@@ -8,7 +8,8 @@ Phase 1 design. No gateway source or tests exist yet; this document is the contr
 - Expose exactly two actions: `create_job` (`POST /v1/jobs`) and `get_job` (`GET /v1/jobs/{job_id}`).
 - Keep GitHub PR state as durable truth. The gateway is a stateless-ish front door; nothing durable lives in the gateway process.
 - Reuse the existing runtime unchanged: `GitHubStore`, marker v1, `Reconciler`, worker adapters, event bus, watchdog.
-- Fail safe and predictably: allowlisted projects, authenticated loopback binding, strict input validation, retry-safe job creation.
+- Fail safe and predictably: allowlisted projects, bearer-authenticated access, strict input validation, retry-safe and conflict-detecting job creation.
+- Let a hosted plugin/connector reach the gateway through an operator-provided HTTPS endpoint, without automating that deployment here.
 
 ## Non-goals
 
@@ -17,7 +18,7 @@ Phase 1 design. No gateway source or tests exist yet; this document is the contr
 - No second database, queue, registry, or lease store. GitHub remains durable truth; the supervisor cache is disposable.
 - No caller-selected repository, cwd, shell command, credentials, adapter, provider, model, capabilities, or routing.
 - No changes to `Reconciler`'s single-store/single-job contract, to the job/task state machine, or to marker v1.
-- No web UI, no deployment automation, no job/PR garbage collection policy (see open concerns).
+- No web UI, no deployment/tunnel automation (the HTTPS front door is operator-provided), no job/PR garbage collection policy (see open concerns).
 - No cross-PR dependency edges. Parent lineage is recorded metadata only.
 
 ## Request and response schemas
@@ -25,6 +26,8 @@ Phase 1 design. No gateway source or tests exist yet; this document is the contr
 Gateway surface (OpenAPI 3.1 document served, authenticated, at `GET /v1/openapi.json`).
 
 `POST /v1/jobs`, `operationId: create_job`, `content-type: application/json`, body <= `max_body_bytes` (default 65536). All objects are `additionalProperties: false`; any unrecognized field is rejected.
+
+**Data handling warning**, repeated verbatim in the OpenAPI `create_job` description: `intent`, `context`, and `requirements` become durable GitHub PR content (`Job.requirements`, `createdBy`, and the initial task `input`). Callers must not send secrets, credentials, tokens, or private data. Large or private payloads belong in artifact references owned by the caller. This design adds no encryption, redaction, or alternate storage.
 
 ```json
 {
@@ -38,7 +41,7 @@ Gateway surface (OpenAPI 3.1 document served, authenticated, at `GET /v1/openapi
 }
 ```
 
-`201 Created` on a newly anchored job, `200 OK` when an existing job is resolved from the same `idempotency_key`:
+`201 Created` on a newly anchored job. `200 OK` when the same `(project, idempotency_key)` arrives with an identical canonical request fingerprint. `409 Conflict` (`idempotency_conflict`) when the key matches an existing job but the canonical request fingerprint differs:
 
 ```json
 {
@@ -47,6 +50,7 @@ Gateway surface (OpenAPI 3.1 document served, authenticated, at `GET /v1/openapi
   "project": "agents-relay",
   "created": true,
   "reconciled": false,
+  "request_fingerprint": "sha256:9c1f0d2ab34e5f67",
   "task_id": "b1e2...",
   "title": "Add a retry budget to the watchdog",
   "pr": {
@@ -67,6 +71,8 @@ Gateway surface (OpenAPI 3.1 document served, authenticated, at `GET /v1/openapi
 - `links.self` and `links.pr` are always present. `links.status` is an alias for `links.self`. `links.dashboard` is present only when the project config sets a reachable `dashboard_url`; the only real dashboard routes in this repo are `serveDashboard`'s `/`, `/api/job`, `/api/usage`, `/events`, all bound to `127.0.0.1`, so a loopback URL is deliberately never emitted.
 - `links.self` uses `public_base_url` when configured; otherwise it is the relative path `/v1/jobs/{job_id}`.
 - No credentials, routing, or provider/model data appear in any response.
+- `request_fingerprint` echoes the persisted canonical fingerprint of the caller's logical request (see idempotency rules). It excludes `idempotency_key` and identifies retry-compatible requests.
+- Responses never echo `intent`, `context`, or task `input`. The durable copy in the PR marker is the only record of the caller's request text.
 
 `GET /v1/jobs/{job_id}`, `operationId: get_job`, `200 OK`:
 
@@ -123,7 +129,7 @@ The gateway has no default project. Configuration comes from `AGENTS_RELAY_GATEW
       "routing": { "provider": "openai", "model": "gpt-5.3-codex", "reasoning": "high" },
       "max_attempts": 3,
       "timeout_ms": 900000,
-      "max_in_flight": 2,
+      "max_concurrent": 2,
       "trusted_authors": ["lalalic"],
       "label": "agents-relay",
       "branch_prefix": "agents-relay/",
@@ -140,6 +146,7 @@ Rules:
 - `capabilities` must be a subset of the adapter's declared capabilities, otherwise config validation fails at startup.
 - `routing` is mandatory and becomes the initial task's `RoutingDecision` (`decidedBy: "gateway-config"`, `decidedAt` at anchor time) with `cwd` taken from `local_path`.
 - `trusted_authors` is passed to `GitHubStore` so only host-authored marker comments are honored.
+- `max_concurrent` is passed to that job's existing `Reconciler` as `maxConcurrent`, bounding concurrent tasks inside one job. There is no cross-project or cross-runtime semaphore and no new global scheduler.
 - Environment: `AGENTS_RELAY_GATEWAY_TOKEN` (required, >=32 chars), `AGENTS_RELAY_GATEWAY_BIND` (default `127.0.0.1`), `AGENTS_RELAY_GATEWAY_PORT` (default `8790`), `AGENTS_RELAY_GATEWAY_MAX_BODY_BYTES` (default `65536`), plus the existing `--events nats`/`--nats-url`/`--subject-prefix` options for the shared bus.
 - Config validation is fail-closed: any invalid project aborts startup. No project is ever auto-created.
 
@@ -150,7 +157,8 @@ Caller-controlled: `intent`, `context`, `requirements`, `project` name, `parent`
 Server-controlled: repository, base branch, local path, adapter, capabilities, provider/model/routing, `cwd`, concurrency, lease, timeout, retry policy, continuation policy.
 
 - Authentication is a single bearer token from the environment, compared in constant time. There is no caller identity, so there is no per-caller attribution or quota; the token is the whole trust boundary. The token is never logged or echoed.
-- Binding is loopback by default. A non-loopback bind is an explicit opt-in and then the bearer token plus host firewall/tunnel is the only protection; TLS termination is out of scope but required in practice.
+- Transport: `AGENTS_RELAY_GATEWAY_BIND` defaults to `127.0.0.1`, which is the safe local default. A hosted ChatGPT plugin/connector needs a reachable HTTPS endpoint, so the supported hosted path is an operator-provided HTTPS reverse proxy or tunnel that terminates TLS and forwards to the loopback gateway. An explicit non-loopback bind behind equivalent network controls is also allowed. `public_base_url` is the connector-facing HTTPS origin used to build action/status links. Provisioning certificates, DNS, tunnels, and network ACLs is outside this enhancement.
+- Secrets are unsupported in `intent`, `context`, and `requirements`: all three can become durable PR marker content. The gateway cannot reliably detect pasted secrets. Callers must keep credentials/private data out and use artifact references for private or large payloads; this enhancement adds no alternate secret store, encryption, or redaction.
 - The gateway holds no GitHub credentials of its own: `GhApiClient` shells out to the host's authenticated `gh` CLI, exactly like the CLI does today.
 - The caller cannot influence which repository, which directory, which model, or whether a shell runs. Unknown or extra fields are rejected rather than ignored.
 - Prompt-injection surface: `intent`/`context` become Codex task input in an allowlisted repository. They are passed as task input text and are never interpolated into a shell command or a git argument. A malicious caller with a valid token can still consume agent budget and cause code changes in an allowlisted repo; that is accepted for a single-operator loopback gateway and is the reason the surface is limited to two actions.
@@ -162,17 +170,35 @@ Server-controlled: repository, base branch, local path, adapter, capabilities, p
 One `create_job` call maps to exactly one open pull request in the configured project. The anchor carries no code change.
 
 1. Validate the body against the schema; reject unknown fields, unknown project, oversized input.
-2. Derive `job_id = <project>-<first 16 hex of sha256(project + "\0" + idempotency_key)>`, so the same key always names the same job.
-3. Resolve an existing job: supervisor cache first, then `GET /repos/{repo}/branches/agents-relay/<job_id>`. If the branch exists, load the PR for that branch and finish any missing durable writes (steps 6-8), then return `created: false`.
-4. Read the base ref, then the base commit's tree SHA.
-5. Create an empty commit and ref via the GitHub git-data API: `POST /repos/{repo}/git/commits` with `tree` = base tree SHA and `parents: [base commit sha]` (no blob/tree changes, therefore an empty diff), then `POST /repos/{repo}/git/refs` for `refs/heads/agents-relay/<job_id>`. This avoids mutating any local checkout. A local `git commit --allow-empty` + push is the documented fallback if the API path is unavailable.
-6. Open a draft PR from that branch onto `base_branch`, then add the project label (`agents-relay` by default). The label is the rediscovery index; the branch prefix encodes `job_id`.
-7. `new GitHubStore(new GhApiClient(), repository, prNumber, new Set(trusted_authors))` and `saveJob(job)` writes the `agents-relay:job:v1` marker comment. The job record is the existing `Job` shape plus the optional lineage extension below.
-8. `appendTask(initialTask)` writes one `agents-relay:task:v1` comment: `state: QUEUED`, empty `dependencies`, config capabilities, config adapter, config routing, config `maxAttempts`/`timeoutMs`, `parentTaskId: null`.
-9. Register the runtime with the supervisor and trigger reconciliation (bounded wait, see failure rules).
-10. Publish `job.created` (orchestrator) and return the response.
+2. Canonicalize the logical request and compute `request_fingerprint`: SHA-256 over sorted-key JSON of `{ intent, context, requirements, parent, agent }`, normalizing absent optionals to `null`. The raw `idempotency_key` is excluded.
+3. Derive `job_id = <project>-<first 16 hex of sha256(project + "\0" + idempotency_key)>`, so the same key always names the same job.
+4. Resolve an existing job: supervisor cache first, then `GET /repos/{repo}/branches/agents-relay/<job_id>`. If the branch exists, find its PR and durable job marker. Equal `requestFingerprint` means finish any missing durable writes (steps 8-9) and return `created: false`; a different fingerprint returns `409 idempotency_conflict` without mutating the existing job.
+5. Read the base ref, then the base commit's tree SHA.
+6. Create an empty commit and ref via the GitHub git-data API: `POST /repos/{repo}/git/commits` with `tree` = base tree SHA and `parents: [base commit sha]` (no blob/tree changes, therefore an empty diff), then `POST /repos/{repo}/git/refs` for `refs/heads/agents-relay/<job_id>`. This avoids mutating any local checkout. A local `git commit --allow-empty` + push is the documented fallback if the API path is unavailable.
+7. Open a draft PR from that branch onto `base_branch`, then add the project label (`agents-relay` by default). The label is the rediscovery index; the branch prefix encodes `job_id`.
+8. `new GitHubStore(new GhApiClient(), repository, prNumber, new Set(trusted_authors))` and `saveJob(job)` writes the `agents-relay:job:v1` marker comment. The job record is the existing `Job` shape plus the optional extension below, including `project`, `requirements`, `requestFingerprint`, and the non-secret key fingerprint.
+9. `appendTask(initialTask)` writes one `agents-relay:task:v1` comment: `state: QUEUED`, deterministic `input` as specified below, empty `dependencies`, config capabilities, config adapter, config routing, config `maxAttempts`/`timeoutMs`, `parentTaskId: null`.
+10. Register the runtime with the supervisor and trigger reconciliation (bounded wait, see failure rules).
+11. Publish `job.created` (orchestrator) and return the response.
 
-Durability rule: `create_job` reports success only after step 8. Steps 4-6 partial failures leave a branch/PR without markers; a retry with the same `idempotency_key` re-resolves the branch and completes the remaining writes on the same PR. The gateway never creates a second PR for the same key.
+Durability rule: `create_job` reports success only after step 9. A partial anchor in steps 5-7 leaves a branch/PR without markers; a retry with the same key and fingerprint repairs the same PR. A retry with the same key but a different fingerprint returns `409` and does not repair or alter the existing job. The gateway never creates a second PR for the same `(project, idempotency_key)`.
+
+### Initial task input composition
+
+`Task.input` is deterministic:
+
+```text
+Intent: <intent with internal whitespace collapsed to single spaces>
+
+Context:
+<context verbatim>
+
+Requirements:
+- <requirement 1 with internal newlines collapsed>
+- <requirement 2 with internal newlines collapsed>
+```
+
+The `Intent:` line is always present. The `Context:` and `Requirements:` blocks are omitted when absent/empty. Blocks are separated by exactly one blank line; no timestamps or execution metadata are injected. `Job.title` is the collapsed intent truncated to 200 characters. This makes retry fingerprints and tests independent of runtime timing.
 
 Lifecycle after creation: the job only ever moves through the existing `OPEN -> RUNNING -> WAITING|BLOCKED -> COMPLETED|FAILED|CANCELLED` transitions driven by `Reconciler` and `schedule`. The gateway never writes task state directly, never transitions a job, and never merges or closes the anchor PR. The anchor PR is a container and audit surface; merging it is a human/host decision outside this design.
 
@@ -185,10 +211,11 @@ parentJobId?: string;
 parentTaskId?: string | null;
 project?: string;
 requirements?: string[];
+requestFingerprint?: string;
 createdBy?: { kind: 'gateway'; agentName?: string; keyFingerprint: string };
 ```
 
-`job_id`, `title`, `state`, `prNumber`, `repository`, `continuation`, timestamps, and `tasks` are unchanged. `requirements` are recorded prose for human/agent readers only; they never feed capabilities, routing, or adapter selection.
+`job_id`, `title`, `state`, `prNumber`, `repository`, `continuation`, timestamps, and `tasks` are unchanged. `requestFingerprint` is the canonical logical-request hash; `createdBy.keyFingerprint` fingerprints the idempotency key without storing the raw key. `requirements` are recorded prose only and never drive capabilities, routing, or adapter selection.
 
 ## Supervisor and recovery
 
@@ -196,14 +223,14 @@ createdBy?: { kind: 'gateway'; agentName?: string; keyFingerprint: string };
 
 - Runtimes are created lazily by `create_job` and by boot recovery, and are keyed by `job_id` so repeated calls cannot double-register a watchdog.
 - `get_job` does not create a runtime; it reads through a short-lived `GitHubStore`.
-- Process-wide `max_active_jobs` (default 8) and per-project `max_in_flight` bound concurrent work; exceeding them returns `429 capacity_exceeded` with `retry_after_ms`, never a queued-but-invisible job.
+- Process-wide `max_active_jobs` (default 8) bounds resident active job runtimes; exceeding it returns `429 capacity_exceeded` with `retry_after_ms`. Per-job task concurrency remains the existing `Reconciler.maxConcurrent` supplied from project `max_concurrent`. There is no cross-runtime scheduler in this enhancement.
 - Idle eviction: a runtime with no non-terminal task and no activity for `idle_ttl_ms` is stopped (unsubscribe, clear watchdog) and dropped. Residency is a cache, never truth.
 - Every runtime uses the existing watchdog pattern from `createService`: `setInterval(reconcile, watchdogMs)` (default 60000 from `SERVICE_DEFAULTS`), unref'd, cleared on eviction/shutdown. SIGINT/SIGTERM stop all runtimes and close the HTTP server, mirroring `Service.stop`.
 
 Boot recovery (`recover()`), no local state involved:
 
-1. For each configured project, `GET /search/issues?q=repo:{repository}+is:pr+is:open+label:{label}`.
-2. For each result, extract `job_id` from `pull_request.head.ref` after `branch_prefix`; if that fails, scan the PR body/comments for an `agents-relay:job:v1` marker.
+1. For each configured project, `GET /search/issues?q=repo:{repository}+is:pr+is:open+label:{label}` to discover candidate PR numbers only.
+2. Fetch each candidate with `GET /repos/{repo}/pulls/{number}` and read `head.ref`; parse `job_id` from `branch_prefix`. If the branch naming convention cannot be parsed, scan trusted PR comments for an `agents-relay:job:v1` marker as fallback.
 3. `GitHubStore.load(job_id)`; skip jobs whose state is terminal (they stay readable via `get_job`).
 4. Register a runtime, reconcile once, subscribe to the shared event bus when configured, and start the watchdog.
 5. Event subscriptions use the existing subject prefix `agents-relay.events.job`, so gateway runtimes and CLI runtimes observe the same wakes. Without NATS the watchdog still converges; that degradation already exists today.
@@ -229,7 +256,7 @@ No new HTTP framework, no schema library, no database, no queue: `node:http` plu
 
 ## Event behavior
 
-- Gateway-authored events: `job.created` (`visibility: orchestrator`) after the marker is durable, `job.reused` (`orchestrator`) when an idempotent retry resolves an existing job, `job.idempotency.mismatch` (`orchestrator`) when the same key arrives with different intent, and `job.create.failed` (`user`, level `error`) for anchor failures.
+- Gateway-authored events: `job.created` (`visibility: orchestrator`) after markers are durable, `job.reused` (`orchestrator`) for an identical idempotent retry, `job.idempotency.conflict` (`orchestrator`) when the same key has a different request fingerprint, and `job.create.failed` (`user`, level `error`) for anchor failures.
 - `get_job` publishes nothing. Reads have no side effects beyond supervisor cache population in the create path.
 - Existing `Reconciler` events are unchanged and remain authoritative for execution: `task.started` (`user`), `task.completed` (`orchestrator`), `task.failed` (`user`), `task.retry`, `thread.started`, `continuation.failed`.
 - Event publishing is best-effort and never gates HTTP outcomes: failures are caught and reported as `event.transport.failed`, exactly like `Reconciler.emit`. A 201 response means the durable marker exists; it never means an event was delivered.
@@ -247,7 +274,8 @@ Error envelope: `{ "error": { "code": "...", "message": "...", "retryable": true
 | Project not in config | 400 | `unknown_project` | no |
 | Body over limit / wrong content type | 413 / 415 | `payload_too_large` / `unsupported_media_type` | no |
 | Unknown `job_id`, non-numeric PR, missing branch | 404 | `not_found` | no |
-| `max_active_jobs` or `max_in_flight` reached | 429 | `capacity_exceeded` | yes |
+| Same idempotency key, different request fingerprint | 409 | `idempotency_conflict` | no |
+| `max_active_jobs` reached | 429 | `capacity_exceeded` | yes |
 | GitHub API/`gh` failure | 502 | `github_unavailable` | yes |
 | First reconcile exceeded `create_timeout_ms` | 201 with `reconciled: false` | - | yes (poll `get_job`) |
 | Unexpected internal error | 500 | `internal` | yes |
@@ -255,11 +283,11 @@ Error envelope: `{ "error": { "code": "...", "message": "...", "retryable": true
 Idempotency rules:
 
 - `idempotency_key` is required, which makes every create retry safe. `job_id` is a deterministic function of `(project, idempotency_key)`, so no extra mapping table is needed.
-- Resolution order: supervisor cache, then branch lookup. A resolved job returns `200` with `created: false` and never mutates the existing job's intent, task, or state.
-- Same key with different `intent`/`context` returns the existing job and publishes `job.idempotency.mismatch`. The key is the contract; the caller must send identical payloads on retry.
-- Same intent with a different key creates a new job and PR. Deduplication by content is the caller's responsibility, not the gateway's.
-- Concurrent same-key requests may both attempt anchor creation. The loser observes GitHub's `422` on ref/PR creation, re-resolves the existing branch, and returns `created: false`. Both responses agree on `job_id` and PR.
-- Partial anchor: if the PR exists but markers are missing, the retry completes steps 7-8 on the same PR before returning. A `201` is only ever returned after the job and initial task markers are durable.
+- Resolution order: supervisor cache, then branch lookup. A resolved job with the same `requestFingerprint` returns `200` with `created: false` and never mutates the existing job's request/task/state.
+- Same key with a different logical request returns `409 idempotency_conflict`, publishes `job.idempotency.conflict`, and leaves the existing job untouched.
+- Same intent with a different key creates a new job and PR. Content deduplication is the caller's responsibility.
+- Concurrent same-key requests may both attempt anchor creation. The loser observes GitHub's `422` on ref/PR creation, re-resolves the existing branch, compares the durable request fingerprint, then returns either `200 created:false` (same request) or `409` (conflict).
+- Partial anchor: if the PR exists but markers are missing, a retry with the matching request completes steps 8-9 on the same PR before returning. A `201` is only returned after the job and initial task markers are durable.
 - Reconciliation is never awaited for correctness. `create_job` waits at most `create_timeout_ms` for the first `reconcile`; on timeout it returns the last durable state with `reconciled: false` and lets the watchdog converge.
 - No process state is required to recover: after a crash, branch + label + markers are enough to rebuild every runtime.
 
@@ -274,12 +302,12 @@ Phase 2 tests run with `node --test test/gateway-*.test.js` against built `dist/
 5. Caller cannot choose execution: attempts to pass `adapter`, `provider`, `model`, `cwd`, `command`, or `capabilities` are rejected as `unknown_field`, and the durable task still carries the config values.
 6. Idempotent retry: two identical calls yield one PR, `created: true` then `created: false`, identical `job_id`/PR/branch, and no duplicate comments.
 7. Concurrent same-key: the second ref/PR creation receives `422`; the response is `created: false`, and only one PR and one marker pair exist.
-8. Same key, different intent: returns the existing job, publishes `job.idempotency.mismatch`, and leaves the durable job and task untouched.
+8. Same key, different request fingerprint: returns `409 idempotency_conflict`, publishes `job.idempotency.conflict`, and leaves the durable job/task untouched.
 9. Partial anchor: with marker writes failing once, the first call errors, and the retry with the same key completes markers on the same PR without creating a second PR.
 10. `get_job`: unknown id returns `404 not_found`; a terminal job returns `terminal: true` and registers no runtime; the payload omits task `input`, `context`, `routing`, and any dashboard link when `dashboard_url` is unset.
 11. Lineage: `parent` and `agent.name` are persisted as `parentJobId`/`parentTaskId`/`createdBy` and echoed by `get_job`, while the initial task keeps `parentTaskId: null` and no cross-PR dependency.
-12. Supervisor: repeated create/get calls for one job keep exactly one runtime and one watchdog; `max_active_jobs` and `max_in_flight` produce `429 capacity_exceeded`; idle eviction removes the runtime while `get_job` still reads correct state.
-13. Recovery: a supervisor boot with two open labeled PRs (one terminal, one running) builds exactly one runtime, reconciles once, and skips the terminal job; an unparseable branch name falls back to the marker scan.
+12. Supervisor: repeated create/get calls for one job keep exactly one runtime and one watchdog; `max_active_jobs` produces `429 capacity_exceeded`; project `max_concurrent` is passed to each existing Reconciler; idle eviction removes the runtime while `get_job` still reads correct state.
+13. Recovery: issue search supplies candidate PR numbers, each candidate is fetched through the pulls API to read `head.ref`; with two open labeled PRs (one terminal, one running) recovery builds one runtime, reconciles once, skips the terminal job, and falls back to trusted marker scan for an unparseable branch name.
 14. Events: `create_job` publishes `job.created` with `visibility=orchestrator`; a throwing event bus still yields `201` and publishes `event.transport.failed`; `get_job` publishes nothing.
 15. Marker compatibility: job comments written without the new optional fields parse and round-trip, keeping the existing marker/store tests green.
 16. Reconciliation is not blocking: with a slow reconciler, `create_job` returns within `create_timeout_ms` with `reconciled: false` and a durable `OPEN` job.
@@ -306,12 +334,12 @@ Explicitly not in phase 2: changes to `src/reconciler.ts`, `src/store.ts`, `src/
 
 ## Open design concerns
 
-1. Transport for hosted ChatGPT: a hosted connector cannot reach a loopback HTTP server. Phase 2 assumes a thin local connector/MCP shim that holds the bearer token and calls the loopback gateway; direct hosted-to-loopback access, and the tunnel plus second auth layer it would need, remain undecided.
+1. Hosted transport is intentionally operator-managed: a ChatGPT connector points at `public_base_url` over HTTPS, while the gateway remains loopback-bound by default behind a TLS reverse proxy/tunnel. Which proxy/tunnel to use and how to provision DNS/certificates remain deployment decisions, not gateway logic.
 2. `links.dashboard` is effectively unavailable: `serveDashboard` is loopback-bound and single-job, so no honest dashboard URL exists for a gateway job until an external route is configured.
 3. Anchor PRs are durable noise: empty commits, draft status, and no merge/close/GC policy. Whether anchors are closed automatically on completion, and whether they may ever merge into the base branch, is unresolved.
 4. Label creation may need repo admin; rediscovery depends on `label:agents-relay` search, with a marker-scan fallback when the label or branch name is unusable.
 5. One shared bearer token means no caller attribution and no per-caller budget. A leaked token can spend agent budget in allowlisted repositories.
 6. Capacity limits are process-local, so two gateway instances break the "one active runner per job" invariant; the existing v1 distributed-lease gap applies.
-7. Idempotency stores only a key fingerprint in the marker, so a caller that loses its key cannot recover its job by intent.
+7. Idempotency stores a non-secret key fingerprint and canonical request fingerprint, but a caller that loses its idempotency key still cannot recover a job by intent alone.
 8. `requirements` are recorded prose only. Any future mapping to capabilities or routing must go through project config, or callers regain execution influence by another name.
 9. `get_job` state can lag reality if a human closes or merges the anchor PR; the design reports PR `closed` but deliberately never mutates the durable job in response.
