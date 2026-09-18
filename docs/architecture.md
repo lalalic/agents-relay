@@ -14,6 +14,8 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
+The connect/plugin action surface (`create_job` / `get_job`) that anchors one PR per objective through an allowlisted project config is designed in [plugin-action-gateway.md](plugin-action-gateway.md).
+
 ## Reconciliation rule
 
 Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened.
