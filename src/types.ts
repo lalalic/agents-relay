@@ -4,7 +4,7 @@ export type AdapterName = 'shell' | 'codex';
 export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; decidedBy: string; decidedAt: string };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type Task = {
-  id: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
+  jobId?: string; id: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   input: string; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   result: Result | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;

@@ -5,12 +5,26 @@ export type Comment = { id: number; body: string; updatedAt: string; authorLogin
 export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; comments(): Promise<Comment[]>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
-  constructor(job?: Job) { if (job) { this.values.set(JOB_MARKER, renderJobComment(job)); for (const task of job.tasks) this.values.set(`${TASK_MARKER}:${task.id}`, renderTaskComment(task)); } }
-  async load(jobId: string): Promise<Job> { const job = parseJob(this.values.get(JOB_MARKER) ?? ''); if (!job || job.id !== jobId) throw new Error(`Job ${jobId} not found`); job.tasks = [...this.values.values()].map(parseTask).filter((x): x is Task => x !== null); return job; }
-  async saveJob(job: Job): Promise<void> { this.values.set(JOB_MARKER, renderJobComment(job)); }
-  async appendTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.id}`, renderTaskComment(task)); }
-  async saveTask(task: Task): Promise<void> { await this.appendTask(task); }
+  constructor(job?: Job) {
+    if (job) {
+      this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job));
+      for (const task of job.tasks) this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task));
+    }
+  }
+  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.tasks = this.tasksForJob(jobId); return job; }
+  async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
+  async appendTask(task: Task): Promise<void> {
+    const key = `${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`;
+    if (this.values.has(key)) throw new Error(`Task ${task.id} already exists in this PR`);
+    this.values.set(key, renderTaskComment(task));
+  }
+  async saveTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task)); }
   async comments(): Promise<Comment[]> { return [...this.values.values()].map((body, i) => ({ id: i + 1, body, updatedAt: new Date().toISOString(), authorLogin: 'local' })); }
+  private findJob(jobId: string): Job | null { return [...this.values.values()].map(parseJob).find((x): x is Job => x !== null && x.id === jobId) ?? null; }
+  private tasksForJob(jobId: string): Task[] {
+    const jobs = [...this.values.values()].map(parseJob).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
+    return [...this.values.values()].map(parseTask).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, jobs.length === 1));
+  }
 }
 export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown> };
 export class GhApiClient implements GitHubClient {
@@ -22,9 +36,27 @@ export class GitHubStore implements DurableStore {
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
   private async list(): Promise<Comment[]> { const all: Comment[] = []; for (let page = 1; page <= 100; page += 1) { const data = await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments?per_page=100&page=${page}`); if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array'); const values = data.map((x: unknown) => { const v = x as Record<string, unknown>; const user = v.user as Record<string, unknown> | null | undefined; return { id: Number(v.id), body: String(v.body ?? ''), updatedAt: String(v.updated_at ?? ''), authorLogin: typeof user?.login === 'string' ? user.login : null }; }); all.push(...values); if (values.length < 100) break; } return all; }
   async comments(): Promise<Comment[]> { return this.list(); }
-  async load(jobId: string): Promise<Job> { const comments = (await this.list()).filter(comment => this.isTrusted(comment)); const job = comments.map(x => parseJob(x.body)).find((x): x is Job => x !== null && x.id === jobId); if (!job) throw new Error(`Job ${jobId} not found in PR`); job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null); return job; }
+  async load(jobId: string): Promise<Job> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
+    const job = jobs.find(x => x.id === jobId);
+    if (!job) throw new Error(`Job ${jobId} not found in PR`);
+    const soleTrustedJob = jobs.length === 1;
+    job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
+    return job;
+  }
   private async comment(body: string): Promise<void> { await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }) }); }
   async saveJob(job: Job): Promise<void> { const comments = (await this.list()).filter(comment => this.isTrusted(comment)); const existing = comments.find(x => parseJob(x.body)?.id === job.id); if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderJobComment(job) }) }); else await this.comment(renderJobComment(job)); }
   async appendTask(task: Task): Promise<void> { await this.comment(renderTaskComment(task)); }
-  async saveTask(task: Task): Promise<void> { const comments = (await this.list()).filter(comment => this.isTrusted(comment)); const existing = comments.find(x => parseTask(x.body)?.id === task.id); if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) }); else await this.appendTask(task); }
+  async saveTask(task: Task): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const existing = comments.find(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
+    if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
+    else await this.appendTask(task);
+  }
+}
+
+function isTaskForJob(task: Task, jobId: string, soleTrustedJob: boolean): boolean {
+  if (task.jobId === jobId) return true;
+  return !task.jobId && soleTrustedJob;
 }
