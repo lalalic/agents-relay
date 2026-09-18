@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Durable async agent jobs coordinated through GitHub pull requests",
   "type": "module",
-  "bin": { "agents-relay": "dist/cli.js" },
+  "bin": { "agents-relay": "dist/cli.js", "agents-relayd": "dist/relayd.js" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.js",

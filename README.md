@@ -10,7 +10,7 @@ npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
 node dist/cli.js submit --file .agents-relay.json --task-id hello --input "echo hello" --adapter shell
 node dist/cli.js reconcile --file .agents-relay.json
-node dist/cli.js serve --file .agents-relay.json
+node dist/relayd.js --file .agents-relay.json
 ```
 
 Open http://localhost:8787. The marker format is intentionally public and append-friendly; the CLI uses `GitHubStore` with the authenticated `gh` client in operational mode.
@@ -24,7 +24,7 @@ agents-relay reconcile --repo OWNER/REPO --pr 1 --id job-1
 agents-relay status --repo OWNER/REPO --pr 1 --id job-1
 ```
 
-`reconcile` leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. `serve` is the watchdog/dashboard mode and can use `--events nats --subject-prefix PREFIX` for optional wakeups. `--file PATH` is explicit local demo/test mode only.
+`reconcile` leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. `agents-relayd` (or the equivalent `agents-relay serve`) is the watchdog/dashboard mode and can use `--events nats --subject-prefix PREFIX` for optional wakeups. See [docs/service.md](docs/service.md). `--file PATH` is explicit local demo/test mode only.
 
 V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in PR marker comments; store only summaries and artifact references.
 
