@@ -31,3 +31,7 @@ npx --package agents-relay --package pm2 pm2 start agents-relayd --name agents-r
 ```
 
 PM2 forwards `SIGINT` and `SIGTERM`. The service clears its watchdog, unsubscribes from wake events, closes the local dashboard server, and exits only after cleanup.
+
+## Plugin action gateway
+
+`agents-relay-gateway` is the related HTTP front door for a hosted ChatGPT plugin/connector: it authenticates with a bearer token, serves the `create_job` / `get_job` OpenAPI actions, anchors one draft PR per objective in an allowlisted project, and then drives the same reconciler/watchdog path described above — one runtime per job. Loopback-bound by default and TLS-terminating proxies are operator-provided. Configure it with `AGENTS_RELAY_GATEWAY_TOKEN` and `AGENTS_RELAY_GATEWAY_CONFIG`; see [plugin-action-gateway.md](plugin-action-gateway.md) for the contract and [../ops/agents-relay-gateway.md](../ops/agents-relay-gateway.md) for operations.

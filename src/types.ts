@@ -9,7 +9,8 @@ export type Task = {
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   result: Result | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
-export type Job = { id: string; title: string; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; createdAt: string; updatedAt: string; tasks: Task[] };
+export type GatewayOrigin = { kind: 'gateway'; agentName?: string; keyFingerprint: string };
+export type Job = { id: string; title: string; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; createdAt: string; updatedAt: string; tasks: Task[]; parentJobId?: string; parentTaskId?: string | null; project?: string; requirements?: string[]; requestFingerprint?: string; createdBy?: GatewayOrigin };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; data?: Record<string, unknown> };
 
