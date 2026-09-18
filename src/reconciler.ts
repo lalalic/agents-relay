@@ -47,7 +47,8 @@ export class Reconciler {
     if (!adapter) { transitionTask(task, 'FAILED'); task.error = `No adapter ${task.adapter}`; await this.store.saveTask(task); return; }
     const missing = task.capabilities.filter(capability => !adapter.capabilities.includes(capability));
     if (missing.length > 0) { transitionTask(task, 'FAILED'); task.error = `Adapter ${adapter.id} lacks capabilities: ${missing.join(', ')}`; await this.store.saveTask(task); return; }
-    transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date((this.options.now ?? new Date()).getTime() + (this.options.leaseMs ?? 300000)).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
+    const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs); const startedAt = (this.options.now ?? new Date()).getTime();
+    transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
     const controller = new AbortController(); let execution: Execution;
     try { execution = adapter.launch(task, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }

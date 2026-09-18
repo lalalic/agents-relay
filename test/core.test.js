@@ -54,5 +54,18 @@ test('continuation failures remain retryable and succeed once', async () => { co
 test('stale completion cannot delete a replacement execution', async () => { const t=task('race'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); await reconciler.reconcile('j'); const old=adapter.resolvers[0]; reconciler.live.delete('race'); const durable=await store.load('j'); durable.tasks[0].state='READY'; await store.saveTask(durable.tasks[0]); await reconciler.reconcile('j'); assert.equal(adapter.launches,2); old.resolve({summary:'old'}); await new Promise(resolve=>setTimeout(resolve,20)); assert.equal(reconciler.live.has('race'),true); adapter.resolvers[1].resolve({summary:'new'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].result.summary,'new'); });
 test('event transport failure is advisory', async () => { const t=task('event-fail'); const store=new InMemoryStore(job([t])); const bus={publish:async()=>{throw new Error('nats down');},subscribe:async()=>{throw new Error('nats down');}}; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'still works'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); });
 test('aggregate edge cases and NATS subject safety are explicit', () => { const empty=job(); assert.equal(schedule(empty).state,'OPEN'); const cancelled=job([task('x','CANCELLED')]); assert.equal(schedule(cancelled).state,'CANCELLED'); assert.throws(()=>subjectToken('bad.id'),/Unsafe/); assert.equal(subjectToken('safe_job-1'),'safe_job-1'); });
+test('live task leases do not expire before their timeout', async () => {
+  const startedBeforeLaunch=Date.now(); const t=task('long'); t.timeoutMs=500; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],leaseMs:20});
+  await reconciler.reconcile('j');
+  await new Promise(resolve=>setTimeout(resolve,30));
+  const running=await reconciler.reconcile('j'); const taskState=running.tasks[0];
+  assert.equal(adapter.launches,1); assert.equal(running.state,'RUNNING'); assert.equal(taskState.attempt,1);
+  assert.ok(new Date(taskState.leaseExpiresAt).getTime() >= startedBeforeLaunch+taskState.timeoutMs);
+  adapter.resolvers[0].resolve({summary:'finished'});
+  await reconciler.idle();
+  const finished=await store.load('j');
+  assert.equal(finished.tasks[0].state,'SUCCEEDED'); assert.equal(finished.tasks[0].attempt,1);
+});
 test('dashboard uses safe DOM rendering and named live events', () => { assert.equal(dashboardHtml.includes('innerHTML'),false); assert.equal(dashboardHtml.includes("addEventListener('relay'"),true); });
 test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=serveDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
