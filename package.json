@@ -1,0 +1,13 @@
+{
+  "name": "agents-relay",
+  "version": "1.0.0",
+  "description": "Durable async agent jobs coordinated through GitHub pull requests",
+  "type": "module",
+  "bin": { "agents-relay": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.js",
+    "dev": "tsx src/cli.ts"
+  },
+  "devDependencies": { "@types/node": "^22.10.2", "tsx": "^4.19.2", "typescript": "^5.7.2" }
+}

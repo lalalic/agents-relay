@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
+import { detectCycles, dependencyReady, schedule } from '../dist/scheduler.js';
+import { CodexAdapter } from '../dist/adapters.js';
+const task = (id, state='QUEUED', dependencies=[]) => ({id,parentTaskId:null,dependencies,capabilities:[],adapter:'shell',input:'true',state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+test('parses task marker JSON', () => { const t=task('a'); assert.equal(parseTask(marker(TASK_MARKER,t)).id,'a'); });
+test('schedules dependency-ready tasks', () => { const a=task('a','SUCCEEDED'); const b=task('b','QUEUED',['a']); const job={id:'j',title:'x',prNumber:1,repository:'r',state:'OPEN',continuation:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),tasks:[a,b]}; schedule(job); assert.equal(b.state,'READY'); assert.equal(job.state,'RUNNING'); });
+test('detects dependency cycles', () => assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/));
+test('dependency readiness is strict', () => { const a=task('a','RUNNING'); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',a]])),false); });
+test('Codex launch requires an observable routing decision', () => { assert.throws(() => new CodexAdapter('definitely-not-started').launch(task('model','READY'), new AbortController().signal), /routing metadata/); });
