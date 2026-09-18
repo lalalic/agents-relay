@@ -11,6 +11,7 @@ import { ShellAdapter, CodexAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { serveDashboard } from './dashboard.js';
+import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 const usage = 'agents-relay <init|submit|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
@@ -42,7 +43,10 @@ export function runtime(store: DurableStore, args: string[], bus: EventBus | und
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined; const reconciler = runtime(loaded.store, args, bus);
-  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id);
+  const requestedUsageDays = Number(arg(args, '--usage-window-days', '1'));
+  const usageWindowDays = Number.isInteger(requestedUsageDays) && requestedUsageDays > 0 ? requestedUsageDays : 1;
+  const usageRegistry = codexAndZaiUsageRegistry(undefined, usageWindowDays);
+  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry);
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
   const watchdog = setInterval(() => void reconciler.reconcile(loaded.job.id), Number(arg(args, '--interval', String(SERVICE_DEFAULTS.watchdogMs)))); watchdog.unref();

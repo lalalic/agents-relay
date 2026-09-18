@@ -2,6 +2,8 @@
 
 `agents-relayd` starts the reconciler watchdog and dashboard for one durable job. It listens on `127.0.0.1:8787` by default, reconciles every 60 seconds, and refreshes the dashboard every 15 seconds. NATS remains optional; enable it with `--events nats` and configure it with `--nats-url` and `--subject-prefix`.
 
+The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
+
 ```sh
 npx agents-relayd --repo OWNER/REPO --pr 1 --id JOB_ID
 ```

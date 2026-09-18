@@ -112,6 +112,16 @@ test('dashboard handles named and snapshot SSE messages with a bounded event fee
   assert.match(dashboardHtml, /while \(eventFeed\.children\.length > MAX_EVENTS\)/);
 });
 
+test('usage API and live UI expose actual usage and explicit balance unavailability', () => {
+  assert.match(dashboardHtml, /id="usage-heading"/);
+  assert.match(dashboardHtml, /fetch\('\/api\/job'\), fetch\('\/api\/usage'\)/);
+  assert.match(dashboardHtml, /function modelTable\(models\)/);
+  assert.match(dashboardHtml, /function usageSource\(source\)/);
+  assert.match(dashboardHtml, /Quota \/ balance: unavailable/);
+  assert.match(dashboardHtml, /Current durable job/);
+  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write|eval\(/);
+});
+
 test('dashboard server is localhost-bound and serves durable markup and JSON', async () => {
   const store = new InMemoryStore(job([task('dashboard-ui', 'RUNNING')]));
   const server = serveDashboard(store, 0, new MemoryEventBus(), 10000, 'dashboard-job');

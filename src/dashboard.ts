@@ -1,6 +1,7 @@
 import { createServer, Server } from 'node:http';
 import { DurableStore } from './store.js';
 import { EventBus } from './events.js';
+import { UsageRegistry } from './usage.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -61,8 +62,22 @@ export const dashboardHtml = `<!doctype html>
     #events .kind { display: inline-block; min-width: 8.5rem; font-weight: 650; color: var(--accent); }
     #events .connection-ok { color: var(--ok); }
     #events .connection-error { color: var(--bad); }
+    .usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; align-items: start; }
+    .source { background: white; border: 1px solid var(--border); border-radius: .45rem; padding: .75rem; min-width: 0; }
+    .source h3 { margin: 0 0 .35rem; font-size: 1rem; }
+    .usage-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: .5rem; margin: .65rem 0; }
+    .usage-count { background: #f4f7fa; border-radius: .35rem; padding: .45rem; }
+    .usage-count strong { display: block; overflow-wrap: anywhere; }
+    .unavailable { color: var(--warn); }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: .38rem .45rem; text-align: right; }
+    th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+    th { color: var(--muted); font-size: .74rem; text-transform: uppercase; }
+    td { overflow-wrap: anywhere; }
     .empty { color: var(--muted); font-style: italic; }
     @media (max-width: 760px) { body { padding: 1rem; } .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 900px) { .usage-grid { grid-template-columns: minmax(0, 1fr); } }
   </style>
 </head>
 <body>
@@ -81,6 +96,12 @@ export const dashboardHtml = `<!doctype html>
       <ul class="tree" id="tasks"></ul>
     </section>
 
+    <section aria-labelledby="usage-heading">
+      <h2 id="usage-heading">Usage</h2>
+      <p class="subtle">Actual recorded requests and tokens in the recent local telemetry window. Quota and remaining balance are shown explicitly when unsupported.</p>
+      <div class="usage-grid" id="usage" aria-live="polite"></div>
+    </section>
+
     <section aria-labelledby="events-heading">
       <h2 id="events-heading">Recent events</h2>
       <p class="subtle">Shows selected, start, milestone, completion, and connection signals. Newest first; bounded to 60 entries.</p>
@@ -95,6 +116,7 @@ export const dashboardHtml = `<!doctype html>
     const taskRoot = document.querySelector('#tasks');
     const eventFeed = document.querySelector('#events');
     const connection = document.querySelector('#connection');
+    const usageRoot = document.querySelector('#usage');
     let lastEventAt = '—';
 
     function value(v) { return v === null || v === undefined || v === '' ? '—' : String(v); }
@@ -222,6 +244,78 @@ export const dashboardHtml = `<!doctype html>
       if (!roots.length) { taskRoot.append(element('li', 'empty', text('No tasks in durable PR state.'))); return; }
       for (const task of roots) taskRoot.append(taskNode(task, children, 0));
     }
+    function number(valueForNumber) { return typeof valueForNumber === 'number' && Number.isFinite(valueForNumber) ? valueForNumber.toLocaleString() : '0'; }
+    function tokenCounts(tokens) {
+      const labels = [['Input', tokens.input], ['Cached input', tokens.cachedInput], ['Cache write', tokens.cacheWriteInput], ['Output', tokens.output], ['Reasoning', tokens.reasoning], ['Total', tokens.total]];
+      const box = element('div', 'usage-counts');
+      for (const [label, valueForCount] of labels) {
+        const item = element('div', 'usage-count');
+        item.append(element('span', 'field-label', text(label)));
+        item.append(element('strong', '', text(number(valueForCount))));
+        box.append(item);
+      }
+      return box;
+    }
+    function modelTable(models) {
+      const wrapper = element('div', 'table-scroll');
+      const table = document.createElement('table');
+      const head = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      for (const label of ['Provider', 'Model', 'Requests', 'Input', 'Cached', 'Cache write', 'Output', 'Reasoning', 'Total']) {
+        const heading = document.createElement('th');
+        heading.append(text(label));
+        headRow.append(heading);
+      }
+      const body = document.createElement('tbody');
+      if (!models.length) {
+        const row = body.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = 9;
+        cell.className = 'empty';
+        cell.append(text('No recorded requests in window'));
+      }
+      for (const model of models) {
+        const row = body.insertRow();
+        row.insertCell().append(text(value(model.provider)));
+        row.insertCell().append(text(value(model.model)));
+        row.insertCell().append(text(number(model.requestCount)));
+        for (const valueForCell of [model.tokens.input, model.tokens.cachedInput, model.tokens.cacheWriteInput, model.tokens.output, model.tokens.reasoning, model.tokens.total]) row.insertCell().append(text(number(valueForCell)));
+      }
+      head.append(headRow); table.append(head, body); wrapper.append(table);
+      return wrapper;
+    }
+    function usageSource(source) {
+      const card = element('article', 'source');
+      const title = element('h3');
+      title.append(text(value(source.label)));
+      title.append(element('span', 'badge', text(value(source.id))));
+      card.append(title, element('p', 'subtle', text(number(source.requestCount) + ' requests · ' + value(source.telemetryPath))));
+      card.append(tokenCounts(source.tokens));
+      card.append(element('p', 'unavailable', text('Quota / balance: unavailable — ' + value(source.quotaBalance.reason))));
+      if (source.warning) card.append(element('p', 'indicators', text(value(source.warning))));
+      card.append(modelTable(Array.isArray(source.models) ? source.models : []));
+      return card;
+    }
+    function currentJobSummary(usage) {
+      const card = element('article', 'source');
+      card.append(element('h3', '', text('Current durable job')));
+      const current = usage.currentJob || {};
+      const status = current.available === false
+        ? 'Unavailable — ' + value(current.reason)
+        : (current.reason ? 'Partial — ' + value(current.reason) : 'Available');
+      card.append(element('p', 'subtle', text(status)));
+      card.append(tokenCounts(current.tokens || {}));
+      card.append(modelTable((current.sessions || []).map(session => ({ provider: session.provider, model: session.model, requestCount: session.requestCount, tokens: session.tokens }))));
+      return card;
+    }
+    function drawUsage(usage) {
+      if (!usage || !Array.isArray(usage.sources)) return;
+      usageRoot.replaceChildren(
+        element('p', 'subtle', text(value(usage.windowStart) + ' → ' + value(usage.windowEnd) + ' · ' + number(usage.requestCount) + ' total requests'))
+      );
+      for (const source of usage.sources) usageRoot.append(usageSource(source));
+      usageRoot.append(currentJobSummary(usage));
+    }
     function eventKind(event) {
       if (!event || typeof event !== 'object') return 'connection';
       return value(event.type);
@@ -243,9 +337,10 @@ export const dashboardHtml = `<!doctype html>
     }
     async function refresh() {
       try {
-        const response = await fetch('/api/job');
-        if (!response.ok) throw new Error('API ' + response.status);
-        apply(await response.json());
+        const [jobResponse, usageResponse] = await Promise.all([fetch('/api/job'), fetch('/api/usage')]);
+        if (!jobResponse.ok || !usageResponse.ok) throw new Error('API ' + (!jobResponse.ok ? jobResponse.status : usageResponse.status));
+        apply(await jobResponse.json());
+        drawUsage(await usageResponse.json());
         lastRefreshAt = new Date().toISOString();
         connection.textContent = 'Live · durable PR state connected';
         connection.className = 'status ok';
@@ -268,7 +363,14 @@ export const dashboardHtml = `<!doctype html>
   </script>
 </body>
 </html>`;
-export function serveDashboard(store: DurableStore, port = 8787, bus?: EventBus, refreshMs = 15000, jobId?: string): Server {
+export function serveDashboard(
+  store: DurableStore,
+  port = 8787,
+  bus?: EventBus,
+  refreshMs = 15000,
+  jobId?: string,
+  usageRegistry?: UsageRegistry,
+): Server {
   const clients = new Set<import('node:http').ServerResponse>();
   let subscribed = false;
   const snapshot = async (): Promise<{ id: string; json: string }> => {
@@ -286,6 +388,12 @@ export function serveDashboard(store: DurableStore, port = 8787, bus?: EventBus,
     }
     return { id: jobId, json: JSON.stringify(await store.load(jobId)) };
   };
+  const usage = async (): Promise<string> => {
+    if (!jobId) throw new Error('Dashboard requires a durable job id');
+    const registry = usageRegistry;
+    if (!registry) throw new Error('Usage telemetry is unavailable');
+    return JSON.stringify(await registry.snapshot(await store.load(jobId)));
+  };
   const server = createServer(async (req, res) => {
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -298,6 +406,16 @@ export function serveDashboard(store: DurableStore, port = 8787, bus?: EventBus,
         res.end((await snapshot()).json);
       } catch (error) {
         res.writeHead(404);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (req.url === '/api/usage') {
+      try {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(await usage());
+      } catch (error) {
+        res.writeHead(503);
         res.end(error instanceof Error ? error.message : String(error));
       }
       return;
