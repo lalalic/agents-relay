@@ -7,6 +7,8 @@ import { MemoryEventBus } from '../dist/events.js';
 const now = () => new Date().toISOString();
 const task = (id, state = 'QUEUED') => ({
   id,
+  projectName: 'Agents Relay',
+  agentName: 'codex',
   parentTaskId: null,
   dependencies: [],
   capabilities: ['shell'],
@@ -70,7 +72,7 @@ test('dashboard markup includes job summary, hierarchy, and execution contracts'
   assert.match(dashboardHtml, /children\.get\(task\.id\)/);
   assert.match(dashboardHtml, /Last refresh/);
   assert.match(dashboardHtml, /Last event/);
-  for (const label of ['Worker adapter', 'Provider / model / reasoning', 'Execution / thread', 'Attempt', 'Dependencies', 'Lease owner / expiry', 'Result', 'Error']) {
+  for (const label of ['Project', 'Agent', 'Parent task', 'Worker adapter', 'Provider / model / reasoning', 'Execution / thread', 'Attempt', 'Dependencies', 'Lease owner / expiry', 'Result', 'Error']) {
     assert.match(dashboardHtml, new RegExp(label));
   }
 });
@@ -104,6 +106,8 @@ test('dashboard server is localhost-bound and serves durable markup and JSON', a
   assert.equal(api.status, 200);
   const payload = await api.json();
   assert.equal(payload.tasks[0].threadId, 'thread-dashboard-ui');
+  assert.equal(payload.tasks[0].projectName, 'Agents Relay');
+  assert.equal(payload.tasks[0].agentName, 'codex');
 
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));

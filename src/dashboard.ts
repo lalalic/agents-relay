@@ -132,7 +132,9 @@ export const dashboardHtml = `<!doctype html>
       card.append(field('Input', task.input));
       const fields = element('div', 'fields');
       const routing = task.routing || {};
-      fields.append(field('Parent', task.parentTaskId ? task.parentTaskId : 'root'));
+      fields.append(field('Project', task.projectName || 'none'));
+      fields.append(field('Agent', task.agentName || 'none'));
+      fields.append(field('Parent task', task.parentTaskId || 'root'));
       fields.append(field('Worker adapter', task.adapter));
       fields.append(field('Provider / model / reasoning', value(routing.provider) + ' / ' + value(routing.model) + ' / ' + value(routing.reasoning || routing.profile)));
       fields.append(field('Execution / thread', value(task.executionId) + ' / ' + value(task.threadId)));
