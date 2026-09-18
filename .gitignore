@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.agents-relay.json
 coverage/
 .env
 .env.*
