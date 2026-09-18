@@ -8,7 +8,7 @@ Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs
 npm install
 npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
-node dist/cli.js submit --file .agents-relay.json --id hello --input "echo hello" --adapter shell
+node dist/cli.js submit --file .agents-relay.json --task-id hello --input "echo hello" --adapter shell
 node dist/cli.js reconcile --file .agents-relay.json
 node dist/cli.js serve --file .agents-relay.json
 ```
@@ -26,4 +26,6 @@ agents-relay status --repo OWNER/REPO --pr 1 --id job-1
 
 `reconcile` leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. `serve` is the watchdog/dashboard mode and can use `--events nats --subject-prefix PREFIX` for optional wakeups. `--file PATH` is explicit local demo/test mode only.
 
-Codex/model-backed tasks require `--provider` and `--model` (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [docs/SKILL.md](docs/SKILL.md).
+V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in PR marker comments; store only summaries and artifact references.
+
+Codex/model-backed tasks require `--provider` and `--model` (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [SKILL.md](SKILL.md).

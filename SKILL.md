@@ -17,3 +17,5 @@ agents-relay serve --repo OWNER/REPO --pr 1 --id JOB_ID
 ```
 
 Use `--file PATH` only for explicit local demo/test mode. Optional `--events nats` enables wake/progress events with `--subject-prefix`; the PR remains authoritative.
+
+V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
