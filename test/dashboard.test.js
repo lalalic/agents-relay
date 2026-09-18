@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardHtml, serveDashboard } from '../dist/dashboard.js';
+import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 import { MemoryEventBus } from '../dist/events.js';
 
@@ -66,6 +66,7 @@ test('dashboard is framework-free, accessible, and renders PR values safely', ()
 
 test('dashboard markup includes job summary, hierarchy, and execution contracts', () => {
   assert.match(dashboardHtml, /id="summary"/);
+  assert.match(dashboardHtml, /GitHub PR/);
   assert.match(dashboardHtml, /countByState/);
   assert.match(dashboardHtml, /Attention: ' \+ indicators\.join/);
   assert.match(dashboardHtml, /function taskNode\(/);
@@ -75,6 +76,29 @@ test('dashboard markup includes job summary, hierarchy, and execution contracts'
   for (const label of ['Project', 'Agent', 'Parent task', 'Worker adapter', 'Provider / model / reasoning', 'Execution / thread', 'Attempt', 'Dependencies', 'Lease owner / expiry', 'Result', 'Error']) {
     assert.match(dashboardHtml, new RegExp(label));
   }
+});
+
+test('GitHub PR links use only validated durable repository and PR values', () => {
+  assert.equal(githubPrUrl('lalalic/agents-relay', 1), 'https://github.com/lalalic/agents-relay/pull/1');
+  assert.equal(githubPrUrl('owner/repo_name.example', 42), 'https://github.com/owner/repo_name.example/pull/42');
+
+  for (const repository of ['', 'lalalic', '/agents-relay', '../evil', 'owner/.', 'owner/..', 'owner/repo?ref=x', 'owner/repo#fragment']) {
+    assert.equal(githubPrUrl(repository, 1), null);
+  }
+  for (const prNumber of [0, -1, 1.5, '1', Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(githubPrUrl('lalalic/agents-relay', prNumber), null);
+  }
+});
+
+test('dashboard renders GitHub PR values through safe DOM APIs with a fallback', () => {
+  assert.match(dashboardHtml, /const url = githubPrUrl\(job\.repository, job\.prNumber\);/);
+  assert.match(dashboardHtml, /const link = document\.createElement\('a'\);/);
+  assert.match(dashboardHtml, /link\.href = url;/);
+  assert.match(dashboardHtml, /link\.target = '_blank';/);
+  assert.match(dashboardHtml, /link\.rel = 'noopener noreferrer';/);
+  assert.match(dashboardHtml, /link\.textContent = 'GitHub PR';/);
+  assert.match(dashboardHtml, /text\('unavailable'\)/);
+  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write|eval\(/);
 });
 
 test('dashboard handles named and snapshot SSE messages with a bounded event feed', () => {

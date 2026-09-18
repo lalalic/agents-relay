@@ -1,6 +1,25 @@
 import { createServer, Server } from 'node:http';
 import { DurableStore } from './store.js';
 import { EventBus } from './events.js';
+
+const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
+
+function isPositiveInteger(candidate: unknown): candidate is number {
+  return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
+}
+
+function isSafeRepositorySegment(segment: string): boolean {
+  return segment !== '.' && segment !== '..';
+}
+
+export function githubPrUrl(repository: unknown, prNumber: unknown): string | null {
+  if (typeof repository !== 'string' || !isPositiveInteger(prNumber)) return null;
+  const match = GITHUB_REPOSITORY_PATTERN.exec(repository);
+  if (!match) return null;
+  const [, owner, repo] = match;
+  if (!isSafeRepositorySegment(owner) || !isSafeRepositorySegment(repo)) return null;
+  return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
+}
 export const dashboardHtml = `<!doctype html>
 <html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
 <head>
@@ -92,6 +111,24 @@ export const dashboardHtml = `<!doctype html>
       box.append(element('p', 'metric-value', text(valueForMetric)));
       return box;
     }
+    function prMetric(job) {
+      const box = element('div', 'metric');
+      box.append(element('p', 'metric-label', text('GitHub PR')));
+      const valueNode = element('p', 'metric-value');
+      const url = githubPrUrl(job.repository, job.prNumber);
+      if (url) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'GitHub PR';
+        valueNode.append(link);
+      } else {
+        valueNode.append(text('unavailable'));
+      }
+      box.append(valueNode);
+      return box;
+    }
     function countByState(tasks) {
       const counts = {};
       for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
@@ -113,6 +150,7 @@ export const dashboardHtml = `<!doctype html>
       if (counts.FAILED) indicators.push(counts.FAILED + ' failed');
       summary.replaceChildren(
         metric('State', value(job.state)),
+        prMetric(job),
         metric('Tasks', String(tasks.length)),
         metric('By task state', ['QUEUED', 'READY', 'RUNNING', 'WAITING', 'BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED'].map(state => state + ' ' + countText(counts, state)).join(' · ')),
         metric('Last activity', value(job.updatedAt))
