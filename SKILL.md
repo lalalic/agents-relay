@@ -1,3 +1,8 @@
+---
+name: agents-relay
+description: Create and operate durable asynchronous agent jobs through GitHub PR state, worker adapters, continuations, retries, and live progress events. Use when an orchestrator needs work to survive the current thread/process or delegate recoverable child tasks.
+---
+
 # Agents Relay
 
 Use Agents Relay for asynchronous work that must survive the current agent process. Create one durable top-level job per objective and submit child tasks with unique IDs, explicit `parentTaskId`, dependencies, capabilities, adapter, timeout, and retry policy. A model-backed task must carry a recorded routing decision (provider, model, optional profile/reasoning/cwd) before it can launch.
