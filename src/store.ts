@@ -1,4 +1,5 @@
 import { Job, Task } from './types.js';
+import { spawn } from 'node:child_process';
 import { parseJob, parseTask, renderJobComment, renderTaskComment, JOB_MARKER, TASK_MARKER } from './markers.js';
 export type Comment = { id: number; body: string; updatedAt: string };
 export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; comments(): Promise<Comment[]>; }
@@ -12,6 +13,9 @@ export class InMemoryStore implements DurableStore {
   async comments(): Promise<Comment[]> { return [...this.values.values()].map((body, i) => ({ id: i + 1, body, updatedAt: new Date().toISOString() })); }
 }
 export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown> };
+export class GhApiClient implements GitHubClient {
+  async request(path: string, init: RequestInit = {}): Promise<unknown> { const args = ['api', path]; const method = String(init.method ?? 'GET'); if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-'); return new Promise<unknown>((resolve, reject) => { const child = spawn('gh', args); let stdout = ''; let stderr = ''; child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); }); child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); }); child.on('error', reject); if (init.body) child.stdin.write(String(init.body)); child.stdin.end(); child.on('close', code => { if (code !== 0) { reject(new Error(stderr.trim() || `gh api exited ${code}`)); return; } if (stdout.trim()) { try { resolve(JSON.parse(stdout) as unknown); } catch { resolve(stdout); } } else resolve(null); }); }); }
+}
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number) {}
   private async list(): Promise<Comment[]> { const data = await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`); if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array'); return data.map((x: unknown) => { const v = x as Record<string, unknown>; return { id: Number(v.id), body: String(v.body ?? ''), updatedAt: String(v.updated_at ?? '') }; }); }

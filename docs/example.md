@@ -9,3 +9,11 @@ node dist/cli.js status --file /tmp/agents-relay.json
 ```
 
 For a nested task, submit `--parent build --deps build`; reconciliation releases it only after `build` succeeds.
+
+The same flow against the dogfood PR is:
+
+```sh
+node dist/cli.js init --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --title "Dogfood"
+node dist/cli.js submit --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id safe-shell --input "printf dogfood" --adapter shell --capabilities shell
+node dist/cli.js reconcile --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302
+```

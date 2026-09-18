@@ -9,5 +9,6 @@
     "test": "npm run build && node --test test/*.test.js",
     "dev": "tsx src/cli.ts"
   },
-  "devDependencies": { "@types/node": "^22.10.2", "tsx": "^4.19.2", "typescript": "^5.7.2" }
+  "devDependencies": { "@types/node": "^22.10.2", "tsx": "^4.19.2", "typescript": "^5.7.2" },
+  "optionalDependencies": { "nats": "^2.29.0" }
 }
