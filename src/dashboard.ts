@@ -98,6 +98,16 @@ export const dashboardHtml = `<!doctype html>
     let lastEventAt = '—';
 
     function value(v) { return v === null || v === undefined || v === '' ? '—' : String(v); }
+    function githubPrUrl(repository, prNumber) {
+      if (typeof repository !== 'string' || !Number.isInteger(prNumber) || prNumber <= 0) return null;
+      const parts = repository.split('/');
+      if (parts.length !== 2) return null;
+      const owner = parts[0];
+      const repo = parts[1];
+      if (!owner || !repo || owner === '.' || owner === '..' || repo === '.' || repo === '..') return null;
+      if (!/^[A-Za-z0-9-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) return null;
+      return 'https://github.com/' + owner + '/' + repo + '/pull/' + prNumber;
+    }
     function text(valueForText) { return document.createTextNode(value(valueForText)); }
     function element(name, className, child) {
       const node = document.createElement(name);
