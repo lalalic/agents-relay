@@ -41,7 +41,7 @@ test('service defaults and package bins use stable package entrypoints', async (
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd.js' });
   assert.equal(SERVICE_DEFAULTS.port, 8787);
-  assert.equal(SERVICE_DEFAULTS.watchdogMs, 3600000);
+  assert.equal(SERVICE_DEFAULTS.watchdogMs, 60000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
 });
 

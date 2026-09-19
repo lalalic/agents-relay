@@ -34,6 +34,7 @@ export class Reconciler {
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const now = (this.options.now ?? new Date()).getTime();
+      await this.recoverFinishedWorkers(job);
       if (prState !== 'OPEN') {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
         for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
@@ -65,6 +66,19 @@ export class Reconciler {
       if (finalState.state === 'COMPLETED' || prState !== 'OPEN') await this.cleanupThreads(finalState);
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
+  }
+  private async recoverFinishedWorkers(job: Job): Promise<void> {
+    for (const task of job.tasks.filter(item => item.state === 'RUNNING' && !this.live.has(item.id) && item.threadId)) {
+      const adapter = this.options.adapters.find(candidate => candidate.name === task.adapter);
+      if (!adapter?.recover) continue;
+      let result: Task['result'] | null = null;
+      try { result = await adapter.recover(task); } catch { result = null; }
+      if (!result) continue;
+      task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null;
+      transitionTask(task, 'SUCCEEDED');
+      await this.store.saveTask(task);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.recovered', 'succeeded', `Recovered completed task ${task.id} from durable worker thread`, 'orchestrator', { threadId: task.threadId }));
+    }
   }
   private async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);

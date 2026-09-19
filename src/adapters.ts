@@ -1,12 +1,12 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision } from './types.js';
 
 export type Execution = { id: string; promise: Promise<Result>; cancel: () => void; threadId?: string; onThreadStarted?: (threadId: string) => void };
-export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; deleteThread?(threadId: string): Promise<void>; }
+export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; recover?(task: Task): Promise<Result | null>; deleteThread?(threadId: string): Promise<void>; }
 function commandExecution(child: ChildProcess, output: () => string, signal: AbortSignal, id: string): Execution { const promise = new Promise<Result>((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve({ summary: output().trim() || 'Command completed' }) : reject(new Error(output().trim() || `Command exited ${code}`))); signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true }); }); return { id, promise, cancel: () => { child.kill('SIGTERM'); } }; }
 export function buildCodexArgs(route: Pick<RoutingDecision, 'provider' | 'model'> & Partial<Pick<RoutingDecision, 'profile' | 'reasoning' | 'cwd'>>, input: string): readonly string[] {
   const args: string[] = ['exec', '--json'];
@@ -26,8 +26,29 @@ export class ShellAdapter implements WorkerAdapter {
 }
 export class CodexAdapter implements WorkerAdapter {
   readonly name = 'codex' as const; readonly id = 'codex'; readonly capabilities = ['model', 'codex'] as const;
-  constructor(private readonly command = 'codex') {}
+  constructor(private readonly command = 'codex', private readonly sessionsRoot = join(homedir(), '.codex', 'sessions')) {}
   launch(task: Task, signal: AbortSignal): Execution { if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`); const route = task.routing; const args = buildCodexArgs(route, task.input); const child = spawn(this.command, args, { shell: false, cwd: route.cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let output = ''; let bufferedThreadId: string | undefined; let execution: Execution; child.stdout?.on('data', (x: Buffer) => { const text = x.toString(); output += text; for (const line of text.split(/\r?\n/)) { const threadId = parseThreadStarted(line); if (threadId) { bufferedThreadId = threadId; if (execution) { execution.threadId = threadId; execution.onThreadStarted?.(threadId); } } } }); child.stderr?.on('data', (x: Buffer) => { output += x.toString(); }); execution = commandExecution(child, () => output, signal, randomUUID()); execution.threadId = bufferedThreadId; return execution; }
+  async recover(task: Task): Promise<Result | null> {
+    if (!task.threadId) return null;
+    let entries: string[];
+    try { entries = await readdir(this.sessionsRoot, { recursive: true, encoding: 'utf8' }); } catch { return null; }
+    const filename = entries.find(entry => entry.endsWith(`${task.threadId}.jsonl`));
+    if (!filename) return null;
+    let lines: string[];
+    try { lines = (await readFile(join(this.sessionsRoot, filename), 'utf8')).split(/\r?\n/); } catch { return null; }
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index]; if (!line) continue;
+      try {
+        const value = JSON.parse(line) as Record<string, unknown>;
+        if (value.type !== 'event_msg') continue;
+        const payload = value.payload as Record<string, unknown> | undefined;
+        if (payload?.type !== 'task_complete') continue;
+        const summary = typeof payload.last_agent_message === 'string' ? payload.last_agent_message.trim() : '';
+        return { summary: summary || 'Codex task completed', data: { recoveredFromThread: task.threadId } };
+      } catch { /* ignore malformed session rows */ }
+    }
+    return null;
+  }
 }
 
 

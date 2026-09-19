@@ -44,5 +44,19 @@ export async function discoverWorkspaceRepositories(root: string): Promise<Disco
     const repository = githubRepositoryFromRemote(await origin(path) ?? '');
     return repository ? { path, repository } : null;
   }));
-  return discovered.filter((item): item is DiscoveredRepository => item !== null);
+  const unique = new Map<string, DiscoveredRepository>();
+  for (const item of discovered) {
+    if (!item) continue;
+    const current = unique.get(item.repository);
+    if (!current || repositoryPathRank(item.path, root) < repositoryPathRank(current.path, root)) unique.set(item.repository, item);
+  }
+  return [...unique.values()].sort((a, b) => a.repository.localeCompare(b.repository));
+}
+
+function repositoryPathRank(path: string, root: string): number {
+  const relativePath = relative(root, path);
+  if (!relativePath.includes('/')) return 0;
+  if (relativePath.startsWith('.worktrees/')) return 2;
+  if (relativePath.startsWith('.backup/')) return 3;
+  return 1;
 }

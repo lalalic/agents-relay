@@ -93,6 +93,20 @@ test('task priority orders ready work and inherits job priority', () => { const 
 test('reconciler launches asynchronously and concurrently', async () => { const a=task('a'), b=task('b'), c=task('c'); const store=new InMemoryStore(job([a,b,c])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',maxConcurrent:2,adapters:[adapter]}); const started=Date.now(); const state=await reconciler.reconcile('j'); assert.ok(Date.now()-started < 100); assert.equal(adapter.launches,2); assert.equal((await store.load('j')).tasks.filter(t=>t.state==='RUNNING').length,2); adapter.resolvers[0].resolve({summary:'a'}); adapter.resolvers[1].resolve({summary:'b'}); await new Promise(resolve=>setTimeout(resolve,30)); adapter.resolvers[2]?.resolve({summary:'c'}); await reconciler.idle(); const done=await store.load('j'); assert.equal(done.tasks.filter(t=>t.state==='SUCCEEDED').length,3); assert.equal(state.state,'RUNNING'); });
 test('timeout cancels a live execution and persists terminal failure', async () => { const t=task('slow'); t.timeoutMs=10; t.maxAttempts=1; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); await reconciler.reconcile('j'); await reconciler.idle(); const result=(await store.load('j')).tasks[0]; assert.equal(adapter.cancelled > 0,true); assert.equal(result.state,'FAILED'); });
 test('expired leases recover without awaiting worker work', async () => { const t=task('expired','RUNNING'); t.attempt=1; t.maxAttempts=2; t.executionId='old'; t.leaseExpiresAt=new Date(Date.now()-1000).toISOString(); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],maxConcurrent:1}); await reconciler.reconcile('j'); assert.equal(adapter.launches,1); assert.equal((await store.load('j')).tasks[0].state,'RUNNING'); adapter.resolvers[0].resolve({summary:'recovered'}); await reconciler.idle(); });
+test('reconciler recovers a completed durable worker thread after daemon restart', async () => {
+  const t=task('recovered-thread','RUNNING');
+  t.adapter='codex'; t.threadId='thread-1'; t.executionId='lost-execution'; t.leaseOwner='old-daemon'; t.leaseExpiresAt=new Date(Date.now()+600000).toISOString();
+  const store=new InMemoryStore(job([t]));
+  const adapter={name:'codex',id:'recovering-codex',capabilities:['model','codex'],launch(){ throw new Error('must not relaunch'); },recover:async current=>current.threadId==='thread-1'?{summary:'durable final answer',data:{recoveredFromThread:'thread-1'}}:null};
+  const reconciler=new Reconciler(store,{owner:'new-daemon',adapters:[adapter]});
+  await reconciler.reconcile('j');
+  const result=(await store.load('j')).tasks[0];
+  assert.equal(result.state,'SUCCEEDED');
+  assert.equal(result.result.summary,'durable final answer');
+  assert.equal(result.leaseOwner,null);
+  assert.equal(result.leaseExpiresAt,null);
+});
+
 test('Codex tasks launch when capabilities are routing metadata', async () => {
   const t=task('codex-capabilities'); t.adapter='codex'; t.capabilities=['coding','testing']; t.routing={provider:'openai',model:'gpt-5-6'};
   const store=new InMemoryStore(job([t])); let launches=0; let resolveExecution;

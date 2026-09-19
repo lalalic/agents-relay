@@ -45,3 +45,32 @@ test('managed job aggregation spans repositories', async () => {
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/neo', 'lalalic/agents-relay'], new Set(['bot']));
   assert.deepEqual(result.map(item => item.job.id).sort(), ['neo-job', 'relay-job']);
 });
+
+
+test('workspace discovery deduplicates multiple checkouts of the same GitHub repository', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-workspace-dedupe-'));
+  try {
+    const primary = join(root, 'neo');
+    const worktree = join(root, '.worktrees', 'neo-feature');
+    const backup = join(root, '.backup', 'neo-old');
+    for (const path of [primary, worktree, backup]) {
+      await mkdir(path, { recursive: true });
+      await exec('git', ['init', '-q', path]);
+      await exec('git', ['-C', path, 'remote', 'add', 'origin', 'git@github.com:lalalic/neo.git']);
+    }
+    assert.deepEqual(await discoverWorkspaceRepositories(root), [{ path: primary, repository: 'lalalic/neo' }]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('managed job aggregation deduplicates duplicate repository inputs', async () => {
+  let pullLists = 0;
+  const rootJob = job('relay-job', 'lalalic/agents-relay', 28);
+  const client = { request: async path => {
+    if (path.includes('/pulls?')) { pullLists += 1; return [{ number: 28, state: 'open', body: '', head: { ref: 'feature' }, base: { ref: 'main' } }]; }
+    if (path.includes('/issues/')) return [{ user: { login: 'bot' }, body: marker(JOB_MARKER, rootJob) }];
+    throw new Error(`unexpected ${path}`);
+  } };
+  const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay', 'lalalic/agents-relay'], new Set(['bot']));
+  assert.equal(pullLists, 1);
+  assert.deepEqual(result.map(item => item.job.id), ['relay-job']);
+});

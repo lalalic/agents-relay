@@ -8,7 +8,8 @@ export function compareJobPriority(a: Job, b: Job): number { return RANK[a.prior
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && !item.draft && !['COMPLETED','CANCELLED'].includes(item.job.state)).map(item => item.job).sort(compareJobPriority); }
 export function terminalManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState !== 'OPEN' && ((item.githubState === 'MERGED' && item.job.state !== 'COMPLETED') || (item.githubState === 'CLOSED' && item.job.state !== 'CANCELLED'))).map(item => item.job).sort(compareJobPriority); }
 export async function aggregateManagedGitHubJobs(client: GitHubClient, repositories: readonly string[], trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
-  const groups = await Promise.all(repositories.map(repository => listManagedGitHubJobs(client, repository, trustedAuthors)));
+  const uniqueRepositories = [...new Set(repositories)];
+  const groups = await Promise.all(uniqueRepositories.map(repository => listManagedGitHubJobs(client, repository, trustedAuthors)));
   return groups.flat().sort((a, b) => b.job.updatedAt.localeCompare(a.job.updatedAt) || b.job.prNumber - a.job.prNumber);
 }
 
@@ -21,7 +22,7 @@ export class RepositoryWorkerPool {
     private readonly trustedAuthors: ReadonlySet<string>,
     private readonly concurrency: number,
     private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
-  ) { this.repositories = typeof repository === 'string' ? [repository] : [...repository]; }
+  ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
   async reconcile(): Promise<void> {
     if (this.running) { this.pending = true; return; }
