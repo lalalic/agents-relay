@@ -94,3 +94,18 @@ The adapter calls MacBridge's loopback-only /experimental/chatgpt/conversation e
 GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.
 
 For work that was completed outside the relay but must be represented truthfully in durable history, use `agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be submitted before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.
+
+
+### Voice Action Gateway
+
+`agents-relayd` can optionally expose a narrowly scoped signed action endpoint for Voice/web clients that can reach public HTTPS but cannot call local MCP tools. It is disabled unless both a secret and repository allowlist are configured.
+
+~~~sh
+agents-relayd --workspace ~/Workspace \
+  --voice-action-secret-file ~/.agents-relay/voice-action-secret \
+  --voice-action-repos lalalic/agents-relay
+~~~
+
+The endpoint is `GET /voice/actions/v1/execute`. Requests carry an HMAC-signed payload plus expiry, with a maximum lifetime of 15 minutes. The gateway rejects unsigned/expired requests and repositories outside the allowlist, disables response caching, and rate-limits requests per client.
+
+Supported signed actions are `job.create` and `task.create`. Replays remain idempotent when the same durable job/task IDs are used: managed job creation reuses the same PR/job marker, while task creation returns the existing task instead of appending a duplicate.
