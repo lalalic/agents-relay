@@ -289,7 +289,7 @@ export class OpenRouterCreditReader implements CreditReader {
       const total = finiteNumber(payload.data?.total_credits);
       const used = finiteNumber(payload.data?.total_usage);
       const remaining = total !== null && used !== null ? total - used : null;
-      const balances = total === null && used === null ? [] : [{ currency: 'credits', total, used, remaining }];
+      const balances = total === null && used === null ? [] : [{ currency: 'USD', total, used, remaining }];
       return { available: balances.length > 0, generatedAt, balances, reason: balances.length ? null : 'OpenRouter returned no usable credit information.' };
     } catch {
       return { available: false, generatedAt, balances: [], reason: 'OpenRouter credits request could not be completed.' };

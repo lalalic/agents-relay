@@ -72,6 +72,7 @@ test('OpenRouter credit reader exposes purchased, used, and remaining credits', 
   };
   const snapshot = await new OpenRouterCreditReader('configured', undefined, fetchImpl, () => new Date('2026-09-18T10:40:00Z')).read();
   assert.equal(snapshot.available, true);
+  assert.equal(snapshot.balances[0].currency, 'USD');
   assert.equal(snapshot.balances[0].total, 100.5);
   assert.equal(snapshot.balances[0].used, 25.75);
   assert.equal(snapshot.balances[0].remaining, 74.75);
