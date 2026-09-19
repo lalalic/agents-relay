@@ -14,8 +14,23 @@
     }
   },
   "jev": {
-    "status": "blocked_authentication",
-    "reason": "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN with Workers AI Read/Edit permissions.",
-    "results": []
+    "status": "blocked_billing",
+    "reason": "Authenticated Cloudflare dashboard-session smoke request reached typesafe/jev but returned HTTP 402 code 2021: Insufficient balance; add money to your gateway or use BYOK.",
+    "connectivityVerified": true,
+    "httpStatus": 402,
+    "cloudflareErrorCode": 2021,
+    "successfulRuns": 0,
+    "failedRuns": 1,
+    "results": [],
+    "metricsAvailable": false,
+    "accountMutationPerformed": false
+  },
+  "baseline": {
+    "model": "GPT-5.6 Sol",
+    "method": "independent fixture review",
+    "reviewedAt": "2026-09-19",
+    "storedLabelAgreement": 1,
+    "cases": 13,
+    "note": "Judgment reference, not ground truth."
   }
 }

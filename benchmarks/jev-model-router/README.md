@@ -97,4 +97,4 @@ A safe candidate path is:
 
 `deterministic eligibility -> Jev semantic tier -> confidence/fallback gate -> model-router final profile mapping`
 
-Do not enable this path in production until a live Cloudflare run establishes acceptable routing quality, calibration, latency, cost, and failure behavior.
+Do not enable this path in production until a live Cloudflare run establishes acceptable routing quality, calibration, latency, cost, and failure behavior. A signed-in Cloudflare dashboard smoke request on 2026-09-19 reached the Jev endpoint but returned HTTP 402 / code 2021 (`Insufficient balance; add money to your gateway or use BYOK`), so the benchmark currently has connectivity evidence but no Jev inference results.
