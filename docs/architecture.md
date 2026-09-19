@@ -1,105 +1,222 @@
-# Agents Relay v1 architecture
+# Agents Relay architecture
 
 ## Goal
 
-Provide a generic, shareable async agent job system where agents can submit durable child tasks, specialized workers execute them asynchronously, results are persisted, and the parent agent can continue when dependencies become ready.
+Provide a generic, shareable async agent job system where orchestrators can create durable objectives, delegate recoverable child tasks, optionally route those tasks through reusable registered agents, persist results/evidence, and continue dependents when durable state changes.
 
-## Core model
+## Durable model
 
 - **GitHub pull request** — durable top-level job container and audit surface.
 - **Job marker comment** — durable job metadata and continuation state.
-- **Task marker comments** — append-friendly durable child-task records.
+- **Task marker comments** — durable child-task state, lineage, leases, routing, selected agent, result, and recovery metadata.
+- **Shared agent registry issue** — durable reusable agent registrations and their observed evidence. Repository scope is default; global scope is explicit.
 - **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
-- **Agent adapters** — pluggable execution backends such as Codex and shell commands.
-- **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
-- **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
+- **Worker adapters** — execution runtimes such as shell, Codex, and ChatGPT.
+- **Registered-agent endpoints** — constrained adapter, absolute-command, or HTTP dispatch targets selected through an agent registration.
+- **Event adapter** — optional low-latency notification/wake channel; events never replace durable GitHub state.
+- **Artifact references** — large/private outputs stay outside GitHub comments; durable records store summaries/references.
 
-## Agent network slice
+There is no second operational database. Local `--file` state exists only for explicit demo/test mode.
 
-An agent is a registered, result-owning worker/social role with a responsibility boundary. It is not the same thing as a skill (a callable capability) or an execution adapter (shell, Codex, or ChatGPT). Registration is machine-driven through the CLI/core API and is stored as a trusted `agents-relay:agent:v1` marker comment on the same PR.
+## Agent != Skill != Adapter
 
-Registration records identity/name, role and responsibility, claimed capabilities, explicit boundaries/non-goals, endpoint/runtime, availability, and routing metadata. `agent-register` and `agent-discover` provide the smallest useful registry surface. Discovery applies hard filters first and returns observed evidence and reasons rather than a universal score. Evidence can include representative evaluations, outcomes, reliability, latency, and cost. `--explore` allows new/unobserved agents to be considered first; the orchestrator still owns the final choice.
+These are independent layers:
 
-The registry does not yet execute remote agents or expose a public marketplace. A constrained ChatGPT/voice/mobile runtime should eventually use a small authenticated service surface with only `POST /jobs` (intention-only/public jobs) and `GET /jobs/:id`; credentials and private payloads must stay out of PR markers and events. Private-data/credential jobs, multi-owner trust, isolation, billing, and public discovery are future security-gated work.
+- **Agent** — durable result-owning identity/role. Registration describes name, role, responsibility, boundaries, claimed capabilities, endpoint/runtime, availability, routing metadata, and evidence.
+- **Skill** — callable capability or behavior contract an agent or orchestrator may use. Skills are not worker identities and are not registry records.
+- **Adapter** — execution runtime. A Codex/ChatGPT/shell adapter can execute many tasks and does not by itself own a responsibility or reputation.
+
+Agent identity therefore remains stable even when its execution mechanism changes. Conversely, choosing an adapter does not mean a registered agent was chosen.
+
+## Managed job workflow
+
+For GitHub-backed work, PR creation/adoption and job management are first-class CLI operations:
+
+1. `agents-relay job create` creates/reuses an open PR and guarantees exactly one trusted job marker.
+2. `agents-relay job adopt` brings an existing unmanaged PR under the same contract.
+3. `agents-relay job repair` repairs duplicate markers for the same job while rejecting conflicting job identity.
+4. `submit`, `status`, `reconcile`, `retry`, `cancel`, and `serve` operate only after a managed job exists.
+5. `record` is a repair/backfill path for work already completed outside the relay; normal work is submitted before execution.
+
+The legacy `init` command remains for compatibility. `--file` is explicit local demo/test mode.
+
+## Shared registry scope
+
+A registered agent is reusable across jobs; it is not owned by a job PR.
+
+### Repository scope
+
+Repository scope is the default. The store locates one trusted registry issue in that repository, identified by an `agents-relay:agent-registry:v1` marker. Agent registrations are trusted `agents-relay:agent:v1` comments on that issue.
+
+All jobs in the repository can read the same agents. Existing trusted PR-scoped agent markers remain a read-only compatibility source. Shared registry records take precedence for duplicate agent IDs, and updating/re-registering a legacy agent writes the current record to the shared registry without rewriting historical PR comments.
+
+### Global scope
+
+Global scope is opt-in. The caller must explicitly provide the GitHub repository that owns the global registry. `--scope both` intentionally reads repository then global scope; it does not silently widen trust.
+
+A registry is accepted only when trusted authorship and marker repository/scope match. Ambiguous trusted registry markers are errors rather than guessed.
+
+## Agent CLI
+
+The first-class namespace is:
+
+~~~text
+agents-relay agent register
+agents-relay agent list
+agents-relay agent show
+agents-relay agent discover
+agents-relay agent eval
+agents-relay agent scores
+~~~
+
+`agent-register` and `agent-discover` remain backwards-compatible aliases.
+
+Registration is declarative. Claimed capabilities are eligibility/routing metadata only; they are never treated as observed proof.
+
+## Discovery and routing
+
+Discovery is intentionally two-stage.
+
+### 1. Hard filters
+
+Candidates must satisfy the requested:
+
+- claimed capabilities;
+- runtime;
+- endpoint kind;
+- availability (offline excluded by default);
+- labels;
+- trust domains;
+- regions;
+- required boundaries;
+- optional minimum evidence-derived capability scores.
+
+A missing/stale/unscored capability cannot satisfy a requested minimum score.
+
+### 2. Explainable ranking
+
+Eligible candidates are ordered using observable dimensions, including:
+
+- task-kind success rate/sample count;
+- per-capability evidence score;
+- broader registered-agent outcome reliability/sample count;
+- availability;
+- mean observed latency;
+- mean observed cost.
+
+The candidate output includes reasons and evidence. No fake universal trust score is computed. `--explore` may promote at most one unscored candidate immediately behind the strongest observed candidate. Discovery does not make the final routing decision: the orchestrator chooses from the returned candidates.
+
+## Selection and dispatch lifecycle
+
+An orchestrator selects an agent and submits the durable task with `--agent-id` plus the task's capabilities and any required boundaries/trust domains/regions. The selected agent ID is stored on the task and remains through retries.
+
+Immediately before each launch the reconciler reloads the registration and revalidates availability and task constraints. Dispatch then maps the registration to an execution runtime without conflating identity with adapter:
+
+- **adapter endpoint** — target must match the registered runtime adapter and resolve to a configured worker adapter;
+- **command endpoint** — target must be an absolute executable path, launches with `shell: false`, and receives only a restricted environment;
+- **HTTP endpoint** — only HTTPS is accepted remotely; unauthenticated HTTP is allowed only for loopback. Non-loopback endpoints require an `authEnv` credential reference.
+
+HTTP credentials are read from the local environment at launch and are not persisted. The HTTP payload contains job/task/parent/project/input/attempt context, not arbitrary local secrets.
+
+The normal task contract still owns dependencies, state transitions, leases, timeouts, retries, thread/continuation state, terminal result, and recovery.
+
+## Evidence lifecycle
+
+Claimed capability and observed evidence remain separate.
+
+For every terminal registered-agent attempt, the reconciler records one durable task observation when the execution ID is still current:
+
+- success, failure, or timeout;
+- job/task/execution ID and attempt;
+- task kind and task capabilities;
+- timestamp;
+- runtime/model version;
+- result/error summary;
+- latency;
+- cost when the worker result exposes it.
+
+Execution ID deduplication prevents stale duplicate completions or reassignment races from double counting. A real retry has a different execution ID and is a distinct observation.
+
+Representative suites are recorded separately by `agents-relay agent eval` with `source: suite`; automatic real-task observations use `source: task`. Both persist in the existing agent registry marker/store.
+
+## Capability scoring and freshness
+
+`agents-relay agent scores` derives scores from observations, never from claimed capabilities.
+
+For each observed capability:
+
+- score = successful **fresh** observations / all fresh observations, expressed 0-100;
+- confidence = a sample-count confidence indicator;
+- total, fresh, and stale sample counts are exposed;
+- last observation and stale state are exposed;
+- no fresh observations means the score is unscored (`null`), not zero.
+
+The default freshness window is 90 days and can be overridden with `--stale-after-days`. Discovery can enforce one minimum for requested capabilities with `--min-score`, or per-capability thresholds with `--min-scores capability=N,...`.
+
+Reliability, latency, cost, confidence, and freshness remain separate evidence dimensions.
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened.
+Every wake-up means only: "the durable state may have changed." The daemon reloads GitHub state, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened.
+
+GitHub PR lifecycle is authoritative at reconciliation boundaries: merged forces the managed job to `COMPLETED`; closed-unmerged forces `CANCELLED` and prevents queued launches.
 
 ## State
 
 Job states:
 
+~~~text
 OPEN -> RUNNING -> WAITING|BLOCKED -> COMPLETED|FAILED|CANCELLED
+~~~
 
 Task states:
 
+~~~text
 QUEUED -> READY -> RUNNING -> WAITING|BLOCKED -> SUCCEEDED|FAILED|CANCELLED
+~~~
 
-A task becomes READY when all declared dependencies have succeeded and any approval gate is satisfied.
-
-## Task record
-
-Each task is one GitHub PR comment containing a human-readable summary plus a hidden `agents-relay:task:v1` JSON marker. Minimum durable fields:
-
-- task id and parent task id
-- dependencies
-- capabilities
-- adapter + execution input
-- routing decision for model-backed workers
-- state + attempt
-- lease owner and expiry
-- execution id/thread id
-- result summary and artifact references
-- timestamps
-
-Task submission is append-only at creation time, which avoids a single giant mutable manifest and makes agent-to-agent delegation natural.
-
-## Execution
-
-1. An agent submits a task to the PR.
-2. A task comment is created durably.
-3. The relay wakes and reloads the PR.
-4. Scheduler marks dependency-satisfied tasks ready.
-5. Dispatcher validates routing/capabilities and claims a lease.
-6. Adapter launches the worker.
-7. Worker reports progress over the optional event channel.
-8. Relay persists terminal task state/result back into the task comment.
-9. Relay reconciles dependents and/or resumes the parent continuation.
-10. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases.
+A task becomes READY when its dependencies have succeeded and any manual/approval gate is released.
 
 ## Continuations
 
-Continuations are adapters, separate from worker adapters. v1 supports Codex-thread continuation plus a generic command/webhook contract. Hosted web chat continuations may rely on their host integration; their durable state remains recoverable from the PR.
+Continuations are separate from worker adapters. v1 supports Codex-thread continuation plus generic command/webhook contracts. Hosted web chat continuation can rely on host integration, but recoverable durable state remains in the PR.
 
-## v1 acceptance criteria
+## Security boundaries
 
-1. A reusable TypeScript package/CLI named `agents-relay`.
-2. GitHub PR/comment durable store with job/task marker parsing and updates.
-3. CLI to initialize a PR job, submit child tasks, inspect status, reconcile, retry/cancel tasks, and run the daemon.
-4. Dependency scheduling and nested parent/child lineage.
-5. Worker lease, expiry detection, recovery, retry, timeout, and cancellation semantics.
-6. At least Codex and shell worker adapters behind one adapter interface.
-7. Routing metadata is mandatory before a model-backed worker can launch.
-8. Optional event integration for wake-ups/progress with durable-state reconciliation.
-9. Parent continuation interface with Codex-thread continuation implemented.
-10. Dashboard web page showing jobs, task tree/state, worker/model, dependencies, results, leases, and live events/status.
-11. SSE or equivalent local live dashboard updates.
-12. Tests for marker parsing, state transitions, scheduling, reconciliation/recovery, and API/dashboard data.
-13. `SKILL.md` describing how an agent submits async work, propagates lineage, consumes results, and treats events vs durable state.
-14. Documentation and a runnable local dogfood example.
-15. Browser-level verification of the dashboard before merge.
+Current implementation intentionally limits the control surface:
 
-## Non-goals for v1
+- trusted GitHub authorship gates managed markers/registry state;
+- cross-repository/global registry lookup is explicit;
+- registry records contain routing metadata/evidence, not credentials or private prompts;
+- command endpoints cannot use relative paths or shell interpretation;
+- remote HTTP requires HTTPS and an environment-based credential reference;
+- unauthenticated HTTP is loopback-only;
+- registered-agent constraints are checked again at launch;
+- events remain non-authoritative.
 
-- Reimplement GitHub as a database.
-- Build a general workflow-language/DAG editor.
-- Require Redis, Postgres, Temporal, or Kubernetes.
-- Make NATS mandatory.
-- Implement a hosted multi-tenant control plane.
-- Encode domain-specific agent roles in the core runtime.
-- Build a broad public agent marketplace or unauthenticated remote HTTP API.
+## Explicit future scope
 
-## Dogfood
+The following are not implemented by this architecture and must not be described as current behavior:
 
-This PR is the first top-level Agents Relay job. Development, review, fixes, and verification remain on this PR until the v1 acceptance criteria are met.
+- a broad hosted or unauthenticated remote job/control API;
+- a public agent marketplace or public discovery service;
+- autonomous final routing without orchestrator choice;
+- general multi-owner identity/federated trust enforcement;
+- private-data or credential-bearing cross-owner routing policy;
+- sandbox/isolation guarantees for arbitrary remote agents;
+- billing/accounting/quotas for third-party agents;
+- distributed atomic leases for multiple active reconcilers per job.
+
+A future remote service should be designed only after concrete identity/trust boundaries exist; it must not weaken the durable GitHub or endpoint security contracts above.
+
+## Validation
+
+For agent-network changes run:
+
+~~~sh
+npm test
+npm run build
+git diff --check
+~~~
+
+Tests cover registry scope/trust, CLI validation, discovery filters/ranking/exploration, dispatch security/lineage/retry behavior, durable outcome evidence, scoring/freshness/minimum scores, and existing job/task reconciliation behavior.

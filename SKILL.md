@@ -58,7 +58,31 @@ When a job becomes COMPLETED or its GitHub PR is merged, delete all ChatGPT task
 
 V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
 
-Registered agents are result-owning roles with responsibility boundaries; skills are callable capabilities and adapters are execution runtimes. Register agents with `agent-register`, discover them with hard filters using `agent-discover`, and treat claimed capabilities separately from observed evaluations/outcomes. Discovery returns explainable evidence and permits exploration; it does not produce a universal trust score. The future constrained remote surface should authenticate `POST /jobs` and `GET /jobs/:id` only, with public/intention-only jobs separated from private-data or credential work.
+## Registered agent workflow
+
+Treat **Agent != Skill != Adapter** as a hard contract:
+
+- an agent is a registered, result-owning role/identity with a responsibility boundary;
+- a skill is a callable capability or behavior contract;
+- an adapter is only the execution runtime.
+
+Registrations are shared durable GitHub state, not job-local state. Repository scope uses one trusted registry issue and is the default. Global scope is explicit and requires a named registry repository. Existing trusted PR-scoped registrations remain readable for compatibility; update/re-register operations write to the shared registry.
+
+Use `agents-relay agent register|list|show|discover|eval|scores`. The older `agent-register` and `agent-discover` spellings are compatibility aliases. Discovery must apply hard capability/runtime/endpoint/boundary/trust/region/availability filters before ranking; offline registrations are excluded by default. Treat returned ordering as explainable routing evidence, not an autonomous final decision. The orchestrator still chooses the agent. Controlled `--explore` may expose one unscored candidate behind the strongest observed candidate.
+
+When a candidate is chosen, submit with `--agent-id` plus the task's actual capabilities and any required boundaries/trust domains/regions. The relay revalidates those constraints immediately before launch. A selected registration dispatches through one of three endpoint kinds:
+
+- `adapter`: resolves to an already configured local worker adapter;
+- `command`: absolute executable path only, no shell interpretation, restricted environment;
+- `http`: loopback HTTP may be unauthenticated; remote endpoints require HTTPS plus `authEnv`, with credentials read locally and never stored in markers.
+
+The durable task remains the unit of lineage, leases, retries, continuations, and recovery. Retries keep the selected `agentId` unless the orchestrator explicitly creates/reassigns different work.
+
+For registered-agent execution, terminal attempts automatically append durable task evidence with success/failure/timeout, job/task/execution identity, attempt, task kind, capabilities, timestamp/version, latency, summary, and cost when observable. Execution IDs deduplicate stale duplicate completions while real retry attempts remain distinct observations. Representative evaluations are added separately with `agents-relay agent eval`.
+
+Use `agents-relay agent scores` for evidence-derived per-capability 0-100 scores. Scores use fresh observed evidence, never claims; output includes confidence, total/fresh/stale sample counts, last observation, and staleness. The default freshness window is 90 days. Discovery can require `--min-score` for requested capabilities or `--min-scores capability=N,...`. Keep reliability, latency, cost, confidence, and freshness separate and explainable; do not invent a universal trust score.
+
+Do not treat this as a public marketplace/control plane. Broad hosted multi-tenant job submission, public discovery, cross-owner private-data/credential routing, isolation, billing, and generalized trust enforcement are future security-gated scope.
 
 Treat GitHub PR state as authoritative at reconciliation boundaries. `MERGED` forces the job to `COMPLETED`; closed-unmerged forces `CANCELLED` and prevents launches. Use the repository-wide dashboard job list to compare GitHub and durable states; repair any mismatch rather than trusting a stale marker.
 

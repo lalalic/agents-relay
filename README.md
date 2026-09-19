@@ -58,7 +58,50 @@ V1 assumes one active runner/daemon per job. Use a distributed atomic lease befo
 
 Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [SKILL.md](SKILL.md).
 
-The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
+## Operational agent network
+
+Agents Relay separates three concepts that must not be conflated:
+
+- **Agent**: a durable, result-owning identity/role with responsibility, boundaries, claimed capabilities, endpoint/runtime, availability, and routing metadata.
+- **Skill**: a callable capability or behavior contract an agent may use.
+- **Adapter**: an execution runtime such as shell, Codex, ChatGPT, command, or HTTP.
+
+Agent registrations are reusable across jobs. Repository scope is the default and stores registrations in one trusted registry issue for that GitHub repository. Global scope is explicit and requires `--registry-repo`; `--scope both` reads repository then global scope. Trusted legacy PR-scoped agent markers are read for compatibility, but new writes go to the shared registry.
+
+Use the first-class agent CLI (legacy `agent-register` and `agent-discover` remain aliases):
+
+~~~sh
+agents-relay agent register --repo OWNER/REPO   --agent-id reviewer --name Reviewer --role review   --responsibility "Review changes" --capabilities code-review,testing   --boundaries "no-secrets|repo-only"   --endpoint-kind adapter --endpoint codex --runtime codex   --trust-domains internal --regions ca
+
+agents-relay agent list --repo OWNER/REPO
+agents-relay agent show reviewer --repo OWNER/REPO
+
+agents-relay agent discover --repo OWNER/REPO   --capabilities code-review,testing --trust-domains internal   --regions ca --task-kind review --min-score 70 --explore
+~~~
+
+Discovery applies hard capability/runtime/endpoint/security/trust/region/availability filters first; offline agents are excluded by default. It then returns an ordered, explainable candidate set using task-specific observations, per-capability scores, broader outcome reliability, sample counts, freshness, latency, and cost. `--explore` may promote at most one unscored candidate behind the strongest observed candidate. The orchestrator still makes the final selection.
+
+Submit work through an explicitly selected registration with `--agent-id`. Dispatch revalidates that agent immediately before launch and preserves the durable task's lineage, lease, retry, continuation, and selected agent identity:
+
+~~~sh
+agents-relay submit --repo OWNER/REPO --pr 12 --id job-1   --task-id review-1 --agent-id reviewer   --capabilities code-review,testing   --required-boundaries "no-secrets|repo-only"   --trust-domains internal --regions ca   --input "Review the current PR and report blocking issues."
+
+agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
+~~~
+
+Registered endpoint kinds are deliberately constrained. Adapter endpoints resolve only to configured local adapters. Command endpoints must be absolute executable paths and run without shell interpretation in a restricted environment. HTTP endpoints may use unauthenticated plain HTTP only on loopback; remote endpoints require HTTPS and an `authEnv` credential reference, with the secret read from the local environment rather than persisted in GitHub.
+
+Real registered-agent executions automatically append durable outcome observations (success/failure/timeout, task/capability context, execution/attempt identity, version, timestamp, latency, and observable cost). Representative suites can add separate evidence explicitly:
+
+~~~sh
+agents-relay agent eval reviewer --repo OWNER/REPO   --suite review-regression --capabilities code-review,testing   --outcome success --latency-ms 820 --version model-v1
+
+agents-relay agent scores reviewer --repo OWNER/REPO
+~~~
+
+Per-capability scores are 0-100 success rates over **fresh observed evidence only**, with confidence plus total/fresh/stale sample counts. The default freshness window is 90 days and can be changed with `--stale-after-days`. Claimed capabilities never create a score. Reliability, latency, and cost remain separate evidence dimensions rather than a universal trust score.
+
+The implementation does **not** provide a public marketplace or broad remote control plane. Hosted multi-tenant identity/trust, private-data or credential-bearing routing across owners, billing, isolation, public discovery, and a general authenticated job service remain future scope. See [docs/architecture.md](docs/architecture.md) and [docs/agent-network.md](docs/agent-network.md).
 
 ### ChatGPT workers through MacBridge
 

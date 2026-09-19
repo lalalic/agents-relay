@@ -1,56 +1,97 @@
-# Agent Network enhancement
+# Operational agent network
 
 ## Objective
 
-Evolve Agents Relay from task adapters into a minimal network of independently registered, result-owning agents while retaining GitHub PR state as durable truth and preserving shell/Codex/ChatGPT worker support.
+Agents Relay extends durable PR-backed task orchestration with reusable registered agents that can be discovered, selected by an orchestrator, dispatched through constrained runtimes, and improved from durable observed evidence.
 
-## Scope shipped
+The design preserves the core invariant: GitHub durable state is authoritative; events are only observability/wake signals.
 
-- Typed agent registration distinguishes identity, role/responsibility, boundaries, claimed capabilities, endpoint/runtime, availability, and routing metadata.
-- Trusted `agents-relay:agent:v1` markers persist registrations in the existing GitHub PR comment store; no second database is introduced.
-- `agent-register` and `agent-discover` are machine-driven CLI/core surfaces.
-- Discovery applies hard requirements first, then returns explainable evidence and a small policy ranking with optional exploration of unobserved agents.
-- Evidence models representative evaluations, historical outcomes, reliability inputs, latency, and cost without fabricating a universal score.
-- Documentation defines the single-orchestrator UX, durable task/lease/retry/reconciliation model, and a narrow future authenticated remote job/status contract.
+## Concept contract
 
-## Non-goals
+**Agent != Skill != Adapter.**
 
-This PR does not build a public marketplace, broad multi-owner control plane, unauthenticated HTTP endpoint, private-data/credential routing, isolation/billing/trust enforcement, or automatic final agent selection. Adapters remain execution runtimes; events remain live observability and never durable truth.
+- **Agent** owns a result/responsibility and has durable identity, boundaries, claimed capabilities, endpoint/runtime, availability, routing metadata, and evidence.
+- **Skill** is a callable capability/behavior contract and is not a durable worker identity.
+- **Adapter** is an execution runtime and does not itself own role/responsibility/evidence.
 
-## Acceptance criteria
+## What is shipped
 
-- Existing task, scheduler, lease/recovery, continuation, dashboard, and ChatGPT adapter behavior remains green.
-- Agents can be registered and discovered from the same durable PR-backed store.
-- Discovery rejects unmet capabilities/runtime/trust/availability requirements and exposes evidence rather than an opaque score.
-- Registration and discovery work without a human web form.
-- The future remote surface is explicitly limited to authenticated create/submit and status operations, with intention-only/public jobs separated from private-data jobs.
+- Shared repository/global durable registry backed by trusted GitHub registry-issue markers.
+- Read compatibility for legacy trusted PR-scoped agent registrations.
+- First-class `agent register|list|show|discover|eval|scores` CLI, with legacy registration/discovery aliases.
+- Hard-filtered discovery for capabilities, runtime, endpoint kind, availability, labels, trust, regions, boundaries, and evidence-derived minimum scores.
+- Explainable ranking using task evidence, capability scores, reliability/sample evidence, latency, cost, and controlled exploration.
+- Explicit orchestrator final selection.
+- Durable task selection via `--agent-id`.
+- Registered dispatch through configured adapter, absolute command, or constrained HTTP endpoints.
+- Launch-time revalidation of availability/capability/boundary/trust/region requirements.
+- Automatic durable success/failure/timeout evidence from real registered-agent task attempts.
+- Explicit representative suite observations through `agent eval`.
+- Per-capability 0-100 scores from fresh evidence with confidence, sample counts, and staleness handling.
+- Minimum capability-score constraints in discovery.
+- No second operational database.
+
+## Registry scope
+
+Repository scope is default and reusable by every job in that repository. Global scope is explicit and requires `--registry-repo`; combined lookup is opt-in. Shared records win duplicate IDs over legacy PR-scoped compatibility records.
+
+Trusted authorship and exact registry repository/scope markers define registry authority. Ambiguous trusted registries are errors.
+
+## Routing lifecycle
+
+1. Register/update reusable agent metadata.
+2. Discover with hard task/security constraints.
+3. Inspect explainable evidence/ranking.
+4. Orchestrator selects the agent.
+5. Submit a durable task with `--agent-id` and real task constraints.
+6. Reconciler reloads/revalidates the registration at launch.
+7. Dispatch through the registered endpoint without changing task lineage/lease/retry semantics.
+8. Persist task result and one execution-scoped evidence observation.
+9. Reconcile dependents/continuations.
+10. Future discovery uses the new evidence.
+
+`--explore` may intentionally place one unscored candidate behind the strongest observed candidate; it does not bypass hard filters.
+
+## Evidence and scoring
+
+Claims only determine declared fit. They never create observed quality scores.
+
+Automatic task observations and explicit suite observations record capability context, result class, execution identity, time/version, latency, and cost when visible. Duplicate execution IDs are not counted twice.
+
+Capability scores use fresh observed success rate. Default freshness is 90 days. Scores expose confidence and total/fresh/stale sample counts; stale-only capability evidence becomes unscored. Reliability, latency, and cost remain separate explainable dimensions.
+
+## Dispatch security
+
+- Adapter endpoint: must resolve to a configured adapter and match the registration's runtime adapter.
+- Command endpoint: absolute executable only, no shell interpretation, restricted environment.
+- HTTP endpoint: loopback HTTP is allowed; remote HTTP must be HTTPS and declare `authEnv`.
+- Credentials are read locally at launch and never stored in registry/job/task markers.
+- Offline agents and agents that no longer satisfy task constraints are rejected before launch.
+
+These checks constrain dispatch; they are not a claim of arbitrary remote sandboxing.
+
+## Explicit non-goals / future scope
+
+Not shipped:
+
+- public marketplace or public discovery;
+- broad hosted/multi-tenant remote job API;
+- unauthenticated remote control surface;
+- autonomous final agent choice;
+- general cross-owner private-data/credential routing;
+- federated identity/trust policy enforcement;
+- remote sandbox/isolation guarantees;
+- billing/settlement/quotas;
+- multiple active reconcilers without a distributed atomic lease.
+
+Any future remote job/status service must start from a concrete authenticated identity/trust model and retain GitHub durable truth and the current secret-handling boundaries.
 
 ## Validation
 
-Run `npm test`, `npm run build`, and `git diff --check`. The implementation adds registry/discovery tests and store round-trip/forgery tests while retaining the existing test suite.
+Run:
 
-## Future direction
-
-Add authenticated remote submission only when the host has a concrete identity and trust boundary. Then add durable remote task leases/heartbeats and recovery integration, richer evidence aggregation, policy-pluggable matching, and security/isolation gates for private jobs. Keep GitHub PR markers authoritative throughout.
-
-## Durable registry scope
-
-Agent identity is no longer owned by a job PR. Job and task markers remain on their managed PR, while agent registrations are stored as trusted `agents-relay:agent:v1` comments on one trusted registry issue identified by `agents-relay:agent-registry:v1`.
-
-### Repository scope
-
-Repository scope is the default. One registry issue belongs to one GitHub repository, and every managed job in that repository reads the same registrations. A repository-scoped lookup cannot silently target another repository.
-
-Existing PR-scoped agent markers remain a read-only compatibility source. Repository discovery reads trusted legacy agent comments across the repository, with the shared registry taking precedence for duplicate agent IDs. Re-registering or updating an old agent writes its current registration into the shared registry; historical PR comments are retained for audit history rather than rewritten or deleted.
-
-### Global scope
-
-Global scope is explicit, not ambient. A caller must name the GitHub repository that owns the global registry. Global lookup reads only that registry and does not inherit local PR-scoped registrations. This makes a central organization/user registry possible without introducing a database or silently widening trust.
-
-Repository and global scopes can be queried together by callers that intentionally want both. Earlier scopes win on duplicate agent IDs, so an orchestrator can make precedence explicit.
-
-### Trust boundary
-
-A registry issue is authoritative only when its marker is authored by a configured trusted GitHub identity and its marker names the exact registry repository and scope. Agent comments are accepted only from the same configured trusted-author set. Untrusted lookalike registry issues and agent markers are ignored; multiple trusted registry markers for the same scope are treated as an error instead of guessed.
-
-The registry stores public routing metadata only. Credentials, private prompts, secrets, and private job payloads remain outside agent markers. Cross-repository/global lookup is opt-in and does not imply authorization to dispatch private or credential-bearing work.
+~~~sh
+npm test
+npm run build
+git diff --check
+~~~
