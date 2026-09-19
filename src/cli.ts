@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
+import { InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs, AgentRegistryScope, repositoryAgentScope } from './store.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { ShellAdapter, CodexAdapter, ChatGptAdapter } from './adapters.js';
@@ -15,7 +15,7 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration } from './types.js';
 import { discoverAgents } from './registry.js';
-const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job create|job adopt|job repair|agent register|agent list|agent show|agent discover|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
@@ -36,6 +36,55 @@ function repository(args: string[]): string { const value = arg(args, '--repo');
 function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const job = JSON.parse(await readFile(file, 'utf8')) as Job; return { store: new InMemoryStore(job), job }; }
 async function githubStore(args: string[]): Promise<GitHubStore> { const client = new GhApiClient(); const login = await client.currentLogin(); const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]); return new GitHubStore(client, repository(args), pullRequest(args), trusted); }
+async function githubRegistryStore(args: string[]): Promise<GitHubStore> { const client = new GhApiClient(); const login = await client.currentLogin(); const trusted = new Set([login, ...csv(args, '--trusted-authors')]); return new GitHubStore(client, repository(args), 0, trusted); }
+function csv(args: string[], name: string): string[] { return [...new Set(arg(args, name).split(',').map(value => value.trim()).filter(Boolean))]; }
+function labels(args: string[]): Record<string, string> | undefined {
+  const values = csv(args, '--labels');
+  if (values.length === 0) return undefined;
+  const output: Record<string, string> = {};
+  for (const item of values) { const [key, value, ...rest] = item.split('='); if (!key || !value || rest.length > 0) throw new Error(`--labels entries must use key=value: ${item}`); output[key] = value; }
+  return output;
+}
+function agentScopes(args: string[], forWrite = false): AgentRegistryScope[] {
+  const scope = arg(args, '--scope', 'repository'); const registryRepo = arg(args, '--registry-repo');
+  if (!['repository', 'global', 'both'].includes(scope)) throw new Error('--scope must be repository, global, or both');
+  if (forWrite && scope === 'both') throw new Error('agent register --scope must be repository or global');
+  if ((scope === 'global' || scope === 'both') && !registryRepo) throw new Error('--registry-repo is required for global agent scope');
+  const output: AgentRegistryScope[] = [];
+  if (scope === 'repository' || scope === 'both') output.push(repositoryAgentScope());
+  if (scope === 'global' || scope === 'both') output.push({ kind: 'global', repository: registryRepo });
+  return output;
+}
+function availability(args: string[], defaultActive = false): AgentRegistration['availability'][] | undefined {
+  const values = csv(args, '--availability');
+  const selected = values.length > 0 ? values : defaultActive ? ['available', 'degraded'] : [];
+  for (const value of selected) if (!['available', 'degraded', 'offline'].includes(value)) throw new Error(`Invalid availability: ${value}`);
+  return selected.length > 0 ? selected as AgentRegistration['availability'][] : undefined;
+}
+async function agentStore(args: string[]): Promise<DurableStore> {
+  if (arg(args, '--repo')) return githubRegistryStore(args);
+  const file = arg(args, '--file'); if (!file) throw new Error('agent commands require --repo or explicit --file demo mode');
+  return (await localStore(file)).store;
+}
+function registration(args: string[]): AgentRegistration {
+  const name = arg(args, '--name'); const responsibility = arg(args, '--responsibility'); const role = arg(args, '--role'); const endpointTarget = arg(args, '--endpoint');
+  if (!name || !responsibility || !role || !endpointTarget) throw new Error('--name, --responsibility, --role, and --endpoint are required');
+  const endpointKind = arg(args, '--endpoint-kind', 'adapter'); if (!['adapter', 'command', 'http'].includes(endpointKind)) throw new Error('--endpoint-kind must be adapter, command, or http');
+  const selectedAvailability = availability(args)?.[0] ?? 'available'; const now = new Date().toISOString();
+  return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: csv(args, '--capabilities'), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
+}
+function discoveryQuery(args: string[]): Parameters<typeof discoverAgents>[1] {
+  return { capabilities: csv(args, '--capabilities'), runtime: arg(args, '--runtime') || undefined, availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') };
+}
+async function runAgentCommand(action: string, args: string[]): Promise<void> {
+  if (!['register', 'list', 'show', 'discover'].includes(action)) throw new Error(usage);
+  const store = await agentStore(args); const scopes = agentScopes(args, action === 'register');
+  if (action === 'register') { const agent = registration(args); await store.saveAgent(agent, scopes[0]); console.log(`Registered ${agent.id}`); return; }
+  const agents = await store.listAgents(scopes);
+  if (action === 'list') { console.log(JSON.stringify(agents, null, 2)); return; }
+  if (action === 'show') { const id = arg(args, '--agent-id'); const name = arg(args, '--name'); if (!id && !name) throw new Error('agent show requires --agent-id or --name'); const matches = agents.filter(agent => id ? agent.id === id : agent.name === name); if (matches.length === 0) throw new Error(`Agent ${id || name} not found`); if (matches.length > 1) throw new Error(`Agent name ${name} is ambiguous; use --agent-id`); console.log(JSON.stringify(matches[0], null, 2)); return; }
+  console.log(JSON.stringify(discoverAgents(agents, discoveryQuery(args)), null, 2));
+}
 async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }
 async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'agents-relay.events.job')); }
@@ -141,15 +190,11 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2); if (!command) throw new Error(usage);
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
+  if (command === 'agent') { const [action, ...agentArgs] = args; await runAgentCommand(action ?? '', agentArgs); return; }
+  if (command === 'agent-register') { await runAgentCommand('register', args); return; }
+  if (command === 'agent-discover') { await runAgentCommand('discover', args); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
-  if (command === 'agent-register') {
-    const now = new Date().toISOString();
-    const agent: AgentRegistration = { id: arg(args, '--agent-id', randomUUID()), name: arg(args, '--name'), responsibility: arg(args, '--responsibility'), role: arg(args, '--role'), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), boundaries: arg(args, '--boundaries').split('|').filter(Boolean), endpoint: { kind: arg(args, '--endpoint-kind', 'adapter') as 'adapter' | 'command' | 'http', target: arg(args, '--endpoint') }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: arg(args, '--availability', 'available') as AgentRegistration['availability'], routing: { labels: arg(args, '--labels').split(',').filter(Boolean).reduce<Record<string, string>>((out, item) => { const [key, value] = item.split('=', 2); if (key && value) out[key] = value; return out; }, {}), trustDomains: arg(args, '--trust-domains').split(',').filter(Boolean), regions: arg(args, '--regions').split(',').filter(Boolean) }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
-    if (!agent.name || !agent.responsibility || !agent.role || !agent.endpoint.target) throw new Error('--name, --responsibility, --role, and --endpoint are required');
-    await store.saveAgent(agent); console.log(`Registered ${agent.id}`); return;
-  }
-  if (command === 'agent-discover') { const candidates = discoverAgents(await store.listAgents(), { capabilities: arg(args, '--capabilities').split(',').filter(Boolean), runtime: arg(args, '--runtime') || undefined, availability: arg(args, '--availability').split(',').filter(Boolean) as AgentRegistration['availability'][], trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') }); console.log(JSON.stringify(candidates, null, 2)); return; }
   if (command === 'record') {
     const now = new Date().toISOString(); const id = arg(args, '--task-id', randomUUID()); const summary = arg(args, '--summary');
     if (!summary) throw new Error('record requires --summary');

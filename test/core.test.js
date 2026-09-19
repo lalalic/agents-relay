@@ -26,6 +26,14 @@ test('discovers by hard requirements and keeps evidence explainable', () => {
   assert.equal(discoverAgents([base], { capabilities:['missing'] }).length, 0);
   assert.equal(discoverAgents([base], { explore:true })[0].exploratory, true);
 });
+test('discovery filters labels, trust domains, regions, runtime, capabilities, and availability', () => {
+  const base = { id:'match', name:'Match', responsibility:'research', role:'researcher', capabilities:['research','vision'], boundaries:[], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{labels:{tier:'gold'},trustDomains:['public','internal'],regions:['ca','us']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
+  const offline = { ...base, id:'offline', availability:'offline' };
+  assert.deepEqual(discoverAgents([base, offline], { capabilities:['research'], runtime:'codex', availability:['available','degraded'], labels:{tier:'gold'}, trustDomains:['public'], regions:['ca'] }).map(item => item.agent.id), ['match']);
+  assert.equal(discoverAgents([base], { labels:{tier:'silver'} }).length, 0);
+  assert.equal(discoverAgents([base], { trustDomains:['private'] }).length, 0);
+  assert.equal(discoverAgents([base], { regions:['eu'] }).length, 0);
+});
 test('task marker metadata round-trips while legacy markers remain compatible', () => {
   const legacy = task('legacy');
   assert.equal(parseTask(marker(TASK_MARKER, legacy)).projectName, undefined);
@@ -36,6 +44,31 @@ test('task marker metadata round-trips while legacy markers remain compatible', 
   assert.equal(parsed.agentName, 'codex');
   assert.equal(parsed.parentTaskId, 'orchestrator');
 });
+test('CLI exposes agent namespace and legacy aliases with validation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-cli-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const run = async args => {
+    const child = spawn(process.execPath, [join('dist', 'cli.js'), ...args], { cwd: process.cwd() });
+    let stdout=''; let stderr=''; child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    const [code] = await once(child, 'exit'); return { code, stdout, stderr };
+  };
+  const list = await run(['agent','list','--file',file]);
+  assert.equal(list.code,0); assert.deepEqual(JSON.parse(list.stdout),[]);
+  const discover = await run(['agent','discover','--file',file]);
+  assert.equal(discover.code,0); assert.deepEqual(JSON.parse(discover.stdout),[]);
+  const legacyDiscover = await run(['agent-discover','--file',file]);
+  assert.equal(legacyDiscover.code,0); assert.deepEqual(JSON.parse(legacyDiscover.stdout),[]);
+  const registered = await run(['agent','register','--file',file,'--agent-id','test-agent','--name','Test','--responsibility','test','--role','tester','--endpoint','shell','--labels','tier=gold','--trust-domains','public,internal','--regions','ca,us']);
+  assert.equal(registered.code,0); assert.match(registered.stdout,/Registered test-agent/);
+  const legacyRegister = await run(['agent-register','--file',file,'--agent-id','legacy-agent','--name','Legacy','--responsibility','test','--role','tester','--endpoint','shell']);
+  assert.equal(legacyRegister.code,0); assert.match(legacyRegister.stdout,/Registered legacy-agent/);
+  const badAvailability = await run(['agent','register','--file',file,'--name','Bad','--responsibility','test','--role','tester','--endpoint','shell','--availability','unknown']);
+  assert.equal(badAvailability.code,1); assert.match(badAvailability.stderr,/Invalid availability/);
+  const badLabels = await run(['agent','register','--file',file,'--name','Bad','--responsibility','test','--role','tester','--endpoint','shell','--labels','broken']);
+  assert.equal(badLabels.code,1); assert.match(badLabels.stderr,/key=value/);
+});
+
 test('CLI submit stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
   const file = join(directory, 'job.json');

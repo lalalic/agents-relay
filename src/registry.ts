@@ -6,6 +6,8 @@ export type DiscoveryQuery = {
   availability?: AgentAvailability[];
   labels?: Record<string, string>;
   trustDomain?: string;
+  trustDomains?: string[];
+  regions?: string[];
   taskKind?: string;
   explore?: boolean;
 };
@@ -17,6 +19,8 @@ function matches(agent: AgentRegistration, query: DiscoveryQuery): boolean {
   if (query.runtime && agent.runtime.adapter !== query.runtime) return false;
   if (query.availability && !query.availability.includes(agent.availability)) return false;
   if (query.trustDomain && !agent.routing.trustDomains?.includes(query.trustDomain)) return false;
+  if (query.trustDomains && !hasAll(agent.routing.trustDomains ?? [], query.trustDomains)) return false;
+  if (query.regions && !hasAll(agent.routing.regions ?? [], query.regions)) return false;
   return !query.labels || Object.entries(query.labels).every(([key, value]) => agent.routing.labels?.[key] === value);
 }
 function reliability(agent: AgentRegistration): number { const { succeeded, failed, timedOut } = agent.evidence.outcomes; const total = succeeded + failed + timedOut; return total === 0 ? 0 : succeeded / total; }
