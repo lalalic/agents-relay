@@ -93,7 +93,6 @@ function rateLimitsFromLine(line: string): { timestamp: string; windows: Account
     if (!rateLimits || typeof rateLimits !== 'object') return null;
     const limits = rateLimits as Record<string, unknown>;
     const windows = [parseWindow(limits.primary), parseWindow(limits.secondary)].filter((window): window is AccountUsageWindow => window !== null);
-    if (!windows.length) return null;
     const timestamp = typeof event.timestamp === 'string' && !Number.isNaN(Date.parse(event.timestamp))
       ? event.timestamp
       : new Date(0).toISOString();
@@ -178,7 +177,9 @@ export class CodexSessionUsageReader implements UsageReader {
 
     const fiveHour = latestWindows.find(window => window.windowMinutes === 300) ?? null;
     const weekly = latestWindows.find(window => window.windowMinutes === 10_080) ?? null;
-    const available = fiveHour !== null && weekly !== null;
+    const telemetryAgeMs = latestTimestamp ? now.getTime() - Date.parse(latestTimestamp) : Number.POSITIVE_INFINITY;
+    const fresh = telemetryAgeMs >= 0 && telemetryAgeMs <= 15 * 60_000;
+    const available = fresh && fiveHour !== null && weekly !== null;
     const snapshot: AccountUsageSnapshot = {
       available,
       generatedAt: now.toISOString(),
@@ -186,8 +187,10 @@ export class CodexSessionUsageReader implements UsageReader {
       weekly,
       reason: available
         ? null
-        : files.length
-          ? 'Real account rate-limit telemetry is present, but both the 5-hour and weekly windows are not available.'
+        : latestTimestamp && !fresh
+          ? 'Latest Codex account rate-limit telemetry is stale.'
+          : files.length
+          ? 'Latest Codex account telemetry does not expose current 5-hour and weekly rate-limit windows.'
           : 'No recent Codex account rate-limit telemetry is available.',
     };
     this.cache = { cachedAt: now.getTime(), snapshot };
