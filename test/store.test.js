@@ -344,7 +344,7 @@ test('repository registry is shared across PR stores and keeps legacy PR agents 
   const updated = registryAgent('shared');
   updated.availability = 'degraded';
   updated.evidence = {
-    evaluations:[{jobId:'job-9',taskId:'task-1',executionId:'exec-1',attempt:1,taskKind:'typescript',capabilities:['typescript'],outcome:'success',observedAt:now(),version:'gpt-5.6',latencyMs:123,cost:0.2}],
+    evaluations:[{source:'suite',suite:'typescript-representative-v1',jobId:'job-9',taskId:'task-1',executionId:'exec-1',attempt:1,taskKind:'typescript',capabilities:['typescript'],outcome:'success',observedAt:now(),version:'gpt-5.6',latencyMs:123,cost:0.2}],
     outcomes:{succeeded:1,failed:0,timedOut:0},
     lastObservedAt:now()
   };
@@ -353,6 +353,8 @@ test('repository registry is shared across PR stores and keeps legacy PR agents 
   assert.equal(persisted.availability, 'degraded');
   assert.deepEqual(persisted.capabilities,['typescript']);
   assert.equal(persisted.evidence.evaluations[0].executionId,'exec-1');
+  assert.equal(persisted.evidence.evaluations[0].source,'suite');
+  assert.equal(persisted.evidence.evaluations[0].suite,'typescript-representative-v1');
   assert.equal(persisted.evidence.evaluations[0].cost,0.2);
   assert.deepEqual(persisted.evidence.outcomes,{succeeded:1,failed:0,timedOut:0});
 });

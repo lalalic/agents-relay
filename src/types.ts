@@ -4,6 +4,8 @@ export type AdapterName = 'shell' | 'codex' | 'chatgpt' | 'command' | 'http' | '
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
 export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string; authEnv?: string };
 export type AgentOutcomeObservation = {
+  source?: 'task' | 'suite';
+  suite?: string;
   jobId?: string;
   taskId: string;
   executionId: string;
@@ -16,6 +18,16 @@ export type AgentOutcomeObservation = {
   summary?: string;
   latencyMs?: number;
   cost?: number;
+};
+export type AgentCapabilityScore = {
+  capability: string;
+  score: number | null;
+  confidence: number;
+  sampleCount: number;
+  freshSampleCount: number;
+  staleSampleCount: number;
+  lastObservedAt: string | null;
+  stale: boolean;
 };
 export type AgentEvidence = {
   evaluations: AgentOutcomeObservation[];

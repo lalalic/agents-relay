@@ -14,8 +14,8 @@ import { serveDashboard } from './dashboard.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration } from './types.js';
-import { discoverAgents } from './registry.js';
-const usage = 'agents-relay <job create|job adopt|job repair|agent register|agent list|agent show|agent discover|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+import { discoverAgents, scoreAgentCapabilities } from './registry.js';
+const usage = 'agents-relay <job create|job adopt|job repair|agent register|agent list|agent show|agent discover|agent eval|agent scores|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
@@ -38,6 +38,7 @@ async function localStore(file: string): Promise<{ store: InMemoryStore; job: Jo
 async function githubStore(args: string[]): Promise<GitHubStore> { const client = new GhApiClient(); const login = await client.currentLogin(); const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]); return new GitHubStore(client, repository(args), pullRequest(args), trusted); }
 async function githubRegistryStore(args: string[]): Promise<GitHubStore> { const client = new GhApiClient(); const login = await client.currentLogin(); const trusted = new Set([login, ...csv(args, '--trusted-authors')]); return new GitHubStore(client, repository(args), 0, trusted); }
 function csv(args: string[], name: string): string[] { return [...new Set(arg(args, name).split(',').map(value => value.trim()).filter(Boolean))]; }
+function capabilityArgs(args: string[]): string[] { return [...new Set([...csv(args, '--capabilities'), ...csv(args, '--capability')])]; }
 function labels(args: string[]): Record<string, string> | undefined {
   const values = csv(args, '--labels');
   if (values.length === 0) return undefined;
@@ -48,7 +49,7 @@ function labels(args: string[]): Record<string, string> | undefined {
 function agentScopes(args: string[], forWrite = false): AgentRegistryScope[] {
   const scope = arg(args, '--scope', 'repository'); const registryRepo = arg(args, '--registry-repo');
   if (!['repository', 'global', 'both'].includes(scope)) throw new Error('--scope must be repository, global, or both');
-  if (forWrite && scope === 'both') throw new Error('agent register --scope must be repository or global');
+  if (forWrite && scope === 'both') throw new Error('agent write commands require --scope repository or global');
   if ((scope === 'global' || scope === 'both') && !registryRepo) throw new Error('--registry-repo is required for global agent scope');
   const output: AgentRegistryScope[] = [];
   if (scope === 'repository' || scope === 'both') output.push(repositoryAgentScope());
@@ -66,6 +67,30 @@ function endpointKinds(args: string[]): AgentRegistration['endpoint']['kind'][] 
   for (const value of values) if (!['adapter', 'command', 'http'].includes(value)) throw new Error(`Invalid endpoint kind: ${value}`);
   return values.length > 0 ? values as AgentRegistration['endpoint']['kind'][] : undefined;
 }
+function numericArg(args: string[], name: string): number | undefined {
+  const value = arg(args, name);
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`${name} must be a number`);
+  return parsed;
+}
+function minScores(args: string[]): Record<string, number> | undefined {
+  const output: Record<string, number> = {};
+  for (const item of csv(args, '--min-scores')) {
+    const [capability, raw, ...rest] = item.split('=');
+    const score = Number(raw);
+    if (!capability || rest.length > 0 || !Number.isFinite(score) || score < 0 || score > 100) throw new Error(`--min-scores entries must use capability=0..100: ${item}`);
+    output[capability] = score;
+  }
+  const minimum = numericArg(args, '--min-score');
+  if (minimum !== undefined) {
+    if (minimum < 0 || minimum > 100) throw new Error('--min-score must be between 0 and 100');
+    const capabilities = capabilityArgs(args);
+    if (capabilities.length === 0) throw new Error('--min-score requires --capability or --capabilities');
+    for (const capability of capabilities) output[capability] = minimum;
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
+}
 async function agentStore(args: string[]): Promise<DurableStore> {
   if (arg(args, '--repo')) return githubRegistryStore(args);
   const file = arg(args, '--file'); if (!file) throw new Error('agent commands require --repo or explicit --file demo mode');
@@ -76,18 +101,59 @@ function registration(args: string[]): AgentRegistration {
   if (!name || !responsibility || !role || !endpointTarget) throw new Error('--name, --responsibility, --role, and --endpoint are required');
   const endpointKind = arg(args, '--endpoint-kind', 'adapter'); if (!['adapter', 'command', 'http'].includes(endpointKind)) throw new Error('--endpoint-kind must be adapter, command, or http');
   const selectedAvailability = availability(args)?.[0] ?? 'available'; const now = new Date().toISOString();
-  return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: csv(args, '--capabilities'), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget, authEnv: arg(args, '--auth-env') || undefined }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
+  return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: capabilityArgs(args), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget, authEnv: arg(args, '--auth-env') || undefined }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
 }
 function discoveryQuery(args: string[]): Parameters<typeof discoverAgents>[1] {
-  return { capabilities: csv(args, '--capabilities'), runtime: arg(args, '--runtime') || undefined, endpointKinds: endpointKinds(args), availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), requiredBoundaries: arg(args, '--required-boundaries').split('|').map(value => value.trim()).filter(Boolean), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') };
+  const staleAfterDays = numericArg(args, '--stale-after-days');
+  if (staleAfterDays !== undefined && staleAfterDays <= 0) throw new Error('--stale-after-days must be greater than 0');
+  return { capabilities: capabilityArgs(args), runtime: arg(args, '--runtime') || undefined, endpointKinds: endpointKinds(args), availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), requiredBoundaries: arg(args, '--required-boundaries').split('|').map(value => value.trim()).filter(Boolean), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, minScores: minScores(args), staleAfterMs: staleAfterDays === undefined ? undefined : staleAfterDays * 24 * 60 * 60 * 1000, explore: args.includes('--explore') };
+}
+function findAgent(agents: AgentRegistration[], args: string[]): AgentRegistration {
+  const positional = args[0] && !args[0].startsWith('-') ? args[0] : '';
+  const id = arg(args, '--agent-id'); const name = arg(args, '--name'); const selector = id || name || positional;
+  if (!selector) throw new Error('agent command requires <agent>, --agent-id, or --name');
+  const matches = agents.filter(agent => id ? agent.id === id : name ? agent.name === name : agent.id === positional || agent.name === positional);
+  if (matches.length === 0) throw new Error(`Agent ${selector} not found`);
+  if (matches.length > 1) throw new Error(`Agent ${selector} is ambiguous; use --agent-id`);
+  return matches[0];
+}
+function evaluation(args: string[], agent: AgentRegistration): AgentRegistration['evidence']['evaluations'][number] {
+  const suite = arg(args, '--suite'); const capabilities = capabilityArgs(args); const outcome = arg(args, '--outcome');
+  if (!suite || capabilities.length === 0) throw new Error('agent eval requires --suite and --capability/--capabilities');
+  if (!['success', 'failure', 'timeout'].includes(outcome)) throw new Error('agent eval --outcome must be success, failure, or timeout');
+  const observedAt = arg(args, '--observed-at', new Date().toISOString());
+  if (!Number.isFinite(Date.parse(observedAt))) throw new Error('--observed-at must be an ISO-compatible timestamp');
+  const latencyMs = numericArg(args, '--latency-ms'); const cost = numericArg(args, '--cost');
+  if (latencyMs !== undefined && latencyMs < 0) throw new Error('--latency-ms must be non-negative');
+  if (cost !== undefined && cost < 0) throw new Error('--cost must be non-negative');
+  return {
+    source: 'suite', suite, taskId: arg(args, '--task-id', `eval:${suite}`), executionId: arg(args, '--execution-id', randomUUID()), attempt: 1,
+    taskKind: arg(args, '--task-kind', suite), capabilities, outcome: outcome as 'success' | 'failure' | 'timeout', observedAt,
+    version: arg(args, '--version', agent.runtime.model ?? agent.runtime.adapter), summary: arg(args, '--summary') || undefined, latencyMs, cost
+  };
 }
 async function runAgentCommand(action: string, args: string[]): Promise<void> {
-  if (!['register', 'list', 'show', 'discover'].includes(action)) throw new Error(usage);
-  const store = await agentStore(args); const scopes = agentScopes(args, action === 'register');
+  if (!['register', 'list', 'show', 'discover', 'eval', 'scores'].includes(action)) throw new Error(usage);
+  const writable = action === 'register' || action === 'eval';
+  const store = await agentStore(args); const scopes = agentScopes(args, writable);
   if (action === 'register') { const agent = registration(args); await store.saveAgent(agent, scopes[0]); console.log(`Registered ${agent.id}`); return; }
   const agents = await store.listAgents(scopes);
   if (action === 'list') { console.log(JSON.stringify(agents, null, 2)); return; }
-  if (action === 'show') { const id = arg(args, '--agent-id'); const name = arg(args, '--name'); if (!id && !name) throw new Error('agent show requires --agent-id or --name'); const matches = agents.filter(agent => id ? agent.id === id : agent.name === name); if (matches.length === 0) throw new Error(`Agent ${id || name} not found`); if (matches.length > 1) throw new Error(`Agent name ${name} is ambiguous; use --agent-id`); console.log(JSON.stringify(matches[0], null, 2)); return; }
+  if (action === 'show') { console.log(JSON.stringify(findAgent(agents, args), null, 2)); return; }
+  if (action === 'eval') {
+    const agent = findAgent(agents, args); const observation = evaluation(args, agent);
+    const existing = agent.evidence.evaluations.find(item => item.executionId === observation.executionId);
+    if (existing) { console.log(JSON.stringify({ agentId: agent.id, observation: existing, scores: scoreAgentCapabilities(agent) }, null, 2)); return; }
+    agent.evidence.evaluations.push(observation); agent.evidence.lastObservedAt = observation.observedAt; agent.updatedAt = observation.observedAt;
+    await store.saveAgent(agent, scopes[0]); console.log(JSON.stringify({ agentId: agent.id, observation, scores: scoreAgentCapabilities(agent) }, null, 2)); return;
+  }
+  if (action === 'scores') {
+    const selected = arg(args, '--agent-id') || arg(args, '--name') || (args[0] && !args[0].startsWith('-')) ? [findAgent(agents, args)] : agents;
+    const staleAfterDays = numericArg(args, '--stale-after-days');
+    if (staleAfterDays !== undefined && staleAfterDays <= 0) throw new Error('--stale-after-days must be greater than 0');
+    const staleAfterMs = staleAfterDays === undefined ? undefined : staleAfterDays * 24 * 60 * 60 * 1000;
+    console.log(JSON.stringify(selected.map(agent => ({ agentId: agent.id, name: agent.name, scores: scoreAgentCapabilities(agent, { staleAfterMs }) })), null, 2)); return;
+  }
   console.log(JSON.stringify(discoverAgents(agents, discoveryQuery(args)), null, 2));
 }
 async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }

@@ -140,6 +140,7 @@ export class Reconciler {
     const observedAt = new Date().toISOString();
     const cost = observableCost(result);
     agent.evidence.evaluations.push({
+      source: 'task',
       jobId: task.jobId,
       taskId: task.id,
       executionId,

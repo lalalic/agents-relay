@@ -13,7 +13,7 @@ import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { MemoryEventBus, subjectToken } from '../dist/events.js';
 import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
-import { discoverAgents } from '../dist/registry.js';
+import { discoverAgents, scoreAgentCapabilities } from '../dist/registry.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'shell',input:'true',state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -56,6 +56,45 @@ test('discovery ranks task-specific evidence and bounds exploration to one promo
   assert.equal(explored[0].ranking.taskKindSuccessRate, 1);
   assert.equal(explored[2].ranking.taskKindSuccessRate, 0);
 });
+test('capability scores use fresh observed evidence, expose confidence, and ignore claims without evidence', () => {
+  const reference = Date.UTC(2026, 8, 19);
+  const fresh = new Date(reference - 5 * 24 * 60 * 60 * 1000).toISOString();
+  const stale = new Date(reference - 120 * 24 * 60 * 60 * 1000).toISOString();
+  const agent = {
+    id:'scored', name:'Scored', responsibility:'research', role:'researcher', capabilities:['research','vision','claimed-only'], boundaries:[],
+    endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{},
+    evidence:{
+      evaluations:[
+        {source:'task',taskId:'t1',executionId:'e1',attempt:1,taskKind:'research',capabilities:['research','vision'],outcome:'success',observedAt:fresh,version:'m',latencyMs:100,cost:1},
+        {source:'suite',suite:'representative-research-v1',taskId:'eval:research',executionId:'e2',attempt:1,taskKind:'representative-research-v1',capabilities:['research'],outcome:'failure',observedAt:fresh,version:'m',latencyMs:300,cost:3},
+        {source:'task',taskId:'t0',executionId:'e0',attempt:1,taskKind:'research',capabilities:['research'],outcome:'success',observedAt:stale,version:'m'}
+      ],
+      outcomes:{succeeded:9,failed:1,timedOut:0}, lastObservedAt:fresh
+    }, registeredAt:fresh, updatedAt:fresh
+  };
+  const scores = scoreAgentCapabilities(agent, { now:reference });
+  const research = scores.find(item => item.capability === 'research');
+  const vision = scores.find(item => item.capability === 'vision');
+  assert.deepEqual(research, { capability:'research', score:50, confidence:40, sampleCount:3, freshSampleCount:2, staleSampleCount:1, lastObservedAt:fresh, stale:false });
+  assert.deepEqual(vision, { capability:'vision', score:100, confidence:25, sampleCount:1, freshSampleCount:1, staleSampleCount:0, lastObservedAt:fresh, stale:false });
+  assert.equal(scores.some(item => item.capability === 'claimed-only'), false);
+  const candidate = discoverAgents([agent], { capabilities:['research'], minScores:{research:50}, staleAfterMs:90 * 24 * 60 * 60 * 1000 })[0];
+  assert.equal(candidate.ranking.capabilityFitScore, 50);
+  assert.equal(candidate.ranking.reliability, 0.9);
+  assert.equal(candidate.ranking.meanLatencyMs, 200);
+  assert.equal(candidate.ranking.meanCost, 2);
+  assert.match(candidate.reasons.join(' '), /capability score: research 50\/100/);
+  assert.equal(discoverAgents([agent], { minScores:{research:51} }).length, 0);
+});
+
+test('stale-only capability evidence does not satisfy minimum score discovery', () => {
+  const old = '2020-01-01T00:00:00.000Z';
+  const agent = { id:'old', name:'Old', responsibility:'work', role:'worker', capabilities:['research'], boundaries:[], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{}, evidence:{evaluations:[{source:'suite',suite:'old-suite',taskId:'eval:old',executionId:'old-1',attempt:1,taskKind:'old-suite',capabilities:['research'],outcome:'success',observedAt:old,version:'m'}],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:old}, registeredAt:old, updatedAt:old };
+  const score = scoreAgentCapabilities(agent)[0];
+  assert.equal(score.score, null); assert.equal(score.stale, true); assert.equal(score.staleSampleCount, 1);
+  assert.equal(discoverAgents([agent], { minScores:{research:1} }).length, 0);
+});
+
 test('task marker metadata round-trips while legacy markers remain compatible', () => {
   const legacy = task('legacy');
   assert.equal(parseTask(marker(TASK_MARKER, legacy)).projectName, undefined);
@@ -91,6 +130,10 @@ test('CLI exposes agent namespace and legacy aliases with validation', async () 
   assert.equal(badLabels.code,1); assert.match(badLabels.stderr,/key=value/);
   const badEndpointKind = await run(['agent','discover','--file',file,'--endpoint-kinds','socket']);
   assert.equal(badEndpointKind.code,1); assert.match(badEndpointKind.stderr,/Invalid endpoint kind/);
+  const badMinScore = await run(['agent','discover','--file',file,'--capabilities','research','--min-score','101']);
+  assert.equal(badMinScore.code,1); assert.match(badMinScore.stderr,/between 0 and 100/);
+  const scores = await run(['agent','scores','--file',file]);
+  assert.equal(scores.code,0); assert.deepEqual(JSON.parse(scores.stdout),[]);
 });
 
 test('CLI submit stores optional project and agent metadata with parent', async () => {
@@ -247,6 +290,7 @@ test('registered agent identity resolves to configured adapter at execution time
   const observed=(await store.listAgents())[0].evidence;
   assert.deepEqual(observed.outcomes,{succeeded:1,failed:0,timedOut:0});
   assert.equal(observed.evaluations.length,1);
+  assert.equal(observed.evaluations[0].source,'task');
   assert.equal(observed.evaluations[0].taskId,'registered-adapter');
   assert.equal(observed.evaluations[0].executionId,'exec-1');
   assert.equal(observed.evaluations[0].attempt,1);
