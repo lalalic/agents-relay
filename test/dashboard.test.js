@@ -139,3 +139,12 @@ test('dashboard warns when GitHub API is rate limited', () => {
   assert.match(dashboardHtml, /loadJSON\('\/api\/status'\)/);
   assert.match(dashboardHtml, /function renderRateLimitStatus\(status\)/);
 });
+
+
+test('completed but unmerged jobs are pinned and highlighted for merge follow-up', () => {
+  assert.match(dashboardHtml, /function isCompleteUnmerged\(job\)/);
+  assert.match(dashboardHtml, /MERGE PENDING/);
+  assert.match(dashboardHtml, /complete-unmerged/);
+  assert.match(dashboardHtml, /mergePendingDelta/);
+  assert.match(dashboardHtml, /job\.state==='COMPLETED'&&job\.githubState==='OPEN'/);
+});
