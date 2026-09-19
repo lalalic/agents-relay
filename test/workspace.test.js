@@ -35,12 +35,11 @@ test('workspace repository parsing ignores non-GitHub remotes', () => {
 
 test('managed job aggregation spans repositories', async () => {
   const jobs = { 'lalalic/neo': job('neo-job', 'lalalic/neo', 20), 'lalalic/agents-relay': job('relay-job', 'lalalic/agents-relay', 28) };
-  const client = { request: async path => {
-    const repository = Object.keys(jobs).find(value => path.includes(`/repos/${value}/`));
-    if (!repository) throw new Error(`unexpected ${path}`);
-    if (path.includes('/pulls?')) return [{ number: jobs[repository].prNumber, state: 'open', body: '', head: { ref: 'feature' }, base: { ref: 'main' } }];
-    if (path.includes('/issues/')) return [{ user: { login: 'bot' }, body: marker(JOB_MARKER, jobs[repository]) }];
-    throw new Error(`unexpected ${path}`);
+  const client = { request: async path => { throw new Error(`unexpected REST ${path}`); }, graphql: async (_query, variables={}) => {
+    const repository = `${variables.owner}/${variables.name}`;
+    const root = jobs[repository];
+    if (!root) throw new Error(`unexpected ${repository}`);
+    return {repository:{pullRequests:{nodes:[{number:root.prNumber,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,root)}]}}],pageInfo:{hasNextPage:false,endCursor:null}}}};
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/neo', 'lalalic/agents-relay'], new Set(['bot']));
   assert.deepEqual(result.map(item => item.job.id).sort(), ['neo-job', 'relay-job']);
@@ -65,10 +64,9 @@ test('workspace discovery deduplicates multiple checkouts of the same GitHub rep
 test('managed job aggregation deduplicates duplicate repository inputs', async () => {
   let pullLists = 0;
   const rootJob = job('relay-job', 'lalalic/agents-relay', 28);
-  const client = { request: async path => {
-    if (path.includes('/pulls?')) { pullLists += 1; return [{ number: 28, state: 'open', body: '', head: { ref: 'feature' }, base: { ref: 'main' } }]; }
-    if (path.includes('/issues/')) return [{ user: { login: 'bot' }, body: marker(JOB_MARKER, rootJob) }];
-    throw new Error(`unexpected ${path}`);
+  const client = { request: async path => { throw new Error(`unexpected REST ${path}`); }, graphql: async () => {
+    pullLists += 1;
+    return {repository:{pullRequests:{nodes:[{number:28,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,rootJob)}]}}],pageInfo:{hasNextPage:false,endCursor:null}}}};
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay', 'lalalic/agents-relay'], new Set(['bot']));
   assert.equal(pullLists, 1);

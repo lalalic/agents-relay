@@ -2,7 +2,7 @@ import { Job, Task } from './types.js';
 import { spawn } from 'node:child_process';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
-export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
+export type Comment = { id: number; nodeId?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
 export async function loadManagedGitHubPullRequestGraphql(repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
@@ -84,7 +84,7 @@ export class InMemoryStore implements DurableStore {
     return [...this.values.values()].map(parseTask).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, jobs.length === 1));
   }
 }
-export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown> };
+export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown>; graphql?(query: string, variables?: Record<string, unknown>): Promise<unknown> };
 export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
 
 function immutableTaskDefinition(task: Task): unknown {
@@ -181,6 +181,25 @@ export class GhApiClient implements GitHubClient {
     const limited = Date.now() < this.cooldownUntil;
     return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null };
   }
+  async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
+    const payload = JSON.stringify({ query, variables });
+    return new Promise<unknown>((resolve, reject) => {
+      const child = spawn('gh', ['api', 'graphql', '--input', '-']);
+      let stdout = ''; let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.stdin.write(payload); child.stdin.end();
+      child.on('close', code => {
+        if (code !== 0) { reject(new Error(stderr.trim() || `gh graphql exited ${code}`)); return; }
+        try {
+          const parsed = JSON.parse(stdout) as Record<string, unknown>;
+          if (Array.isArray(parsed.errors) && parsed.errors.length > 0) throw new Error(JSON.stringify(parsed.errors));
+          resolve(parsed.data ?? parsed);
+        } catch (error) { reject(error); }
+      });
+    });
+  }
   async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const now = Date.now();
     if (now < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);
@@ -232,9 +251,60 @@ export class GhApiClient implements GitHubClient {
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
-  private async list(): Promise<Comment[]> { const all: Comment[] = []; for (let page = 1; page <= 100; page += 1) { const data = await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments?per_page=100&page=${page}`); if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array'); const values = data.map((x: unknown) => { const v = x as Record<string, unknown>; const user = v.user as Record<string, unknown> | null | undefined; return { id: Number(v.id), body: String(v.body ?? ''), updatedAt: String(v.updated_at ?? ''), authorLogin: typeof user?.login === 'string' ? user.login : null }; }); all.push(...values); if (values.length < 100) break; } return all; }
+  private repoParts(): { owner: string; name: string } {
+    const [owner, name] = this.repository.split('/', 2);
+    if (!owner || !name) throw new Error(`Invalid GitHub repository ${this.repository}`);
+    return { owner, name };
+  }
+  private async graphql(query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!this.client.graphql) throw new Error('GitHub GraphQL client is required');
+    return await this.client.graphql(query, variables) as Record<string, unknown>;
+  }
+  private async prNode(): Promise<Record<string, unknown>> {
+    const { owner, name } = this.repoParts();
+    const data = await this.graphql(
+      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt}}}',
+      { owner, name, number: this.prNumber }
+    );
+    const repository = data.repository as Record<string, unknown> | undefined;
+    const pr = repository?.pullRequest as Record<string, unknown> | undefined;
+    if (!pr) throw new Error(`Pull request #${this.prNumber} not found in ${this.repository}`);
+    return pr;
+  }
+  private async list(): Promise<Comment[]> {
+    const { owner, name } = this.repoParts();
+    const all: Comment[] = [];
+    let cursor: string | null = null;
+    do {
+      const data = await this.graphql(
+        'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(first:100,after:$cursor){nodes{id databaseId body updatedAt author{login}} pageInfo{hasNextPage endCursor}}}}}',
+        { owner, name, number: this.prNumber, cursor }
+      );
+      const repository = data.repository as Record<string, unknown> | undefined;
+      const pr = repository?.pullRequest as Record<string, unknown> | undefined;
+      const comments = pr?.comments as Record<string, unknown> | undefined;
+      const nodes = Array.isArray(comments?.nodes) ? comments.nodes as Array<Record<string, unknown>> : [];
+      for (const value of nodes) {
+        const author = value.author as Record<string, unknown> | undefined;
+        all.push({
+          id: Number(value.databaseId ?? 0),
+          nodeId: typeof value.id === 'string' ? value.id : undefined,
+          body: String(value.body ?? ''),
+          updatedAt: String(value.updatedAt ?? ''),
+          authorLogin: typeof author?.login === 'string' ? author.login : null
+        });
+      }
+      const pageInfo = comments?.pageInfo as Record<string, unknown> | undefined;
+      cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
+    } while (cursor);
+    return all;
+  }
   async comments(): Promise<Comment[]> { return this.list(); }
-  async pullRequestState(): Promise<PullRequestState> { const value = await this.client.request(`/repos/${this.repository}/pulls/${this.prNumber}`) as Record<string, unknown>; if (value.merged === true || typeof value.merged_at === 'string') return 'MERGED'; return String(value.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN'; }
+  async pullRequestState(): Promise<PullRequestState> {
+    const pr = await this.prNode();
+    if (pr.merged === true || typeof pr.mergedAt === 'string') return 'MERGED';
+    return String(pr.state ?? '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
@@ -245,7 +315,27 @@ export class GitHubStore implements DurableStore {
     return job;
   }
   async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
-  private async comment(body: string): Promise<void> { await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }) }); }
+  private async comment(body: string): Promise<void> {
+    const pr = await this.prNode();
+    await this.graphql(
+      'mutation($subjectId:ID!,$body:String!){addComment(input:{subjectId:$subjectId,body:$body}){commentEdge{node{id}}}}',
+      { subjectId: pr.id, body }
+    );
+  }
+  private async updateComment(comment: Comment, body: string): Promise<void> {
+    if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL update');
+    await this.graphql(
+      'mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}',
+      { id: comment.nodeId, body }
+    );
+  }
+  private async deleteComment(comment: Comment): Promise<void> {
+    if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL delete');
+    await this.graphql(
+      'mutation($id:ID!){deleteIssueComment(input:{id:$id}){clientMutationId}}',
+      { id: comment.nodeId }
+    );
+  }
   async saveJob(job: Job): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobComments = comments.filter(comment => parseJob(comment.body) !== null);
@@ -254,8 +344,8 @@ export class GitHubStore implements DurableStore {
     const matches = jobComments.filter(comment => parseJob(comment.body)?.id === job.id);
     if (matches.length === 0) await this.comment(renderJobComment(job));
     else {
-      await this.client.request(`/repos/${this.repository}/issues/comments/${matches[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderJobComment(job) }) });
-      for (const duplicate of matches.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.id}`, { method: 'DELETE' });
+      await this.updateComment(matches[0], renderJobComment(job));
+      for (const duplicate of matches.slice(1)) await this.deleteComment(duplicate);
     }
     const durable = (await this.list()).filter(comment => this.isTrusted(comment)).filter(comment => parseJob(comment.body)?.id === job.id);
     if (durable.length !== 1) throw new Error(`Failed to persist exactly one ${JOB_MARKER} marker for job ${job.id}`);
@@ -271,55 +361,61 @@ export class GitHubStore implements DurableStore {
     if (matches.length === 0) { await this.comment(renderTaskComment(task)); return; }
     const parsed = matches.map(comment => ({ comment, task: parseTask(comment.body) as Task }));
     if (parsed.some(item => !sameTaskDefinition(item.task, task))) throw new Error(`Task ${task.id} already exists with a different definition`);
-    for (const duplicate of parsed.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.comment.id}`, { method: 'DELETE' });
+    for (const duplicate of parsed.slice(1)) await this.deleteComment(duplicate.comment);
   }
   async saveTask(task: Task): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const existing = comments.filter(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
     if (existing.length > 0) {
-      await this.client.request(`/repos/${this.repository}/issues/comments/${existing[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
-      for (const duplicate of existing.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.id}`, { method: 'DELETE' });
+      await this.updateComment(existing[0], renderTaskComment(task));
+      for (const duplicate of existing.slice(1)) await this.deleteComment(duplicate);
     } else await this.appendTask(task);
   }
   async saveAgent(agent: AgentRegistration): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const existing = comments.find(comment => parseAgent(comment.body)?.id === agent.id);
-    if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
+    if (existing) await this.updateComment(existing, renderAgentComment(agent));
     else await this.comment(renderAgentComment(agent));
   }
 }
 
 export async function listManagedGitHubJobs(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
-  const pullRequests: Array<Record<string, unknown>> = [];
-  for (let page = 1; ; page += 1) {
-    const value = await client.request(`/repos/${repository}/pulls?state=all&per_page=100&page=${page}`);
-    if (!Array.isArray(value)) throw new Error('GitHub pull request list response was not an array');
-    const pageValues = value as Array<Record<string, unknown>>; pullRequests.push(...pageValues);
-    if (pageValues.length < 100) break;
-  }
+  if (!client.graphql) throw new Error('GitHub GraphQL client is required');
+  const [owner, name] = repository.split('/', 2);
+  if (!owner || !name) throw new Error(`Invalid GitHub repository ${repository}`);
   const output: ManagedJobOverview[] = [];
-  const commentConcurrency = 8;
-  for (let index = 0; index < pullRequests.length; index += commentConcurrency) {
-    const batch = pullRequests.slice(index, index + commentConcurrency);
-    const loaded = await Promise.all(batch.map(async pr => {
+  let cursor: string | null = null;
+  do {
+    const data = await client.graphql(
+      'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){pullRequests(first:50,after:$cursor,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}',
+      { owner, name, cursor }
+    ) as Record<string, unknown>;
+    const repo = data.repository as Record<string, unknown> | undefined;
+    const connection = repo?.pullRequests as Record<string, unknown> | undefined;
+    const nodes = Array.isArray(connection?.nodes) ? connection.nodes as Array<Record<string, unknown>> : [];
+    for (const pr of nodes) {
+      const comments = pr.comments as Record<string, unknown> | undefined;
+      const rows = Array.isArray(comments?.nodes) ? comments.nodes as Array<Record<string, unknown>> : [];
+      const trusted = rows.filter(item => {
+        const author = item.author as Record<string, unknown> | undefined;
+        return typeof author?.login === 'string' && trustedAuthors.has(author.login);
+      });
+      const jobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
+      const tasks = trusted.map(item => parseTask(String(item.body ?? ''))).filter((item): item is Task => item !== null);
+      const state = String(pr.state ?? '').toUpperCase();
+      const githubState: PullRequestState = pr.merged === true || state === 'MERGED' ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
       const number = Number(pr.number);
-      if (!Number.isInteger(number) || number <= 0) return { pr, comments: null as unknown[] | null };
-      const comments = await client.request(`/repos/${repository}/issues/${number}/comments?per_page=100`);
-      return { pr, comments: Array.isArray(comments) ? comments : null };
-    }));
-    for (const { pr, comments } of loaded) {
-      if (!comments) continue;
-      const trusted = comments.filter(item => { const row = item as Record<string, unknown>; const user = row.user as Record<string, unknown> | undefined; return typeof user?.login === 'string' && trustedAuthors.has(user.login); });
-      const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
-      const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
-      const githubState: PullRequestState = pr.merged_at ? 'MERGED' : String(pr.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN';
       for (const job of jobs) {
         if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
+        if (Number.isInteger(number) && number > 0) job.prNumber = number;
+        job.repository = repository;
         job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
-        output.push({ job, githubState, draft: pr.draft === true, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
+        output.push({ job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null });
       }
     }
-  }
+    const pageInfo = connection?.pageInfo as Record<string, unknown> | undefined;
+    cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
+  } while (cursor);
   return output.sort((a, b) => b.job.prNumber - a.job.prNumber);
 }
 

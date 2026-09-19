@@ -53,18 +53,14 @@ const githubComment = (body, login = 'bot', id = Math.floor(Math.random() * 1_00
   user: { login }
 });
 const trustedClient = comments => ({
-  request: async (path, init = {}) => {
-    const method = String(init.method ?? 'GET');
-    if (method === 'GET') return comments;
-    const requestBody = JSON.parse(String(init.body));
-    if (method === 'POST') {
-      comments.push(githubComment(requestBody.body));
-      return comments.at(-1);
-    }
-    const id = Number(path.split('/').at(-1));
-    const existing = comments.find(item => item.id === id);
-    existing.body = requestBody.body;
-    return existing;
+  request: async () => { throw new Error('REST should not be used by GitHubStore'); },
+  graphql: async (query, variables = {}) => {
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null } } };
+    if (query.includes('comments(first:100')) return { repository:{ pullRequest:{ comments:{ nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})), pageInfo:{hasNextPage:false,endCursor:null} } } } };
+    if (query.includes('addComment')) { const item=githubComment(variables.body); comments.push(item); return { addComment:{ commentEdge:{ node:{ id:'IC_'+item.id } } } }; }
+    if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const item=comments.find(row=>row.id===id); item.body=variables.body; return { updateIssueComment:{ issueComment:{id:variables.id} } }; }
+    if (query.includes('deleteIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const index=comments.findIndex(row=>row.id===id); if(index>=0) comments.splice(index,1); return { deleteIssueComment:{clientMutationId:null} }; }
+    throw new Error('Unhandled fake GraphQL query: '+query);
   }
 });
 const githubWithComments = comments => new GitHubStore(trustedClient(comments), 'owner/repo', 1, new Set(['bot']));
@@ -164,6 +160,15 @@ class ManagedGitHubClient {
   comments;
   nextPr;
   nextComment;
+  async graphql(query, variables = {}) {
+    const pr = this.pulls.find(item => item.number === Number(variables.number)) ?? this.pulls[0];
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return { repository:{ pullRequest: pr ? { id:'PR_'+pr.number, state:String(pr.state||'open').toUpperCase(), merged:false, mergedAt:null, closedAt:null } : null } };
+    if (query.includes('comments(first:100')) { const values=this.comments.get(Number(variables.number)) ?? []; return { repository:{ pullRequest:{ comments:{ nodes:values.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})), pageInfo:{hasNextPage:false,endCursor:null} } } } }; }
+    if (query.includes('addComment')) { const prNumber=Number(String(variables.subjectId).replace('PR_','')); const values=this.comments.get(prNumber) ?? []; const item=githubComment(variables.body,'bot',this.nextComment++); values.push(item); this.comments.set(prNumber,values); return { addComment:{commentEdge:{node:{id:'IC_'+item.id}}} }; }
+    if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); for(const values of this.comments.values()){const item=values.find(row=>row.id===id); if(item){item.body=variables.body; return {updateIssueComment:{issueComment:{id:variables.id}}};}} }
+    if (query.includes('deleteIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); for(const values of this.comments.values()){const index=values.findIndex(row=>row.id===id); if(index>=0){values.splice(index,1); return {deleteIssueComment:{clientMutationId:null}};}} }
+    throw new Error('Unhandled fake GraphQL query: '+query);
+  }
   async request(path, init = {}) {
     const method = String(init.method ?? 'GET');
     if (path.includes('/pulls?')) return this.pulls.filter(item => item.state === 'open');
@@ -325,6 +330,14 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
   const comments = [];
   const client = {
     currentLogin: async () => 'bot',
+    graphql: async (query, variables = {}) => {
+      if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null}:null}};
+      if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
+      if (query.includes('addComment')) { const item=githubComment(variables.body,'bot',comments.length+1); comments.push(item); return {addComment:{commentEdge:{node:{id:'IC_'+item.id}}}}; }
+      if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const item=comments.find(row=>row.id===id); item.body=variables.body; return {updateIssueComment:{issueComment:{id:variables.id}}}; }
+      if (query.includes('deleteIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const index=comments.findIndex(row=>row.id===id); if(index>=0) comments.splice(index,1); return {deleteIssueComment:{clientMutationId:null}}; }
+      throw new Error('Unhandled fake GraphQL query: '+query);
+    },
     request: async (path, init = {}) => {
       const method = String(init.method ?? 'GET');
       calls.push({ path, method, body: init.body ? JSON.parse(String(init.body)) : null });
