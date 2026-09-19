@@ -331,6 +331,19 @@ export function serveDashboard(
 
   const server = createServer(async (req, res) => {
     const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (requestUrl.pathname === '/voice' && req.method === 'GET') {
+      if (!voiceAgentGateway) { res.writeHead(404); res.end('Not found'); return; }
+      const forwarded = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : undefined;
+      const clientId = forwarded ?? req.socket.remoteAddress ?? 'unknown';
+      const response = voiceAgentGateway.submit({
+        token: '',
+        request: requestUrl.searchParams.get('q') ?? '',
+        clientId,
+      });
+      res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(response.body));
+      return;
+    }
     if (requestUrl.pathname === '/voice/agent/v1/message' && (req.method === 'GET' || req.method === 'POST')) {
       if (!voiceAgentGateway) { res.writeHead(404); res.end('Not found'); return; }
       const forwarded = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : undefined;

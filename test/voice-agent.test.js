@@ -67,7 +67,7 @@ test('voice agent gateway enforces configured project scope', () => {
   const token = createVoiceAgentToken(secret, ['agents-relay', 'neo'], 7200);
   const gateway = new VoiceAgentGateway({ run: async () => ({ summary: 'done' }) }, secret, '/workspace', new Set(['agents-relay']));
   assert.equal(gateway.submit({ token, request: 'x', project: 'neo', clientId: 'client' }).status, 401);
-  assert.equal(gateway.submit({ token, request: 'x', clientId: 'client' }).status, 400);
+  assert.equal(gateway.submit({ token, request: 'x', clientId: 'client' }).status, 202);
 });
 
 
@@ -88,6 +88,36 @@ test('voice agent gateway supports explicit tokenless connectivity-test mode', a
   assert.equal(calls[0].project, 'agents-relay');
   assert.equal(gateway.submit({ token: '', request: 'x', project: 'neo', clientId: 'voice2' }).status, 401);
   assert.equal(gateway.status('', accepted.body.request_id, 'agents-relay').status, 200);
+});
+
+
+test('simple GET /voice accepts only q and infers the single allowed project', async () => {
+  const calls = [];
+  const job = {
+    id: 'j', title: 'J', prNumber: 1, repository: 'lalalic/agents-relay', state: 'OPEN',
+    continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [],
+  };
+  const gateway = new VoiceAgentGateway(
+    { run: async input => { calls.push(input); return { summary: 'done' }; } },
+    '',
+    '/workspace',
+    new Set(['agents-relay']),
+    'none',
+  );
+  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 10000, 'j', undefined, undefined, undefined, undefined, undefined, gateway);
+  await new Promise(resolve => server.once('listening', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const response = await fetch('http://127.0.0.1:' + port + '/voice?q=' + encodeURIComponent('check repo status'));
+  assert.equal(response.status, 202);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const body = await response.json();
+  assert.equal(body.accepted, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].request, 'check repo status');
+  assert.equal(calls[0].project, 'agents-relay');
+  await new Promise(resolve => server.close(resolve));
 });
 
 test('dashboard exposes only the general voice agent API and disables caching', async () => {

@@ -118,7 +118,7 @@ agents-relayd --workspace ~/Workspace \
   --voice-agent-projects agents-relay,neo
 ~~~
 
-In `none` mode, Voice can call `GET /voice/agent/v1/message?project=agents-relay&request=<text>` without a token. This mode is intended only for temporary controlled testing of the public Voice path.
+In `none` mode with exactly one allowed project, Voice can use the simplest endpoint: `GET /voice?q=<natural-language text>`. The only client input is `q`; the gateway infers the sole allowed project and the server-side worker interprets the free-form request. This mode is intended only for temporary controlled testing of the public Voice path.
 
 Before switching to Voice, mint a scoped session URL. The default token lifetime is two hours and tokens are capped at eight hours:
 

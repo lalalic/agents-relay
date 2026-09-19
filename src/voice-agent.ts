@@ -196,7 +196,8 @@ export class VoiceAgentGateway {
       try { claims = verifyVoiceAgentToken(input.token, this.secret, input.project); }
       catch (error) { return { status: 401, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
     }
-    const project = input.project ?? (claims?.projects.length === 1 ? claims.projects[0] : undefined);
+    const onlyAllowedProject = this.allowedProjects.size === 1 ? [...this.allowedProjects][0] : undefined;
+    const project = input.project ?? (claims?.projects.length === 1 ? claims.projects[0] : undefined) ?? onlyAllowedProject;
     if (!project) return { status: 400, body: { ok: false, error: 'project is required' } };
     if (!this.allowedProjects.has(project) || (claims !== null && !claims.projects.includes(project))) return { status: 401, body: { ok: false, error: 'Project is not allowed' } };
 
