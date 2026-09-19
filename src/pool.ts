@@ -1,0 +1,47 @@
+import { GhApiClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs } from './store.js';
+import { EventBus, eventFor } from './events.js';
+import { Reconciler } from './reconciler.js';
+import { Job, Priority } from './types.js';
+
+const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
+export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && !['COMPLETED','FAILED','CANCELLED'].includes(item.job.state)).map(item => item.job).sort(compareJobPriority); }
+
+export class RepositoryWorkerPool {
+  private running = false;
+  private pending = false;
+  constructor(
+    private readonly client: GhApiClient,
+    private readonly repository: string,
+    private readonly trustedAuthors: ReadonlySet<string>,
+    private readonly concurrency: number,
+    private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
+  ) {}
+  async reconcile(): Promise<void> {
+    if (this.running) { this.pending = true; return; }
+    this.running = true;
+    try {
+      do {
+        this.pending = false;
+        const jobs = runnableManagedJobs(await listManagedGitHubJobs(this.client, this.repository, this.trustedAuthors));
+        let capacity = Math.max(1, this.concurrency);
+        for (const job of jobs) {
+          if (capacity <= 0) break;
+          const store = new GitHubStore(this.client, this.repository, job.prNumber, this.trustedAuthors);
+          const ready = job.tasks.filter(task => ['READY','QUEUED','WAITING'].includes(task.state)).length;
+          if (ready === 0 && job.tasks.length > 0) continue;
+          const allowance = Math.max(1, Math.min(capacity, ready || 1));
+          await this.makeReconciler(store, allowance).reconcile(job.id);
+          capacity -= allowance;
+        }
+      } while (this.pending);
+    } finally { this.running = false; }
+  }
+  async watch(bus: EventBus): Promise<() => Promise<void>> {
+    return bus.subscribe('*', async event => { if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(); });
+  }
+  webhookWake(bus: EventBus | undefined, deliveryId: string, event: string, action: string | null): void {
+    if (bus) void bus.publish(eventFor('repository-pool', 'github', null, 'github.webhook', 'queued', `GitHub webhook ${event}${action ? ':' + action : ''}`, 'orchestrator', { deliveryId, event, action }));
+    else void this.reconcile();
+  }
+}
