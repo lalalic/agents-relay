@@ -96,3 +96,10 @@ test('task details omit input and result from dashboard', () => {
   assert.doesNotMatch(dashboardHtml, /function markdownValue\(/);
   assert.doesNotMatch(dashboardHtml, /function inlineMarkdown\(/);
 });
+
+
+test('selected job body does not scroll and omits task count field', () => {
+  assert.match(dashboardHtml, /#jobs-workspace > \.panel:first-child \.panel-body \{ overflow:visible; max-height:none; \}/);
+  assert.doesNotMatch(dashboardHtml, /field\('Tasks',String\(\(job\.tasks\|\|\[\]\)\.length\)\)/);
+  assert.match(dashboardHtml, /field\('Task states'/);
+});
