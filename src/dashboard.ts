@@ -238,8 +238,8 @@ usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage')
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
 const stream=new EventSource('/events');
-stream.onopen=()=>{connection.textContent='Live · event stream connected';connection.className='status-pill ok';addEvent({type:'connection',task_id:'system',message:'Event stream connected',timestamp:new Date().toISOString()},'ok');};
-stream.onerror=()=>{connection.textContent='Degraded · event stream reconnecting';connection.className='status-pill warn';addEvent({type:'connection',task_id:'system',message:'Event stream reconnecting',timestamp:new Date().toISOString()},'error');};
+stream.onopen=()=>{connection.textContent='Live · event stream connected';connection.className='status-pill ok';};
+stream.onerror=()=>{connection.textContent='Degraded · event stream reconnecting';connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
 if(location.hash==='#/usage')showView('usage');else showView('jobs');
