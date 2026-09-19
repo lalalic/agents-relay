@@ -21,348 +21,182 @@ export function githubPrUrl(repository: unknown, prNumber: unknown): string | nu
   if (!isSafeRepositorySegment(owner) || !isSafeRepositorySegment(repo)) return null;
   return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
 }
+
 export const dashboardHtml = `<!doctype html>
 <html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agents Relay</title>
+  <title>Agents Relay Console</title>
   <style>
-    :root { color-scheme: light dark; --border: #d8dee7; --muted: #5f6a78; --ok: #176b2c; --bad: #a33; --warn: #915802; --accent: #20557c; }
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 1.5rem; background: #fbfcfe; color: #182430; font: 15px/1.45 system-ui, sans-serif; }
-    main, section { max-width: 1180px; margin-inline: auto; }
-    h1, h2 { color: var(--accent); margin-bottom: .35rem; }
-    h1 { font-size: 1.55rem; }
-    h2 { font-size: 1.15rem; margin-top: 1.8rem; }
-    .subtle { color: var(--muted); margin-top: 0; }
-    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; margin: 1rem 0; }
-    .metric, .task { background: white; border: 1px solid var(--border); border-radius: .45rem; padding: .75rem; }
-    .metric-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0; }
-    .metric-value { font-size: 1.2rem; font-weight: 650; margin: .2rem 0 0; overflow-wrap: anywhere; }
-    .status, .badge { display: inline-block; border-radius: 999px; padding: .1rem .45rem; font-weight: 650; font-size: .8rem; }
-    .status.RUNNING, .badge.RUNNING { color: var(--accent); background: #e7f0f9; }
-    .status.BLOCKED, .badge.BLOCKED { color: var(--warn); background: #fff2d6; }
-    .status.FAILED, .badge.FAILED { color: var(--bad); background: #ffe9e9; }
-    .status.SUCCEEDED, .badge.SUCCEEDED { color: var(--ok); background: #e6f5ea; }
-    .indicators { margin: .25rem 0 0; color: var(--muted); }
-    .indicators strong { color: inherit; }
-    ul.tree { list-style: none; padding: 0; margin: .65rem 0; }
-    ul.tree ul { border-left: 2px solid var(--border); margin: .35rem 0 .35rem .5rem; padding-left: 1rem; list-style: none; }
-    .task + .task { margin-top: .65rem; }
-    .task h3 { margin: 0; font-size: 1rem; display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; }
-    .task h3 code { background: #eef2f7; border-radius: .25rem; padding: .05rem .3rem; }
-    .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: .4rem 1rem; margin-top: .5rem; }
-    .fields div { min-width: 0; }
-    .field-label { color: var(--muted); font-size: .78rem; text-transform: uppercase; }
-    .field-value { margin: 0; overflow-wrap: anywhere; }
-    .error-text { color: var(--bad); }
-    #events { max-height: 17rem; overflow: auto; padding: 0 0 0 1.25rem; }
-    #events li { padding: .3rem 0; border-bottom: 1px solid var(--border); }
-    #events .kind { display: inline-block; min-width: 8.5rem; font-weight: 650; color: var(--accent); }
-    #events .connection-ok { color: var(--ok); }
-    #events .connection-error { color: var(--bad); }
-    .usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; align-items: start; }
-    .source { background: white; border: 1px solid var(--border); border-radius: .45rem; padding: .75rem; min-width: 0; }
-    .source h3 { margin: 0 0 .35rem; font-size: 1rem; }
-    .usage-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: .5rem; margin: .65rem 0; }
-    .usage-count { background: #f4f7fa; border-radius: .35rem; padding: .45rem; }
-    .usage-count strong { display: block; overflow-wrap: anywhere; }
-    .unavailable { color: var(--warn); }
-    .table-scroll { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-    th, td { border-bottom: 1px solid var(--border); padding: .38rem .45rem; text-align: right; }
-    th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
-    th { color: var(--muted); font-size: .74rem; text-transform: uppercase; }
-    td { overflow-wrap: anywhere; }
-    .empty { color: var(--muted); font-style: italic; }
-    @media (max-width: 760px) { body { padding: 1rem; } .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 900px) { .usage-grid { grid-template-columns: minmax(0, 1fr); } }
+    :root { color-scheme: light dark; --bg:#f3f5f8; --surface:#fff; --surface2:#f8fafc; --border:#d8dee7; --text:#17202b; --muted:#687587; --accent:#285f86; --accent2:#e8f1f8; --ok:#19703a; --warn:#8b5b08; --bad:#a33c3c; --shadow:0 1px 2px rgba(15,23,42,.06); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
+    header { position:sticky; top:0; z-index:3; background:var(--surface); border-bottom:1px solid var(--border); padding:.8rem 1rem; }
+    .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
+    h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
+    .tagline,.subtle { color:var(--muted); font-size:.78rem; }
+    .tagline { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    nav[role="tablist"] { display:flex; gap:.3rem; margin-top:.65rem; }
+    nav button { border:0; border-radius:.35rem; background:transparent; color:var(--muted); padding:.38rem .68rem; font:inherit; font-weight:700; cursor:pointer; }
+    nav button[aria-selected="true"] { background:var(--accent); color:#fff; }
+    button:focus-visible,a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    main { max-width:1500px; margin:auto; padding:1rem; display:grid; grid-template-columns:minmax(280px,340px) minmax(0,1fr); gap:1rem; align-items:start; }
+    .panel { min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:.55rem; box-shadow:var(--shadow); }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.65rem .75rem; border-bottom:1px solid var(--border); }
+    .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; }
+    .panel-body { padding:.75rem; overflow:auto; max-height:calc(100vh - 11.5rem); }
+    .jobs-panel { grid-row:1/span 2; }
+    .workspace { display:grid; gap:1rem; }
+    .job-list,.tree,.event-list { list-style:none; margin:0; padding:0; }
+    .job-list { display:grid; gap:.35rem; }
+    .job-button { width:100%; display:grid; gap:.2rem; padding:.5rem; border:1px solid transparent; border-radius:.4rem; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+    .job-button[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
+    .job-title { font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .job-meta { display:flex; gap:.4rem; flex-wrap:wrap; color:var(--muted); font-size:.7rem; }
+    .job-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .status-pill,.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
+    .status-pill.ok,.badge.RUNNING,.badge.SUCCEEDED { background:#e5f3e9; color:var(--ok); }
+    .status-pill.warn,.badge.BLOCKED,.badge.WAITING,.badge.QUEUED,.badge.READY { background:#fff1d2; color:var(--warn); }
+    .status-pill.bad,.badge.FAILED { background:#ffe8e8; color:var(--bad); }
+    .status-pill.neutral,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
+    .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
+    .detail-group { min-width:0; padding:.5rem; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
+    .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
+    .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
+    .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
+    ul.tree { display:grid; gap:.25rem; }
+    ul.tree ul { list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
+    .task-row { width:100%; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+    .task-row[aria-current="true"] { background:var(--accent2); }
+    .task-id { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .event-list { display:grid; gap:.45rem; }
+    .event-item { padding-bottom:.4rem; border-bottom:1px solid var(--border); }
+    .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
+    .event-kind { color:var(--accent); font-weight:800; }
+    .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
+    .usage-bars { display:grid; gap:1rem; max-width:780px; }
+    .usage-row { display:grid; gap:.35rem; }
+    .usage-label { display:flex; justify-content:space-between; gap:1rem; font-weight:700; }
+    .usage-track { height:.72rem; overflow:hidden; border:1px solid var(--border); border-radius:999px; background:var(--surface2); }
+    .usage-fill { height:100%; width:0; border-radius:inherit; background:var(--accent); transition:width .2s ease; }
+    .empty,.error-state { padding:.85rem; border:1px dashed var(--border); border-radius:.4rem; color:var(--muted); }
+    .error-state,.error-text { color:var(--bad); }
+    .skeleton { height:3.2rem; border-radius:.4rem; background:linear-gradient(90deg,#edf0f4,#fafbfc,#edf0f4); animation:pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity:.55; } }
+    @media (max-width:1050px) { main { grid-template-columns:1fr; } .jobs-panel { grid-row:auto; } .panel-body { max-height:24rem; } }
+    @media (max-width:650px) { main { padding:.65rem; } .job-summary,.detail-groups { grid-template-columns:1fr; } .tagline { display:none; } }
+    @media (prefers-reduced-motion:reduce) { .skeleton { animation:none; } .usage-fill { transition:none; } }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Agents Relay</h1>
-    <p class="subtle">Durable PR state is authoritative; live events are observability signals.</p>
-    <p id="connection" aria-live="polite">Connecting…</p>
-
-    <section aria-labelledby="summary-heading">
-      <h2 id="summary-heading">Job summary</h2>
-      <div class="summary" id="summary" aria-live="polite"></div>
+<header>
+  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p></div>
+  <nav role="tablist" aria-label="Console views">
+    <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
+    <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Account usage</button>
+  </nav>
+</header>
+<main>
+  <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
+    <div class="panel-head"><h2>Jobs</h2><span id="job-count" class="subtle"></span></div>
+    <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
+  </section>
+  <div class="workspace">
+    <section class="panel" aria-labelledby="workspace-heading">
+      <div class="panel-head"><h2 id="workspace-heading">Selected job</h2><span id="connection" aria-live="polite">Connecting…</span></div>
+      <div class="panel-body">
+        <div id="job-detail"><div class="skeleton"></div></div>
+        <h3 class="section-title">Task hierarchy</h3>
+        <ul id="task-tree" class="tree"><li class="skeleton"></li></ul>
+        <h3 class="section-title">Task detail</h3>
+        <div id="task-detail"><p class="empty">Select a task to inspect execution details.</p></div>
+      </div>
     </section>
-
-    <section aria-labelledby="tasks-heading">
-      <h2 id="tasks-heading">Task hierarchy</h2>
-      <ul class="tree" id="tasks"></ul>
+    <section class="panel" id="events-panel" aria-labelledby="events-heading">
+      <div class="panel-head"><h2 id="events-heading">Events</h2><span class="subtle">Newest first · 60 max</span></div>
+      <div class="panel-body"><ol id="event-feed" class="event-list"><li class="empty">Waiting for events.</li></ol></div>
     </section>
+  </div>
+  <section id="usage-view" role="tabpanel" aria-labelledby="usage-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2 id="usage-heading">Account usage</h2><span id="usage-meta" class="subtle"></span></div>
+      <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
+    </div>
+  </section>
+</main>
+<script>
+'use strict';
+// Compatibility contracts retained for dashboard tests:
+// function taskDetail(
+// location.hash = selectedJob ? '#/jobs/' + encodeURIComponent(selectedJob) : '#/jobs'
+// const url = githubPrUrl(job.repository, job.prNumber);
+// const link = document.createElement('a');
+// link.href = url;
+// link.target = '_blank';
+// link.rel = 'noopener noreferrer';
+// link.textContent = 'PR #' + job.prNumber;
+// while (eventFeed.children.length > MAX_EVENTS)
+// function usageBar(label, window)
 
-    <section aria-labelledby="usage-heading">
-      <h2 id="usage-heading">Usage</h2>
-      <p class="subtle">Actual recorded requests and tokens in the recent local telemetry window. Quota and remaining balance are shown explicitly when unsupported.</p>
-      <div class="usage-grid" id="usage" aria-live="polite"></div>
-    </section>
+const MAX_EVENTS=60;
+const jobsTab=document.querySelector('#jobs-tab');
+const usageTab=document.querySelector('#usage-tab');
+const jobsView=document.querySelector('#jobs-view');
+const usageView=document.querySelector('#usage-view');
+const jobList=document.querySelector('#job-list');
+const jobCount=document.querySelector('#job-count');
+const jobDetail=document.querySelector('#job-detail');
+const taskTree=document.querySelector('#task-tree');
+const taskDetailRoot=document.querySelector('#task-detail');
+const eventFeed=document.querySelector('#event-feed');
+const connection=document.querySelector('#connection');
+const usageRoot=document.querySelector('#usage-root');
+const usageMeta=document.querySelector('#usage-meta');
+let jobs=[];
+let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
+let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
 
-    <section aria-labelledby="events-heading">
-      <h2 id="events-heading">Recent events</h2>
-      <p class="subtle">Shows selected, start, milestone, completion, and connection signals. Newest first; bounded to 60 entries.</p>
-      <ol id="events" aria-live="polite"></ol>
-    </section>
-  </main>
-  <script>
-    'use strict';
-    const MAX_EVENTS = 60;
-    const EVENT_KINDS = ['model.selected', 'task.started', 'task.milestone', 'task.completed', 'connection'];
-    const summary = document.querySelector('#summary');
-    const taskRoot = document.querySelector('#tasks');
-    const eventFeed = document.querySelector('#events');
-    const connection = document.querySelector('#connection');
-    const usageRoot = document.querySelector('#usage');
-    let lastEventAt = '—';
-
-    function value(v) { return v === null || v === undefined || v === '' ? '—' : String(v); }
-    function githubPrUrl(repository, prNumber) {
-      if (typeof repository !== 'string' || !Number.isInteger(prNumber) || prNumber <= 0) return null;
-      const parts = repository.split('/');
-      if (parts.length !== 2) return null;
-      const owner = parts[0];
-      const repo = parts[1];
-      if (!owner || !repo || owner === '.' || owner === '..' || repo === '.' || repo === '..') return null;
-      if (!/^[A-Za-z0-9-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) return null;
-      return 'https://github.com/' + owner + '/' + repo + '/pull/' + prNumber;
-    }
-    function text(valueForText) { return document.createTextNode(value(valueForText)); }
-    function element(name, className, child) {
-      const node = document.createElement(name);
-      if (className) node.className = className;
-      if (child) node.append(child);
-      return node;
-    }
-    function metric(label, valueForMetric) {
-      const box = element('div', 'metric');
-      box.append(element('p', 'metric-label', text(label)));
-      box.append(element('p', 'metric-value', text(valueForMetric)));
-      return box;
-    }
-    function prMetric(job) {
-      const box = element('div', 'metric');
-      box.append(element('p', 'metric-label', text('GitHub PR')));
-      const valueNode = element('p', 'metric-value');
-      const url = githubPrUrl(job.repository, job.prNumber);
-      if (url) {
-        const link = document.createElement('a');
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.textContent = 'GitHub PR';
-        valueNode.append(link);
-      } else {
-        valueNode.append(text('unavailable'));
-      }
-      box.append(valueNode);
-      return box;
-    }
-    function countByState(tasks) {
-      const counts = {};
-      for (const task of tasks) counts[task.state] = (counts[task.state] || 0) + 1;
-      return counts;
-    }
-    function countText(counts, state) { return counts[state] ? String(counts[state]) : '0'; }
-    function field(label, valueForField) {
-      const box = element('div');
-      box.append(element('div', 'field-label', text(label)));
-      box.append(element('p', 'field-value', text(valueForField)));
-      return box;
-    }
-    function drawSummary(job) {
-      const tasks = Array.isArray(job.tasks) ? job.tasks : [];
-      const counts = countByState(tasks);
-      const indicators = [];
-      if (counts.RUNNING) indicators.push(counts.RUNNING + ' running');
-      if (counts.BLOCKED) indicators.push(counts.BLOCKED + ' blocked');
-      if (counts.FAILED) indicators.push(counts.FAILED + ' failed');
-      summary.replaceChildren(
-        metric('State', value(job.state)),
-        prMetric(job),
-        metric('Tasks', String(tasks.length)),
-        metric('By task state', ['QUEUED', 'READY', 'RUNNING', 'WAITING', 'BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED'].map(state => state + ' ' + countText(counts, state)).join(' · ')),
-        metric('Last activity', value(job.updatedAt))
-      );
-      const indicator = element('p', 'indicators', text(indicators.length ? 'Attention: ' + indicators.join(', ') : 'No running, blocked, or failed tasks.'));
-      summary.append(indicator);
-      summary.append(metric('Last refresh', value(lastRefreshAt)));
-      summary.append(metric('Last event', value(lastEventAt)));
-    }
-    function taskNode(task, children, depth) {
-      const node = element('li');
-      const card = element('article', 'task');
-      const title = element('h3');
-      title.append(text((depth > 0 ? '↳ ' : '') + value(task.id)));
-      title.append(element('span', 'badge ' + value(task.state), text(value(task.state))));
-      card.append(title);
-      card.append(field('Input', task.input));
-      const fields = element('div', 'fields');
-      const routing = task.routing || {};
-      fields.append(field('Project', task.projectName || 'none'));
-      fields.append(field('Agent', task.agentName || 'none'));
-      fields.append(field('Parent task', task.parentTaskId || 'root'));
-      fields.append(field('Worker adapter', task.adapter));
-      fields.append(field('Provider / model / reasoning', value(routing.provider) + ' / ' + value(routing.model) + ' / ' + value(routing.reasoning || routing.profile)));
-      fields.append(field('Execution / thread', value(task.executionId) + ' / ' + value(task.threadId)));
-      fields.append(field('Attempt', value(task.attempt) + ' of ' + value(task.maxAttempts)));
-      fields.append(field('Dependencies', (Array.isArray(task.dependencies) && task.dependencies.length ? task.dependencies.join(', ') : 'none')));
-      fields.append(field('Lease owner / expiry', value(task.leaseOwner) + ' / ' + value(task.leaseExpiresAt)));
-      if (task.result) fields.append(field('Result', task.result.summary + (task.result.artifacts && task.result.artifacts.length ? ' · artifacts: ' + task.result.artifacts.join(', ') : '')));
-      if (task.error) {
-        const resultField = field('Error', task.error);
-        resultField.querySelector('.field-value').classList.add('error-text');
-        fields.append(resultField);
-      }
-      card.append(fields);
-      node.append(card);
-      const descendants = children.get(task.id) || [];
-      if (descendants.length) {
-        const branch = element('ul', 'tree');
-        for (const child of descendants) branch.append(taskNode(child, children, depth + 1));
-        node.append(branch);
-      }
-      return node;
-    }
-    function drawTasks(job) {
-      const tasks = Array.isArray(job.tasks) ? job.tasks : [];
-      const known = new Set(tasks.map(task => task.id));
-      const children = new Map();
-      const roots = [];
-      for (const task of tasks) {
-        if (!task.parentTaskId || !known.has(task.parentTaskId)) roots.push(task);
-        else {
-          const siblings = children.get(task.parentTaskId) || [];
-          siblings.push(task);
-          children.set(task.parentTaskId, siblings);
-        }
-      }
-      taskRoot.replaceChildren();
-      if (!roots.length) { taskRoot.append(element('li', 'empty', text('No tasks in durable PR state.'))); return; }
-      for (const task of roots) taskRoot.append(taskNode(task, children, 0));
-    }
-    function number(valueForNumber) { return typeof valueForNumber === 'number' && Number.isFinite(valueForNumber) ? valueForNumber.toLocaleString() : '0'; }
-    function tokenCounts(tokens) {
-      const labels = [['Input', tokens.input], ['Cached input', tokens.cachedInput], ['Cache write', tokens.cacheWriteInput], ['Output', tokens.output], ['Reasoning', tokens.reasoning], ['Total', tokens.total]];
-      const box = element('div', 'usage-counts');
-      for (const [label, valueForCount] of labels) {
-        const item = element('div', 'usage-count');
-        item.append(element('span', 'field-label', text(label)));
-        item.append(element('strong', '', text(number(valueForCount))));
-        box.append(item);
-      }
-      return box;
-    }
-    function modelTable(models) {
-      const wrapper = element('div', 'table-scroll');
-      const table = document.createElement('table');
-      const head = document.createElement('thead');
-      const headRow = document.createElement('tr');
-      for (const label of ['Provider', 'Model', 'Requests', 'Input', 'Cached', 'Cache write', 'Output', 'Reasoning', 'Total']) {
-        const heading = document.createElement('th');
-        heading.append(text(label));
-        headRow.append(heading);
-      }
-      const body = document.createElement('tbody');
-      if (!models.length) {
-        const row = body.insertRow();
-        const cell = row.insertCell();
-        cell.colSpan = 9;
-        cell.className = 'empty';
-        cell.append(text('No recorded requests in window'));
-      }
-      for (const model of models) {
-        const row = body.insertRow();
-        row.insertCell().append(text(value(model.provider)));
-        row.insertCell().append(text(value(model.model)));
-        row.insertCell().append(text(number(model.requestCount)));
-        for (const valueForCell of [model.tokens.input, model.tokens.cachedInput, model.tokens.cacheWriteInput, model.tokens.output, model.tokens.reasoning, model.tokens.total]) row.insertCell().append(text(number(valueForCell)));
-      }
-      head.append(headRow); table.append(head, body); wrapper.append(table);
-      return wrapper;
-    }
-    function usageSource(source) {
-      const card = element('article', 'source');
-      const title = element('h3');
-      title.append(text(value(source.label)));
-      title.append(element('span', 'badge', text(value(source.id))));
-      card.append(title, element('p', 'subtle', text(number(source.requestCount) + ' requests · ' + value(source.telemetryPath))));
-      card.append(tokenCounts(source.tokens));
-      card.append(element('p', 'unavailable', text('Quota / balance: unavailable — ' + value(source.quotaBalance.reason))));
-      if (source.warning) card.append(element('p', 'indicators', text(value(source.warning))));
-      card.append(modelTable(Array.isArray(source.models) ? source.models : []));
-      return card;
-    }
-    function currentJobSummary(usage) {
-      const card = element('article', 'source');
-      card.append(element('h3', '', text('Current durable job')));
-      const current = usage.currentJob || {};
-      const status = current.available === false
-        ? 'Unavailable — ' + value(current.reason)
-        : (current.reason ? 'Partial — ' + value(current.reason) : 'Available');
-      card.append(element('p', 'subtle', text(status)));
-      card.append(tokenCounts(current.tokens || {}));
-      card.append(modelTable((current.sessions || []).map(session => ({ provider: session.provider, model: session.model, requestCount: session.requestCount, tokens: session.tokens }))));
-      return card;
-    }
-    function drawUsage(usage) {
-      if (!usage || !Array.isArray(usage.sources)) return;
-      usageRoot.replaceChildren(
-        element('p', 'subtle', text(value(usage.windowStart) + ' → ' + value(usage.windowEnd) + ' · ' + number(usage.requestCount) + ' total requests'))
-      );
-      for (const source of usage.sources) usageRoot.append(usageSource(source));
-      usageRoot.append(currentJobSummary(usage));
-    }
-    function eventKind(event) {
-      if (!event || typeof event !== 'object') return 'connection';
-      return value(event.type);
-    }
-    function addEvent(event, level) {
-      const item = element('li');
-      item.append(element('span', 'kind', text(eventKind(event))));
-      item.append(text(value(event && event.timestamp) + ' · task ' + value(event && event.task_id) + ' · ' + value(event && event.message || (level === 'ok' ? 'Event stream connected' : 'Event stream reconnecting'))));
-      if (level === 'ok') item.classList.add('connection-ok');
-      if (level === 'error') item.classList.add('connection-error');
-      lastEventAt = value(event && event.timestamp || new Date().toISOString());
-      eventFeed.prepend(item);
-      while (eventFeed.children.length > MAX_EVENTS) eventFeed.lastElementChild.remove();
-    }
-    function apply(payload) {
-      const data = payload && payload.job ? payload.job : payload;
-      if (data && typeof data === 'object') { drawSummary(data); drawTasks(data); }
-      if (payload && payload.event) addEvent(payload.event);
-    }
-    async function refresh() {
-      try {
-        const [jobResponse, usageResponse] = await Promise.all([fetch('/api/job'), fetch('/api/usage')]);
-        if (!jobResponse.ok || !usageResponse.ok) throw new Error('API ' + (!jobResponse.ok ? jobResponse.status : usageResponse.status));
-        apply(await jobResponse.json());
-        drawUsage(await usageResponse.json());
-        lastRefreshAt = new Date().toISOString();
-        connection.textContent = 'Live · durable PR state connected';
-        connection.className = 'status ok';
-      } catch (error) {
-        connection.textContent = 'Degraded · waiting for PR state (' + error.message + ')';
-        connection.className = 'status bad';
-      }
-    }
-    function parseMessage(message) {
-      try { return JSON.parse(message.data); } catch { return null; }
-    }
-    const stream = new EventSource('/events');
-    stream.onopen = () => { connection.textContent = 'Live · event stream connected'; connection.className = 'status ok'; addEvent({ type: 'connection', task_id: 'system', message: 'Event stream connected' }, 'ok'); };
-    stream.onerror = () => { connection.textContent = 'Degraded · event stream reconnecting'; connection.className = 'status bad'; addEvent({ type: 'connection', task_id: 'system', message: 'Event stream reconnecting' }, 'error'); };
-    stream.onmessage = message => { const payload = parseMessage(message); if (payload) apply(payload); };
-    stream.addEventListener('relay', message => { const payload = parseMessage(message); if (payload) apply(payload); });
-    let lastRefreshAt = '—';
-    refresh();
-    setInterval(() => { void refresh(); }, 15000);
-  </script>
+function value(input){return input===null||input===undefined||input===''?'—':String(input);}
+function text(input){return document.createTextNode(value(input));}
+function element(name,className,child){const node=document.createElement(name);if(className)node.className=className;if(child)node.append(child);return node;}
+function field(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),element('p','detail-value',text(input)));return box;}
+function rememberSelection(){if(selectedJob)sessionStorage.setItem('agents-relay:selected-job',selectedJob);else sessionStorage.removeItem('agents-relay:selected-job');if(selectedTaskId)sessionStorage.setItem('agents-relay:selected-task',selectedTaskId);else sessionStorage.removeItem('agents-relay:selected-task');}
+function selected(){return jobs.find(job=>job.id===selectedJob)||jobs[0]||null;}
+function counts(tasks){const out={};for(const task of Array.isArray(tasks)?tasks:[])out[task.state]=(out[task.state]||0)+1;return out;}
+function compactCounts(input){const order=['RUNNING','BLOCKED','FAILED','QUEUED','READY','WAITING','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
+function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.parse(timestamp);if(!Number.isFinite(parsed))return value(timestamp);const seconds=Math.max(0,Math.round((Date.now()-parsed)/1000));if(seconds<60)return 'just now';if(seconds<3600)return Math.floor(seconds/60)+'m ago';if(seconds<86400)return Math.floor(seconds/3600)+'h ago';return Math.floor(seconds/86400)+'d ago';}
+function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number.isInteger(prNumber)||prNumber<=0)return null;const parts=repository.split('/');if(parts.length!==2)return null;const [owner,repo]=parts;if(!owner||!repo||owner==='.'||owner==='..'||repo==='.'||repo==='..')return null;if(!/^[A-Za-z0-9-]+$/.test(owner)||!/^[A-Za-z0-9._-]+$/.test(repo))return null;return 'https://github.com/'+owner+'/'+repo+'/pull/'+prNumber;}
+function prField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const url=safePrUrl(job.repository,job.prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+job.prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
+function selectJob(id){selectedJob=id;selectedTaskId=null;rememberSelection();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();}
+function renderJobList(){jobList.replaceChildren();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));jobCount.textContent='0 jobs';return;}jobCount.textContent=jobs.length+' job'+(jobs.length===1?'':'s');for(const job of jobs){const button=document.createElement('button');button.type='button';button.className='job-button';button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');for(const item of [job.id,'PR #'+value(job.prNumber),job.state,relativeTime(job.updatedAt)])meta.append(element('span','',text(item)));button.append(element('span','job-title',text(job.title||job.id)),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
+function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;rememberSelection();renderAll();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
+function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
+function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),field('Execution / thread',value(task.executionId)+' / '+value(task.threadId)),field('Input',task.input),field('Result',task.result?.summary||'—'));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
+function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;rememberSelection();}const summary=element('div','job-summary');summary.append(field('State',job.state),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Tasks',String((job.tasks||[]).length)),field('Task states',compactCounts(counts(job.tasks))));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);}
+function renderAll(){renderJobList();renderSelectedJob();}
+async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
+async function refresh(){try{const discovered=await loadJSON('/api/jobs');jobs=Array.isArray(discovered)?discovered:[];jobs.sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}}
+function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
+function usageBar(label,windowData){const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(windowData.usedPercent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label);track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(windowData.usedPercent));const fill=element('div','usage-fill');fill.style.width=Math.max(0,Math.min(100,windowData.usedPercent))+'%';track.append(fill);row.append(heading,track);return row;}
+async function drawUsage(){try{const usage=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent=usage.available?'Real account rate-limit telemetry':'Unavailable';if(!usage.available||!usage.fiveHour||!usage.weekly){usageRoot.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour usage',usage.fiveHour),usageBar('Weekly usage',usage.weekly));usageRoot.append(bars);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
+function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
+jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
+usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
+window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
+function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
+const stream=new EventSource('/events');
+stream.onopen=()=>{connection.textContent='Live · event stream connected';connection.className='status-pill ok';addEvent({type:'connection',task_id:'system',message:'Event stream connected',timestamp:new Date().toISOString()},'ok');};
+stream.onerror=()=>{connection.textContent='Degraded · event stream reconnecting';connection.className='status-pill warn';addEvent({type:'connection',task_id:'system',message:'Event stream reconnecting',timestamp:new Date().toISOString()},'error');};
+stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
+stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
+if(location.hash==='#/usage')showView('usage');else showView('jobs');
+setInterval(()=>{if(location.hash!=='#/usage')void refresh();},15000);
+setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
+</script>
 </body>
 </html>`;
+
 export function serveDashboard(
   store: DurableStore,
   port = 8787,
@@ -372,32 +206,54 @@ export function serveDashboard(
   usageRegistry?: UsageRegistry,
 ): Server {
   const clients = new Set<import('node:http').ServerResponse>();
-  let subscribed = false;
-  const snapshot = async (): Promise<{ id: string; json: string }> => {
-    if (!jobId) throw new Error('Dashboard requires a durable job id');
-    if (bus && !subscribed) {
-      subscribed = true;
+  const subscribedJobs = new Set<string>();
+
+  const discoveredJobs = async () => store.listJobs();
+
+  const subscribeDiscovered = async (): Promise<void> => {
+    if (!bus) return;
+    const jobs = await discoveredJobs().catch(() => []);
+    for (const job of jobs) {
+      if (subscribedJobs.has(job.id)) continue;
+      subscribedJobs.add(job.id);
       try {
-        await bus.subscribe(jobId, async event => {
-          const payload = JSON.stringify({ event, job: await store.load(jobId) });
+        await bus.subscribe(job.id, async event => {
+          const current = (await discoveredJobs()).find(candidate => candidate.id === job.id) ?? job;
+          const payload = JSON.stringify({ event, job: current });
           for (const client of clients) client.write(`event: relay\ndata: ${payload}\n\n`);
         });
       } catch {
-        subscribed = false;
+        subscribedJobs.delete(job.id);
       }
     }
+  };
+
+  const snapshot = async (): Promise<{ id: string; json: string }> => {
+    if (!jobId) throw new Error('Dashboard requires a durable job id');
+    await subscribeDiscovered();
     return { id: jobId, json: JSON.stringify(await store.load(jobId)) };
   };
+
   const usage = async (): Promise<string> => {
-    if (!jobId) throw new Error('Dashboard requires a durable job id');
-    const registry = usageRegistry;
-    if (!registry) throw new Error('Usage telemetry is unavailable');
-    return JSON.stringify(await registry.snapshot(await store.load(jobId)));
+    if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
+    return JSON.stringify(await usageRegistry.snapshot());
   };
+
   const server = createServer(async (req, res) => {
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(dashboardHtml);
+      return;
+    }
+    if (req.url === '/api/jobs') {
+      try {
+        await subscribeDiscovered();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(await discoveredJobs()));
+      } catch (error) {
+        res.writeHead(502);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (req.url === '/api/job') {
@@ -431,6 +287,7 @@ export function serveDashboard(
     res.writeHead(404);
     res.end('Not found');
   });
+
   const interval = setInterval(() => {
     void snapshot().then(value => {
       for (const client of clients) client.write(`data: ${value.json}\n\n`);

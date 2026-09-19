@@ -3,193 +3,91 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { Job } from './types.js';
 
-export type UsageAccounting = {
-  input: number;
-  cachedInput: number;
-  cacheWriteInput: number;
-  output: number;
-  reasoning: number;
-  total: number;
+export type AccountUsageWindow = {
+  usedPercent: number;
+  windowMinutes: number;
+  resetsAt: number | null;
 };
 
-export type UsageRecord = {
-  sourceId: 'codex' | 'zai';
-  provider: 'codex' | 'zai';
-  sessionId: string;
-  responseId: string | null;
-  timestamp: string;
-  model: string;
-  reasoning: string | null;
-  tokens: UsageAccounting;
-};
-
-export type UsageModelSummary = {
-  provider: UsageRecord['provider'];
-  model: string;
-  requestCount: number;
-  tokens: UsageAccounting;
-};
-
-export type UsageSessionSummary = {
-  sessionId: string;
-  provider: UsageRecord['provider'];
-  model: string;
-  requestCount: number;
-  tokens: UsageAccounting;
-  lastActivityAt: string;
-};
-
-export type UsageSourceSummary = {
-  id: UsageRecord['sourceId'];
-  label: string;
-  telemetryAvailable: boolean;
-  telemetryPath: string;
-  requestCount: number;
-  tokens: UsageAccounting;
-  models: UsageModelSummary[];
-  recentSessions: UsageSessionSummary[];
-  quotaBalance: { available: false; state: 'unsupported'; reason: string };
-  warning: string | null;
-};
-
-export type CurrentJobUsage = {
+export type AccountUsageSnapshot = {
   available: boolean;
-  reason: string | null;
-  requestCount: number;
-  tokens: UsageAccounting;
-  sessions: UsageSessionSummary[];
-};
-
-export type UsageSnapshot = {
   generatedAt: string;
-  windowDays: number;
-  windowStart: string;
-  windowEnd: string;
-  requestCount: number;
-  tokens: UsageAccounting;
-  sources: UsageSourceSummary[];
-  currentJob: CurrentJobUsage;
+  fiveHour: AccountUsageWindow | null;
+  weekly: AccountUsageWindow | null;
+  reason: string | null;
 };
-
-export interface UsageReaderResult {
-  windowStart: Date;
-  windowEnd: Date;
-  telemetryPath: string;
-  records: UsageRecord[];
-  warning: string | null;
-}
 
 export interface UsageReader {
-  read(): Promise<UsageReaderResult>;
+  read(): Promise<AccountUsageSnapshot>;
 }
 
-const EMPTY_TOKENS: UsageAccounting = { input: 0, cachedInput: 0, cacheWriteInput: 0, output: 0, reasoning: 0, total: 0 };
-const ZAI_MODEL_PATTERN = /^glm(?:[-_.]|\b)/i;
-
-function zeroTokens(): UsageAccounting {
-  return { ...EMPTY_TOKENS };
+function finitePercent(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 }
 
-function addTokens(target: UsageAccounting, value: UsageAccounting): void {
-  target.input += value.input;
-  target.cachedInput += value.cachedInput;
-  target.cacheWriteInput += value.cacheWriteInput;
-  target.output += value.output;
-  target.reasoning += value.reasoning;
-  target.total += value.total;
+function positiveMinutes(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function nonNegativeInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+function epochSeconds(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function isoTime(value: Date): string {
-  return value.toISOString();
-}
-
-function recordModel(value: unknown): string | null {
-  return nonEmptyString(value) ? value : null;
-}
-
-function parseUsageTokens(value: unknown): UsageAccounting | null {
+function parseWindow(value: unknown): AccountUsageWindow | null {
   if (!value || typeof value !== 'object') return null;
-  const usage = value as Record<string, unknown>;
-  const input = nonNegativeInteger(usage.input_tokens);
-  const cachedInput = nonNegativeInteger(usage.cached_input_tokens);
-  const cacheWriteInput = nonNegativeInteger(usage.cache_write_input_tokens);
-  const output = nonNegativeInteger(usage.output_tokens);
-  const reasoning = nonNegativeInteger(usage.reasoning_output_tokens);
-  if (input === null || cachedInput === null || cacheWriteInput === null || output === null || reasoning === null) return null;
-  const recordedTotal = nonNegativeInteger(usage.total_tokens);
-  const computedTotal = input + output;
-  return {
-    input,
-    cachedInput,
-    cacheWriteInput,
-    output,
-    reasoning,
-    total: recordedTotal ?? computedTotal,
-  };
+  const raw = value as Record<string, unknown>;
+  const usedPercent = finitePercent(raw.used_percent);
+  const windowMinutes = positiveMinutes(raw.window_minutes);
+  if (usedPercent === null || windowMinutes === null) return null;
+  return { usedPercent, windowMinutes, resetsAt: epochSeconds(raw.resets_at) };
 }
 
-async function jsonlUsageRecord(line: string, sessionIdFallback: string): Promise<Omit<UsageRecord, 'sourceId' | 'provider'> | null> {
+function rateLimitsFromLine(line: string): { timestamp: string; windows: AccountUsageWindow[] } | null {
   try {
-    const value = JSON.parse(line) as unknown;
-    if (!value || typeof value !== 'object') return null;
-    const event = value as Record<string, unknown>;
-    const payloadValue = event.payload;
-    if (!payloadValue || typeof payloadValue !== 'object') return null;
-    const payload = payloadValue as Record<string, unknown>;
-    if (event.type === 'session_meta' && nonEmptyString(payload.id)) {
-      return null;
-    }
-    if (event.type !== 'token_usage_record') return null;
-    const tokens = parseUsageTokens(payload.usage);
-    if (!tokens) return null;
+    const parsed = JSON.parse(line) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const event = parsed as Record<string, unknown>;
+    if (event.type !== 'event_msg') return null;
+    const payload = event.payload;
+    if (!payload || typeof payload !== 'object') return null;
+    const message = payload as Record<string, unknown>;
+    if (message.type !== 'token_count') return null;
+    const rateLimits = message.rate_limits;
+    if (!rateLimits || typeof rateLimits !== 'object') return null;
+    const limits = rateLimits as Record<string, unknown>;
+    const windows = [parseWindow(limits.primary), parseWindow(limits.secondary)].filter((window): window is AccountUsageWindow => window !== null);
+    if (!windows.length) return null;
     const timestamp = typeof event.timestamp === 'string' && !Number.isNaN(Date.parse(event.timestamp))
       ? event.timestamp
-      : new Date().toISOString();
-    return {
-      sessionId: nonEmptyString(payload.session_id) || nonEmptyString(payload.thread_id) ? String(payload.session_id || payload.thread_id) : sessionIdFallback,
-      responseId: nonEmptyString(payload.response_id) ? payload.response_id : null,
-      timestamp,
-      model: 'unknown',
-      reasoning: null,
-      tokens,
-    };
+      : new Date(0).toISOString();
+    return { timestamp, windows };
   } catch {
     return null;
   }
 }
 
 export class CodexSessionUsageReader implements UsageReader {
-  private cache: { signature: string; cachedAt: number; result: UsageReaderResult } | null = null;
+  private cache: { cachedAt: number; snapshot: AccountUsageSnapshot } | null = null;
 
   constructor(
     private readonly codexHome = join(homedir(), '.codex'),
-    private readonly windowDays = 1,
+    private readonly lookbackDays = 8,
     private readonly cacheTtlMs = 10_000,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  private async usageFiles(windowStart: Date): Promise<Array<{ path: string; modifiedAt: Date }>> {
-    const roots = [join(this.codexHome, 'sessions'), join(this.codexHome, 'archived_sessions')];
+  private async usageFiles(cutoff: Date): Promise<Array<{ path: string; modifiedAt: Date }>> {
     const files: Array<{ path: string; modifiedAt: Date }> = [];
-    for (const root of roots) {
-      await this.collectFiles(root, windowStart, files, 0);
+    for (const root of [join(this.codexHome, 'sessions'), join(this.codexHome, 'archived_sessions')]) {
+      await this.collectFiles(root, cutoff, files, 0);
     }
-    return files.sort((left, right) => left.modifiedAt.getTime() - right.modifiedAt.getTime());
+    return files.sort((left, right) => right.modifiedAt.getTime() - left.modifiedAt.getTime());
   }
 
   private async collectFiles(
     directory: string,
-    windowStart: Date,
+    cutoff: Date,
     files: Array<{ path: string; modifiedAt: Date }>,
     depth: number,
   ): Promise<void> {
@@ -203,202 +101,72 @@ export class CodexSessionUsageReader implements UsageReader {
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) {
-        await this.collectFiles(path, windowStart, files, depth + 1);
+        await this.collectFiles(path, cutoff, files, depth + 1);
         continue;
       }
       if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
       try {
         const metadata = await stat(path);
-        if (metadata.mtime < windowStart) continue;
-        files.push({ path, modifiedAt: metadata.mtime });
+        if (metadata.mtime >= cutoff) files.push({ path, modifiedAt: metadata.mtime });
       } catch {
         continue;
       }
     }
   }
 
-  async read(): Promise<UsageReaderResult> {
-    const windowEnd = this.now();
-    const windowStart = new Date(windowEnd.getTime() - this.windowDays * 24 * 60 * 60 * 1000);
-    const files = await this.usageFiles(windowStart);
-    const signature = `${windowStart.toISOString()}|${files.map(file => `${file.path}:${file.modifiedAt.getTime()}`).join('|')}`;
-    if (this.cache && this.cache.signature === signature && windowEnd.getTime() - this.cache.cachedAt < this.cacheTtlMs) {
-      return this.cache.result;
-    }
-    const records: UsageRecord[] = [];
-    const seenResponses = new Set<string>();
+  async read(): Promise<AccountUsageSnapshot> {
+    const now = this.now();
+    if (this.cache && now.getTime() - this.cache.cachedAt < this.cacheTtlMs) return this.cache.snapshot;
+    const cutoff = new Date(now.getTime() - this.lookbackDays * 86_400_000);
+    const files = await this.usageFiles(cutoff);
+    let latestTimestamp = '';
+    let latestWindows: AccountUsageWindow[] = [];
+
     for (const file of files) {
-      let sessionId = 'unknown';
-      let model: string | null = null;
-      let reasoning: string | null = null;
       const stream = createReadStream(file.path, { encoding: 'utf8' });
       const lines = createInterface({ input: stream, crlfDelay: Infinity });
       try {
         for await (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const parsed = JSON.parse(line) as unknown;
-            if (parsed && typeof parsed === 'object') {
-              const event = parsed as Record<string, unknown>;
-              const payload = event.payload as Record<string, unknown> | undefined;
-              if (event.type === 'session_meta' && payload && nonEmptyString(payload.id)) sessionId = payload.id;
-              if (event.type === 'turn_context' && payload) {
-                model = recordModel(payload.model);
-                reasoning = recordModel(payload.effort);
-              }
-            }
-          } catch {
-            continue;
+          if (!line.includes('"rate_limits"')) continue;
+          const telemetry = rateLimitsFromLine(line);
+          if (telemetry && telemetry.timestamp > latestTimestamp) {
+            latestTimestamp = telemetry.timestamp;
+            latestWindows = telemetry.windows;
           }
-          if (!model) continue;
-          const partial = await jsonlUsageRecord(line, sessionId);
-          if (!partial) continue;
-          const sourceId: UsageRecord['sourceId'] = ZAI_MODEL_PATTERN.test(model) ? 'zai' : 'codex';
-          const responseKey = `${partial.sessionId}:${partial.responseId ?? file.path}:${partial.timestamp}`;
-          if (seenResponses.has(responseKey)) continue;
-          seenResponses.add(responseKey);
-          records.push({ ...partial, model, reasoning, sourceId, provider: sourceId });
         }
       } finally {
         lines.close();
         stream.destroy();
       }
     }
-    const result: UsageReaderResult = {
-      windowStart,
-      windowEnd,
-      telemetryPath: this.codexHome,
-      records,
-      warning: files.length ? null : 'No Codex JSONL session files changed in the selected window.',
+
+    const fiveHour = latestWindows.find(window => window.windowMinutes === 300) ?? null;
+    const weekly = latestWindows.find(window => window.windowMinutes === 10_080) ?? null;
+    const available = fiveHour !== null && weekly !== null;
+    const snapshot: AccountUsageSnapshot = {
+      available,
+      generatedAt: now.toISOString(),
+      fiveHour,
+      weekly,
+      reason: available
+        ? null
+        : files.length
+          ? 'Real account rate-limit telemetry is present, but both the 5-hour and weekly windows are not available.'
+          : 'No recent Codex account rate-limit telemetry is available.',
     };
-    this.cache = { signature, cachedAt: windowEnd.getTime(), result };
-    return result;
+    this.cache = { cachedAt: now.getTime(), snapshot };
+    return snapshot;
   }
-}
-
-function summarizeModels(records: readonly UsageRecord[]): UsageModelSummary[] {
-  const byModel = new Map<string, UsageModelSummary>();
-  for (const record of records) {
-    const existing = byModel.get(record.model) ?? {
-      provider: record.provider,
-      model: record.model,
-      requestCount: 0,
-      tokens: zeroTokens(),
-    };
-    existing.requestCount += 1;
-    addTokens(existing.tokens, record.tokens);
-    byModel.set(record.model, existing);
-  }
-  return [...byModel.values()].sort((left, right) => right.tokens.total - left.tokens.total || left.model.localeCompare(right.model));
-}
-
-function summarizeSessions(records: readonly UsageRecord[], limit?: number): UsageSessionSummary[] {
-  const bySession = new Map<string, UsageSessionSummary>();
-  for (const record of records) {
-    const existing = bySession.get(record.sessionId) ?? {
-      sessionId: record.sessionId,
-      provider: record.provider,
-      model: record.model,
-      requestCount: 0,
-      tokens: zeroTokens(),
-      lastActivityAt: record.timestamp,
-    };
-    existing.requestCount += 1;
-    addTokens(existing.tokens, record.tokens);
-    existing.lastActivityAt = existing.lastActivityAt > record.timestamp ? existing.lastActivityAt : record.timestamp;
-    if (record.provider === 'zai' || !ZAI_MODEL_PATTERN.test(existing.model)) existing.model = record.model;
-    bySession.set(record.sessionId, existing);
-  }
-  const summaries = [...bySession.values()].sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt));
-  return limit === undefined ? summaries : summaries.slice(0, limit);
-}
-
-function sourceSummary(
-  id: UsageRecord['sourceId'],
-  label: string,
-  records: readonly UsageRecord[],
-  telemetryPath: string,
-  warning: string | null,
-): UsageSourceSummary {
-  const tokens = zeroTokens();
-  for (const record of records) addTokens(tokens, record.tokens);
-  return {
-    id,
-    label,
-    telemetryAvailable: true,
-    telemetryPath,
-    requestCount: records.length,
-    tokens,
-    models: summarizeModels(records),
-    recentSessions: summarizeSessions(records, 10),
-    quotaBalance: {
-      available: false,
-      state: 'unsupported',
-      reason: id === 'zai'
-        ? 'Local telemetry reports usage only; Z.ai account quota/balance has no supported local source.'
-        : 'Codex local telemetry reports usage only; plan quota/balance is not available.',
-    },
-    warning: records.length ? warning : 'No matching requests recorded in the selected window.',
-  };
-}
-
-function currentJobUsage(records: readonly UsageRecord[], sessionIds: readonly string[]): CurrentJobUsage {
-  const wanted = new Set(sessionIds.filter(sessionId => sessionId && sessionId !== 'unknown'));
-  if (!wanted.size) {
-    return { available: false, reason: 'No durable task in this job has a recorded execution thread id.', requestCount: 0, tokens: zeroTokens(), sessions: [] };
-  }
-  const matched = records.filter(record => wanted.has(record.sessionId));
-  const tokens = zeroTokens();
-  for (const record of matched) addTokens(tokens, record.tokens);
-  return {
-    available: true,
-    reason: matched.length ? null : 'Recorded thread ids have no usage in the selected window.',
-    requestCount: matched.length,
-    tokens,
-    sessions: summarizeSessions(matched),
-  };
 }
 
 export class UsageRegistry {
-  constructor(
-    private readonly reader: UsageReader,
-    private readonly sources: ReadonlyArray<{ id: UsageRecord['sourceId']; label: string }>,
-  ) {}
+  constructor(private readonly reader: UsageReader) {}
 
-async snapshot(job?: Pick<Job, 'tasks'>, currentThreadIds: readonly string[] = []): Promise<UsageSnapshot> {
-    const telemetry = await this.reader.read();
-    const selected = currentThreadIds.length
-      ? currentThreadIds
-      : (job?.tasks ?? []).map(task => task.threadId).filter((threadId): threadId is string => Boolean(threadId));
-    const tokens = zeroTokens();
-    for (const record of telemetry.records) addTokens(tokens, record.tokens);
-    const sourceDetails = this.sources.map(source => sourceSummary(
-      source.id,
-      source.label,
-      telemetry.records.filter(record => record.sourceId === source.id),
-      telemetry.telemetryPath,
-      telemetry.warning,
-    ));
-    return {
-      generatedAt: isoTime(telemetry.windowEnd),
-      windowDays: Math.max(1, Math.round((telemetry.windowEnd.getTime() - telemetry.windowStart.getTime()) / 86_400_000)),
-      windowStart: isoTime(telemetry.windowStart),
-      windowEnd: isoTime(telemetry.windowEnd),
-      requestCount: telemetry.records.length,
-      tokens,
-      sources: sourceDetails,
-      currentJob: currentJobUsage(telemetry.records, selected),
-    };
+  async snapshot(): Promise<AccountUsageSnapshot> {
+    return this.reader.read();
   }
 }
 
-export function codexAndZaiUsageRegistry(
-  codexHome?: string,
-  windowDays = 1,
-): UsageRegistry {
-  const reader = new CodexSessionUsageReader(codexHome, windowDays);
-  return new UsageRegistry(reader, [
-    { id: 'codex', label: 'Codex local session telemetry' },
-    { id: 'zai', label: 'Z.ai runtime usage via recorded GLM models' },
-  ]);
+export function codexAndZaiUsageRegistry(codexHome?: string, _legacyWindowDays?: number): UsageRegistry {
+  return new UsageRegistry(new CodexSessionUsageReader(codexHome));
 }

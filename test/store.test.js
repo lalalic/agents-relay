@@ -122,6 +122,40 @@ test('legacy tasks join only one trusted job and are never guessed with multiple
   assert.deepEqual((await multipleMemory.load('one')).tasks, []);
 });
 
+test('job discovery is read-only and an explicit upsert pins the current PR', async () => {
+  const comments = [
+    githubComment(marker(JOB_MARKER, job('job-a')), 'bot', 10),
+    githubComment(marker(TASK_MARKER, task('job-a', 'alpha')), 'bot', 11)
+  ];
+  const github = githubWithComments(comments);
+  assert.deepEqual((await github.listJobs()).map(item => item.id), ['job-a']);
+  const requested = { ...job('pinned'), prNumber: 999, repository: 'someone/else', tasks: [] };
+  await github.upsertJobForCurrentPr(requested);
+  const jobs = await github.listJobs();
+  const pinned = jobs.find(item => item.id === 'pinned');
+  assert.equal(pinned?.prNumber, 1);
+  assert.equal(pinned?.repository, 'owner/repo');
+  assert.ok(comments.some(item => item.body.includes('"id":"pinned"')));
+});
+
+test('job discovery reads durable jobs across open PRs without writing', async () => {
+  const first = githubComment(marker(JOB_MARKER, { ...job('job-a'), prNumber: 1 }), 'bot', 21);
+  const second = githubComment(marker(JOB_MARKER, { ...job('job-b'), prNumber: 2 }), 'bot', 22);
+  const requests = [];
+  const client = {
+    request: async (path, init = {}) => {
+      requests.push([path, String(init.method ?? 'GET')]);
+      if (path.includes('/pulls?')) return [{ number: 1 }, { number: 2 }];
+      if (path.includes('/issues/1/comments')) return [first];
+      if (path.includes('/issues/2/comments')) return [second];
+      throw new Error('unexpected request: ' + path);
+    }
+  };
+  const store = new GitHubStore(client, 'owner/repo', 1, new Set(['bot']));
+  assert.deepEqual((await store.listJobs()).map(item => item.id).sort(), ['job-a', 'job-b']);
+  assert.equal(requests.every(([, method]) => method === 'GET'), true);
+});
+
 test('untrusted task markers are ignored and updates survive a fresh store', async () => {
   const durable = task('job-a', 'durable', 'SUCCEEDED');
   durable.result = { summary: 'durable' };
