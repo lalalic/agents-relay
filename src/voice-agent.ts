@@ -1,5 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { resolve } from 'node:path';
 
 export type VoiceAgentRequestState = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 
@@ -80,6 +82,56 @@ export function buildVoiceAgentUrl(baseUrl: string, secret: string, projects: re
   return url.toString();
 }
 
+function voiceAgentPrompt(input: VoiceAgentWorkerRequest): string {
+  const projectLine = input.project ? `Project: ${input.project}\n` : '';
+  const workspaceLine = input.workspaceRoot ? `Workspace root: ${input.workspaceRoot}\n` : '';
+  return 'You are the server-side orchestrator for a Voice request. Carry the request to completion instead of only explaining what to do. ' +
+    'Use the existing local tools, project instructions, skills, and Agents Relay CLI. For repository work, preserve the durable managed job/task workflow and follow the project AGENTS.md/bootstrap contracts. ' +
+    'Do not invent a second control-plane API when existing CLI/tools already provide the operation.\n\n' +
+    workspaceLine + projectLine + `Voice request:\n${input.request}`;
+}
+
+function codexSummary(output: string): { summary: string; conversationId?: string } {
+  let conversationId: string | undefined;
+  let summary = '';
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const value = JSON.parse(line) as Record<string, unknown>;
+      if (value.type === 'thread.started' && typeof value.thread_id === 'string') conversationId = value.thread_id;
+      const item = value.item as Record<string, unknown> | undefined;
+      if (value.type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') summary = item.text.trim();
+      const payload = value.payload as Record<string, unknown> | undefined;
+      if (value.type === 'event_msg' && payload?.type === 'task_complete' && typeof payload.last_agent_message === 'string') summary = payload.last_agent_message.trim();
+    } catch { /* ignore non-JSON output */ }
+  }
+  return { summary: summary || 'Voice Agent request completed', conversationId };
+}
+
+export class CodexVoiceAgentWorker implements VoiceAgentWorker {
+  constructor(private readonly command = 'codex') {}
+
+  async run(input: VoiceAgentWorkerRequest): Promise<VoiceAgentWorkerResult> {
+    if (!input.project || !input.workspaceRoot) throw new Error('Voice Agent worker requires project and workspace root');
+    const cwd = resolve(input.workspaceRoot, input.project);
+    const prompt = voiceAgentPrompt(input);
+    const args = input.conversationId
+      ? ['exec', 'resume', input.conversationId, prompt, '--json']
+      : ['exec', '--json', '-C', cwd, '--', prompt];
+    const output = await new Promise<string>((resolvePromise, reject) => {
+      const child = spawn(this.command, args, { cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', code => code === 0 ? resolvePromise(stdout) : reject(new Error((stderr || stdout || `Codex exited ${code}`).trim())));
+    });
+    const parsed = codexSummary(output);
+    return { summary: parsed.summary, conversationId: parsed.conversationId ?? input.conversationId };
+  }
+}
+
 export class MacBridgeVoiceAgentWorker implements VoiceAgentWorker {
   constructor(
     private readonly endpoint: string,
@@ -96,13 +148,7 @@ export class MacBridgeVoiceAgentWorker implements VoiceAgentWorker {
     url.pathname = '/experimental/chatgpt/conversation';
     url.search = '';
     url.hash = '';
-    const projectLine = input.project ? `Project: ${input.project}\n` : '';
-    const workspaceLine = input.workspaceRoot ? `Workspace root: ${input.workspaceRoot}\n` : '';
-    const prompt =
-      'You are the server-side orchestrator for a Voice request. Carry the request to completion instead of only explaining what to do. ' +
-      'Use the existing local tools, project instructions, skills, and Agents Relay CLI. For repository work, preserve the durable managed job/task workflow and follow the project AGENTS.md/bootstrap contracts. ' +
-      'Do not invent a second control-plane API when existing CLI/tools already provide the operation.\n\n' +
-      workspaceLine + projectLine + `Voice request:\n${input.request}`;
+    const prompt = voiceAgentPrompt(input);
     const body: Record<string, unknown> = {
       prompt,
       thinking_effort: this.thinkingEffort,

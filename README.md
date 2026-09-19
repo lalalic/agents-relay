@@ -98,7 +98,7 @@ For work that was completed outside the relay but must be represented truthfully
 
 ### Voice Agent Gateway
 
-`agents-relayd` can optionally expose a general Voice Agent gateway for clients that can reach public HTTPS but cannot use local MCP tools directly. Voice sends a natural-language request; the daemon accepts it immediately and delegates the work to a server-side ChatGPT/MacBridge agent that follows workspace/project instructions and uses the existing Agents Relay CLI and skills.
+`agents-relayd` can optionally expose a general Voice Agent gateway for clients that can reach public HTTPS but cannot use local MCP tools directly. Voice sends a natural-language request; the daemon accepts it immediately and delegates the work to a server-side agent worker that follows workspace/project instructions and uses the existing Agents Relay CLI and skills. The default worker is Codex CLI, so Voice does not depend on ChatGPT UI automation; `--voice-agent-worker chatgpt` remains available when MacBridge conversation automation is desired.
 
 The old action-specific `GET /voice/actions/v1/execute` endpoint and its `job.create` / `task.create` schemas are removed. Voice no longer needs to understand the Agents Relay control-plane contract.
 

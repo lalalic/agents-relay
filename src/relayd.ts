@@ -15,7 +15,7 @@ import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
-import { MacBridgeVoiceAgentWorker, VoiceAgentGateway } from './voice-agent.js';
+import { CodexVoiceAgentWorker, MacBridgeVoiceAgentWorker, VoiceAgentGateway } from './voice-agent.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
@@ -107,13 +107,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const voiceAgentProjects = new Set(value(argv,'--voice-agent-projects').split(',').map(item=>item.trim()).filter(Boolean));
   const macBridgeUrl = value(argv,'--macbridge-url') || process.env.AGENTS_RELAY_MACBRIDGE_URL || 'http://127.0.0.1:8788';
   const macBridgeTokenFile = value(argv,'--macbridge-token-file') || process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE || join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
+  const voiceAgentWorkerKind = value(argv,'--voice-agent-worker','codex');
+  const voiceAgentWorker = voiceAgentWorkerKind === 'chatgpt'
+    ? new MacBridgeVoiceAgentWorker(macBridgeUrl, macBridgeTokenFile, value(argv,'--voice-agent-thinking','high'), Number(value(argv,'--voice-agent-max-runtime','3600')))
+    : new CodexVoiceAgentWorker(value(argv,'--codex','codex'));
   const voiceAgentGateway = voiceAgentSecret && voiceAgentProjects.size > 0
-    ? new VoiceAgentGateway(
-        new MacBridgeVoiceAgentWorker(macBridgeUrl, macBridgeTokenFile, value(argv,'--voice-agent-thinking','high'), Number(value(argv,'--voice-agent-max-runtime','3600'))),
-        voiceAgentSecret,
-        normalized.workspaceRoot ?? defaultWorkspaceRoot(),
-        voiceAgentProjects,
-      )
+    ? new VoiceAgentGateway(voiceAgentWorker, voiceAgentSecret, normalized.workspaceRoot ?? defaultWorkspaceRoot(), voiceAgentProjects)
     : undefined;
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob,voiceAgentGateway);
   await once(server,'listening');
