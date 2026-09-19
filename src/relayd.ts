@@ -35,7 +35,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback.id,undefined,overviews,webhook);
   await once(server,'listening');
   const interval=setInterval(()=>void pool.reconcile(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
-  const stopWatch = bus ? await bus.subscribe('*',async e=>{if(e.type==='job.wake'||e.type==='github.webhook')await pool.reconcile();}) : async()=>{};
+  const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   console.log('Dashboard listening; repository worker pool active'); void pool.reconcile();
 }
