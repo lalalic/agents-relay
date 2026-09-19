@@ -1,12 +1,20 @@
 # Running the service
 
-`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. It listens on `127.0.0.1:8787` by default, performs a full durable PR/job reconciliation sweep every hour, and refreshes GitHub-backed dashboard state every 5 minutes to remain rate-limit safe. NATS and GitHub webhooks remain optional low-latency wakeups; the hourly sweep re-reads durable GitHub state so missed wakeups can still recover.
+`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. With no `--pr`/`--id`, it discovers Git repositories under `~/Workspace` (or `--workspace PATH`), maps GitHub `origin` remotes to repositories, and watches all discovered repositories together. It listens on `127.0.0.1:8787` by default, performs a full durable PR/job reconciliation sweep every hour, and refreshes GitHub-backed dashboard state every 5 minutes to remain rate-limit safe. NATS and GitHub webhooks remain optional low-latency wakeups; the hourly sweep re-reads durable GitHub state so missed wakeups can still recover.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
 ```sh
 npx agents-relayd --repo OWNER/REPO
 ```
+
+Workspace mode (the default):
+
+```sh
+npx agents-relayd --workspace ~/Workspace
+```
+
+Use `--repo OWNER/REPO` to retain the single-repository worker pool. Legacy single-job daemon mode remains available with `--repo OWNER/REPO --pr NUMBER --id JOB_ID`.
 
 Use service overrides as needed:
 
