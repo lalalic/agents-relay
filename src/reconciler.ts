@@ -74,6 +74,8 @@ export class Reconciler {
     const controller = new AbortController(); let execution: Execution;
     const workerTask = { ...task, input: managedWorkerInput(job, task) };
     try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
+    // A worker may reject before durable execution metadata finishes saving. Attach a guard immediately so Node never treats that race as an unhandled rejection; the durable completion handler below still records the outcome.
+    void execution.promise.catch(() => undefined);
     task.executionId = execution.id; await this.store.saveTask(task);
     let threadPersistence = Promise.resolve();
     const persistThread = (threadId: string): void => {
