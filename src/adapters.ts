@@ -19,6 +19,20 @@ export function buildCodexArgs(route: Pick<RoutingDecision, 'provider' | 'model'
   return args;
 }
 function parseThreadStarted(line: string): string | undefined { try { const value = JSON.parse(line) as Record<string, unknown>; return value.type === 'thread.started' && typeof value.thread_id === 'string' ? value.thread_id : undefined; } catch { return undefined; } }
+function parseCodexAssistantMessage(line: string): string | undefined {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    const payload = value.payload as Record<string, unknown> | undefined;
+    if (value.type === 'event_msg' && payload?.type === 'task_complete' && typeof payload.last_agent_message === 'string') return payload.last_agent_message.trim() || undefined;
+    const item = value.item as Record<string, unknown> | undefined;
+    if (value.type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') return item.text.trim() || undefined;
+  } catch { /* non-JSON diagnostic output is ignored on successful Codex runs */ }
+  return undefined;
+}
+function appendTail(current: string, chunk: string, maxBytes = 16384): string {
+  const combined = current + chunk;
+  return Buffer.byteLength(combined) <= maxBytes ? combined : Buffer.from(combined).subarray(-maxBytes).toString('utf8');
+}
 export class ShellAdapter implements WorkerAdapter {
   readonly name = 'shell' as const; readonly id = 'shell'; readonly capabilities = ['shell', 'command'] as const;
   constructor(private readonly shell = false) {}
@@ -27,7 +41,46 @@ export class ShellAdapter implements WorkerAdapter {
 export class CodexAdapter implements WorkerAdapter {
   readonly name = 'codex' as const; readonly id = 'codex'; readonly capabilities = ['model', 'codex'] as const;
   constructor(private readonly command = 'codex', private readonly sessionsRoot = join(homedir(), '.codex', 'sessions')) {}
-  launch(task: Task, signal: AbortSignal): Execution { if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`); const route = task.routing; const args = buildCodexArgs(route, task.input); const child = spawn(this.command, args, { shell: false, cwd: route.cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let output = ''; let bufferedThreadId: string | undefined; let execution: Execution; child.stdout?.on('data', (x: Buffer) => { const text = x.toString(); output += text; for (const line of text.split(/\r?\n/)) { const threadId = parseThreadStarted(line); if (threadId) { bufferedThreadId = threadId; if (execution) { execution.threadId = threadId; execution.onThreadStarted?.(threadId); } } } }); child.stderr?.on('data', (x: Buffer) => { output += x.toString(); }); execution = commandExecution(child, () => output, signal, randomUUID()); execution.threadId = bufferedThreadId; return execution; }
+  launch(task: Task, signal: AbortSignal): Execution {
+    if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
+    const route = task.routing;
+    const args = buildCodexArgs(route, task.input);
+    const child = spawn(this.command, args, { shell: false, cwd: route.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdoutBuffer = '';
+    let finalAssistantMessage = '';
+    let stderrTail = '';
+    let bufferedThreadId: string | undefined;
+    let execution: Execution;
+    const consumeLine = (line: string): void => {
+      const threadId = parseThreadStarted(line);
+      if (threadId) {
+        bufferedThreadId = threadId;
+        if (execution) { execution.threadId = threadId; execution.onThreadStarted?.(threadId); }
+      }
+      const assistantMessage = parseCodexAssistantMessage(line);
+      if (assistantMessage) finalAssistantMessage = assistantMessage;
+    };
+    child.stdout?.on('data', (x: Buffer) => {
+      stdoutBuffer += x.toString();
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) consumeLine(line);
+    });
+    child.stderr?.on('data', (x: Buffer) => { stderrTail = appendTail(stderrTail, x.toString()); });
+    const id = randomUUID();
+    const promise = new Promise<Result>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', code => {
+        if (stdoutBuffer) consumeLine(stdoutBuffer);
+        if (code === 0) resolve({ summary: finalAssistantMessage || 'Codex task completed' });
+        else reject(new Error(stderrTail.trim() || `Codex exited ${code}`));
+      });
+      signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+    });
+    execution = { id, promise, cancel: () => { child.kill('SIGTERM'); } };
+    execution.threadId = bufferedThreadId;
+    return execution;
+  }
   async recover(task: Task): Promise<Result | null> {
     if (!task.threadId) return null;
     let entries: string[];

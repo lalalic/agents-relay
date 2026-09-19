@@ -67,6 +67,54 @@ test('CodexAdapter buffers a thread id emitted before callback attachment', asyn
   }
 });
 
+test('CodexAdapter persists only the final assistant message from large JSON output', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-summary-'));
+  try {
+    const command = join(root, 'codex');
+    const noise = 'x'.repeat(70000);
+    const final = 'concise final result';
+    await writeFile(command, [
+      '#!/bin/sh',
+      `printf '%s\\n' '${JSON.stringify({ type: 'thread.started', thread_id: 'summary-thread' })}'`,
+      `printf '%s\\n' '${JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', text: noise } })}'`,
+      `printf '%s\\n' '${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: final } })}'`,
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const adapter = new CodexAdapter(command);
+    const result = await adapter.launch({
+      id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm-5.3-flash' },
+    }, new AbortController().signal).promise;
+    assert.equal(result.summary, final);
+    assert.ok(Buffer.byteLength(result.summary) < 1024);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CodexAdapter bounds stderr retained for failed executions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-error-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, [
+      '#!/bin/sh',
+      "python3 - <<'PY' >&2",
+      "print('e' * 70000)",
+      'PY',
+      'exit 1',
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const adapter = new CodexAdapter(command);
+    await assert.rejects(adapter.launch({
+      id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm-5.3-flash' },
+    }, new AbortController().signal).promise, error => {
+      assert.ok(Buffer.byteLength(error.message) <= 16384);
+      return true;
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('ChatGptAdapter treats configured MacBridge URL as an origin', async () => {
   let requestedUrl = '';
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-origin-'));
