@@ -1,0 +1,3483 @@
+{
+  "summary": {
+    "model": "openai/gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "requests_attempted": 104,
+    "requests_succeeded": 104,
+    "exact_match": 0.9711538461538461,
+    "false_positive_loads": 0,
+    "missed_required_skills": 3,
+    "latency_ms": {
+      "p50": 1586.6709580000002,
+      "p95": 3038.8169169000003,
+      "mean": 1787.727483173077
+    },
+    "usage": {
+      "prompt_tokens": 55658,
+      "completion_tokens": 5716,
+      "total_tokens": 61374,
+      "reported_cost_usd": 0.16847600000000007
+    },
+    "by_candidate_set_size": {
+      "4": {
+        "n": 26,
+        "exact_match": 1.0,
+        "false_positive_loads": 0,
+        "missed_required_skills": 0
+      },
+      "8": {
+        "n": 26,
+        "exact_match": 1.0,
+        "false_positive_loads": 0,
+        "missed_required_skills": 0
+      },
+      "16": {
+        "n": 26,
+        "exact_match": 0.9230769230769231,
+        "false_positive_loads": 0,
+        "missed_required_skills": 2
+      },
+      "24": {
+        "n": 26,
+        "exact_match": 0.9615384615384616,
+        "false_positive_loads": 0,
+        "missed_required_skills": 1
+      }
+    },
+    "failed_calls": 0
+  },
+  "results": [
+    {
+      "fixture_id": "historical-browser-session",
+      "expected": "browser-harness",
+      "predicted": "browser-harness",
+      "confidence": 0.99,
+      "rationale": "The task requires interacting with the logged-in Cloudflare dashboard in the user's real Chrome session, including navigating and clicking through a web page.",
+      "candidate_set_size": 4,
+      "latency_ms": 1401.5789159999993,
+      "usage": {
+        "prompt_tokens": 243,
+        "completion_tokens": 52,
+        "total_tokens": 295,
+        "cost": 0.001006,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001006,
+          "upstream_inference_prompt_cost": 0.000486,
+          "upstream_inference_completions_cost": 0.00052
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-browser-session",
+      "expected": "browser-harness",
+      "predicted": "browser-harness",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires interacting with a website through the user's real, logged-in Chrome session and clicking through a dashboard page.",
+      "candidate_set_size": 8,
+      "latency_ms": 1571.171249999999,
+      "usage": {
+        "prompt_tokens": 388,
+        "completion_tokens": 49,
+        "total_tokens": 437,
+        "cost": 0.001266,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001266,
+          "upstream_inference_prompt_cost": 0.000776,
+          "upstream_inference_completions_cost": 0.00049
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-browser-session",
+      "expected": "browser-harness",
+      "predicted": "browser-harness",
+      "confidence": 0.99,
+      "rationale": "The task requires interacting with the logged-in Cloudflare dashboard in the user's real Chrome session, including navigating and clicking through a web app.",
+      "candidate_set_size": 16,
+      "latency_ms": 1581.5001250000007,
+      "usage": {
+        "prompt_tokens": 666,
+        "completion_tokens": 52,
+        "total_tokens": 718,
+        "cost": 0.001852,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001852,
+          "upstream_inference_prompt_cost": 0.001332,
+          "upstream_inference_completions_cost": 0.00052
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-browser-session",
+      "expected": "browser-harness",
+      "predicted": "browser-harness",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires operating the user's real, logged-in Chrome session and clicking through a web dashboard.",
+      "candidate_set_size": 24,
+      "latency_ms": 1556.7257090000003,
+      "usage": {
+        "prompt_tokens": 904,
+        "completion_tokens": 45,
+        "total_tokens": 949,
+        "cost": 0.002258,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002258,
+          "upstream_inference_prompt_cost": 0.001808,
+          "upstream_inference_completions_cost": 0.00045
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-managed-pr",
+      "expected": "xchat-orchestrator",
+      "predicted": "xchat-orchestrator",
+      "confidence": 0.94,
+      "rationale": "The task\u2019s primary requirement is an end-to-end managed GitHub PR workflow through implementation, validation, and review. Durable child work and observability are supporting concerns within that repository lifecycle.",
+      "candidate_set_size": 4,
+      "latency_ms": 3894.1472080000003,
+      "usage": {
+        "prompt_tokens": 251,
+        "completion_tokens": 254,
+        "total_tokens": 505,
+        "cost": 0.003042,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.003042,
+          "upstream_inference_prompt_cost": 0.000502,
+          "upstream_inference_completions_cost": 0.00254
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 188,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-managed-pr",
+      "expected": "xchat-orchestrator",
+      "predicted": "xchat-orchestrator",
+      "confidence": 0.98,
+      "rationale": "The task explicitly requires repository work managed through a GitHub pull request, with delegated child work, observability, and review lifecycle handling\u2014the core purpose of xchat-orchestrator.",
+      "candidate_set_size": 8,
+      "latency_ms": 2969.269208,
+      "usage": {
+        "prompt_tokens": 389,
+        "completion_tokens": 118,
+        "total_tokens": 507,
+        "cost": 0.001958,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001958,
+          "upstream_inference_prompt_cost": 0.000778,
+          "upstream_inference_completions_cost": 0.00118
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 53,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-managed-pr",
+      "expected": "xchat-orchestrator",
+      "predicted": "agents-relay",
+      "confidence": 0.97,
+      "rationale": "The task explicitly requires a managed PR, durable child tasks, and observable progress through review\u2014all core capabilities of agents-relay\u2019s asynchronous GitHub PR job orchestration, continuations, retries, and live progress events.",
+      "candidate_set_size": 16,
+      "latency_ms": 3476.280334,
+      "usage": {
+        "prompt_tokens": 668,
+        "completion_tokens": 134,
+        "total_tokens": 802,
+        "cost": 0.002676,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002676,
+          "upstream_inference_prompt_cost": 0.001336,
+          "upstream_inference_completions_cost": 0.00134
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 64,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-managed-pr",
+      "expected": "xchat-orchestrator",
+      "predicted": "agents-relay",
+      "confidence": 0.98,
+      "rationale": "The task explicitly requires a managed PR, durable asynchronous child tasks, and observable progress through review, which directly matches agents-relay\u2019s GitHub PR state, worker continuations/retries, and live progress events.",
+      "candidate_set_size": 24,
+      "latency_ms": 3051.0900420000003,
+      "usage": {
+        "prompt_tokens": 907,
+        "completion_tokens": 119,
+        "total_tokens": 1026,
+        "cost": 0.003004,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.003004,
+          "upstream_inference_prompt_cost": 0.001814,
+          "upstream_inference_completions_cost": 0.00119
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 50,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-markcut",
+      "expected": "markcut",
+      "predicted": "markcut",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires editing clips into a video using a Markdown storyboard, previews, and a final render, which directly matches Markcut's capabilities.",
+      "candidate_set_size": 4,
+      "latency_ms": 1964.7092499999985,
+      "usage": {
+        "prompt_tokens": 230,
+        "completion_tokens": 53,
+        "total_tokens": 283,
+        "cost": 0.00099,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00099,
+          "upstream_inference_prompt_cost": 0.00046,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-markcut",
+      "expected": "markcut",
+      "predicted": "markcut",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires editing clips into a video using a Markdown storyboard, previews, and a final render, which directly matches Markcut's core workflow.",
+      "candidate_set_size": 8,
+      "latency_ms": 1626.5610000000006,
+      "usage": {
+        "prompt_tokens": 359,
+        "completion_tokens": 54,
+        "total_tokens": 413,
+        "cost": 0.001258,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001258,
+          "upstream_inference_prompt_cost": 0.000718,
+          "upstream_inference_completions_cost": 0.00054
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-markcut",
+      "expected": "markcut",
+      "predicted": "markcut",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires editing clips into a video through a Markdown storyboard, previews, and a final render, which directly matches Markcut's workflow.",
+      "candidate_set_size": 16,
+      "latency_ms": 1587.8339579999993,
+      "usage": {
+        "prompt_tokens": 610,
+        "completion_tokens": 53,
+        "total_tokens": 663,
+        "cost": 0.00175,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00175,
+          "upstream_inference_prompt_cost": 0.00122,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-markcut",
+      "expected": "markcut",
+      "predicted": "markcut",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires editing clips via a Markdown storyboard, generating previews, and producing a final render, which directly matches Markcut.",
+      "candidate_set_size": 24,
+      "latency_ms": 1659.9466249999998,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 50,
+        "total_tokens": 955,
+        "cost": 0.00231,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00231,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-mermaid",
+      "expected": "design-doc-mermaid",
+      "predicted": "design-doc-mermaid",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requests a Mermaid topology diagram, so the Mermaid architecture-diagram skill is the most directly required.",
+      "candidate_set_size": 4,
+      "latency_ms": 3881.3998329999995,
+      "usage": {
+        "prompt_tokens": 231,
+        "completion_tokens": 93,
+        "total_tokens": 324,
+        "cost": 0.001392,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001392,
+          "upstream_inference_prompt_cost": 0.000462,
+          "upstream_inference_completions_cost": 0.00093
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 43,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-mermaid",
+      "expected": "design-doc-mermaid",
+      "predicted": "design-doc-mermaid",
+      "confidence": 0.98,
+      "rationale": "The task explicitly requests a Mermaid topology diagram; this skill is specialized for creating Mermaid architecture and deployment diagrams from a described system.",
+      "candidate_set_size": 8,
+      "latency_ms": 3334.9955419999997,
+      "usage": {
+        "prompt_tokens": 360,
+        "completion_tokens": 87,
+        "total_tokens": 447,
+        "cost": 0.00159,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00159,
+          "upstream_inference_prompt_cost": 0.00072,
+          "upstream_inference_completions_cost": 0.00087
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 34,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-mermaid",
+      "expected": "design-doc-mermaid",
+      "predicted": "family-tutor",
+      "confidence": 0.96,
+      "rationale": "The task specifically targets the family-tutor architecture: tutor orchestrator, parent controls, worker, and Discord channels. That domain-specific topology is more materially relevant than the generic Mermaid diagram skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 5077.076374999999,
+      "usage": {
+        "prompt_tokens": 655,
+        "completion_tokens": 208,
+        "total_tokens": 863,
+        "cost": 0.00339,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00339,
+          "upstream_inference_prompt_cost": 0.00131,
+          "upstream_inference_completions_cost": 0.00208
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 143,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-mermaid",
+      "expected": "design-doc-mermaid",
+      "predicted": "design-doc-mermaid",
+      "confidence": 0.98,
+      "rationale": "The task specifically asks for a Mermaid topology diagram, which directly matches this skill\u2019s architecture and deployment diagram capabilities.",
+      "candidate_set_size": 24,
+      "latency_ms": 2743.249083,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 79,
+        "total_tokens": 984,
+        "cost": 0.0026,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.0026,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00079
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 29,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-neox-media",
+      "expected": "neox-phone-mcp",
+      "predicted": "neox-phone-mcp",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires accessing the user's iPhone through Neox to locate the latest video and transfer its original file to the Mac.",
+      "candidate_set_size": 4,
+      "latency_ms": 1454.8233340000004,
+      "usage": {
+        "prompt_tokens": 242,
+        "completion_tokens": 53,
+        "total_tokens": 295,
+        "cost": 0.001014,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001014,
+          "upstream_inference_prompt_cost": 0.000484,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-neox-media",
+      "expected": "neox-phone-mcp",
+      "predicted": "neox-phone-mcp",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires using Neox to locate the latest iPhone video and transfer its original file to the Mac.",
+      "candidate_set_size": 8,
+      "latency_ms": 1384.1249590000002,
+      "usage": {
+        "prompt_tokens": 380,
+        "completion_tokens": 50,
+        "total_tokens": 430,
+        "cost": 0.00126,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00126,
+          "upstream_inference_prompt_cost": 0.00076,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-neox-media",
+      "expected": "neox-phone-mcp",
+      "predicted": "neox-phone-mcp",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires using Neox to locate the latest iPhone video and transfer its original file to the Mac, which is the core capability of the Neox phone MCP skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1576.637333,
+      "usage": {
+        "prompt_tokens": 631,
+        "completion_tokens": 63,
+        "total_tokens": 694,
+        "cost": 0.001892,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001892,
+          "upstream_inference_prompt_cost": 0.001262,
+          "upstream_inference_completions_cost": 0.00063
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-neox-media",
+      "expected": "neox-phone-mcp",
+      "predicted": "neox-phone-mcp",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires accessing the iPhone through Neox, identifying the latest video, and transferring its original media file to the Mac.",
+      "candidate_set_size": 24,
+      "latency_ms": 2187.412833,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 54,
+        "total_tokens": 959,
+        "cost": 0.00235,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00235,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00054
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-notebooklm",
+      "expected": "notebooklm",
+      "predicted": "notebooklm",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires using NotebookLM to research sources and generate a grounded artifact from the notebook.",
+      "candidate_set_size": 4,
+      "latency_ms": 1416.899,
+      "usage": {
+        "prompt_tokens": 231,
+        "completion_tokens": 44,
+        "total_tokens": 275,
+        "cost": 0.000902,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000902,
+          "upstream_inference_prompt_cost": 0.000462,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-notebooklm",
+      "expected": "notebooklm",
+      "predicted": "notebooklm",
+      "confidence": 1,
+      "rationale": "The task explicitly requires using NotebookLM to research provided sources and generate a grounded artifact from the notebook.",
+      "candidate_set_size": 8,
+      "latency_ms": 1486.4433750000003,
+      "usage": {
+        "prompt_tokens": 350,
+        "completion_tokens": 43,
+        "total_tokens": 393,
+        "cost": 0.00113,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00113,
+          "upstream_inference_prompt_cost": 0.0007,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-notebooklm",
+      "expected": "notebooklm",
+      "predicted": "notebooklm",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires operating NotebookLM to research provided sources and generate a grounded notebook artifact.",
+      "candidate_set_size": 16,
+      "latency_ms": 1536.3585829999997,
+      "usage": {
+        "prompt_tokens": 618,
+        "completion_tokens": 43,
+        "total_tokens": 661,
+        "cost": 0.001666,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001666,
+          "upstream_inference_prompt_cost": 0.001236,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-notebooklm",
+      "expected": "notebooklm",
+      "predicted": "notebooklm",
+      "confidence": 1,
+      "rationale": "The task explicitly requires operating NotebookLM to research provided sources and generate a grounded notebook artifact.",
+      "candidate_set_size": 24,
+      "latency_ms": 2619.7805000000003,
+      "usage": {
+        "prompt_tokens": 901,
+        "completion_tokens": 41,
+        "total_tokens": 942,
+        "cost": 0.002212,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002212,
+          "upstream_inference_prompt_cost": 0.001802,
+          "upstream_inference_completions_cost": 0.00041
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-phone-control",
+      "expected": "phone-harness",
+      "predicted": "phone-harness",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires controlling an iPhone via iPhone Mirroring, tapping a UI control, and verifying the resulting screen.",
+      "candidate_set_size": 4,
+      "latency_ms": 1444.458792,
+      "usage": {
+        "prompt_tokens": 243,
+        "completion_tokens": 50,
+        "total_tokens": 293,
+        "cost": 0.000986,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000986,
+          "upstream_inference_prompt_cost": 0.000486,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-phone-control",
+      "expected": "phone-harness",
+      "predicted": "phone-harness",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires controlling an iPhone through iPhone Mirroring, tapping a UI control, and reading the resulting screen.",
+      "candidate_set_size": 8,
+      "latency_ms": 1822.5278330000006,
+      "usage": {
+        "prompt_tokens": 362,
+        "completion_tokens": 50,
+        "total_tokens": 412,
+        "cost": 0.001224,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001224,
+          "upstream_inference_prompt_cost": 0.000724,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-phone-control",
+      "expected": "phone-harness",
+      "predicted": "phone-harness",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires controlling an iPhone through iPhone Mirroring, tapping a UI control, and reading the resulting screen.",
+      "candidate_set_size": 16,
+      "latency_ms": 1321.0221249999997,
+      "usage": {
+        "prompt_tokens": 628,
+        "completion_tokens": 50,
+        "total_tokens": 678,
+        "cost": 0.001756,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001756,
+          "upstream_inference_prompt_cost": 0.001256,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-phone-control",
+      "expected": "phone-harness",
+      "predicted": "phone-harness",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires controlling an iPhone via iPhone Mirroring, tapping a UI control, and reading the resulting screen.",
+      "candidate_set_size": 24,
+      "latency_ms": 2178.3443340000013,
+      "usage": {
+        "prompt_tokens": 908,
+        "completion_tokens": 50,
+        "total_tokens": 958,
+        "cost": 0.002316,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002316,
+          "upstream_inference_prompt_cost": 0.001816,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-pm2",
+      "expected": "daemon-service-manage",
+      "predicted": "daemon-service-manage",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting PM2 service status and logs, restarting the service, and verifying it remains online.",
+      "candidate_set_size": 4,
+      "latency_ms": 1365.555208,
+      "usage": {
+        "prompt_tokens": 234,
+        "completion_tokens": 48,
+        "total_tokens": 282,
+        "cost": 0.000948,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000948,
+          "upstream_inference_prompt_cost": 0.000468,
+          "upstream_inference_completions_cost": 0.00048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-pm2",
+      "expected": "daemon-service-manage",
+      "predicted": "daemon-service-manage",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting logs, restarting, and verifying the status of a PM2-managed persistent service.",
+      "candidate_set_size": 8,
+      "latency_ms": 1974.440083000001,
+      "usage": {
+        "prompt_tokens": 356,
+        "completion_tokens": 47,
+        "total_tokens": 403,
+        "cost": 0.001182,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001182,
+          "upstream_inference_prompt_cost": 0.000712,
+          "upstream_inference_completions_cost": 0.00047
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-pm2",
+      "expected": "daemon-service-manage",
+      "predicted": "daemon-service-manage",
+      "confidence": 1,
+      "rationale": "The task explicitly requires inspecting PM2 service status and logs, restarting the service, and verifying that it remains online.",
+      "candidate_set_size": 16,
+      "latency_ms": 1431.9330409999989,
+      "usage": {
+        "prompt_tokens": 630,
+        "completion_tokens": 47,
+        "total_tokens": 677,
+        "cost": 0.00173,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00173,
+          "upstream_inference_prompt_cost": 0.00126,
+          "upstream_inference_completions_cost": 0.00047
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-pm2",
+      "expected": "daemon-service-manage",
+      "predicted": "daemon-service-manage",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting a PM2-managed service, reviewing its logs, restarting it, and verifying that it stays online.",
+      "candidate_set_size": 24,
+      "latency_ms": 1474.117916,
+      "usage": {
+        "prompt_tokens": 908,
+        "completion_tokens": 51,
+        "total_tokens": 959,
+        "cost": 0.002326,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002326,
+          "upstream_inference_prompt_cost": 0.001816,
+          "upstream_inference_completions_cost": 0.00051
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-progress-events",
+      "expected": "events-bus",
+      "predicted": "events-bus",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing progress events and exposing meaningful async worker milestones, which directly matches the events-bus skill.",
+      "candidate_set_size": 4,
+      "latency_ms": 2182.7562080000002,
+      "usage": {
+        "prompt_tokens": 223,
+        "completion_tokens": 48,
+        "total_tokens": 271,
+        "cost": 0.000926,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000926,
+          "upstream_inference_prompt_cost": 0.000446,
+          "upstream_inference_completions_cost": 0.00048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-progress-events",
+      "expected": "events-bus",
+      "predicted": "events-bus",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing progress events for an asynchronous worker so each meaningful milestone remains observable while it runs.",
+      "candidate_set_size": 8,
+      "latency_ms": 1291.055333,
+      "usage": {
+        "prompt_tokens": 344,
+        "completion_tokens": 46,
+        "total_tokens": 390,
+        "cost": 0.001148,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001148,
+          "upstream_inference_prompt_cost": 0.000688,
+          "upstream_inference_completions_cost": 0.00046
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-progress-events",
+      "expected": "events-bus",
+      "predicted": "events-bus",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing progress events and surfacing meaningful milestones from an asynchronous worker, which is the core purpose of the events-bus skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1581.8961250000002,
+      "usage": {
+        "prompt_tokens": 638,
+        "completion_tokens": 54,
+        "total_tokens": 692,
+        "cost": 0.001816,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001816,
+          "upstream_inference_prompt_cost": 0.001276,
+          "upstream_inference_completions_cost": 0.00054
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-progress-events",
+      "expected": "events-bus",
+      "predicted": "events-bus",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires publishing live progress events that expose meaningful milestones from an otherwise opaque asynchronous worker.",
+      "candidate_set_size": 24,
+      "latency_ms": 1441.602,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 44,
+        "total_tokens": 949,
+        "cost": 0.00225,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00225,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-relay-task",
+      "expected": "agents-relay",
+      "predicted": "agents-relay",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires creating a durable Agents Relay child task under an existing PR job and configuring retries to persist across daemon restarts, which directly matches durable jobs, continuations, and retries through GitHub PR state.",
+      "candidate_set_size": 4,
+      "latency_ms": 1701.6556250000003,
+      "usage": {
+        "prompt_tokens": 250,
+        "completion_tokens": 68,
+        "total_tokens": 318,
+        "cost": 0.00118,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00118,
+          "upstream_inference_prompt_cost": 0.0005,
+          "upstream_inference_completions_cost": 0.00068
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-relay-task",
+      "expected": "agents-relay",
+      "predicted": "agents-relay",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires creating a durable child task under an existing PR-backed Agents Relay job and configuring retries to persist across daemon restarts, which directly matches this skill\u2019s job hierarchy, continuation, and durable retry capabilities.",
+      "candidate_set_size": 8,
+      "latency_ms": 1505.979667,
+      "usage": {
+        "prompt_tokens": 379,
+        "completion_tokens": 68,
+        "total_tokens": 447,
+        "cost": 0.001438,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001438,
+          "upstream_inference_prompt_cost": 0.000758,
+          "upstream_inference_completions_cost": 0.00068
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-relay-task",
+      "expected": "agents-relay",
+      "predicted": "agents-relay",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires creating a durable child task under an existing PR job and configuring retries to persist across daemon restarts, which are core Agents Relay capabilities.",
+      "candidate_set_size": 16,
+      "latency_ms": 1813.4697920000003,
+      "usage": {
+        "prompt_tokens": 617,
+        "completion_tokens": 56,
+        "total_tokens": 673,
+        "cost": 0.001794,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001794,
+          "upstream_inference_prompt_cost": 0.001234,
+          "upstream_inference_completions_cost": 0.00056
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-relay-task",
+      "expected": "agents-relay",
+      "predicted": "agents-relay",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires creating a durable child task under an existing PR job and configuring retries to persist across daemon restarts, which directly matches Agents Relay's job hierarchy, continuations, retry, and durability capabilities.",
+      "candidate_set_size": 24,
+      "latency_ms": 1690.330125,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 67,
+        "total_tokens": 972,
+        "cost": 0.00248,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00248,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00067
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-skill-refactor",
+      "expected": "skill-builder",
+      "predicted": "skill-builder",
+      "confidence": 0.99,
+      "rationale": "The task explicitly asks to review and restructure an agent skill, rebuild its capability tree, tighten instructions, and add capability-focused evaluations, which directly matches the skill-builder specialization.",
+      "candidate_set_size": 4,
+      "latency_ms": 1672.6556660000008,
+      "usage": {
+        "prompt_tokens": 221,
+        "completion_tokens": 58,
+        "total_tokens": 279,
+        "cost": 0.001022,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001022,
+          "upstream_inference_prompt_cost": 0.000442,
+          "upstream_inference_completions_cost": 0.00058
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-skill-refactor",
+      "expected": "skill-builder",
+      "predicted": "skill-builder",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires reviewing and restructuring an agent skill, tightening its instructions, rebuilding its capability tree, and adding capability-focused evaluations\u2014all core functions of skill-builder.",
+      "candidate_set_size": 8,
+      "latency_ms": 2214.8063340000003,
+      "usage": {
+        "prompt_tokens": 352,
+        "completion_tokens": 56,
+        "total_tokens": 408,
+        "cost": 0.001264,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001264,
+          "upstream_inference_prompt_cost": 0.000704,
+          "upstream_inference_completions_cost": 0.00056
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-skill-refactor",
+      "expected": "skill-builder",
+      "predicted": "skill-builder",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires reviewing an agent skill, rebuilding its capability tree, tightening its instructions, and adding capability-focused evaluations\u2014all core functions of skill-builder.",
+      "candidate_set_size": 16,
+      "latency_ms": 1405.4092919999998,
+      "usage": {
+        "prompt_tokens": 629,
+        "completion_tokens": 54,
+        "total_tokens": 683,
+        "cost": 0.001798,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001798,
+          "upstream_inference_prompt_cost": 0.001258,
+          "upstream_inference_completions_cost": 0.00054
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-skill-refactor",
+      "expected": "skill-builder",
+      "predicted": "skill-builder",
+      "confidence": 0.99,
+      "rationale": "The task directly requires reviewing and restructuring an agent skill, rebuilding its capability tree, tightening instructions, and creating capability-focused evaluations.",
+      "candidate_set_size": 24,
+      "latency_ms": 2111.4490000000005,
+      "usage": {
+        "prompt_tokens": 906,
+        "completion_tokens": 49,
+        "total_tokens": 955,
+        "cost": 0.002302,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002302,
+          "upstream_inference_prompt_cost": 0.001812,
+          "upstream_inference_completions_cost": 0.00049
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-wechat",
+      "expected": "wechat-bro",
+      "predicted": "wechat-bro",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires configuring a watched WeChat contact, routine orchestrator replies, and message escalation.",
+      "candidate_set_size": 4,
+      "latency_ms": 1250.1465419999995,
+      "usage": {
+        "prompt_tokens": 235,
+        "completion_tokens": 45,
+        "total_tokens": 280,
+        "cost": 0.00092,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00092,
+          "upstream_inference_prompt_cost": 0.00047,
+          "upstream_inference_completions_cost": 0.00045
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-wechat",
+      "expected": "wechat-bro",
+      "predicted": "wechat-bro",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires WeChat watched-contact monitoring, routine reply orchestration, and escalation handling.",
+      "candidate_set_size": 8,
+      "latency_ms": 1562.6277089999992,
+      "usage": {
+        "prompt_tokens": 354,
+        "completion_tokens": 44,
+        "total_tokens": 398,
+        "cost": 0.001148,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001148,
+          "upstream_inference_prompt_cost": 0.000708,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-wechat",
+      "expected": "wechat-bro",
+      "predicted": "wechat-bro",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires WeChat watched-contact monitoring, routine orchestrated replies, and escalation handling.",
+      "candidate_set_size": 16,
+      "latency_ms": 1420.6852910000016,
+      "usage": {
+        "prompt_tokens": 622,
+        "completion_tokens": 44,
+        "total_tokens": 666,
+        "cost": 0.001684,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001684,
+          "upstream_inference_prompt_cost": 0.001244,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-wechat",
+      "expected": "wechat-bro",
+      "predicted": "wechat-bro",
+      "confidence": 0.99,
+      "rationale": "The task directly requires WeChat watched-contact monitoring, routine orchestrated replies, and escalation of messages needing the user.",
+      "candidate_set_size": 24,
+      "latency_ms": 1472.1344999999992,
+      "usage": {
+        "prompt_tokens": 904,
+        "completion_tokens": 48,
+        "total_tokens": 952,
+        "cost": 0.002288,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002288,
+          "upstream_inference_prompt_cost": 0.001808,
+          "upstream_inference_completions_cost": 0.00048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-worker-routing",
+      "expected": "model-router",
+      "predicted": "model-router",
+      "confidence": 0.99,
+      "rationale": "The task explicitly asks to route each new worker according to configured model-router rules and diagnose why workers all selected the same model.",
+      "candidate_set_size": 4,
+      "latency_ms": 1338.1141249999998,
+      "usage": {
+        "prompt_tokens": 243,
+        "completion_tokens": 49,
+        "total_tokens": 292,
+        "cost": 0.000976,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000976,
+          "upstream_inference_prompt_cost": 0.000486,
+          "upstream_inference_completions_cost": 0.00049
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-worker-routing",
+      "expected": "model-router",
+      "predicted": "model-router",
+      "confidence": 0.99,
+      "rationale": "The task explicitly asks to route each new worker according to configured model-router rules and diagnose why workers all selected the same model.",
+      "candidate_set_size": 8,
+      "latency_ms": 2145.976709,
+      "usage": {
+        "prompt_tokens": 392,
+        "completion_tokens": 49,
+        "total_tokens": 441,
+        "cost": 0.001274,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001274,
+          "upstream_inference_prompt_cost": 0.000784,
+          "upstream_inference_completions_cost": 0.00049
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-worker-routing",
+      "expected": "model-router",
+      "predicted": "model-router",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires diagnosing uniform model selection and routing each new worker according to configured model-router rules.",
+      "candidate_set_size": 16,
+      "latency_ms": 2320.554875,
+      "usage": {
+        "prompt_tokens": 638,
+        "completion_tokens": 44,
+        "total_tokens": 682,
+        "cost": 0.001716,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001716,
+          "upstream_inference_prompt_cost": 0.001276,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "historical-worker-routing",
+      "expected": "model-router",
+      "predicted": "model-router",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires routing each new worker according to configured model-router rules and diagnosing why all workers selected the same model.",
+      "candidate_set_size": 24,
+      "latency_ms": 1883.969542,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 48,
+        "total_tokens": 953,
+        "cost": 0.00229,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00229,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-general-question",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a general operating-systems concept question and does not require any of the specialized tools or workflows.",
+      "candidate_set_size": 4,
+      "latency_ms": 2192.4973749999986,
+      "usage": {
+        "prompt_tokens": 241,
+        "completion_tokens": 44,
+        "total_tokens": 285,
+        "cost": 0.000922,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000922,
+          "upstream_inference_prompt_cost": 0.000482,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-general-question",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a general operating-systems concept question and does not require any specialized tool or workflow.",
+      "candidate_set_size": 8,
+      "latency_ms": 1462.1839160000009,
+      "usage": {
+        "prompt_tokens": 383,
+        "completion_tokens": 42,
+        "total_tokens": 425,
+        "cost": 0.001186,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001186,
+          "upstream_inference_prompt_cost": 0.000766,
+          "upstream_inference_completions_cost": 0.00042
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-general-question",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a general operating-systems concept that can be explained directly without any specialized skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1706.9445000000023,
+      "usage": {
+        "prompt_tokens": 661,
+        "completion_tokens": 41,
+        "total_tokens": 702,
+        "cost": 0.001732,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001732,
+          "upstream_inference_prompt_cost": 0.001322,
+          "upstream_inference_completions_cost": 0.00041
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-general-question",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a general operating-systems concept that can be explained directly without any specialized skill.",
+      "candidate_set_size": 24,
+      "latency_ms": 1234.1955410000019,
+      "usage": {
+        "prompt_tokens": 899,
+        "completion_tokens": 41,
+        "total_tokens": 940,
+        "cost": 0.002208,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002208,
+          "upstream_inference_prompt_cost": 0.001798,
+          "upstream_inference_completions_cost": 0.00041
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-math",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "Solving a basic linear equation requires no specialized skill.",
+      "candidate_set_size": 4,
+      "latency_ms": 1194.9276660000016,
+      "usage": {
+        "prompt_tokens": 224,
+        "completion_tokens": 32,
+        "total_tokens": 256,
+        "cost": 0.000768,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000768,
+          "upstream_inference_prompt_cost": 0.000448,
+          "upstream_inference_completions_cost": 0.00032
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-math",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "Solving a basic linear equation requires no specialized skill.",
+      "candidate_set_size": 8,
+      "latency_ms": 1382.808083999997,
+      "usage": {
+        "prompt_tokens": 346,
+        "completion_tokens": 32,
+        "total_tokens": 378,
+        "cost": 0.001012,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001012,
+          "upstream_inference_prompt_cost": 0.000692,
+          "upstream_inference_completions_cost": 0.00032
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-math",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "This is a simple algebra problem that requires no specialized skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1189.8357500000002,
+      "usage": {
+        "prompt_tokens": 620,
+        "completion_tokens": 33,
+        "total_tokens": 653,
+        "cost": 0.00157,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00157,
+          "upstream_inference_prompt_cost": 0.00124,
+          "upstream_inference_completions_cost": 0.00033
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-math",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "This is a basic algebra problem and requires no specialized skill.",
+      "candidate_set_size": 24,
+      "latency_ms": 1894.1035419999998,
+      "usage": {
+        "prompt_tokens": 900,
+        "completion_tokens": 33,
+        "total_tokens": 933,
+        "cost": 0.00213,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00213,
+          "upstream_inference_prompt_cost": 0.0018,
+          "upstream_inference_completions_cost": 0.00033
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-small-code",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "This is a basic JavaScript knowledge question and does not require routing, event handling, or browser interaction.",
+      "candidate_set_size": 4,
+      "latency_ms": 2664.938417000002,
+      "usage": {
+        "prompt_tokens": 231,
+        "completion_tokens": 42,
+        "total_tokens": 273,
+        "cost": 0.000882,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000882,
+          "upstream_inference_prompt_cost": 0.000462,
+          "upstream_inference_completions_cost": 0.00042
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-small-code",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a straightforward JavaScript knowledge question and requires no specialized tools or external access.",
+      "candidate_set_size": 8,
+      "latency_ms": 1526.9879579999995,
+      "usage": {
+        "prompt_tokens": 381,
+        "completion_tokens": 40,
+        "total_tokens": 421,
+        "cost": 0.001162,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001162,
+          "upstream_inference_prompt_cost": 0.000762,
+          "upstream_inference_completions_cost": 0.0004
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-small-code",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a basic JavaScript knowledge question and requires no specialized tool or skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1622.987791,
+      "usage": {
+        "prompt_tokens": 630,
+        "completion_tokens": 39,
+        "total_tokens": 669,
+        "cost": 0.00165,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00165,
+          "upstream_inference_prompt_cost": 0.00126,
+          "upstream_inference_completions_cost": 0.00039
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-small-code",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a basic JavaScript knowledge question and does not require any specialized skill.",
+      "candidate_set_size": 24,
+      "latency_ms": 1664.3649160000002,
+      "usage": {
+        "prompt_tokens": 896,
+        "completion_tokens": 39,
+        "total_tokens": 935,
+        "cost": 0.002182,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002182,
+          "upstream_inference_prompt_cost": 0.001792,
+          "upstream_inference_completions_cost": 0.00039
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-writing",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 1,
+      "rationale": "This is a simple sentence-editing task and requires no specialized skill.",
+      "candidate_set_size": 4,
+      "latency_ms": 1432.447290999999,
+      "usage": {
+        "prompt_tokens": 215,
+        "completion_tokens": 35,
+        "total_tokens": 250,
+        "cost": 0.00078,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00078,
+          "upstream_inference_prompt_cost": 0.00043,
+          "upstream_inference_completions_cost": 0.00035
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-writing",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a straightforward sentence-editing task and requires no specialized skill.",
+      "candidate_set_size": 8,
+      "latency_ms": 1385.553957999999,
+      "usage": {
+        "prompt_tokens": 336,
+        "completion_tokens": 37,
+        "total_tokens": 373,
+        "cost": 0.001042,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001042,
+          "upstream_inference_prompt_cost": 0.000672,
+          "upstream_inference_completions_cost": 0.00037
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-writing",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a simple sentence-editing task and requires no specialized skill.",
+      "candidate_set_size": 16,
+      "latency_ms": 1694.8685419999983,
+      "usage": {
+        "prompt_tokens": 624,
+        "completion_tokens": 37,
+        "total_tokens": 661,
+        "cost": 0.001618,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001618,
+          "upstream_inference_prompt_cost": 0.001248,
+          "upstream_inference_completions_cost": 0.00037
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "none-writing",
+      "expected": "none",
+      "predicted": "none",
+      "confidence": 0.99,
+      "rationale": "This is a straightforward sentence-editing task that requires no specialized skill.",
+      "candidate_set_size": 24,
+      "latency_ms": 1350.8846250000026,
+      "usage": {
+        "prompt_tokens": 903,
+        "completion_tokens": 37,
+        "total_tokens": 940,
+        "cost": 0.002176,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002176,
+          "upstream_inference_prompt_cost": 0.001806,
+          "upstream_inference_completions_cost": 0.00037
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-audio-source",
+      "expected": "audio-sourcing",
+      "predicted": "audio-sourcing",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires sourcing royalty-free background music and UI transition sound effects for video production.",
+      "candidate_set_size": 4,
+      "latency_ms": 1174.8174170000016,
+      "usage": {
+        "prompt_tokens": 221,
+        "completion_tokens": 43,
+        "total_tokens": 264,
+        "cost": 0.000872,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000872,
+          "upstream_inference_prompt_cost": 0.000442,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-audio-source",
+      "expected": "audio-sourcing",
+      "predicted": "audio-sourcing",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires finding royalty-free background music and UI sound effects for video production.",
+      "candidate_set_size": 8,
+      "latency_ms": 1693.0914580000015,
+      "usage": {
+        "prompt_tokens": 345,
+        "completion_tokens": 42,
+        "total_tokens": 387,
+        "cost": 0.00111,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00111,
+          "upstream_inference_prompt_cost": 0.00069,
+          "upstream_inference_completions_cost": 0.00042
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-audio-source",
+      "expected": "audio-sourcing",
+      "predicted": "audio-sourcing",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires finding royalty-free background music and sound effects for video production.",
+      "candidate_set_size": 16,
+      "latency_ms": 1416.8954580000009,
+      "usage": {
+        "prompt_tokens": 616,
+        "completion_tokens": 41,
+        "total_tokens": 657,
+        "cost": 0.001642,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001642,
+          "upstream_inference_prompt_cost": 0.001232,
+          "upstream_inference_completions_cost": 0.00041
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-audio-source",
+      "expected": "audio-sourcing",
+      "predicted": "audio-sourcing",
+      "confidence": 1,
+      "rationale": "The task directly requires finding royalty-free background music and UI transition sound effects for video production.",
+      "candidate_set_size": 24,
+      "latency_ms": 1585.5079580000008,
+      "usage": {
+        "prompt_tokens": 901,
+        "completion_tokens": 41,
+        "total_tokens": 942,
+        "cost": 0.002212,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002212,
+          "upstream_inference_prompt_cost": 0.001802,
+          "upstream_inference_completions_cost": 0.00041
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-auto-optimize",
+      "expected": "autoresearch",
+      "predicted": "autoresearch",
+      "confidence": 0.99,
+      "rationale": "The task explicitly calls for an iterative experiment loop driven by a measurable benchmark, retaining improvements and reverting regressions.",
+      "candidate_set_size": 4,
+      "latency_ms": 1306.5777920000023,
+      "usage": {
+        "prompt_tokens": 232,
+        "completion_tokens": 46,
+        "total_tokens": 278,
+        "cost": 0.000924,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000924,
+          "upstream_inference_prompt_cost": 0.000464,
+          "upstream_inference_completions_cost": 0.00046
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-auto-optimize",
+      "expected": "autoresearch",
+      "predicted": "autoresearch",
+      "confidence": 0.99,
+      "rationale": "The task explicitly calls for an iterative, benchmark-driven optimization loop that retains improvements and rejects regressions, which directly matches autoresearch.",
+      "candidate_set_size": 8,
+      "latency_ms": 1481.1255840000008,
+      "usage": {
+        "prompt_tokens": 374,
+        "completion_tokens": 50,
+        "total_tokens": 424,
+        "cost": 0.001248,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001248,
+          "upstream_inference_prompt_cost": 0.000748,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-auto-optimize",
+      "expected": "autoresearch",
+      "predicted": "autoresearch",
+      "confidence": 0.99,
+      "rationale": "The task explicitly calls for an iterative, benchmark-driven optimization loop that retains improvements and rejects regressions, which directly matches autoresearch.",
+      "candidate_set_size": 16,
+      "latency_ms": 1401.1692500000024,
+      "usage": {
+        "prompt_tokens": 652,
+        "completion_tokens": 50,
+        "total_tokens": 702,
+        "cost": 0.001804,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001804,
+          "upstream_inference_prompt_cost": 0.001304,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-auto-optimize",
+      "expected": "autoresearch",
+      "predicted": "autoresearch",
+      "confidence": 0.99,
+      "rationale": "The task explicitly calls for an iterative, benchmark-driven optimization loop that retains improvements and rejects regressions, which directly matches autoresearch.",
+      "candidate_set_size": 24,
+      "latency_ms": 2245.493500000002,
+      "usage": {
+        "prompt_tokens": 903,
+        "completion_tokens": 50,
+        "total_tokens": 953,
+        "cost": 0.002306,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002306,
+          "upstream_inference_prompt_cost": 0.001806,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-find-skill",
+      "expected": "find-skills",
+      "predicted": "find-skills",
+      "confidence": 0.99,
+      "rationale": "The user explicitly asks to discover whether an installable skill exists for working with Blender projects.",
+      "candidate_set_size": 4,
+      "latency_ms": 1267.3041669999989,
+      "usage": {
+        "prompt_tokens": 238,
+        "completion_tokens": 43,
+        "total_tokens": 281,
+        "cost": 0.000906,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000906,
+          "upstream_inference_prompt_cost": 0.000476,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-find-skill",
+      "expected": "find-skills",
+      "predicted": "find-skills",
+      "confidence": 0.99,
+      "rationale": "The user explicitly asks to discover whether an installable skill exists for working with Blender projects, which directly matches the find-skills capability.",
+      "candidate_set_size": 8,
+      "latency_ms": 1521.1110420000011,
+      "usage": {
+        "prompt_tokens": 387,
+        "completion_tokens": 52,
+        "total_tokens": 439,
+        "cost": 0.001294,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001294,
+          "upstream_inference_prompt_cost": 0.000774,
+          "upstream_inference_completions_cost": 0.00052
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-find-skill",
+      "expected": "find-skills",
+      "predicted": "find-skills",
+      "confidence": 0.99,
+      "rationale": "The user explicitly asks to discover whether an installable skill exists for working with Blender projects.",
+      "candidate_set_size": 16,
+      "latency_ms": 1609.376208999997,
+      "usage": {
+        "prompt_tokens": 633,
+        "completion_tokens": 43,
+        "total_tokens": 676,
+        "cost": 0.001696,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001696,
+          "upstream_inference_prompt_cost": 0.001266,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-find-skill",
+      "expected": "find-skills",
+      "predicted": "find-skills",
+      "confidence": 0.99,
+      "rationale": "The user explicitly asks to discover whether an installable skill exists for working with Blender projects.",
+      "candidate_set_size": 24,
+      "latency_ms": 1156.1644579999993,
+      "usage": {
+        "prompt_tokens": 904,
+        "completion_tokens": 43,
+        "total_tokens": 947,
+        "cost": 0.002238,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002238,
+          "upstream_inference_prompt_cost": 0.001808,
+          "upstream_inference_completions_cost": 0.00043
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-macbridge",
+      "expected": "devmacbridge",
+      "predicted": "devmacbridge",
+      "confidence": 1,
+      "rationale": "The task explicitly asks to repair and verify DevMacBridge connectivity so this web ChatGPT thread can call tools on the user's Mac.",
+      "candidate_set_size": 4,
+      "latency_ms": 1899.768208000001,
+      "usage": {
+        "prompt_tokens": 230,
+        "completion_tokens": 49,
+        "total_tokens": 279,
+        "cost": 0.00095,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00095,
+          "upstream_inference_prompt_cost": 0.00046,
+          "upstream_inference_completions_cost": 0.00049
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-macbridge",
+      "expected": "devmacbridge",
+      "predicted": "devmacbridge",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires repairing and verifying DevMacBridge connectivity so the web ChatGPT client can call tools on the user's Mac.",
+      "candidate_set_size": 8,
+      "latency_ms": 1513.015292000002,
+      "usage": {
+        "prompt_tokens": 375,
+        "completion_tokens": 50,
+        "total_tokens": 425,
+        "cost": 0.00125,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00125,
+          "upstream_inference_prompt_cost": 0.00075,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-macbridge",
+      "expected": "devmacbridge",
+      "predicted": "devmacbridge",
+      "confidence": 1.0,
+      "rationale": "The task explicitly requires repairing and verifying DevMacBridge so this web ChatGPT thread can call tools on the user's Mac again.",
+      "candidate_set_size": 16,
+      "latency_ms": 1484.962375000002,
+      "usage": {
+        "prompt_tokens": 655,
+        "completion_tokens": 50,
+        "total_tokens": 705,
+        "cost": 0.00181,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00181,
+          "upstream_inference_prompt_cost": 0.00131,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-macbridge",
+      "expected": "devmacbridge",
+      "predicted": "devmacbridge",
+      "confidence": 1,
+      "rationale": "The task explicitly requires repairing and verifying DevMacBridge so this web ChatGPT thread can access tools on the user's Mac.",
+      "candidate_set_size": 24,
+      "latency_ms": 1370.9259580000007,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 47,
+        "total_tokens": 952,
+        "cost": 0.00228,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.00228,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00047
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-minimal-code",
+      "expected": "ponytail",
+      "predicted": "ponytail",
+      "confidence": 0.99,
+      "rationale": "The task explicitly prioritizes the smallest working TypeScript refactor, no new dependencies, and minimal boilerplate, which directly matches the ponytail skill.",
+      "candidate_set_size": 4,
+      "latency_ms": 1916.1329999999984,
+      "usage": {
+        "prompt_tokens": 225,
+        "completion_tokens": 55,
+        "total_tokens": 280,
+        "cost": 0.001,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001,
+          "upstream_inference_prompt_cost": 0.00045,
+          "upstream_inference_completions_cost": 0.00055
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-minimal-code",
+      "expected": "ponytail",
+      "predicted": "ponytail",
+      "confidence": 0.99,
+      "rationale": "The task explicitly asks for the smallest working refactor with no new dependencies or boilerplate, which directly matches the minimal, YAGNI-oriented coding skill.",
+      "candidate_set_size": 8,
+      "latency_ms": 1620.760666999999,
+      "usage": {
+        "prompt_tokens": 354,
+        "completion_tokens": 56,
+        "total_tokens": 410,
+        "cost": 0.001268,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001268,
+          "upstream_inference_prompt_cost": 0.000708,
+          "upstream_inference_completions_cost": 0.00056
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-minimal-code",
+      "expected": "ponytail",
+      "predicted": "ponytail",
+      "confidence": 0.99,
+      "rationale": "The task explicitly prioritizes the smallest working TypeScript refactor with no new dependencies or boilerplate, which directly matches the skill\u2019s minimal, YAGNI-oriented coding approach.",
+      "candidate_set_size": 16,
+      "latency_ms": 2075.7263749999984,
+      "usage": {
+        "prompt_tokens": 614,
+        "completion_tokens": 60,
+        "total_tokens": 674,
+        "cost": 0.001828,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001828,
+          "upstream_inference_prompt_cost": 0.001228,
+          "upstream_inference_completions_cost": 0.0006
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-minimal-code",
+      "expected": "ponytail",
+      "predicted": "ponytail",
+      "confidence": 0.99,
+      "rationale": "The task explicitly prioritizes the smallest working TypeScript refactor, no new dependencies, and minimal boilerplate, which directly matches the YAGNI-oriented ponytail skill.",
+      "candidate_set_size": 24,
+      "latency_ms": 1620.3524999999993,
+      "usage": {
+        "prompt_tokens": 905,
+        "completion_tokens": 59,
+        "total_tokens": 964,
+        "cost": 0.0024,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.0024,
+          "upstream_inference_prompt_cost": 0.00181,
+          "upstream_inference_completions_cost": 0.00059
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-social-post",
+      "expected": "post",
+      "predicted": "post",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing prepared media to TikTok and YouTube and verifying both posts, which directly matches the post skill\u2019s browser-automation capabilities.",
+      "candidate_set_size": 4,
+      "latency_ms": 1761.6096250000019,
+      "usage": {
+        "prompt_tokens": 244,
+        "completion_tokens": 53,
+        "total_tokens": 297,
+        "cost": 0.001018,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001018,
+          "upstream_inference_prompt_cost": 0.000488,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-social-post",
+      "expected": "post",
+      "predicted": "post",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing prepared media to TikTok and YouTube and verifying successful posts, which directly matches the post skill's browser-automation capabilities.",
+      "candidate_set_size": 8,
+      "latency_ms": 1590.56625,
+      "usage": {
+        "prompt_tokens": 374,
+        "completion_tokens": 53,
+        "total_tokens": 427,
+        "cost": 0.001278,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001278,
+          "upstream_inference_prompt_cost": 0.000748,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-social-post",
+      "expected": "post",
+      "predicted": "post",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires publishing prepared media to TikTok and YouTube and verifying success, which directly matches the post skill's browser-automation capabilities.",
+      "candidate_set_size": 16,
+      "latency_ms": 2444.3985000000002,
+      "usage": {
+        "prompt_tokens": 614,
+        "completion_tokens": 52,
+        "total_tokens": 666,
+        "cost": 0.001748,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001748,
+          "upstream_inference_prompt_cost": 0.001228,
+          "upstream_inference_completions_cost": 0.00052
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-social-post",
+      "expected": "post",
+      "predicted": "post",
+      "confidence": 0.99,
+      "rationale": "The task directly requires publishing prepared media to TikTok and YouTube and verifying successful posts, which is the post skill's specified capability.",
+      "candidate_set_size": 24,
+      "latency_ms": 2126.0352499999995,
+      "usage": {
+        "prompt_tokens": 902,
+        "completion_tokens": 50,
+        "total_tokens": 952,
+        "cost": 0.002304,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002304,
+          "upstream_inference_prompt_cost": 0.001804,
+          "upstream_inference_completions_cost": 0.0005
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-speech",
+      "expected": "tts-stt-sts",
+      "predicted": "tts-stt-sts",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires transcribing a local recording and synthesizing replacement speech into an audio file, which directly needs speech-to-text and text-to-speech capabilities.",
+      "candidate_set_size": 4,
+      "latency_ms": 1906.916292,
+      "usage": {
+        "prompt_tokens": 236,
+        "completion_tokens": 59,
+        "total_tokens": 295,
+        "cost": 0.001062,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001062,
+          "upstream_inference_prompt_cost": 0.000472,
+          "upstream_inference_completions_cost": 0.00059
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-speech",
+      "expected": "tts-stt-sts",
+      "predicted": "tts-stt-sts",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires transcribing audio (speech-to-text) and synthesizing a replacement voice line (text-to-speech), then producing an audio file.",
+      "candidate_set_size": 8,
+      "latency_ms": 1472.8930420000008,
+      "usage": {
+        "prompt_tokens": 386,
+        "completion_tokens": 58,
+        "total_tokens": 444,
+        "cost": 0.001352,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001352,
+          "upstream_inference_prompt_cost": 0.000772,
+          "upstream_inference_completions_cost": 0.00058
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-speech",
+      "expected": "tts-stt-sts",
+      "predicted": "tts-stt-sts",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires speech-to-text transcription and text-to-speech synthesis of a replacement voice line, including audio-file output.",
+      "candidate_set_size": 16,
+      "latency_ms": 1797.997917,
+      "usage": {
+        "prompt_tokens": 633,
+        "completion_tokens": 52,
+        "total_tokens": 685,
+        "cost": 0.001786,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001786,
+          "upstream_inference_prompt_cost": 0.001266,
+          "upstream_inference_completions_cost": 0.00052
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-speech",
+      "expected": "tts-stt-sts",
+      "predicted": "tts-stt-sts",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires speech-to-text transcription and text-to-speech synthesis, which this skill directly supports.",
+      "candidate_set_size": 24,
+      "latency_ms": 1993.2473330000012,
+      "usage": {
+        "prompt_tokens": 904,
+        "completion_tokens": 48,
+        "total_tokens": 952,
+        "cost": 0.002288,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002288,
+          "upstream_inference_prompt_cost": 0.001808,
+          "upstream_inference_completions_cost": 0.00048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-tutor",
+      "expected": "family-tutor",
+      "predicted": "family-tutor",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires a persistent child-specific tutoring workflow with separate learner context and parent observation controls, which directly matches the family-tutor skill.",
+      "candidate_set_size": 4,
+      "latency_ms": 1467.3635829999992,
+      "usage": {
+        "prompt_tokens": 241,
+        "completion_tokens": 53,
+        "total_tokens": 294,
+        "cost": 0.001012,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001012,
+          "upstream_inference_prompt_cost": 0.000482,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-tutor",
+      "expected": "family-tutor",
+      "predicted": "family-tutor",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires a persistent child-specific tutoring workflow with separate learner context and parent observation controls, which directly matches the family-tutor skill.",
+      "candidate_set_size": 8,
+      "latency_ms": 1727.9316250000018,
+      "usage": {
+        "prompt_tokens": 386,
+        "completion_tokens": 53,
+        "total_tokens": 439,
+        "cost": 0.001302,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001302,
+          "upstream_inference_prompt_cost": 0.000772,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-tutor",
+      "expected": "family-tutor",
+      "predicted": "family-tutor",
+      "confidence": 0.99,
+      "rationale": "The task directly requires a persistent child-specific tutoring workflow with separate learner context and parent observation/control capabilities, which is the core purpose of family-tutor.",
+      "candidate_set_size": 16,
+      "latency_ms": 1598.7628339999987,
+      "usage": {
+        "prompt_tokens": 666,
+        "completion_tokens": 55,
+        "total_tokens": 721,
+        "cost": 0.001882,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001882,
+          "upstream_inference_prompt_cost": 0.001332,
+          "upstream_inference_completions_cost": 0.00055
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-tutor",
+      "expected": "family-tutor",
+      "predicted": "family-tutor",
+      "confidence": 0.99,
+      "rationale": "The task directly requires a persistent child-specific tutoring workflow with separate learner context and parent observation/control capabilities.",
+      "candidate_set_size": 24,
+      "latency_ms": 1164.3084169999972,
+      "usage": {
+        "prompt_tokens": 902,
+        "completion_tokens": 45,
+        "total_tokens": 947,
+        "cost": 0.002254,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002254,
+          "upstream_inference_prompt_cost": 0.001804,
+          "upstream_inference_completions_cost": 0.00045
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-vision",
+      "expected": "understand-image-video",
+      "predicted": "understand-image-video",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting a product-demo video and producing structured per-frame scene and object observations.",
+      "candidate_set_size": 4,
+      "latency_ms": 1381.681125,
+      "usage": {
+        "prompt_tokens": 234,
+        "completion_tokens": 45,
+        "total_tokens": 279,
+        "cost": 0.000918,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.000918,
+          "upstream_inference_prompt_cost": 0.000468,
+          "upstream_inference_completions_cost": 0.00045
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-vision",
+      "expected": "understand-image-video",
+      "predicted": "understand-image-video",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting a product-demo video and producing structured scene and object observations for sampled frames.",
+      "candidate_set_size": 8,
+      "latency_ms": 1836.3050419999993,
+      "usage": {
+        "prompt_tokens": 384,
+        "completion_tokens": 46,
+        "total_tokens": 430,
+        "cost": 0.001228,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001228,
+          "upstream_inference_prompt_cost": 0.000768,
+          "upstream_inference_completions_cost": 0.00046
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-vision",
+      "expected": "understand-image-video",
+      "predicted": "understand-image-video",
+      "confidence": 0.99,
+      "rationale": "The task specifically requires inspecting a video and producing structured scene and object observations for sampled frames.",
+      "candidate_set_size": 16,
+      "latency_ms": 1289.691833000001,
+      "usage": {
+        "prompt_tokens": 631,
+        "completion_tokens": 44,
+        "total_tokens": 675,
+        "cost": 0.001702,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.001702,
+          "upstream_inference_prompt_cost": 0.001262,
+          "upstream_inference_completions_cost": 0.00044
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    },
+    {
+      "fixture_id": "synthetic-vision",
+      "expected": "understand-image-video",
+      "predicted": "understand-image-video",
+      "confidence": 0.99,
+      "rationale": "The task explicitly requires inspecting sampled video frames and producing structured scene and object observations, which directly matches image/video scene understanding and object detection.",
+      "candidate_set_size": 24,
+      "latency_ms": 1343.4528750000006,
+      "usage": {
+        "prompt_tokens": 902,
+        "completion_tokens": 53,
+        "total_tokens": 955,
+        "cost": 0.002334,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0.002334,
+          "upstream_inference_prompt_cost": 0.001804,
+          "upstream_inference_completions_cost": 0.00053
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "model": "openai/gpt-5.6-sol"
+    }
+  ]
+}
