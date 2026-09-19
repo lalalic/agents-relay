@@ -49,7 +49,7 @@ npx agents-relay init --repo OWNER/REPO --pr 1 --id job-1 --title "Objective"
 
 ## npm publishing
 
-Pushes to `main` run `.github/workflows/publish.yml`: install, test, choose the next npm version, pack-check, and publish. Feature branches do not edit `package.json` versions. If `agents-relay` is not published yet the first release is `1.0.0`; later releases increment only the patch version from the npm registry. The repository must provide an `NPM_TOKEN` Actions secret with permission to publish the public `agents-relay` package.
+Pushes to `main` run `.github/workflows/publish.yml`: install, test, choose the next npm version, pack-check, publish, and create the matching `vX.Y.Z` tag. Feature branches do not edit `package.json` versions. If `agents-relay` is not published yet the first release is `1.0.0`; later releases increment only the patch version from the npm registry. The repository must provide an `NPM_TOKEN` Actions secret with permission to publish the public `agents-relay` package.
 
 Normal consumers should invoke the CLI with `npx agents-relay ...` (or `npx agents-relayd ...`).
 
