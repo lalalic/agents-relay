@@ -69,18 +69,21 @@ test('CodexAdapter buffers a thread id emitted before callback attachment', asyn
 
 test('ChatGptAdapter treats configured MacBridge URL as an origin', async () => {
   let requestedUrl = '';
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-origin-'));
+  const tokenFile = join(root, 'token'); await writeFile(tokenFile, 'test-token');
   const { ChatGptAdapter } = await import('../dist/adapters.js');
   const adapter = new ChatGptAdapter({
     endpoint: 'http://127.0.0.1:8788/v1/responses',
-    tokenFile: tokenFile,
+    tokenFile,
     fetch: async input => {
       requestedUrl = String(input);
       return new Response(JSON.stringify({ complete: true, conversation_id: 'conv-origin', assistant_text: 'ok' }), { status: 200 });
     },
   });
-  const task = { ...baseTask(), routing: { adapter: 'chatgpt', provider: 'openai', model: 'gpt-5.6-sol' } };
+  const task = { id: 'origin', input: 'test', routing: { provider: 'openai', model: 'gpt-5.6-sol' } };
   await adapter.launch(task, new AbortController().signal).promise;
   assert.equal(requestedUrl, 'http://127.0.0.1:8788/experimental/chatgpt/conversation');
+  await rm(root, { recursive: true, force: true });
 });
 
 test('ChatGptAdapter launches through MacBridge and exposes conversation id as thread id', async () => {
