@@ -36,6 +36,12 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /MERGED','CLOSED/);
 });
 
+test('task attempts display as cumulative count over three-attempt windows', () => {
+  assert.match(dashboardHtml, /function attemptBudget\(task\)/);
+  assert.match(dashboardHtml, /attempt\+' \/ 3×'\+\(max\/3\)/);
+  assert.match(dashboardHtml, /field\('Attempt',attemptBudget\(task\)\)/);
+});
+
 test('selected job title appears in the panel heading', () => {
   assert.match(dashboardHtml, /id="selected-job-title"/);
   assert.match(dashboardHtml, /selectedJobTitle\.textContent='— '\+value\(job\.title\|\|job\.id\)/);

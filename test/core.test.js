@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
-import { detectCycles, dependencyReady, schedule } from '../dist/scheduler.js';
+import { detectCycles, dependencyReady, extendRetryBudget, schedule } from '../dist/scheduler.js';
 import { CodexAdapter } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler, compareTaskPriority } from '../dist/reconciler.js';
@@ -93,6 +93,12 @@ test('CLI record persists completed orchestrator work without pretending it was 
   assert.equal(saved.tasks[0].state, 'SUCCEEDED');
   assert.equal(saved.tasks[0].executionId, 'abc123');
   assert.equal(saved.tasks[0].result.data.commit, 'abc123');
+});
+test('manual retry budget advances in three-attempt windows without resetting history', () => {
+  assert.equal(extendRetryBudget({attempt:3,maxAttempts:3}),6);
+  assert.equal(extendRetryBudget({attempt:5,maxAttempts:3}),6);
+  assert.equal(extendRetryBudget({attempt:6,maxAttempts:6}),9);
+  assert.equal(extendRetryBudget({attempt:8,maxAttempts:9}),12);
 });
 test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'READY'); assert.equal(value.state,'RUNNING'); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });

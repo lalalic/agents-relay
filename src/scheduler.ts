@@ -19,4 +19,9 @@ export function schedule(job: Job): Job {
   if (job.state !== next) { assertJobTransition(job.state, next); job.state = next; job.updatedAt = new Date().toISOString(); }
   return job;
 }
+export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, windowSize = 3): number {
+  if (!Number.isInteger(windowSize) || windowSize < 1) throw new Error('Retry window size must be a positive integer');
+  const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
+  return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
+}
 export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; task.updatedAt = new Date().toISOString(); }
