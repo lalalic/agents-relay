@@ -2,6 +2,7 @@ import { createServer, Server } from 'node:http';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
+import { Job } from './types.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -222,10 +223,25 @@ export function serveDashboard(
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
+  let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null }> | null = null;
   const discoveredJobs = async () => {
-    if (overviewProvider) return (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt }));
-    if (!jobId) return [];
-    return [await store.load(jobId)];
+    try {
+      const jobs = overviewProvider
+        ? (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt }))
+        : jobId ? [await store.load(jobId)] : [];
+      lastKnownJobs = jobs;
+      return jobs;
+    } catch (error) {
+      if (lastKnownJobs) return lastKnownJobs;
+      if (jobId) {
+        try {
+          const job = await store.load(jobId);
+          lastKnownJobs = [job];
+          return lastKnownJobs;
+        } catch { /* durable backend unavailable too */ }
+      }
+      throw error;
+    }
   };
 
   const subscribeDiscovered = async (): Promise<void> => {

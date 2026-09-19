@@ -130,8 +130,12 @@ export async function startService(args: string[]): Promise<Service> {
   const service = await createService(args);
   const stop = (): void => { void service.stop().then(() => process.exit(0), error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
-  await service.reconciler.reconcile(service.job.id);
   console.log('Dashboard listening');
+  try {
+    await service.reconciler.reconcile(service.job.id);
+  } catch (error) {
+    console.error(`Initial reconciliation failed; dashboard remains available: ${error instanceof Error ? error.message : String(error)}`);
+  }
   return service;
 }
 export function isEntrypoint(moduleUrl: string): boolean {
