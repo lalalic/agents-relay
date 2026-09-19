@@ -55,7 +55,7 @@ export class Reconciler {
       if (prState === 'CLOSED') { scheduled.state = 'CANCELLED'; scheduled.updatedAt = new Date().toISOString(); }
       if (scheduled.state !== previousState) await this.store.saveJob(scheduled);
       if (prState === 'OPEN') {
-        for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
+        for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
         for (const task of scheduled.tasks.filter(t => t.state === 'READY').sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
           if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
@@ -136,10 +136,10 @@ export class Reconciler {
     if (execution.threadId) persistThread(execution.threadId);
     const timer = setTimeout(() => { controller.abort(); execution.cancel(); }, task.timeoutMs);
     this.live.set(task.id, { taskId: task.id, execution, controller, timer });
-    void execution.promise.then(
+    this.detach(execution.promise.then(
       async result => { await threadPersistence; await this.finish(job.id, task.id, execution.id, result, null); },
       async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)); },
-    );
+    ), job.id, task.id, 'worker completion');
   }
   private async launchPlanner(job: Job, task: Task): Promise<void> {
     const planner = this.options.planner;
@@ -154,7 +154,7 @@ export class Reconciler {
     let promise: Promise<import('./planner.js').PlannerResult>;
     try { promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId }, controller.signal); }
     catch (error) { await this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))); return; }
-    void promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))));
+    this.detach(promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error)))), job.id, task.id, 'planner completion');
   }
   private async finishPlanner(jobId: string, taskId: string, executionId: string | null, error: Error | null, raw?: import('./planner.js').PlannerResult): Promise<void> {
     const live = this.plannerLive.get(taskId);
@@ -164,7 +164,7 @@ export class Reconciler {
     if (task.state === 'CANCELLED') return;
     if (error) {
       task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${error.message}`, 'user')); void this.reconcile(jobId); return;
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${error.message}`, 'user')); this.detach(this.reconcile(jobId), jobId, task.id, 'planner retry reconciliation'); return;
     }
     try {
       const result = parsePlannerResult(raw);
@@ -179,7 +179,7 @@ export class Reconciler {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught); task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
     }
-    void this.reconcile(jobId);
+    this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
@@ -192,7 +192,7 @@ export class Reconciler {
     if (task.state === 'CANCELLED') { await this.store.saveTask(task); return; }
     if (error === null) { task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed`)); await this.deliverContinuation(job, task); }
     else { task.error = error; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'task.failed' : 'task.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Task ${task.id}: ${error}`, task.state === 'FAILED' ? 'user' : 'orchestrator')); }
-    void this.reconcile(jobId);
+    this.detach(this.reconcile(jobId), jobId, task.id, 'worker follow-up reconciliation');
   }
   private async cleanupThreads(job: Job): Promise<void> {
     const adapter = this.options.adapters.find(candidate => candidate.name === 'chatgpt' && candidate.deleteThread);
@@ -219,6 +219,14 @@ export class Reconciler {
     finally { this.continuationLive.delete(task.id); }
   }
   private async emit(event: EventRecord): Promise<void> { try { if (this.options.emit) await this.options.emit(event); } catch { /* observability cannot block durable execution */ } try { if (this.options.eventBus) await this.options.eventBus.publish(event); } catch (error) { await this.reportTransportFailure(error); } }
+  private detach(promise: Promise<unknown>, jobId: string, taskId: string, context: string): void {
+    void promise.catch(error => this.reportDetachedFailure(jobId, taskId, context, error));
+  }
+  private async reportDetachedFailure(jobId: string, taskId: string, context: string, error: unknown): Promise<void> {
+    if (!this.options.emit) return;
+    const message = error instanceof Error ? error.message : String(error);
+    try { await this.options.emit(eventFor(jobId, taskId, null, 'runtime.persistence.failed', 'failed', `${context} failed: ${message}`, 'orchestrator')); } catch { /* detached failure reporting must never crash the daemon */ }
+  }
   private async reportTransportFailure(error: unknown): Promise<void> { if (this.options.emit) { try { await this.options.emit(eventFor('system', 'event-bus', null, 'event.transport.failed', 'failed', `Event transport unavailable: ${error instanceof Error ? error.message : String(error)}`, 'orchestrator')); } catch { /* reporting is best effort */ } } }
 }
 

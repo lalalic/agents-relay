@@ -192,6 +192,27 @@ test('thread id persists before a failed execution is retried', async () => {
   const finished=await store.load('j');
   assert.equal(launches,2); assert.equal(retriedThreadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].threadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].state,'SUCCEEDED');
 });
+test('worker completion persistence failure is contained and reported without crashing the reconciler', async () => {
+  const t=task('persist-fail');
+  class FailingCompletionStore extends InMemoryStore {
+    failures=0;
+    async saveTask(value) {
+      if (value.state==='SUCCEEDED' && this.failures++===0) throw new Error('github persistence down');
+      return super.saveTask(value);
+    }
+  }
+  const store=new FailingCompletionStore(job([t]));
+  const adapter=new FakeAdapter();
+  const events=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],emit:event=>events.push(event)});
+  await reconciler.reconcile('j');
+  adapter.resolvers[0].resolve({summary:'large result was already bounded'});
+  await reconciler.idle();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(events.some(event=>event.type==='runtime.persistence.failed' && /github persistence down/.test(event.message)),true);
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+});
+
 test('event transport failure is advisory', async () => { const t=task('event-fail'); const store=new InMemoryStore(job([t])); const bus={publish:async()=>{throw new Error('nats down');},subscribe:async()=>{throw new Error('nats down');},subscribeAll:async()=>{throw new Error('nats down');}}; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'still works'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); });
 test('aggregate edge cases and NATS subject safety are explicit', () => { const empty=job(); assert.equal(schedule(empty).state,'OPEN'); const cancelled=job([task('x','CANCELLED')]); assert.equal(schedule(cancelled).state,'CANCELLED'); assert.throws(()=>subjectToken('bad.id'),/Unsafe/); assert.equal(subjectToken('safe_job-1'),'safe_job-1'); });
 test('live task leases do not expire before their timeout', async () => {
