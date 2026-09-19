@@ -75,6 +75,7 @@ export const dashboardHtml = `<!doctype html>
     .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
     .event-kind { color:var(--accent); font-weight:800; }
     .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
+    #usage-view { grid-column:1 / -1; }
     .usage-providers { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:1rem; }
     .usage-provider { padding:1rem; border:1px solid var(--border); border-radius:.55rem; background:var(--surface2); }
     .usage-provider h3 { margin:0 0 .8rem; font-size:.9rem; }
@@ -105,7 +106,7 @@ export const dashboardHtml = `<!doctype html>
     <div class="panel-head"><h2>Jobs</h2><span id="job-count" class="subtle"></span></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
-  <div class="workspace">
+  <div class="workspace" id="jobs-workspace">
     <section class="panel" aria-labelledby="workspace-heading">
       <div class="panel-head"><h2 id="workspace-heading">Selected job <span id="selected-job-title" class="subtle"></span></h2><span id="connection" aria-live="polite">Connecting…</span></div>
       <div class="panel-body">
@@ -147,6 +148,7 @@ const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
 const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
+const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobCount=document.querySelector('#job-count');
 const jobDetail=document.querySelector('#job-detail');
@@ -184,8 +186,10 @@ async function refresh(){try{const discovered=await loadJSON('/api/jobs');jobs=A
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
 function usageBar(label,windowData,mode){const isAvailable=mode==='available';const percent=Math.max(0,Math.min(100,isAvailable?100-windowData.usedPercent:windowData.usedPercent));const suffix=isAvailable?'% available':'% used';const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+suffix)));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' '+(isAvailable?'available':'used'));track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const mode=provider.id==='openai'?'available':'used';const bars=element('div','usage-bars');bars.append(usageBar('5-hour',usage.fiveHour,mode),usageBar('Weekly',usage.weekly,mode));card.append(bars);return card;}
-async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];if(!providers.length){usageRoot.append(element('p','empty',text('Account usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
-function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
+function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
+function creditProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label+' credits')));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){card.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return card;}const groups=element('div','detail-groups');for(const balance of credits.balances){groups.append(field(balance.currency+' remaining',formatCredit(balance.remaining,balance.currency)));if(balance.total!==null&&balance.total!==undefined)groups.append(field(balance.currency+' total',formatCredit(balance.total,balance.currency)));if(balance.used!==null&&balance.used!==undefined)groups.append(field(balance.currency+' used',formatCredit(balance.used,balance.currency)));}card.append(groups);return card;}
+async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
+function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});

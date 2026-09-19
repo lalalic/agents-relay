@@ -24,13 +24,38 @@ export type AccountUsageProvider = {
   usage: AccountUsageSnapshot;
 };
 
+export type CreditBalance = { currency: string; total: number | null; used: number | null; remaining: number | null };
+
+export type CreditSnapshot = {
+  available: boolean;
+  generatedAt: string;
+  balances: CreditBalance[];
+  reason: string | null;
+};
+
+export type CreditProvider = { id: 'deepseek' | 'openrouter'; label: string; credits: CreditSnapshot };
+
 export type AccountUsageOverview = {
   generatedAt: string;
   providers: AccountUsageProvider[];
+  credits: CreditProvider[];
 };
 
 export interface UsageReader {
   read(): Promise<AccountUsageSnapshot>;
+}
+
+export interface CreditReader {
+  read(): Promise<CreditSnapshot>;
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function finitePercent(value: unknown): number | null {
@@ -217,20 +242,86 @@ export class ZaiUsageReader implements UsageReader {
   }
 }
 
+
+export class DeepSeekCreditReader implements CreditReader {
+  constructor(
+    private readonly apiKey = process.env.DEEPSEEK_API_KEY ?? '',
+    private readonly endpoint = 'https://api.deepseek.com/user/balance',
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  async read(): Promise<CreditSnapshot> {
+    const generatedAt = this.now().toISOString();
+    if (!this.apiKey) return { available: false, generatedAt, balances: [], reason: 'DEEPSEEK_API_KEY is not configured.' };
+    try {
+      const response = await this.fetchImpl(this.endpoint, { headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' } });
+      if (!response.ok) return { available: false, generatedAt, balances: [], reason: `DeepSeek balance request failed with HTTP ${response.status}.` };
+      const payload = await response.json() as { is_available?: boolean; balance_infos?: Array<Record<string, unknown>> };
+      const balances = (Array.isArray(payload.balance_infos) ? payload.balance_infos : []).map(info => ({
+        currency: typeof info.currency === 'string' ? info.currency : 'credit',
+        total: finiteNumber(info.total_balance),
+        used: null,
+        remaining: finiteNumber(info.total_balance),
+      })).filter(balance => balance.remaining !== null);
+      return { available: payload.is_available === true && balances.length > 0, generatedAt, balances, reason: balances.length ? null : 'DeepSeek returned no usable balance information.' };
+    } catch {
+      return { available: false, generatedAt, balances: [], reason: 'DeepSeek balance request could not be completed.' };
+    }
+  }
+}
+
+export class OpenRouterCreditReader implements CreditReader {
+  constructor(
+    private readonly apiKey = process.env.OPENROUTER_API_KEY ?? '',
+    private readonly endpoint = 'https://openrouter.ai/api/v1/credits',
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  async read(): Promise<CreditSnapshot> {
+    const generatedAt = this.now().toISOString();
+    if (!this.apiKey) return { available: false, generatedAt, balances: [], reason: 'OPENROUTER_API_KEY is not configured.' };
+    try {
+      const response = await this.fetchImpl(this.endpoint, { headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' } });
+      if (!response.ok) return { available: false, generatedAt, balances: [], reason: `OpenRouter credits request failed with HTTP ${response.status}; this endpoint requires a management key.` };
+      const payload = await response.json() as { data?: { total_credits?: unknown; total_usage?: unknown } };
+      const total = finiteNumber(payload.data?.total_credits);
+      const used = finiteNumber(payload.data?.total_usage);
+      const remaining = total !== null && used !== null ? total - used : null;
+      const balances = total === null && used === null ? [] : [{ currency: 'credits', total, used, remaining }];
+      return { available: balances.length > 0, generatedAt, balances, reason: balances.length ? null : 'OpenRouter returned no usable credit information.' };
+    } catch {
+      return { available: false, generatedAt, balances: [], reason: 'OpenRouter credits request could not be completed.' };
+    }
+  }
+}
+
 export class UsageRegistry {
   constructor(
     private readonly openaiReader: UsageReader,
     private readonly zaiReader: UsageReader = new ZaiUsageReader(),
+    private readonly deepSeekReader: CreditReader | null = null,
+    private readonly openRouterReader: CreditReader | null = null,
   ) {}
 
   async snapshot(): Promise<AccountUsageOverview> {
-    const [openai, zai] = await Promise.all([this.openaiReader.read(), this.zaiReader.read()]);
+    const [openai, zai, deepseek, openrouter] = await Promise.all([
+      this.openaiReader.read(),
+      this.zaiReader.read(),
+      this.deepSeekReader?.read() ?? Promise.resolve(null),
+      this.openRouterReader?.read() ?? Promise.resolve(null),
+    ]);
+    const credits: CreditProvider[] = [];
+    if (deepseek) credits.push({ id: 'deepseek', label: 'DeepSeek', credits: deepseek });
+    if (openrouter) credits.push({ id: 'openrouter', label: 'OpenRouter', credits: openrouter });
     return {
       generatedAt: new Date().toISOString(),
       providers: [
         { id: 'openai', label: 'OpenAI', usage: openai },
         { id: 'zai', label: 'Z.ai', usage: zai },
       ],
+      credits,
     };
   }
 }
@@ -250,5 +341,10 @@ export class UnavailableUsageReader implements UsageReader {
 }
 
 export function codexAndZaiUsageRegistry(codexHome?: string, _legacyWindowDays?: number): UsageRegistry {
-  return new UsageRegistry(new CodexSessionUsageReader(codexHome));
+  return new UsageRegistry(
+    new CodexSessionUsageReader(codexHome),
+    new ZaiUsageReader(),
+    process.env.DEEPSEEK_API_KEY ? new DeepSeekCreditReader() : null,
+    process.env.OPENROUTER_API_KEY ? new OpenRouterCreditReader() : null,
+  );
 }

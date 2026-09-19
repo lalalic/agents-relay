@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { CodexSessionUsageReader, UsageRegistry } from '../dist/usage.js';
+import { CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, UsageRegistry } from '../dist/usage.js';
 
 function jsonl(value) { return JSON.stringify(value) + '\n'; }
 
@@ -49,4 +49,39 @@ test('usage registry exposes only account limit state', async () => {
   const snapshot = overview.providers.find(provider => provider.id === 'openai').usage;
   const zai = overview.providers.find(provider => provider.id === 'zai').usage;
   assert.deepEqual(Object.keys(snapshot).sort(), ['available', 'fiveHour', 'generatedAt', 'reason', 'weekly']);
+});
+
+
+test('DeepSeek credit reader exposes configured account balances', async () => {
+  const fetchImpl = async url => {
+    assert.equal(url, 'https://api.deepseek.com/user/balance');
+    return new Response(JSON.stringify({ is_available: true, balance_infos: [
+      { currency: 'USD', total_balance: '12.34', granted_balance: '2.34', topped_up_balance: '10.00' },
+      { currency: 'CNY', total_balance: '56.78', granted_balance: '0', topped_up_balance: '56.78' }
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const snapshot = await new DeepSeekCreditReader('configured', undefined, fetchImpl, () => new Date('2026-09-18T10:40:00Z')).read();
+  assert.equal(snapshot.available, true);
+  assert.deepEqual(snapshot.balances.map(item => [item.currency, item.remaining]), [['USD', 12.34], ['CNY', 56.78]]);
+});
+
+test('OpenRouter credit reader exposes purchased, used, and remaining credits', async () => {
+  const fetchImpl = async url => {
+    assert.equal(url, 'https://openrouter.ai/api/v1/credits');
+    return new Response(JSON.stringify({ data: { total_credits: 100.5, total_usage: 25.75 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const snapshot = await new OpenRouterCreditReader('configured', undefined, fetchImpl, () => new Date('2026-09-18T10:40:00Z')).read();
+  assert.equal(snapshot.available, true);
+  assert.equal(snapshot.balances[0].total, 100.5);
+  assert.equal(snapshot.balances[0].used, 25.75);
+  assert.equal(snapshot.balances[0].remaining, 74.75);
+});
+
+test('usage registry includes credit providers only when readers are configured', async () => {
+  const usage = { read: async () => ({ available: false, generatedAt: 'x', fiveHour: null, weekly: null, reason: 'none' }) };
+  const credit = { read: async () => ({ available: true, generatedAt: 'x', balances: [{ currency: 'USD', total: 10, used: null, remaining: 10 }], reason: null }) };
+  const withoutCredits = await new UsageRegistry(usage, usage).snapshot();
+  assert.deepEqual(withoutCredits.credits, []);
+  const withCredits = await new UsageRegistry(usage, usage, credit, credit).snapshot();
+  assert.deepEqual(withCredits.credits.map(item => item.id), ['deepseek', 'openrouter']);
 });

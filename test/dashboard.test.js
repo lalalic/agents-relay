@@ -7,6 +7,8 @@ test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, />Usage<\/button>/);
   assert.match(dashboardHtml, /id="usage-heading">Usage<\/h2>/);
   assert.match(dashboardHtml, /id="events-panel"/);
+  assert.match(dashboardHtml, /id="jobs-workspace"/);
+  assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
   assert.match(dashboardHtml, /function taskNode\(/);
   assert.match(dashboardHtml, /function renderTaskDetail\(/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:selected-job'/);
@@ -28,6 +30,8 @@ test('account usage is limited to two real rate-limit percentage bars', () => {
   assert.match(dashboardHtml, /Weekly/);
   assert.match(dashboardHtml, /function usageProvider\(provider\)/);
   assert.match(dashboardHtml, /overview\.providers/);
+  assert.match(dashboardHtml, /overview\.credits/);
+  assert.match(dashboardHtml, /function creditProvider\(provider\)/);
   assert.match(dashboardHtml, /progressbar/);
   assert.match(dashboardHtml, /provider\.id==='openai'\?'available':'used'/);
   assert.match(dashboardHtml, /% available/);
