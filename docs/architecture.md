@@ -101,7 +101,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 10. Dashboard web page showing jobs, task tree/state, worker/model, dependencies, results, leases, and live events/status.
 11. SSE or equivalent local live dashboard updates.
 12. Tests for marker parsing, state transitions, scheduling, reconciliation/recovery, and API/dashboard data.
-13. `SKILL.md` describing how an agent submits async work, propagates lineage, consumes results, and treats events vs durable state.
+13. `skills/agents-relay/SKILL.md` plus supporting agent files describing how an agent submits async work, propagates lineage, consumes results, and treats events vs durable state.
 14. Documentation and a runnable local dogfood example.
 15. Browser-level verification of the dashboard before merge.
 

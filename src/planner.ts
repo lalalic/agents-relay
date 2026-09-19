@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Job, Priority, Task, AdapterName, RoutingDecision } from './types.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
@@ -95,6 +98,53 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
       child.on('close', code => code === 0 ? (() => { try { resolve(parsePlannerOutput(stdout)); } catch (error) { reject(error); } })() : reject(new Error(stderr.trim() || `Planner exited ${code}`)));
       signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
       child.stdin.end(plannerInput(context));
+    });
+  }
+}
+
+
+const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
+
+function parsePlannerAgentMessage(line: string): string | undefined {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    const item = value.item as Record<string, unknown> | undefined;
+    if (value.type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') return item.text.trim() || undefined;
+    const payload = value.payload as Record<string, unknown> | undefined;
+    if (value.type === 'event_msg' && payload?.type === 'task_complete' && typeof payload.last_agent_message === 'string') return payload.last_agent_message.trim() || undefined;
+  } catch { /* ignore non-JSON runtime diagnostics */ }
+  return undefined;
+}
+
+export class AgentObjectivePlanner implements ObjectivePlanner {
+  constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
+  async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
+    const instructions = await readFile(this.agentFile, 'utf8');
+    const prompt = instructions.trim() + '\n\n## Durable planner input\n\n' + plannerInput(context);
+    return await new Promise<PlannerResult>((resolve, reject) => {
+      const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdoutBuffer = '';
+      let finalMessage = '';
+      let stderrTail = '';
+      const consume = (line: string): void => {
+        const message = parsePlannerAgentMessage(line);
+        if (message) finalMessage = message;
+      };
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdoutBuffer += chunk.toString();
+        const lines = stdoutBuffer.split(/\r?\n/);
+        stdoutBuffer = lines.pop() ?? '';
+        for (const line of lines) consume(line);
+      });
+      child.stderr.on('data', (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-16384); });
+      child.on('error', reject);
+      child.on('close', code => {
+        if (stdoutBuffer) consume(stdoutBuffer);
+        if (code !== 0) { reject(new Error(stderrTail.trim() || 'Planner agent runtime exited ' + code)); return; }
+        if (!finalMessage) { reject(new Error('Planner agent returned no final message')); return; }
+        try { resolve(parsePlannerOutput(finalMessage)); } catch (error) { reject(error); }
+      });
+      signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     });
   }
 }

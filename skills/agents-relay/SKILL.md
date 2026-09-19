@@ -5,6 +5,11 @@ description: Create and operate durable asynchronous agent jobs through GitHub P
 
 # Agents Relay
 
+## Runtime contract
+
+This skill is the installable instruction/agent bundle. Do not require a local source checkout to execute Agents Relay. Use `npx agents-relay ...` for the executable CLI/runtime. Supporting agent definitions live under this skill directory and ship with the npm package; the default autonomous planner uses `agents/planner.agent.md`.
+
+
 Use Agents Relay for asynchronous work that must survive the current agent process. Create one durable top-level job per objective and submit child tasks with unique IDs, explicit parentTaskId, dependencies, capabilities, adapter, timeout, and retry policy. A model-backed task must carry a recorded routing decision (provider, model, optional profile/reasoning/cwd/projectId) before it can launch. Use adapter codex for local Codex-compatible workers and adapter chatgpt for a ChatGPT web worker created through MacBridge.
 
 GitHub PR comments are durable truth in operational mode. Reload the PR after every event or wake-up and reconcile desired durable state into worker executions; events and NATS are only low-latency notifications and must never be treated as completion.
@@ -21,7 +26,7 @@ satisfaction does not override failed or blocked work.
 For new GitHub-backed work, do not create the PR or job marker with raw gh commands. Use the first-class CLI:
 
 ~~~sh
-agents-relay job create --repo OWNER/REPO --head feat/example --base main \
+npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id JOB_ID --title "Objective" --body "PR description"
 ~~~
 
@@ -30,13 +35,13 @@ job create resolves an existing open PR with the same head/base before creating 
 To bring an existing unmanaged PR under Agents Relay, even when it has zero comments:
 
 ~~~sh
-agents-relay job adopt --repo OWNER/REPO --pr 6 --id JOB_ID --title "Objective"
+npx agents-relay job adopt --repo OWNER/REPO --pr 6 --id JOB_ID --title "Objective"
 ~~~
 
 To repair duplicate markers for that same job:
 
 ~~~sh
-agents-relay job repair --repo OWNER/REPO --pr 6 --id JOB_ID
+npx agents-relay job repair --repo OWNER/REPO --pr 6 --id JOB_ID
 ~~~
 
 A PR carrying a marker for a different job is rejected rather than silently reassigned. Managed task commands must not run until the durable job marker exists; submit/status/reconcile/retry/cancel/serve fail clearly when it is absent.
@@ -46,11 +51,11 @@ The legacy init flow remains supported for compatibility, but orchestrators shou
 Typical managed flow:
 
 ~~~sh
-agents-relay job create --repo OWNER/REPO --head feat/example --id JOB_ID --title "Objective"
-agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID --task-id child --input "echo work" --adapter shell
-agents-relay reconcile --repo OWNER/REPO --pr 12 --id JOB_ID
-agents-relay status --repo OWNER/REPO --pr 12 --id JOB_ID
-agents-relay serve --repo OWNER/REPO --pr 12 --id JOB_ID
+npx agents-relay job create --repo OWNER/REPO --head feat/example --id JOB_ID --title "Objective"
+npx agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID --task-id child --input "echo work" --adapter shell
+npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id JOB_ID
+npx agents-relay status --repo OWNER/REPO --pr 12 --id JOB_ID
+npx agents-relay serve --repo OWNER/REPO --pr 12 --id JOB_ID
 ~~~
 
 Use --file PATH only for explicit local demo/test mode. Optional --events nats enables wake/progress events with --subject-prefix; the PR remains authoritative.
@@ -65,8 +70,8 @@ When a job becomes COMPLETED or its GitHub PR is merged, delete all ChatGPT task
 
 V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
 
-Registered agents are result-owning roles with responsibility boundaries; skills are callable capabilities and adapters are execution runtimes. Register agents with `agent-register`, discover them with hard filters using `agent-discover`, and treat claimed capabilities separately from observed evaluations/outcomes. Discovery returns explainable evidence and permits exploration; it does not produce a universal trust score. The future constrained remote surface should authenticate `POST /jobs` and `GET /jobs/:id` only, with public/intention-only jobs separated from private-data or credential work.
+Registered agents are result-owning roles with responsibility boundaries; skills are callable capabilities and adapters are execution runtimes. Register agents with `npx agents-relay agent-register`, discover them with hard filters using `npx agents-relay agent-discover`, and treat claimed capabilities separately from observed evaluations/outcomes. Discovery returns explainable evidence and permits exploration; it does not produce a universal trust score. The future constrained remote surface should authenticate `POST /jobs` and `GET /jobs/:id` only, with public/intention-only jobs separated from private-data or credential work.
 
 Treat GitHub PR state as authoritative at reconciliation boundaries. `MERGED` forces the job to `COMPLETED`; closed-unmerged forces `CANCELLED` and prevents launches. Use the repository-wide dashboard job list to compare GitHub and durable states; repair any mismatch rather than trusting a stale marker.
 
-If already-completed orchestrator work is missing from a managed job, backfill it with `agents-relay record` and the real commit SHA rather than inventing a worker execution. Treat this as a repair path only; new work should be submitted before it starts. Managed job description comes from the GitHub PR body and should remain visible with the job title in the dashboard.
+If already-completed orchestrator work is missing from a managed job, backfill it with `npx agents-relay record` and the real commit SHA rather than inventing a worker execution. Treat this as a repair path only; new work should be submitted before it starts. Managed job description comes from the GitHub PR body and should remain visible with the job title in the dashboard.

@@ -16,7 +16,7 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
-import { CommandObjectivePlanner } from './planner.js';
+import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
 class ServiceEventBus implements EventBus {
@@ -106,7 +106,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
 }
 
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const plannerCommand = arg(args, '--planner-command'); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new ShellAdapter(), new CodexAdapter(arg(args, '--codex', 'codex')), new ChatGptAdapter({ endpoint: arg(args, '--macbridge-url') || undefined, tokenFile: arg(args, '--macbridge-token-file') || undefined })], continuations: [new CodexThreadContinuation(arg(args, '--codex', 'codex')), new CommandContinuation(), new WebhookContinuation()], planner: plannerCommand ? new CommandObjectivePlanner(plannerCommand) : undefined, eventBus: bus, emit }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const plannerCommand = arg(args, '--planner-command'); const modelRuntime = arg(args, '--codex', 'codex'); const planner = plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new ShellAdapter(), new CodexAdapter(modelRuntime), new ChatGptAdapter({ endpoint: arg(args, '--macbridge-url') || undefined, tokenFile: arg(args, '--macbridge-token-file') || undefined })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, eventBus: bus, emit }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined; const reconciler = runtime(loaded.store, args, bus);

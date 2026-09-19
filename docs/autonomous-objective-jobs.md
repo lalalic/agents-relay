@@ -12,6 +12,7 @@ Existing jobs remain `fixed` by default. An `autonomous` job may grow its own du
 - A planner is a real durable task (`kind: planner`) in the same parent/subtask hierarchy as execution work.
 - Reconciliation owns liveness: it decides when another planner is required, including after daemon restart or a missed wake-up.
 - The planner owns reasoning: it returns `objective_status`, an assessment, and typed `next_tasks`.
+- The default planner is the installable `skills/agents-relay/agents/planner.agent.md` agent contract shipped with the npm package; runtime command configuration is only an override.
 - `in_progress` creates durable child work; `satisfied` stops growth but does not bypass normal completion gates.
 - Failed or blocked work prevents autonomous completion and prevents blindly creating another planning round.
 - Planner and generated task creation are idempotent so repeated reconciliation does not duplicate work.

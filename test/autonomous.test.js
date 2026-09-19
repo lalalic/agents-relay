@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { AgentObjectivePlanner, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
 import { executionMode } from '../dist/cli.js';
@@ -27,6 +30,25 @@ test('execution mode and planner result markers round-trip, with legacy jobs fix
   assert.equal(executionMode([]), 'fixed');
   assert.match(dashboardHtml, /Execution mode/);
   assert.match(dashboardHtml, /executionMode\|\|'fixed'/);
+});
+
+test('default planner agent loads markdown instructions and returns typed planning JSON', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-agent-'));
+  try {
+    const command = join(root, 'model-runtime');
+    const agentFile = join(root, 'planner.agent.md');
+    await writeFile(agentFile, '# Planner Agent\nReturn JSON only.\n');
+    await writeFile(command, [
+      '#!/bin/sh',
+      "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"objective_status\\\":\\\"satisfied\\\",\\\"assessment\\\":\\\"done\\\",\\\"next_tasks\\\":[]}\"}}'",
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const planner = new AgentObjectivePlanner(command, agentFile);
+    const result = await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null }, new AbortController().signal);
+    assert.deepEqual(result, { objective_status: 'satisfied', assessment: 'done', next_tasks: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('fixed jobs remain backward compatible and never create planner tasks', async () => {
@@ -55,6 +77,7 @@ test('autonomous reconciliation grows the real parent/subtask tree and completes
   assert.equal(result.state, 'COMPLETED');
   assert.equal(calls, 2);
   assert.equal(plannerOne?.kind, 'planner');
+  assert.equal(plannerOne?.agentName, 'planner');
   assert.equal(work?.parentTaskId, 'planner-1');
   assert.equal(plannerTwo?.parentTaskId, 'planner-1');
   assert.equal(plannerTwo?.plannerResult?.objective_status, 'satisfied');
