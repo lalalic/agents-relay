@@ -163,6 +163,17 @@ class ManagedGitHubClient {
   async graphql(query, variables = {}) {
     const pr = this.pulls.find(item => item.number === Number(variables.number)) ?? this.pulls[0];
     if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return { repository:{ pullRequest: pr ? { id:'PR_'+pr.number, state:String(pr.state||'open').toUpperCase(), merged:false, mergedAt:null, closedAt:null } : null } };
+    if (query.includes('pullRequest(number:$number){number title body state headRefName baseRefName}')) return { repository:{ pullRequest: pr ? {number:pr.number,title:pr.title,body:pr.body,state:String(pr.state||'open').toUpperCase(),headRefName:pr.head.ref,baseRefName:pr.base.ref} : null } };
+    if (query.includes('pullRequests(first:20')) {
+      const nodes=this.pulls.filter(item=>item.state==='open'&&(!variables.head||item.head.ref===variables.head)&&(!variables.base||item.base.ref===variables.base)).map(item=>({number:item.number,title:item.title,body:item.body,state:'OPEN',headRefName:item.head.ref,baseRefName:item.base.ref}));
+      return {repository:{pullRequests:{nodes}}};
+    }
+    if (query.includes('query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}')) return {repository:{id:'REPO_owner_repo'}};
+    if (query.includes('createPullRequest')) {
+      const pull={number:this.nextPr++,title:variables.title,body:variables.body,state:'open',head:{ref:variables.head},base:{ref:variables.base}};
+      this.pulls.push(pull);
+      return {createPullRequest:{pullRequest:{number:pull.number,title:pull.title,body:pull.body,state:'OPEN',headRefName:pull.head.ref,baseRefName:pull.base.ref}}};
+    }
     if (query.includes('comments(first:100')) { const values=this.comments.get(Number(variables.number)) ?? []; return { repository:{ pullRequest:{ comments:{ nodes:values.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})), pageInfo:{hasNextPage:false,endCursor:null} } } } }; }
     if (query.includes('addComment')) { const prNumber=Number(String(variables.subjectId).replace('PR_','')); const values=this.comments.get(prNumber) ?? []; const item=githubComment(variables.body,'bot',this.nextComment++); values.push(item); this.comments.set(prNumber,values); return { addComment:{commentEdge:{node:{id:'IC_'+item.id}}} }; }
     if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); for(const values of this.comments.values()){const item=values.find(row=>row.id===id); if(item){item.body=variables.body; return {updateIssueComment:{issueComment:{id:variables.id}}};}} }
@@ -331,6 +342,16 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
   const client = {
     currentLogin: async () => 'bot',
     graphql: async (query, variables = {}) => {
+      calls.push(query);
+      if (query.includes('pullRequests(first:20')) return {repository:{pullRequests:{nodes:pr?[{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}]:[]}}};
+      if (query.includes('query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}')) return {repository:{id:'REPO_owner_repo'}};
+      if (query.includes('createPullRequest')) {
+        if (!bootstrapped) throw new Error('No commits between main and feat/empty');
+        pr={number:7,title:variables.title,body:variables.body,state:'open',head:{ref:variables.head},base:{ref:variables.base}};
+        return {createPullRequest:{pullRequest:{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}}};
+      }
+      if (query.includes('ref(qualifiedName:$qualified)')) return {repository:{ref:{target:{oid:'parent'}}}};
+      if (query.includes('createCommitOnBranch')) { bootstrapped=true; return {createCommitOnBranch:{commit:{oid:'bootstrap'}}}; }
       if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null}:null}};
       if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
       if (query.includes('addComment')) { const item=githubComment(variables.body,'bot',comments.length+1); comments.push(item); return {addComment:{commentEdge:{node:{id:'IC_'+item.id}}}}; }
@@ -338,36 +359,6 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
       if (query.includes('deleteIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const index=comments.findIndex(row=>row.id===id); if(index>=0) comments.splice(index,1); return {deleteIssueComment:{clientMutationId:null}}; }
       throw new Error('Unhandled fake GraphQL query: '+query);
     },
-    request: async (path, init = {}) => {
-      const method = String(init.method ?? 'GET');
-      calls.push({ path, method, body: init.body ? JSON.parse(String(init.body)) : null });
-      if (path.includes('/pulls?')) return pr ? [pr] : [];
-      if (method === 'POST' && path.endsWith('/pulls')) {
-        if (!bootstrapped) throw new Error('gh: Validation Failed (HTTP 422)');
-        const body = JSON.parse(String(init.body));
-        pr = { number: 7, title: body.title, body: body.body, state: 'open', head: { ref: body.head }, base: { ref: body.base } };
-        return pr;
-      }
-      if (path.includes('/compare/main...feat/empty')) return { ahead_by: 0 };
-      if (path.endsWith('/git/ref/heads/feat/empty')) return { object: { sha: 'parent' } };
-      if (path.endsWith('/git/commits/parent')) return { tree: { sha: 'tree' } };
-      if (method === 'POST' && path.endsWith('/git/commits')) return { sha: 'bootstrap' };
-      if (method === 'PATCH' && path.endsWith('/git/refs/heads/feat/empty')) { bootstrapped = true; return { object: { sha: 'bootstrap' } }; }
-      if (method === 'GET' && path.includes('/issues/7/comments')) return comments;
-      if (method === 'POST' && path.includes('/issues/7/comments')) {
-        const body = JSON.parse(String(init.body));
-        const comment = githubComment(body.body, 'bot', comments.length + 1);
-        comments.push(comment);
-        return comment;
-      }
-      if (method === 'PATCH' && path.includes('/issues/comments/')) {
-        const id = Number(path.split('/').at(-1));
-        const row = comments.find(item => item.id === id);
-        row.body = JSON.parse(String(init.body)).body;
-        return row;
-      }
-      throw new Error('Unhandled fake request: ' + method + ' ' + path);
-    }
   };
 
   const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), {
@@ -376,6 +367,6 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
 
   assert.equal(result.pr.number, 7);
   assert.equal(bootstrapped, true);
-  assert.equal(calls.filter(item => item.path.endsWith('/git/commits') && item.method === 'POST').length, 1);
+  assert.equal(calls.filter(query => query.includes('createCommitOnBranch')).length, 1);
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
 });

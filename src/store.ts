@@ -101,22 +101,35 @@ function immutableTaskDefinition(task: Task): unknown {
 function sameTaskDefinition(left: Task, right: Task): boolean {
   return JSON.stringify(immutableTaskDefinition(left)) === JSON.stringify(immutableTaskDefinition(right));
 }
+async function githubGraphql(client: GitHubClient, query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!client.graphql) throw new Error('GitHub GraphQL client is required');
+  return await client.graphql(query, variables) as Record<string, unknown>;
+}
+function repositoryParts(repository: string): { owner: string; name: string } {
+  const [owner, name] = repository.split('/', 2);
+  if (!owner || !name) throw new Error(`Invalid GitHub repository ${repository}`);
+  return { owner, name };
+}
 async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string, head: string): Promise<void> {
-  const ref = await client.request(`/repos/${repository}/git/ref/heads/${head}`) as Record<string, unknown>;
-  const object = ref.object as Record<string, unknown> | undefined;
-  if (typeof object?.sha !== 'string' || object.sha.length === 0) throw new Error(`Unable to resolve head branch ${head}`);
-  const parentSha = object.sha;
-  const commit = await client.request(`/repos/${repository}/git/commits/${parentSha}`) as Record<string, unknown>;
-  const tree = commit.tree as Record<string, unknown> | undefined;
-  if (typeof tree?.sha !== 'string' || tree.sha.length === 0) throw new Error(`Unable to resolve tree for head branch ${head}`);
-  const created = await client.request(`/repos/${repository}/git/commits`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: 'chore: bootstrap Agents Relay job', tree: tree.sha, parents: [parentSha] })
-  }) as Record<string, unknown>;
-  if (typeof created.sha !== 'string' || created.sha.length === 0) throw new Error(`Unable to create bootstrap commit for ${head}`);
-  await client.request(`/repos/${repository}/git/refs/heads/${head}`, {
-    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sha: created.sha, force: false })
-  });
+  const { owner, name } = repositoryParts(repository);
+  const data = await githubGraphql(
+    client,
+    'query($owner:String!,$name:String!,$qualified:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$qualified){target{oid}}}}',
+    { owner, name, qualified: `refs/heads/${head}` }
+  );
+  const repo = data.repository as Record<string, unknown> | undefined;
+  const ref = repo?.ref as Record<string, unknown> | undefined;
+  const target = ref?.target as Record<string, unknown> | undefined;
+  const expectedHeadOid = typeof target?.oid === 'string' ? target.oid : '';
+  if (!expectedHeadOid) throw new Error(`Unable to resolve head branch ${head}`);
+  const created = await githubGraphql(
+    client,
+    'mutation($repositoryNameWithOwner:String!,$branchName:String!,$expectedHeadOid:GitObjectID!){createCommitOnBranch(input:{branch:{repositoryNameWithOwner:$repositoryNameWithOwner,branchName:$branchName},message:{headline:"chore: bootstrap Agents Relay job"},expectedHeadOid:$expectedHeadOid}){commit{oid}}}',
+    { repositoryNameWithOwner: repository, branchName: head, expectedHeadOid }
+  );
+  const result = created.createCommitOnBranch as Record<string, unknown> | undefined;
+  const commit = result?.commit as Record<string, unknown> | undefined;
+  if (typeof commit?.oid !== 'string' || commit.oid.length === 0) throw new Error(`Unable to create bootstrap commit for ${head}`);
 }
 
 function pullRequest(value: unknown): PullRequest {
@@ -124,52 +137,66 @@ function pullRequest(value: unknown): PullRequest {
   const head = item.head as Record<string, unknown> | undefined;
   const base = item.base as Record<string, unknown> | undefined;
   const number = Number(item.number);
-  if (!Number.isInteger(number) || number <= 0 || typeof head?.ref !== 'string' || typeof base?.ref !== 'string') throw new Error('Invalid GitHub pull request response');
-  return { number, title: String(item.title ?? ''), body: String(item.body ?? ''), state: String(item.state ?? ''), head: head.ref, base: base.ref };
+  const headRef = typeof item.headRefName === 'string' ? item.headRefName : typeof head?.ref === 'string' ? head.ref : '';
+  const baseRef = typeof item.baseRefName === 'string' ? item.baseRefName : typeof base?.ref === 'string' ? base.ref : '';
+  if (!Number.isInteger(number) || number <= 0 || !headRef || !baseRef) throw new Error('Invalid GitHub pull request response');
+  return { number, title: String(item.title ?? ''), body: String(item.body ?? ''), state: String(item.state ?? ''), head: headRef, base: baseRef };
 }
 
 export async function resolvePullRequest(client: GitHubClient, repository: string, options: { prNumber?: number; head?: string; base?: string; title?: string; body?: string }): Promise<PullRequest> {
-  if (options.prNumber) return pullRequest(await client.request(`/repos/${repository}/pulls/${options.prNumber}`));
+  const { owner, name } = repositoryParts(repository);
+  if (options.prNumber) {
+    const data = await githubGraphql(
+      client,
+      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){number title body state headRefName baseRefName}}}',
+      { owner, name, number: options.prNumber }
+    );
+    const repo = data.repository as Record<string, unknown> | undefined;
+    const pr = repo?.pullRequest;
+    if (!pr) throw new Error(`Pull request #${options.prNumber} not found`);
+    return pullRequest(pr);
+  }
   if (!options.head) throw new Error('--head is required when --pr is not provided');
   const base = options.base || 'main';
-  const owner = repository.split('/')[0];
-  const query = `/repos/${repository}/pulls?state=open&head=${encodeURIComponent(`${owner}:${options.head}`)}&base=${encodeURIComponent(base)}&per_page=100`;
   const find = async (): Promise<PullRequest | null> => {
-    const response = await client.request(query);
-    if (!Array.isArray(response)) throw new Error('GitHub pull request list response was not an array');
-    const match = response.map(pullRequest).find(pr => pr.head === options.head && pr.base === base);
+    const data = await githubGraphql(
+      client,
+      'query($owner:String!,$name:String!,$head:String!,$base:String!){repository(owner:$owner,name:$name){pullRequests(first:20,states:OPEN,headRefName:$head,baseRefName:$base){nodes{number title body state headRefName baseRefName}}}}',
+      { owner, name, head: options.head, base }
+    );
+    const repo = data.repository as Record<string, unknown> | undefined;
+    const connection = repo?.pullRequests as Record<string, unknown> | undefined;
+    const nodes = Array.isArray(connection?.nodes) ? connection.nodes : [];
+    const match = nodes.map(pullRequest).find(pr => pr.head === options.head && pr.base === base);
     return match ?? null;
   };
   const existing = await find();
   if (existing) return existing;
   if (!options.title) throw new Error('--title is required when creating a pull request');
+  const repositoryData = await githubGraphql(client, 'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}', { owner, name });
+  const repo = repositoryData.repository as Record<string, unknown> | undefined;
+  if (typeof repo?.id !== 'string') throw new Error(`Repository ${repository} not found`);
+  const create = async (): Promise<PullRequest> => {
+    const data = await githubGraphql(
+      client,
+      'mutation($repositoryId:ID!,$base:String!,$head:String!,$title:String!,$body:String!){createPullRequest(input:{repositoryId:$repositoryId,baseRefName:$base,headRefName:$head,title:$title,body:$body}){pullRequest{number title body state headRefName baseRefName}}}',
+      { repositoryId: repo.id, base, head: options.head, title: options.title, body: options.body ?? '' }
+    );
+    const result = data.createPullRequest as Record<string, unknown> | undefined;
+    if (!result?.pullRequest) throw new Error('GitHub createPullRequest returned no pull request');
+    return pullRequest(result.pullRequest);
+  };
   try {
-    return pullRequest(await client.request(`/repos/${repository}/pulls`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: options.title, body: options.body ?? '', head: options.head, base })
-    }));
+    return await create();
   } catch (error) {
     const raced = await find();
     if (raced) return raced;
     const message = error instanceof Error ? error.message : String(error);
-    let noCommitsBetween = /No commits between/i.test(message);
-    if (!noCommitsBetween && /HTTP 422/i.test(message)) {
-      try {
-        const comparison = await client.request(`/repos/${repository}/compare/${base}...${options.head}`) as Record<string, unknown>;
-        noCommitsBetween = Number(comparison.ahead_by) === 0;
-      } catch {
-        noCommitsBetween = false;
-      }
-    }
-    if (noCommitsBetween) {
+    if (/No commits between|no commits between/i.test(message)) {
       await bootstrapEmptyHeadCommit(client, repository, options.head);
       const afterBootstrap = await find();
       if (afterBootstrap) return afterBootstrap;
-      return pullRequest(await client.request(`/repos/${repository}/pulls`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: options.title, body: options.body ?? '', head: options.head, base })
-      }));
+      return create();
     }
     throw error;
   }
@@ -227,8 +254,9 @@ export class GhApiClient implements GitHubClient {
   }
   async currentLogin(): Promise<string> {
     try {
-      const value = await this.request('/user') as Record<string, unknown>;
-      if (typeof value.login === 'string' && value.login.length > 0) return value.login;
+      const value = await this.graphql('query { viewer { login } }') as Record<string, unknown>;
+      const viewer = value.viewer as Record<string, unknown> | undefined;
+      if (typeof viewer?.login === 'string' && viewer.login.length > 0) return viewer.login;
     } catch { /* fall back to gh's locally known active account below */ }
     return new Promise<string>((resolve, reject) => {
       const child = spawn('gh', ['auth', 'status', '--active', '--json', 'hosts']);
