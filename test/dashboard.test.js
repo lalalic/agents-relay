@@ -16,6 +16,15 @@ test('dashboard exposes the operations-console structure safely', () => {
   assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
 });
 
+test('jobs panel supports manual refresh and unfinished-first ordering', () => {
+  assert.match(dashboardHtml, /id="jobs-refresh"/);
+  assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click'/);
+  assert.match(dashboardHtml, /function isTerminalJob\(job\)/);
+  assert.match(dashboardHtml, /jobs\.sort\(compareJobs\)/);
+  assert.match(dashboardHtml, /COMPLETED','CANCELLED/);
+  assert.match(dashboardHtml, /MERGED','CLOSED/);
+});
+
 test('selected job title appears in the panel heading', () => {
   assert.match(dashboardHtml, /id="selected-job-title"/);
   assert.match(dashboardHtml, /selectedJobTitle\.textContent='— '\+value\(job\.title\|\|job\.id\)/);
