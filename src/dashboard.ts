@@ -299,11 +299,12 @@ export function serveDashboard(
     if (req.url === '/api/jobs') {
       try {
         await subscribeDiscovered();
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(await discoveredJobs()));
+        const jobs = await discoveredJobs();
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(jobs));
       } catch (error) {
-        res.writeHead(502);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(502);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }
