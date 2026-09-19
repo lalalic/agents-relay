@@ -44,3 +44,11 @@ test('GitHub PR links accept only validated durable repository and PR values', (
     assert.equal(githubPrUrl('lalalic/agents-relay', prNumber), null);
   }
 });
+
+test('job list uses status badges with distinct state classes', () => {
+  assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
+  assert.match(dashboardHtml, /\.badge\.COMPLETED/);
+  assert.match(dashboardHtml, /\.badge\.OPEN/);
+  assert.match(dashboardHtml, /\.badge\.CANCELLED/);
+  assert.match(dashboardHtml, /\.badge\.FAILED/);
+});
