@@ -3,6 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
 
 export type AccountUsageWindow = {
   usedPercent: number;
@@ -93,13 +94,43 @@ function rateLimitsFromLine(line: string): { timestamp: string; windows: Account
     if (!rateLimits || typeof rateLimits !== 'object') return null;
     const limits = rateLimits as Record<string, unknown>;
     const windows = [parseWindow(limits.primary), parseWindow(limits.secondary)].filter((window): window is AccountUsageWindow => window !== null);
-    if (!windows.length) return null;
     const timestamp = typeof event.timestamp === 'string' && !Number.isNaN(Date.parse(event.timestamp))
       ? event.timestamp
       : new Date(0).toISOString();
     return { timestamp, windows };
   } catch {
     return null;
+  }
+}
+
+export class CodexApiUsageReader implements UsageReader {
+  constructor(private readonly now: () => Date = () => new Date()) {}
+  async read(): Promise<AccountUsageSnapshot> {
+    const generatedAt = this.now().toISOString();
+    return await new Promise(resolve => {
+      const child = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      const finish = (snapshot: AccountUsageSnapshot) => { lines.close(); child.kill(); resolve(snapshot); };
+      const timer = setTimeout(() => finish({ available: false, generatedAt, fiveHour: null, weekly: null, reason: 'Codex app-server rate-limit request timed out.' }), 10_000);
+      lines.on('line', line => {
+        try {
+          const message = JSON.parse(line) as { id?: number; result?: { rateLimits?: { primary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number }; secondary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number } } } };
+          if (message.id !== 2) return;
+          clearTimeout(timer);
+          const parse = (window: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number } | undefined): AccountUsageWindow | null => {
+            if (!window) return null; const usedPercent = finitePercent(window.usedPercent); const windowMinutes = positiveMinutes(window.windowDurationMins);
+            return usedPercent === null || windowMinutes === null ? null : { usedPercent, windowMinutes, resetsAt: epochSeconds(window.resetsAt) };
+          };
+          const limits = message.result?.rateLimits; const primary = parse(limits?.primary); const secondary = parse(limits?.secondary);
+          const windows = [primary, secondary].filter((window): window is AccountUsageWindow => window !== null);
+          const fiveHour = windows.find(window => window.windowMinutes === 300) ?? null; const weekly = windows.find(window => window.windowMinutes === 10_080) ?? null;
+          const available = fiveHour !== null && weekly !== null; finish({ available, generatedAt, fiveHour, weekly, reason: available ? null : 'Codex app-server did not return both account quota windows.' });
+        } catch { return; }
+      });
+      child.once('error', () => { clearTimeout(timer); finish({ available: false, generatedAt, fiveHour: null, weekly: null, reason: 'Codex app-server could not be started.' }); });
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'agents-relay', version: '1' }, capabilities: {} } }) + '\n');
+      setTimeout(() => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} }) + '\n'), 100);
+    });
   }
 }
 
@@ -178,7 +209,9 @@ export class CodexSessionUsageReader implements UsageReader {
 
     const fiveHour = latestWindows.find(window => window.windowMinutes === 300) ?? null;
     const weekly = latestWindows.find(window => window.windowMinutes === 10_080) ?? null;
-    const available = fiveHour !== null && weekly !== null;
+    const telemetryAgeMs = latestTimestamp ? now.getTime() - Date.parse(latestTimestamp) : Number.POSITIVE_INFINITY;
+    const fresh = telemetryAgeMs >= 0 && telemetryAgeMs <= 15 * 60_000;
+    const available = fresh && fiveHour !== null && weekly !== null;
     const snapshot: AccountUsageSnapshot = {
       available,
       generatedAt: now.toISOString(),
@@ -186,8 +219,10 @@ export class CodexSessionUsageReader implements UsageReader {
       weekly,
       reason: available
         ? null
-        : files.length
-          ? 'Real account rate-limit telemetry is present, but both the 5-hour and weekly windows are not available.'
+        : latestTimestamp && !fresh
+          ? 'Latest Codex account rate-limit telemetry is stale.'
+          : files.length
+          ? 'Latest Codex account telemetry does not expose current 5-hour and weekly rate-limit windows.'
           : 'No recent Codex account rate-limit telemetry is available.',
     };
     this.cache = { cachedAt: now.getTime(), snapshot };
@@ -342,7 +377,7 @@ export class UnavailableUsageReader implements UsageReader {
 
 export function codexAndZaiUsageRegistry(codexHome?: string, _legacyWindowDays?: number): UsageRegistry {
   return new UsageRegistry(
-    new CodexSessionUsageReader(codexHome),
+    new CodexApiUsageReader(),
     new ZaiUsageReader(),
     process.env.DEEPSEEK_API_KEY ? new DeepSeekCreditReader() : null,
     process.env.OPENROUTER_API_KEY ? new OpenRouterCreditReader() : null,

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
-import { Job, Task, EventRecord } from './types.js';
+import { Job, Task, EventRecord, Priority } from './types.js';
 import { schedule, transitionTask } from './scheduler.js';
 import { Execution, WorkerAdapter } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
+
+const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; adapters: WorkerAdapter[]; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void> };
 type LiveExecution = { taskId: string; execution: Execution; controller: AbortController; timer: NodeJS.Timeout };
@@ -20,7 +23,7 @@ export class Reconciler {
   private readonly continuationLive = new Set<string>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
-  async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async () => { await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
+  async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async event => { if (event.type !== 'job.wake' && event.type !== 'github.webhook') return; await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
   async idle(): Promise<void> { while (this.live.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   async reconcile(jobId: string): Promise<Job> {
@@ -53,7 +56,7 @@ export class Reconciler {
       if (prState === 'OPEN') {
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size);
-        for (const task of scheduled.tasks.filter(t => t.state === 'READY').slice(0, capacity)) await this.launch(scheduled, task);
+        for (const task of scheduled.tasks.filter(t => t.state === 'READY').sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) await this.launch(scheduled, task);
       }
       const finalState = schedule(await this.store.load(jobId));
       if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
@@ -74,6 +77,8 @@ export class Reconciler {
     const controller = new AbortController(); let execution: Execution;
     const workerTask = { ...task, input: managedWorkerInput(job, task) };
     try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
+    // A worker may reject before durable execution metadata finishes saving. Attach a guard immediately so Node never treats that race as an unhandled rejection; the durable completion handler below still records the outcome.
+    void execution.promise.catch(() => undefined);
     task.executionId = execution.id; await this.store.saveTask(task);
     let threadPersistence = Promise.resolve();
     const persistThread = (threadId: string): void => {

@@ -2,6 +2,8 @@ import { createServer, Server } from 'node:http';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
+import { Job } from './types.js';
+import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -179,7 +181,7 @@ function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number
 function prField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const url=safePrUrl(job.repository,job.prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+job.prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
 function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Chat')));const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'&&task.threadId){const link=document.createElement('a');link.href='https://chatgpt.com/c/'+encodeURIComponent(task.threadId);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open chat';line.append(link);}else line.append(text('—'));box.append(line);return box;}
 function selectJob(id){selectedJob=id;selectedTaskId=null;rememberSelection();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();}
-function renderJobList(){jobList.replaceChildren();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));jobCount.textContent='0 jobs';return;}jobCount.textContent=jobs.length+' job'+(jobs.length===1?'':'s');for(const job of jobs){const button=document.createElement('button');button.type='button';button.className='job-button';button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span','',text(value(job.githubState||'UNKNOWN'))),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
+function renderJobList(){jobList.replaceChildren();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));jobCount.textContent='0 jobs';return;}jobCount.textContent=jobs.length+' job'+(jobs.length===1?'':'s');for(const job of jobs){const button=document.createElement('button');button.type='button';button.className='job-button';button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span','',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
 function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;rememberSelection();renderAll();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
@@ -188,8 +190,8 @@ function renderAll(){renderJobList();renderSelectedJob();}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
 async function refresh(){try{const discovered=await loadJSON('/api/jobs');jobs=Array.isArray(discovered)?discovered:[];jobs.sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}}
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
-function usageBar(label,windowData,mode){const isAvailable=mode==='available';const percent=Math.max(0,Math.min(100,isAvailable?100-windowData.usedPercent:windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
-function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const mode=provider.id==='openai'?'available':'used';const bars=element('div','usage-bars');bars.append(usageBar('5-hour',usage.fiveHour,mode),usageBar('Weekly',usage.weekly,mode));card.append(bars);return card;}
+function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
+function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
 function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
 function creditProvider(provider){const row=element('section','usage-provider');row.append(element('h3','',text(provider.label)));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){row.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return row;}const balance=credits.balances[0];row.append(element('div','detail-value',text(formatCredit(balance.remaining,balance.currency))));return row;}
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
@@ -204,7 +206,7 @@ stream.onerror=()=>{connection.textContent='Degraded · event stream reconnectin
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
 if(location.hash==='#/usage')showView('usage');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage')void refresh();},15000);
+setInterval(()=>{if(location.hash!=='#/usage')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 </script>
 </body>
@@ -214,18 +216,35 @@ export function serveDashboard(
   store: DurableStore,
   port = 8787,
   bus?: EventBus,
-  refreshMs = 15000,
+  refreshMs = 300000,
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: () => Promise<ManagedJobOverview[]>,
+  webhook?: { secret: string; repository: string; pullRequest?: number; wake: (deliveryId: string, event: string, action: string | null) => void },
 ): Server {
+  const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
+  let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean }> | null = null;
   const discoveredJobs = async () => {
-    if (overviewProvider) return (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt }));
-    if (!jobId) return [];
-    return [await store.load(jobId)];
+    try {
+      const jobs = overviewProvider
+        ? (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }))
+        : jobId ? [await store.load(jobId)] : [];
+      lastKnownJobs = jobs;
+      return jobs;
+    } catch (error) {
+      if (lastKnownJobs) return lastKnownJobs;
+      if (jobId) {
+        try {
+          const job = await store.load(jobId);
+          lastKnownJobs = [job];
+          return lastKnownJobs;
+        } catch { /* durable backend unavailable too */ }
+      }
+      throw error;
+    }
   };
 
   const subscribeDiscovered = async (): Promise<void> => {
@@ -263,34 +282,51 @@ export function serveDashboard(
       res.end(dashboardHtml);
       return;
     }
+    if (req.url === '/webhooks/github' && req.method === 'POST') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      const signature = typeof req.headers['x-hub-signature-256'] === 'string' ? req.headers['x-hub-signature-256'] : undefined;
+      if (!webhook || !verifyGitHubWebhook(webhook.secret, body, signature)) { res.writeHead(401); res.end('Invalid signature'); return; }
+      const event = parseGitHubWebhook(req.headers, body);
+      if (!event) { res.writeHead(202); res.end('Ignored'); return; }
+      if (event.repository !== webhook.repository || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
+      if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
+      res.writeHead(202); res.end('Accepted');
+      queueMicrotask(() => webhook.wake(event.deliveryId, event.event, event.action));
+      return;
+    }
     if (req.url === '/api/jobs') {
       try {
         await subscribeDiscovered();
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(await discoveredJobs()));
+        const jobs = await discoveredJobs();
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(jobs));
       } catch (error) {
-        res.writeHead(502);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(502);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }
     if (req.url === '/api/job') {
       try {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end((await snapshot()).json);
+        const body = (await snapshot()).json;
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(body);
       } catch (error) {
-        res.writeHead(404);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(404);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }
     if (req.url === '/api/usage') {
       try {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(await usage());
+        const body = await usage();
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(body);
       } catch (error) {
-        res.writeHead(503);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(503);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }

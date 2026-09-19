@@ -26,14 +26,15 @@ test('selected job title appears in the panel heading', () => {
 });
 
 test('account usage is limited to two real rate-limit percentage bars', () => {
-  assert.match(dashboardHtml, /5-hour/);
+  assert.match(dashboardHtml, /5-hour remaining/);
+  assert.match(dashboardHtml, /Weekly remaining/);
+  assert.match(dashboardHtml, /100-windowData\.usedPercent/);
   assert.match(dashboardHtml, /Weekly/);
   assert.match(dashboardHtml, /function usageProvider\(provider\)/);
   assert.match(dashboardHtml, /overview\.providers/);
   assert.match(dashboardHtml, /overview\.credits/);
   assert.match(dashboardHtml, /function creditProvider\(provider\)/);
   assert.match(dashboardHtml, /progressbar/);
-  assert.match(dashboardHtml, /provider\.id==='openai'\?'available':'used'/);
   assert.match(dashboardHtml, /Math\.round\(percent\)\+'%'/);
   assert.doesNotMatch(dashboardHtml, /% available|% used/);
   assert.match(dashboardHtml, /Real account telemetry when available/);
@@ -73,7 +74,7 @@ test('credit providers render one balance value per provider row', () => {
 test('job list uses PR-number title and concise state metadata', () => {
   assert.match(dashboardHtml, /text\('PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
-  assert.match(dashboardHtml, /text\(value\(job\.githubState\|\|'UNKNOWN'\)\)/);
+  assert.match(dashboardHtml, /job\.draft\?'DRAFT':value\(job\.githubState\|\|'UNKNOWN'\)/);
   assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
 });
