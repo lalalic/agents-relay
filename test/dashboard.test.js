@@ -89,3 +89,11 @@ test('task input and result preserve whitespace and render markdown safely', () 
   assert.match(dashboardHtml, /document\.createElement\('strong'\)/);
   assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
 });
+
+test('task details expose ChatGPT thread as chat link instead of raw execution identifiers', () => {
+  assert.match(dashboardHtml, /function chatField\(task\)/);
+  assert.match(dashboardHtml, /https:\/\/chatgpt\.com\/c\//);
+  assert.match(dashboardHtml, /encodeURIComponent\(task\.threadId\)/);
+  assert.match(dashboardHtml, /link\.textContent='Open chat'/);
+  assert.doesNotMatch(dashboardHtml, /field\('Execution \/ thread'/);
+});
