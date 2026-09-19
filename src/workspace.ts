@@ -28,7 +28,7 @@ export async function discoverGitRepositories(root: string): Promise<string[]> {
     if (await hasGitDirectory(directory)) { found.push(directory); return; }
     let entries;
     try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
-    await Promise.all(entries.filter(entry => entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git').map(entry => visit(join(directory, entry.name))));
+    await Promise.all(entries.filter(entry => entry.isDirectory() && !['node_modules', '.git', '.worktrees', '.backup'].includes(entry.name)).map(entry => visit(join(directory, entry.name))));
   };
   await visit(resolve(root));
   return found.sort((a, b) => relative(root, a).localeCompare(relative(root, b)));

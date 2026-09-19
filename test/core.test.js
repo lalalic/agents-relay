@@ -10,7 +10,7 @@ import { detectCycles, dependencyReady, schedule } from '../dist/scheduler.js';
 import { CodexAdapter } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler, compareTaskPriority } from '../dist/reconciler.js';
-import { MemoryEventBus, subjectToken } from '../dist/events.js';
+import { MemoryEventBus, eventFor, subjectToken } from '../dist/events.js';
 import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
@@ -72,6 +72,18 @@ test('repository pool selects stale terminal jobs for lifecycle reconciliation',
   const open={...job([]),id:'open'}; const merged={...job([]),id:'merged',state:'RUNNING'}; const completed={...job([]),id:'done',state:'COMPLETED'}; const closed={...job([]),id:'closed',state:'OPEN'};
   const items=[{job:open,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:merged,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:completed,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:closed,githubState:'CLOSED',draft:false,mergedAt:null,closedAt:now()}];
   assert.deepEqual(new Set(terminalManagedJobs(items).map(x=>x.id)),new Set(['merged','closed']));
+});
+
+test('repository pool uses targeted wake metadata without a full workspace scan', async () => {
+  const bus=new MemoryEventBus();
+  const calls=[];
+  const client={request:async()=>{throw new Error('full scan should not run for targeted wake');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{calls.push({id,maxConcurrent});}}));
+  const stop=await pool.watch(bus);
+  await bus.publish(eventFor('job-1','task-1',null,'job.wake','queued','wake','orchestrator',{repository:'owner/repo',prNumber:42}));
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(calls,[{id:'job-1',maxConcurrent:4}]);
+  await stop();
 });
 
 test('repository pool reconciles merged PRs even though they are not runnable', async () => {
