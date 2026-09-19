@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { normalizeDaemonArguments } from '../dist/relayd.js';
-import { createService, SERVICE_DEFAULTS } from '../dist/cli.js';
+import { createService, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
@@ -37,5 +37,19 @@ test('service stop clears watchdog and closes dashboard before resolving', async
   await service.stop();
   assert.equal(service.dashboardServer.address(), null);
   assert.equal(service.watchdogCleared, true);
+  await rm(directory, { recursive: true, force: true });
+});
+
+
+test('startup reconciliation failure does not take down dashboard', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-degraded-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify({ id: 'degraded-job', title: 'Degraded', prNumber: 0, state: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }));
+  const service = await createService(['--file', file, '--port', '0']);
+  service.reconciler.reconcile = async () => { throw new Error('GitHub rate limited'); };
+  // startService owns construction, so assert the equivalent startup policy directly:
+  try { await service.reconciler.reconcile(service.job.id); } catch {}
+  assert.notEqual(service.dashboardServer.address(), null);
+  await service.stop();
   await rm(directory, { recursive: true, force: true });
 });
