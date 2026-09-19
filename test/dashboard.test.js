@@ -120,15 +120,16 @@ test('selected job body does not scroll and omits task count field', () => {
 });
 
 
-test('job list exposes repository and quick repository/status filters', () => {
+test('job list exposes repository and repository quick filter without job count or status filter', () => {
   assert.match(dashboardHtml, /id="repo-filter"/);
-  assert.match(dashboardHtml, /id="status-filter"/);
+  assert.doesNotMatch(dashboardHtml, /id="status-filter"/);
   assert.match(dashboardHtml, /All repos/);
-  assert.match(dashboardHtml, /All statuses/);
+  assert.doesNotMatch(dashboardHtml, /All statuses/);
   assert.match(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
   assert.match(dashboardHtml, /function filteredJobs\(\)/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:repo-filter'/);
-  assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:status-filter'/);
+  assert.doesNotMatch(dashboardHtml, /agents-relay:status-filter/);
+  assert.doesNotMatch(dashboardHtml, /id="job-count"/);
 });
 
 

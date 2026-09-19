@@ -115,7 +115,7 @@ export const dashboardHtml = `<!doctype html>
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select><select id="status-filter" class="job-filter" aria-label="Filter jobs by status"><option value="">All statuses</option></select></div><span id="job-count" class="subtle"></span><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -162,10 +162,8 @@ const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
-const jobCount=document.querySelector('#job-count');
 const jobsRefresh=document.querySelector('#jobs-refresh');
 const repoFilter=document.querySelector('#repo-filter');
-const statusFilter=document.querySelector('#status-filter');
 const selectedJobRefresh=document.querySelector('#selected-job-refresh');
 const jobDetail=document.querySelector('#job-detail');
 const taskTree=document.querySelector('#task-tree');
@@ -180,7 +178,6 @@ let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
 let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
-let selectedStatus=sessionStorage.getItem('agents-relay:status-filter')||'';
 
 function value(input){return input===null||input===undefined||input===''?'—':String(input);}
 function text(input){return document.createTextNode(value(input));}
@@ -196,19 +193,15 @@ function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number
 function prField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const url=safePrUrl(job.repository,job.prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+job.prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
 function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Chat')));const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'&&task.threadId){const link=document.createElement('a');link.href='https://chatgpt.com/c/'+encodeURIComponent(task.threadId);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open chat';line.append(link);}else line.append(text('—'));box.append(line);return box;}
 function selectJob(id){selectedJob=id;selectedTaskId=null;rememberSelection();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();}
-function jobStatuses(job){return new Set([value(job.state),value(job.githubState||'UNKNOWN')]);}
-function filteredJobs(){return jobs.filter(job=>(!selectedRepo||job.repository===selectedRepo)&&(!selectedStatus||jobStatuses(job).has(selectedStatus)));}
+function filteredJobs(){return jobs.filter(job=>!selectedRepo||job.repository===selectedRepo);}
 function syncFilters(){
   const repos=[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
-  const statuses=[...new Set(jobs.flatMap(job=>[job.state,job.githubState]).filter(Boolean))].sort();
-  const previousRepo=selectedRepo;const previousStatus=selectedStatus;
+  const previousRepo=selectedRepo;
   repoFilter.replaceChildren(new Option('All repos',''),...repos.map(repo=>new Option(repo,repo)));
-  statusFilter.replaceChildren(new Option('All statuses',''),...statuses.map(status=>new Option(status,status)));
   selectedRepo=repos.includes(previousRepo)?previousRepo:'';
-  selectedStatus=statuses.includes(previousStatus)?previousStatus:'';
-  repoFilter.value=selectedRepo;statusFilter.value=selectedStatus;
+  repoFilter.value=selectedRepo;
 }
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));jobCount.textContent='0 jobs';return;}jobCount.textContent=visible.length===jobs.length?(jobs.length+' job'+(jobs.length===1?'':'s')):(visible.length+' / '+jobs.length);if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected filters.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button';button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))),element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button';button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))),element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
 function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;rememberSelection();renderAll();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
@@ -236,7 +229,6 @@ function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsW
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh());
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
-statusFilter.addEventListener('change',()=>{selectedStatus=statusFilter.value;sessionStorage.setItem('agents-relay:status-filter',selectedStatus);renderJobList();});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
