@@ -27,6 +27,44 @@ export class InMemoryStore implements DurableStore {
   }
 }
 export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown> };
+export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
+
+function pullRequest(value: unknown): PullRequest {
+  const item = value as Record<string, unknown>;
+  const head = item.head as Record<string, unknown> | undefined;
+  const base = item.base as Record<string, unknown> | undefined;
+  const number = Number(item.number);
+  if (!Number.isInteger(number) || number <= 0 || typeof head?.ref !== 'string' || typeof base?.ref !== 'string') throw new Error('Invalid GitHub pull request response');
+  return { number, title: String(item.title ?? ''), body: String(item.body ?? ''), state: String(item.state ?? ''), head: head.ref, base: base.ref };
+}
+
+export async function resolvePullRequest(client: GitHubClient, repository: string, options: { prNumber?: number; head?: string; base?: string; title?: string; body?: string }): Promise<PullRequest> {
+  if (options.prNumber) return pullRequest(await client.request(`/repos/${repository}/pulls/${options.prNumber}`));
+  if (!options.head) throw new Error('--head is required when --pr is not provided');
+  const base = options.base || 'main';
+  const owner = repository.split('/')[0];
+  const query = `/repos/${repository}/pulls?state=open&head=${encodeURIComponent(`${owner}:${options.head}`)}&base=${encodeURIComponent(base)}&per_page=100`;
+  const find = async (): Promise<PullRequest | null> => {
+    const response = await client.request(query);
+    if (!Array.isArray(response)) throw new Error('GitHub pull request list response was not an array');
+    const match = response.map(pullRequest).find(pr => pr.head === options.head && pr.base === base);
+    return match ?? null;
+  };
+  const existing = await find();
+  if (existing) return existing;
+  if (!options.title) throw new Error('--title is required when creating a pull request');
+  try {
+    return pullRequest(await client.request(`/repos/${repository}/pulls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: options.title, body: options.body ?? '', head: options.head, base })
+    }));
+  } catch (error) {
+    const raced = await find();
+    if (raced) return raced;
+    throw error;
+  }
+}
 export class GhApiClient implements GitHubClient {
   async request(path: string, init: RequestInit = {}): Promise<unknown> { const args = ['api', path]; const method = String(init.method ?? 'GET'); if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-'); return new Promise<unknown>((resolve, reject) => { const child = spawn('gh', args); let stdout = ''; let stderr = ''; child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); }); child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); }); child.on('error', reject); if (init.body) child.stdin.write(String(init.body)); child.stdin.end(); child.on('close', code => { if (code !== 0) { reject(new Error(stderr.trim() || `gh api exited ${code}`)); return; } if (stdout.trim()) { try { resolve(JSON.parse(stdout) as unknown); } catch { resolve(stdout); } } else resolve(null); }); }); }
   async currentLogin(): Promise<string> { const value = await this.request('/user') as Record<string, unknown>; if (typeof value.login !== 'string' || value.login.length === 0) throw new Error('gh authentication did not return a login'); return value.login; }
@@ -40,14 +78,27 @@ export class GitHubStore implements DurableStore {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
     const job = jobs.find(x => x.id === jobId);
-    if (!job) throw new Error(`Job ${jobId} not found in PR`);
+    if (!job) throw new Error(`Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}; run agents-relay job adopt --repo ${this.repository} --pr ${this.prNumber} --id ${jobId}`);
     const soleTrustedJob = jobs.length === 1;
     job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
     return job;
   }
   private async comment(body: string): Promise<void> { await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }) }); }
-  async saveJob(job: Job): Promise<void> { const comments = (await this.list()).filter(comment => this.isTrusted(comment)); const existing = comments.find(x => parseJob(x.body)?.id === job.id); if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderJobComment(job) }) }); else await this.comment(renderJobComment(job)); }
-  async appendTask(task: Task): Promise<void> { await this.comment(renderTaskComment(task)); }
+  async saveJob(job: Job): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const jobComments = comments.filter(comment => parseJob(comment.body) !== null);
+    const conflicts = jobComments.filter(comment => parseJob(comment.body)?.id !== job.id);
+    if (conflicts.length > 0) throw new Error(`PR #${this.prNumber} already has a different ${JOB_MARKER} marker`);
+    const matches = jobComments.filter(comment => parseJob(comment.body)?.id === job.id);
+    if (matches.length === 0) await this.comment(renderJobComment(job));
+    else {
+      await this.client.request(`/repos/${this.repository}/issues/comments/${matches[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderJobComment(job) }) });
+      for (const duplicate of matches.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.id}`, { method: 'DELETE' });
+    }
+    const durable = (await this.list()).filter(comment => this.isTrusted(comment)).filter(comment => parseJob(comment.body)?.id === job.id);
+    if (durable.length !== 1) throw new Error(`Failed to persist exactly one ${JOB_MARKER} marker for job ${job.id}`);
+  }
+  async appendTask(task: Task): Promise<void> { if (!task.jobId) throw new Error('GitHub task requires jobId'); await this.load(task.jobId); await this.comment(renderTaskComment(task)); }
   async saveTask(task: Task): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const existing = comments.find(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
