@@ -14,6 +14,14 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
+## Agent network slice
+
+An agent is a registered, result-owning worker/social role with a responsibility boundary. It is not the same thing as a skill (a callable capability) or an execution adapter (shell, Codex, or ChatGPT). Registration is machine-driven through the CLI/core API and is stored as a trusted `agents-relay:agent:v1` marker comment on the same PR.
+
+Registration records identity/name, role and responsibility, claimed capabilities, explicit boundaries/non-goals, endpoint/runtime, availability, and routing metadata. `agent-register` and `agent-discover` provide the smallest useful registry surface. Discovery applies hard filters first and returns observed evidence and reasons rather than a universal score. Evidence can include representative evaluations, outcomes, reliability, latency, and cost. `--explore` allows new/unobserved agents to be considered first; the orchestrator still owns the final choice.
+
+The registry does not yet execute remote agents or expose a public marketplace. A constrained ChatGPT/voice/mobile runtime should eventually use a small authenticated service surface with only `POST /jobs` (intention-only/public jobs) and `GET /jobs/:id`; credentials and private payloads must stay out of PR markers and events. Private-data/credential jobs, multi-owner trust, isolation, billing, and public discovery are future security-gated work.
+
 ## Reconciliation rule
 
 Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened.
@@ -90,6 +98,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 - Make NATS mandatory.
 - Implement a hosted multi-tenant control plane.
 - Encode domain-specific agent roles in the core runtime.
+- Build a broad public agent marketplace or unauthenticated remote HTTP API.
 
 ## Dogfood
 
