@@ -38,7 +38,7 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
 
 test('task attempts display as cumulative count over three-attempt windows', () => {
   assert.match(dashboardHtml, /function attemptBudget\(task\)/);
-  assert.match(dashboardHtml, /attempt\+' \/ 3×'\+\(max\/3\)/);
+  assert.match(dashboardHtml, /Math\.max\(max,Math\.ceil\(attempt\/3\)\*3\)/);
   assert.match(dashboardHtml, /field\('Attempt',attemptBudget\(task\)\)/);
 });
 
