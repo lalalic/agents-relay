@@ -3,6 +3,7 @@ import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
 import { Job } from './types.js';
+import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -205,7 +206,7 @@ stream.onerror=()=>{connection.textContent='Degraded · event stream reconnectin
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
 if(location.hash==='#/usage')showView('usage');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage')void refresh();},15000);
+setInterval(()=>{if(location.hash!=='#/usage')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 </script>
 </body>
@@ -215,11 +216,13 @@ export function serveDashboard(
   store: DurableStore,
   port = 8787,
   bus?: EventBus,
-  refreshMs = 15000,
+  refreshMs = 300000,
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: () => Promise<ManagedJobOverview[]>,
+  webhook?: { secret: string; repository: string; pullRequest: number; wake: (deliveryId: string, event: string, action: string | null) => void },
 ): Server {
+  const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
@@ -277,6 +280,20 @@ export function serveDashboard(
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(dashboardHtml);
+      return;
+    }
+    if (req.url === '/webhooks/github' && req.method === 'POST') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      const signature = typeof req.headers['x-hub-signature-256'] === 'string' ? req.headers['x-hub-signature-256'] : undefined;
+      if (!webhook || !verifyGitHubWebhook(webhook.secret, body, signature)) { res.writeHead(401); res.end('Invalid signature'); return; }
+      const event = parseGitHubWebhook(req.headers, body);
+      if (!event) { res.writeHead(202); res.end('Ignored'); return; }
+      if (event.repository !== webhook.repository || (event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
+      if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
+      res.writeHead(202); res.end('Accepted');
+      queueMicrotask(() => webhook.wake(event.deliveryId, event.event, event.action));
       return;
     }
     if (req.url === '/api/jobs') {

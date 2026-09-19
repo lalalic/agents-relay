@@ -71,7 +71,33 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
   }
 }
 export class GhApiClient implements GitHubClient {
-  async request(path: string, init: RequestInit = {}): Promise<unknown> { const args = ['api', path]; const method = String(init.method ?? 'GET'); if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-'); return new Promise<unknown>((resolve, reject) => { const child = spawn('gh', args); let stdout = ''; let stderr = ''; child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); }); child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); }); child.on('error', reject); if (init.body) child.stdin.write(String(init.body)); child.stdin.end(); child.on('close', code => { if (code !== 0) { reject(new Error(stderr.trim() || `gh api exited ${code}`)); return; } if (stdout.trim()) { try { resolve(JSON.parse(stdout) as unknown); } catch { resolve(stdout); } } else resolve(null); }); }); }
+  private cooldownUntil = 0;
+  private rateLimitFailures = 0;
+  async request(path: string, init: RequestInit = {}): Promise<unknown> {
+    const now = Date.now();
+    if (now < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);
+    const args = ['api', path]; const method = String(init.method ?? 'GET');
+    if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-');
+    return new Promise<unknown>((resolve, reject) => {
+      const child = spawn('gh', args); let stdout = ''; let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on('error', reject); if (init.body) child.stdin.write(String(init.body)); child.stdin.end();
+      child.on('close', code => {
+        if (code !== 0) {
+          const message = stderr.trim() || `gh api exited ${code}`;
+          if (/rate limit|secondary rate|HTTP 429/i.test(message)) {
+            this.rateLimitFailures += 1;
+            const delay = Math.min(15 * 60_000, 60_000 * (2 ** Math.min(this.rateLimitFailures - 1, 4)));
+            this.cooldownUntil = Date.now() + delay;
+          }
+          reject(new Error(message)); return;
+        }
+        this.rateLimitFailures = 0; this.cooldownUntil = 0;
+        if (stdout.trim()) { try { resolve(JSON.parse(stdout) as unknown); } catch { resolve(stdout); } } else resolve(null);
+      });
+    });
+  }
   async currentLogin(): Promise<string> { const value = await this.request('/user') as Record<string, unknown>; if (typeof value.login !== 'string' || value.login.length === 0) throw new Error('gh authentication did not return a login'); return value.login; }
 }
 export class GitHubStore implements DurableStore {

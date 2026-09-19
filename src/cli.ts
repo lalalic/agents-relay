@@ -16,7 +16,7 @@ import { Server } from 'node:http';
 import { AgentRegistration } from './types.js';
 import { discoverAgents } from './registry.js';
 const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
-export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
+export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, dashboardRefreshMs: 300000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
   constructor(private readonly upstream: EventBus) {}
@@ -103,7 +103,9 @@ export async function createService(args: string[]): Promise<Service> {
     const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]);
     overviewProvider = () => listManagedGitHubJobs(overviewClient, repo, trusted);
   }
-  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider);
+  const webhookSecret = arg(args, '--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
+  const webhook = repo && webhookSecret ? { secret: webhookSecret, repository: repo, pullRequest: loaded.job.prNumber, wake: (deliveryId: string, event: string, action: string | null): void => { const wakeEvent = eventFor(loaded.job.id, 'github', null, 'github.webhook', 'queued', 'GitHub webhook ' + event + (action ? ':' + action : ''), 'orchestrator', { deliveryId, event, action }); if (bus) void bus.publish(wakeEvent); else void reconciler.reconcile(loaded.job.id); } } : undefined;
+  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider, webhook);
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
   const watchdog = setInterval(() => void reconciler.reconcile(loaded.job.id), Number(arg(args, '--interval', String(SERVICE_DEFAULTS.watchdogMs)))); watchdog.unref();
