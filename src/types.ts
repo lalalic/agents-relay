@@ -1,6 +1,28 @@
 export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type AdapterName = 'shell' | 'codex' | 'chatgpt';
+export type AgentAvailability = 'available' | 'degraded' | 'offline';
+export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string };
+export type AgentEvidence = {
+  evaluations: Array<{ taskKind: string; outcome: 'success' | 'failure' | 'timeout'; observedAt: string; summary?: string; latencyMs?: number; cost?: number }>;
+  outcomes: { succeeded: number; failed: number; timedOut: number };
+  lastObservedAt: string | null;
+};
+export type AgentRegistration = {
+  id: string;
+  name: string;
+  responsibility: string;
+  role: string;
+  capabilities: string[];
+  boundaries: string[];
+  endpoint: AgentEndpoint;
+  runtime: { adapter: string; provider?: string; model?: string };
+  availability: AgentAvailability;
+  routing: { labels?: Record<string, string>; trustDomains?: string[]; regions?: string[] };
+  evidence: AgentEvidence;
+  registeredAt: string;
+  updatedAt: string;
+};
 export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type Task = {

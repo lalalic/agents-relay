@@ -1,8 +1,9 @@
 import { Job, Task } from './types.js';
 import { spawn } from 'node:child_process';
-import { parseJob, parseTask, renderJobComment, renderTaskComment, JOB_MARKER, TASK_MARKER } from './markers.js';
+import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
+import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; comments(): Promise<Comment[]>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -19,6 +20,8 @@ export class InMemoryStore implements DurableStore {
     this.values.set(key, renderTaskComment(task));
   }
   async saveTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task)); }
+  async listAgents(): Promise<AgentRegistration[]> { return [...this.values.values()].map(parseAgent).filter((x): x is AgentRegistration => x !== null); }
+  async saveAgent(agent: AgentRegistration): Promise<void> { this.values.set(`${AGENT_MARKER}:${agent.id}`, renderAgentComment(agent)); }
   async comments(): Promise<Comment[]> { return [...this.values.values()].map((body, i) => ({ id: i + 1, body, updatedAt: new Date().toISOString(), authorLogin: 'local' })); }
   private findJob(jobId: string): Job | null { return [...this.values.values()].map(parseJob).find((x): x is Job => x !== null && x.id === jobId) ?? null; }
   private tasksForJob(jobId: string): Task[] {
@@ -83,6 +86,7 @@ export class GitHubStore implements DurableStore {
     job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
     return job;
   }
+  async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
   private async comment(body: string): Promise<void> { await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }) }); }
   async saveJob(job: Job): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
@@ -104,6 +108,12 @@ export class GitHubStore implements DurableStore {
     const existing = comments.find(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
     if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
     else await this.appendTask(task);
+  }
+  async saveAgent(agent: AgentRegistration): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const existing = comments.find(comment => parseAgent(comment.body)?.id === agent.id);
+    if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
+    else await this.comment(renderAgentComment(agent));
   }
 }
 

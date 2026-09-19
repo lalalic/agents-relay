@@ -58,6 +58,8 @@ V1 assumes one active runner/daemon per job. Use a distributed atomic lease befo
 
 Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [SKILL.md](SKILL.md).
 
+The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
+
 ### ChatGPT workers through MacBridge
 
 Use the chatgpt adapter to make a relay task create a real ChatGPT web conversation through the local MacBridge runtime. The returned ChatGPT conversation_id is stored as the task threadId, so lineage is durable and a retry continues the same conversation.
