@@ -69,8 +69,6 @@ export class Reconciler {
   private async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) { transitionTask(task, 'FAILED'); task.error = `No adapter ${task.adapter}`; await this.store.saveTask(task); return; }
-    const missing = task.capabilities.filter(capability => !adapter.capabilities.includes(capability));
-    if (missing.length > 0) { transitionTask(task, 'FAILED'); task.error = `Adapter ${adapter.id} lacks capabilities: ${missing.join(', ')}`; await this.store.saveTask(task); return; }
     const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs); const startedAt = (this.options.now ?? new Date()).getTime();
     transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
