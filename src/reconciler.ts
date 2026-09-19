@@ -59,7 +59,7 @@ export class Reconciler {
     this.live.set(task.id, { taskId: task.id, execution, controller, timer });
     void execution.promise.then(result => this.finish(job.id, task.id, execution.id, result, null), error => this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)));
   }
-  private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Codex thread ${threadId} started`, 'orchestrator', { threadId })); } }
+  private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
   private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId); if (live?.execution.id === executionId) { clearTimeout(live.timer); this.live.delete(taskId); }
     const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (!task || task.executionId !== executionId) return;

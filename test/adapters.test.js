@@ -66,3 +66,77 @@ test('CodexAdapter buffers a thread id emitted before callback attachment', asyn
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('ChatGptAdapter launches through MacBridge and exposes conversation id as thread id', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-'));
+  try {
+    const tokenFile = join(root, 'http-token');
+    await writeFile(tokenFile, 'secret-token\n', { mode: 0o600 });
+    let request;
+    const adapter = new (await import('../dist/adapters.js')).ChatGptAdapter({
+      endpoint: 'http://127.0.0.1:9999',
+      tokenFile,
+      fetch: async (input, init) => {
+        request = { input: String(input), init };
+        return new Response(JSON.stringify({ complete: true, conversation_id: 'chat-thread-1', assistant_text: 'finished work' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    const execution = adapter.launch({
+      id: 'chat-task',
+      input: 'build the feature',
+      timeoutMs: 120000,
+      threadId: null,
+      routing: { provider: 'openai', model: 'gpt-5-6-pro', reasoning: 'high', projectId: 'g-p-12345678' },
+    }, new AbortController().signal);
+    let observedThreadId;
+    execution.onThreadStarted = threadId => { observedThreadId = threadId; };
+    const result = await execution.promise;
+    assert.equal(request.input, 'http://127.0.0.1:9999/experimental/chatgpt/conversation');
+    assert.equal(request.init.headers.authorization, 'Bearer secret-token');
+    const body = JSON.parse(request.init.body);
+    assert.deepEqual(body, {
+      prompt: 'build the feature',
+      model: 'gpt-5-6-pro',
+      thinking_effort: 'high',
+      max_runtime_seconds: 120,
+      project_id: 'g-p-12345678',
+    });
+    assert.equal(execution.threadId, 'chat-thread-1');
+    assert.equal(observedThreadId, 'chat-thread-1');
+    assert.equal(result.summary, 'finished work');
+    assert.equal(result.data.conversationId, 'chat-thread-1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter continues an existing conversation on retry and normalizes medium reasoning', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-retry-'));
+  try {
+    const tokenFile = join(root, 'http-token');
+    await writeFile(tokenFile, 'token', { mode: 0o600 });
+    let body;
+    const { ChatGptAdapter } = await import('../dist/adapters.js');
+    const adapter = new ChatGptAdapter({
+      endpoint: 'http://127.0.0.1:9999/experimental/chatgpt/conversation',
+      tokenFile,
+      fetch: async (_input, init) => {
+        body = JSON.parse(init.body);
+        return new Response(JSON.stringify({ complete: true, conversation_id: 'existing-thread', assistant_text: 'continued' }), { status: 200 });
+      },
+    });
+    const result = await adapter.launch({
+      id: 'retry-task', input: 'continue', timeoutMs: 10000, threadId: 'existing-thread',
+      routing: { provider: 'openai', model: 'gpt-5-6', reasoning: 'medium' },
+    }, new AbortController().signal).promise;
+    assert.equal(body.conversation_id, 'existing-thread');
+    assert.equal(body.thinking_effort, 'standard');
+    assert.equal(body.max_runtime_seconds, 30);
+    assert.equal(result.summary, 'continued');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
