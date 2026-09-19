@@ -46,6 +46,34 @@ function chatGptEndpoint(base?: string): string {
 function chatGptTokenFile(file?: string): string {
   return file ?? process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE ?? process.env.MAC_DEV_BRIDGE_HTTP_TOKEN_FILE ?? join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
 }
+function chatGptConversationId(text: string): string | undefined {
+  const match = /\"conversation_id\"\s*:\s*\"((?:\\.|[^\"\\])*)\"/.exec(text);
+  if (!match) return undefined;
+  try { const value = JSON.parse(`\"${match[1]}\"`) as unknown; return typeof value === 'string' ? value : undefined; } catch { return undefined; }
+}
+async function readChatGptResponse(response: Response, onConversationId: (conversationId: string) => void): Promise<string> {
+  if (!response.body) {
+    const text = await response.text();
+    const conversationId = chatGptConversationId(text);
+    if (conversationId) onConversationId(conversationId);
+    return text;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    const conversationId = chatGptConversationId(text);
+    if (conversationId) onConversationId(conversationId);
+  }
+  text += decoder.decode();
+  const conversationId = chatGptConversationId(text);
+  if (conversationId) onConversationId(conversationId);
+  return text;
+}
+
 export class ChatGptAdapter implements WorkerAdapter {
   readonly name = 'chatgpt' as const;
   readonly id = 'chatgpt/macbridge';
@@ -82,15 +110,19 @@ export class ChatGptAdapter implements WorkerAdapter {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      const text = await response.text();
-      let payload: Record<string, unknown>;
-      try { payload = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error(`MacBridge returned unreadable ChatGPT response (${response.status})`); }
-      if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `MacBridge ChatGPT request failed (${response.status})`);
-      const conversationId = typeof payload.conversation_id === 'string' ? payload.conversation_id : undefined;
-      if (conversationId) {
+      let exposedConversationId: string | undefined;
+      const exposeConversationId = (conversationId: string): void => {
+        if (exposedConversationId === conversationId) return;
+        exposedConversationId = conversationId;
         execution.threadId = conversationId;
         execution.onThreadStarted?.(conversationId);
-      }
+      };
+      const text = await readChatGptResponse(response, exposeConversationId);
+      let payload: Record<string, unknown>;
+      try { payload = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error(`MacBridge returned unreadable ChatGPT response (${response.status})`); }
+      const conversationId = typeof payload.conversation_id === 'string' ? payload.conversation_id : exposedConversationId;
+      if (conversationId) exposeConversationId(conversationId);
+      if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `MacBridge ChatGPT request failed (${response.status})`);
       if (payload.complete !== true) throw new Error('MacBridge ChatGPT conversation did not complete');
       const assistantText = typeof payload.assistant_text === 'string' ? payload.assistant_text.trim() : '';
       return {
