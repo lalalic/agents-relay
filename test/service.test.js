@@ -17,9 +17,10 @@ test('daemon arguments require and normalize durable identifiers', () => {
   assert.deepEqual(normalized.serviceArguments, argv);
 });
 
-test('repository daemon wires account usage telemetry into dashboard', async () => {
+test('repository daemon wires account usage telemetry and the default planner into workspace reconciliation', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
+  assert.match(source, /planner:runtimePlanner\(argv\)/);
   assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),exactJob/);
 });
 
@@ -88,6 +89,12 @@ test('published bin files are executable after build and npm pack', async () => 
   const files = new Map(JSON.parse(packed.stdout)[0].files.map(file => [file.path, file.mode]));
   assert.equal(files.get('dist/cli.js'), 0o755);
   assert.equal(files.get('dist/relayd.js'), 0o755);
+  assert.equal(files.has('skills/agents-relay/SKILL.md'), true);
+  assert.equal(files.has('skills/agents-relay/agents/planner.agent.md'), true);
+  assert.equal(files.has('src/cli.ts'), false);
+  assert.equal(files.has('test/service.test.js'), false);
+  assert.equal(files.has('.github/workflows/publish.yml'), false);
+  assert.equal(files.has('pack.json'), false);
 });
 
 test('service stop clears watchdog and closes dashboard before resolving', async () => {

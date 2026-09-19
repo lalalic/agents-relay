@@ -338,13 +338,15 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const calls = [];
   let bootstrapped = false;
+  let headExists = false;
   let pr = null;
   const comments = [];
   const client = {
     currentLogin: async () => 'bot',
     request: async (path, init = {}) => {
       calls.push(path);
-      if (path.includes('/compare/')) return { ahead_by: bootstrapped ? 1 : 0, behind_by: 5 };
+      if (path.includes('/compare/')) { if (!headExists) throw new Error('gh: Not Found (HTTP 404)'); return { ahead_by: bootstrapped ? 1 : 0, behind_by: 5 }; }
+      if (path.endsWith('/git/refs') && init.method === 'POST') { const body = JSON.parse(String(init.body)); assert.equal(body.ref, 'refs/heads/feat/empty'); assert.equal(body.sha, 'parent'); headExists = true; return { ref: body.ref, object: { sha: body.sha } }; }
       if (path.endsWith('/git/commits') && init.method === 'POST') {
         const body = JSON.parse(String(init.body));
         assert.equal(body.tree, 'tree');
@@ -369,7 +371,7 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
         pr={number:7,title:variables.title,body:variables.body,state:'open',head:{ref:variables.head},base:{ref:variables.base}};
         return {createPullRequest:{pullRequest:{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}}};
       }
-      if (query.includes('ref(qualifiedName:$qualified)')) return {repository:{ref:{target:{oid:'parent',tree:{oid:'tree'}}}}};
+      if (query.includes('head:ref(qualifiedName:$head)')) return {repository:{head:headExists?{target:{oid:'parent',tree:{oid:'tree'}}}:null,base:{target:{oid:'parent',tree:{oid:'tree'}}}}};
       if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null}:null}};
       if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
       if (query.includes('addComment')) { const item=githubComment(variables.body,'bot',comments.length+1); comments.push(item); return {addComment:{commentEdge:{node:{id:'IC_'+item.id}}}}; }
@@ -385,6 +387,7 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
 
   assert.equal(result.pr.number, 7);
   assert.equal(bootstrapped, true);
+  assert.equal(calls.filter(call => String(call).endsWith('/git/refs')).length, 1);
   assert.equal(calls.filter(call => String(call).endsWith('/git/commits')).length, 1);
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
 });
