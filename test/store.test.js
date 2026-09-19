@@ -182,6 +182,7 @@ class ManagedGitHubClient {
   }
   async request(path, init = {}) {
     const method = String(init.method ?? 'GET');
+    if (path.includes('/compare/')) return { ahead_by: 1 };
     if (path.includes('/pulls?')) return this.pulls.filter(item => item.state === 'open');
     const pullMatch = path.match(/\/pulls\/(\d+)$/);
     if (method === 'GET' && pullMatch) return this.pulls.find(item => item.number === Number(pullMatch[1]));
@@ -333,7 +334,7 @@ test('saveTask collapses duplicate durable markers for one job and task id', asy
   assert.equal((await store.load('dedupe')).tasks[0].state, 'RUNNING');
 });
 
-test('managed job creation bootstraps an empty head branch after GitHub no-commits 422', async () => {
+test('managed job creation proactively bootstraps a head branch with no ahead commits', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const calls = [];
   let bootstrapped = false;
@@ -341,17 +342,34 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
   const comments = [];
   const client = {
     currentLogin: async () => 'bot',
+    request: async (path, init = {}) => {
+      calls.push(path);
+      if (path.includes('/compare/')) return { ahead_by: bootstrapped ? 1 : 0, behind_by: 5 };
+      if (path.endsWith('/git/commits') && init.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        assert.equal(body.tree, 'tree');
+        assert.deepEqual(body.parents, ['parent']);
+        return { sha: 'bootstrap' };
+      }
+      if (path.includes('/git/refs/heads/feat/empty') && init.method === 'PATCH') {
+        const body = JSON.parse(String(init.body));
+        assert.equal(body.sha, 'bootstrap');
+        assert.equal(body.force, false);
+        bootstrapped = true;
+        return { object: { sha: 'bootstrap' } };
+      }
+      throw new Error('Unhandled fake request: '+path);
+    },
     graphql: async (query, variables = {}) => {
       calls.push(query);
       if (query.includes('pullRequests(first:20')) return {repository:{pullRequests:{nodes:pr?[{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}]:[]}}};
       if (query.includes('query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}')) return {repository:{id:'REPO_owner_repo'}};
       if (query.includes('createPullRequest')) {
-        if (!bootstrapped) throw new Error('No commits between main and feat/empty');
+        if (!bootstrapped) throw new Error('createPullRequest must not run before bootstrap');
         pr={number:7,title:variables.title,body:variables.body,state:'open',head:{ref:variables.head},base:{ref:variables.base}};
         return {createPullRequest:{pullRequest:{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}}};
       }
-      if (query.includes('ref(qualifiedName:$qualified)')) return {repository:{ref:{target:{oid:'parent'}}}};
-      if (query.includes('createCommitOnBranch')) { bootstrapped=true; return {createCommitOnBranch:{commit:{oid:'bootstrap'}}}; }
+      if (query.includes('ref(qualifiedName:$qualified)')) return {repository:{ref:{target:{oid:'parent',tree:{oid:'tree'}}}}};
       if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null}:null}};
       if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
       if (query.includes('addComment')) { const item=githubComment(variables.body,'bot',comments.length+1); comments.push(item); return {addComment:{commentEdge:{node:{id:'IC_'+item.id}}}}; }
@@ -367,6 +385,6 @@ test('managed job creation bootstraps an empty head branch after GitHub no-commi
 
   assert.equal(result.pr.number, 7);
   assert.equal(bootstrapped, true);
-  assert.equal(calls.filter(query => query.includes('createCommitOnBranch')).length, 1);
+  assert.equal(calls.filter(call => String(call).endsWith('/git/commits')).length, 1);
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
 });
