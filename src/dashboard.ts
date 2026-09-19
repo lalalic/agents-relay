@@ -310,21 +310,23 @@ export function serveDashboard(
     }
     if (req.url === '/api/job') {
       try {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end((await snapshot()).json);
+        const body = (await snapshot()).json;
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(body);
       } catch (error) {
-        res.writeHead(404);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(404);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }
     if (req.url === '/api/usage') {
       try {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(await usage());
+        const body = await usage();
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(body);
       } catch (error) {
-        res.writeHead(503);
-        res.end(error instanceof Error ? error.message : String(error));
+        if (!res.headersSent) res.writeHead(503);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;
     }
