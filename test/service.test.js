@@ -60,7 +60,18 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
     ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|adopt|repair>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create or reuse an open PR'],
+    ['dist/cli.js', ['job', 'adopt', '--help'], 'Adopt an existing PR'],
+    ['dist/cli.js', ['job', 'repair', '--help'], 'Repair duplicate durable markers'],
+    ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
     ['dist/cli.js', ['submit', '--help'], 'Queue a task for a managed job'],
+    ['dist/cli.js', ['record', '--help'], 'Backfill work completed outside the relay'],
+    ['dist/cli.js', ['status', '--help'], 'Show the durable state for a job'],
+    ['dist/cli.js', ['reconcile', '--help'], 'Reconcile a job once'],
+    ['dist/cli.js', ['retry', '--help'], 'Retry a task by setting it READY'],
+    ['dist/cli.js', ['cancel', '--help'], 'Cancel a task'],
+    ['dist/cli.js', ['serve', '--help'], 'Run the dashboard and reconciliation service'],
+    ['dist/cli.js', ['agent-register', '--help'], 'Register an agent role'],
+    ['dist/cli.js', ['agent-discover', '--help'], 'Find registered agents'],
     ['dist/relayd.js', ['--help'], 'npx agents-relayd [options]']
   ]) {
     const result = spawnSync(process.execPath, [entry, ...args], { encoding: 'utf8' });
