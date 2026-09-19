@@ -6,6 +6,7 @@ import { Job } from './types.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
+const SSE_HEARTBEAT_MS = 15000;
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -408,6 +409,12 @@ export function serveDashboard(
     }).catch(() => undefined);
   }, Math.max(10000, refreshMs));
   interval.unref();
+  const heartbeat = setInterval(() => {
+    if (clients.size === 0) return;
+    for (const client of clients) client.write(': heartbeat\n\n');
+  }, SSE_HEARTBEAT_MS);
+  heartbeat.unref();
+  server.on('close', () => { clearInterval(interval); clearInterval(heartbeat); clients.clear(); });
   server.listen(port, '127.0.0.1');
   return server;
 }

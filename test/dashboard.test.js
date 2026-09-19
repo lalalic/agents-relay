@@ -148,6 +148,13 @@ test('dashboard periodic snapshots stay cache-only until an explicit refresh', a
   assert.match(source, /if \(clients\.size === 0\) return;/);
 });
 
+test('dashboard SSE sends short keepalive comments independent of durable snapshots', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
+  assert.match(source, /const SSE_HEARTBEAT_MS = 15000/);
+  assert.match(source, /client\.write\(': heartbeat\\n\\n'\)/);
+  assert.match(source, /clearInterval\(heartbeat\)/);
+});
+
 test('dashboard warns when GitHub API is rate limited', () => {
   assert.match(dashboardHtml, /id="rate-limit-warning"/);
   assert.match(dashboardHtml, /GitHub API rate limit reached\. Showing cached job data\./);
