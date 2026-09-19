@@ -105,14 +105,17 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const voiceAgentSecretFile = value(argv,'--voice-agent-secret-file');
   const voiceAgentSecret = value(argv,'--voice-agent-secret') || process.env.AGENTS_RELAY_VOICE_AGENT_SECRET || (voiceAgentSecretFile ? (await readFile(voiceAgentSecretFile,'utf8')).trim() : '');
   const voiceAgentProjects = new Set(value(argv,'--voice-agent-projects').split(',').map(item=>item.trim()).filter(Boolean));
+  const voiceAgentAuth = value(argv,'--voice-agent-auth','token');
+  if (voiceAgentAuth !== 'token' && voiceAgentAuth !== 'none') throw new Error('--voice-agent-auth must be token or none');
   const macBridgeUrl = value(argv,'--macbridge-url') || process.env.AGENTS_RELAY_MACBRIDGE_URL || 'http://127.0.0.1:8788';
   const macBridgeTokenFile = value(argv,'--macbridge-token-file') || process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE || join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
   const voiceAgentWorkerKind = value(argv,'--voice-agent-worker','codex');
   const voiceAgentWorker = voiceAgentWorkerKind === 'chatgpt'
     ? new MacBridgeVoiceAgentWorker(macBridgeUrl, macBridgeTokenFile, value(argv,'--voice-agent-thinking','high'), Number(value(argv,'--voice-agent-max-runtime','3600')))
     : new CodexVoiceAgentWorker(value(argv,'--codex','codex'));
-  const voiceAgentGateway = voiceAgentSecret && voiceAgentProjects.size > 0
-    ? new VoiceAgentGateway(voiceAgentWorker, voiceAgentSecret, normalized.workspaceRoot ?? defaultWorkspaceRoot(), voiceAgentProjects)
+  const voiceAgentEnabled = voiceAgentProjects.size > 0 && (voiceAgentAuth === 'none' || Boolean(voiceAgentSecret));
+  const voiceAgentGateway = voiceAgentEnabled
+    ? new VoiceAgentGateway(voiceAgentWorker, voiceAgentSecret, normalized.workspaceRoot ?? defaultWorkspaceRoot(), voiceAgentProjects, voiceAgentAuth)
     : undefined;
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob,voiceAgentGateway);
   await once(server,'listening');

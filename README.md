@@ -110,6 +110,16 @@ agents-relayd --workspace ~/Workspace \
   --voice-agent-projects agents-relay,neo
 ~~~
 
+For controlled connectivity debugging, authentication can be explicitly disabled while retaining the daemon project allowlist and per-client rate limit:
+
+~~~sh
+agents-relayd --workspace ~/Workspace \
+  --voice-agent-auth none \
+  --voice-agent-projects agents-relay,neo
+~~~
+
+In `none` mode, Voice can call `GET /voice/agent/v1/message?project=agents-relay&request=<text>` without a token. This mode is intended only for temporary controlled testing of the public Voice path.
+
 Before switching to Voice, mint a scoped session URL. The default token lifetime is two hours and tokens are capped at eight hours:
 
 ~~~sh

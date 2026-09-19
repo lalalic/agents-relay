@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 
 export type VoiceAgentRequestState = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+export type VoiceAgentAuthMode = 'token' | 'none';
 
 export interface VoiceAgentWorkerRequest {
   request: string;
@@ -183,18 +184,21 @@ export class VoiceAgentGateway {
     private readonly secret: string,
     private readonly workspaceRoot: string,
     private readonly allowedProjects: ReadonlySet<string>,
+    private readonly authMode: VoiceAgentAuthMode = 'token',
     private readonly maxRequestsPerMinute = 20,
   ) {}
 
   submit(input: { token: string; request: string; project?: string; sessionId?: string; clientId: string }): VoiceAgentResponse {
     if (!this.accept(input.clientId)) return { status: 429, body: { ok: false, error: 'Rate limit exceeded' } };
     if (!input.request.trim()) return { status: 400, body: { ok: false, error: 'request is required' } };
-    let claims: VoiceAgentSessionClaims;
-    try { claims = verifyVoiceAgentToken(input.token, this.secret, input.project); }
-    catch (error) { return { status: 401, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
-    const project = input.project ?? (claims.projects.length === 1 ? claims.projects[0] : undefined);
-    if (!project) return { status: 400, body: { ok: false, error: 'project is required for multi-project tokens' } };
-    if (!this.allowedProjects.has(project) || !claims.projects.includes(project)) return { status: 401, body: { ok: false, error: 'Project is not allowed' } };
+    let claims: VoiceAgentSessionClaims | null = null;
+    if (this.authMode === 'token') {
+      try { claims = verifyVoiceAgentToken(input.token, this.secret, input.project); }
+      catch (error) { return { status: 401, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+    }
+    const project = input.project ?? (claims?.projects.length === 1 ? claims.projects[0] : undefined);
+    if (!project) return { status: 400, body: { ok: false, error: 'project is required' } };
+    if (!this.allowedProjects.has(project) || (claims !== null && !claims.projects.includes(project))) return { status: 401, body: { ok: false, error: 'Project is not allowed' } };
 
     const sessionId = input.sessionId?.trim() || randomUUID();
     const session = this.sessions.get(sessionId) ?? { id: sessionId, tail: Promise.resolve() };
@@ -237,12 +241,14 @@ export class VoiceAgentGateway {
   }
 
   status(token: string, requestId: string, project?: string): VoiceAgentResponse {
-    let claims: VoiceAgentSessionClaims;
-    try { claims = verifyVoiceAgentToken(token, this.secret, project); }
-    catch (error) { return { status: 401, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+    let claims: VoiceAgentSessionClaims | null = null;
+    if (this.authMode === 'token') {
+      try { claims = verifyVoiceAgentToken(token, this.secret, project); }
+      catch (error) { return { status: 401, body: { ok: false, error: error instanceof Error ? error.message : String(error) } }; }
+    }
     const state = this.requests.get(requestId);
     if (!state) return { status: 404, body: { ok: false, error: 'Request not found' } };
-    if (!state.project || !this.allowedProjects.has(state.project) || !claims.projects.includes(state.project)) return { status: 401, body: { ok: false, error: 'Project is not allowed' } };
+    if (!state.project || !this.allowedProjects.has(state.project) || (claims !== null && !claims.projects.includes(state.project))) return { status: 401, body: { ok: false, error: 'Project is not allowed' } };
     return {
       status: 200,
       body: {

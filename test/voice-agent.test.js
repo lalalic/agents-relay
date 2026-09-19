@@ -70,6 +70,26 @@ test('voice agent gateway enforces configured project scope', () => {
   assert.equal(gateway.submit({ token, request: 'x', clientId: 'client' }).status, 400);
 });
 
+
+test('voice agent gateway supports explicit tokenless connectivity-test mode', async () => {
+  const calls = [];
+  const gateway = new VoiceAgentGateway(
+    { run: async input => { calls.push(input); return { summary: 'ok' }; } },
+    '',
+    '/workspace',
+    new Set(['agents-relay']),
+    'none',
+  );
+  const accepted = gateway.submit({ token: '', request: 'check status', project: 'agents-relay', clientId: 'voice' });
+  assert.equal(accepted.status, 202);
+  assert.equal(accepted.body.accepted, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].project, 'agents-relay');
+  assert.equal(gateway.submit({ token: '', request: 'x', project: 'neo', clientId: 'voice2' }).status, 401);
+  assert.equal(gateway.status('', accepted.body.request_id, 'agents-relay').status, 200);
+});
+
 test('dashboard exposes only the general voice agent API and disables caching', async () => {
   const job = {
     id: 'j', title: 'J', prNumber: 1, repository: 'lalalic/agents-relay', state: 'OPEN',
