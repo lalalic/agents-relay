@@ -3,7 +3,18 @@ export const JOB_MARKER = 'agents-relay:job:v1';
 export const TASK_MARKER = 'agents-relay:task:v1';
 export const AGENT_MARKER = 'agents-relay:agent:v1';
 export function marker(label: string, value: unknown): string { return `<!-- ${label} ${JSON.stringify(value)} -->`; }
-export function parseMarker<T>(body: string, label: string): T | null { const match = body.match(new RegExp(`<!--\\s*${label.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s+([\\s\\S]*?)\\s*-->`)); if (!match) return null; try { return JSON.parse(match[1]) as T; } catch { return null; } }
+export function parseMarker<T>(body: string, label: string): T | null {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const startMatch = body.match(new RegExp(`<!--\\s*${escaped}\\s+`));
+  if (!startMatch || startMatch.index === undefined) return null;
+  const payloadStart = startMatch.index + startMatch[0].length;
+  let end = body.indexOf('-->', payloadStart);
+  while (end !== -1) {
+    const candidate = body.slice(payloadStart, end).trim();
+    try { return JSON.parse(candidate) as T; } catch { end = body.indexOf('-->', end + 3); }
+  }
+  return null;
+}
 export function renderJobComment(job: Job): string { return `${marker(JOB_MARKER, { ...job, tasks: undefined })}\n# Agents Relay job: ${job.title}\nState: ${job.state}\nPR: #${job.prNumber}`; }
 export function renderTaskComment(task: Task): string { return `${marker(TASK_MARKER, task)}\n## Task ${task.id}\nState: ${task.state}\n${task.result?.summary ?? task.input}`; }
 export function parseJob(body: string): Job | null { return parseMarker<Job>(body, JOB_MARKER); }

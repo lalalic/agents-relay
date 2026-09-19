@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { GitHubStore, InMemoryStore } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
+test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
+  const description = 'mermaid\\nflowchart TD\\nA --> B';
+  const body = marker(JOB_MARKER, { id: 'mermaid-job', title: 'Mermaid', description, tasks: undefined });
+  const parsed = parseJob(body);
+  assert.equal(parsed?.id, 'mermaid-job');
+  assert.equal(parsed?.description, description);
+});
+
 const now = () => new Date().toISOString();
 const task = (jobId, id, state = 'QUEUED') => ({
   jobId,
