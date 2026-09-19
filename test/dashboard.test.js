@@ -57,3 +57,8 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.CANCELLED/);
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
+
+test('hidden dashboard views cannot be overridden by layout display rules', () => {
+  assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
+  assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
+});
