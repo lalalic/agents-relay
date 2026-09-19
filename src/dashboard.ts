@@ -260,6 +260,7 @@ export function serveDashboard(
   overviewProvider?: () => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repository: string; pullRequest?: number; wake: (deliveryId: string, event: string, action: string | null) => void },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
+  exactJobProvider?: (jobId: string) => Promise<Job | null>,
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -307,6 +308,10 @@ export function serveDashboard(
   const snapshot = async (requestedJobId = jobId): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
+      if (requestedJobId && exactJobProvider) {
+        const exact = await exactJobProvider(requestedJobId);
+        if (exact) return { id: exact.id, json: JSON.stringify(exact) };
+      }
       const candidates = await discoveredJobs();
       const job = requestedJobId ? candidates.find(candidate => candidate.id === requestedJobId) : candidates[0];
       if (!job) throw new Error(`Managed job ${requestedJobId ?? ''} not found`);

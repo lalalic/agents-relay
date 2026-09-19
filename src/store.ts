@@ -5,6 +5,43 @@ import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
+export async function loadManagedGitHubJobGraphql(repository: string, prNumber: number, jobId: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview | null> {
+  const [owner, name] = repository.split('/', 2);
+  if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0) return null;
+  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergedAt closedAt body comments(last:100){nodes{author{login} body}}}}}';
+  return new Promise<ManagedJobOverview | null>((resolve, reject) => {
+    const child = spawn('gh', ['api','graphql','-f',`query=${query}`,'-F',`owner=${owner}`,'-F',`name=${name}`,'-F',`number=${prNumber}`]);
+    let stdout=''; let stderr='';
+    child.stdout.on('data',(chunk:Buffer)=>{stdout+=chunk.toString();});
+    child.stderr.on('data',(chunk:Buffer)=>{stderr+=chunk.toString();});
+    child.on('error',reject);
+    child.on('close',code=>{
+      if(code!==0){reject(new Error(stderr.trim()||`gh graphql exited ${code}`));return;}
+      try{
+        const payload=JSON.parse(stdout) as Record<string, unknown>;
+        const data=payload.data as Record<string, unknown> | undefined;
+        const repo=data?.repository as Record<string, unknown> | undefined;
+        const pr=repo?.pullRequest as Record<string, unknown> | undefined;
+        if(!pr){resolve(null);return;}
+        const comments=(pr.comments as Record<string, unknown> | undefined)?.nodes;
+        const trusted=(Array.isArray(comments)?comments:[]).filter(item=>{
+          const row=item as Record<string, unknown>;
+          const author=row.author as Record<string, unknown> | undefined;
+          return typeof author?.login==='string'&&trustedAuthors.has(author.login);
+        });
+        const jobs=trusted.map(item=>parseJob(String((item as Record<string, unknown>).body??''))).filter((item): item is Job=>item!==null);
+        const job=jobs.find(item=>item.id===jobId);
+        if(!job){resolve(null);return;}
+        const tasks=trusted.map(item=>parseTask(String((item as Record<string, unknown>).body??''))).filter((item): item is Task=>item!==null);
+        job.tasks=tasks.filter(task=>task.jobId===job.id||(!task.jobId&&jobs.length===1));
+        if(!job.description&&typeof pr.body==='string'&&pr.body) job.description=pr.body;
+        const state=String(pr.state??'').toUpperCase();
+        const githubState: PullRequestState = pr.merged===true ? 'MERGED' : state==='CLOSED' ? 'CLOSED' : 'OPEN';
+        resolve({job,githubState,draft:pr.isDraft===true,mergedAt:typeof pr.mergedAt==='string'?pr.mergedAt:null,closedAt:typeof pr.closedAt==='string'?pr.closedAt:null});
+      }catch(error){reject(error);}
+    });
+  });
+}
 const COMPLETED_JOB_HISTORY_LIMIT = 10;
 function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
 function completedAt(item: ManagedJobOverview): string { return item.mergedAt ?? item.closedAt ?? item.job.updatedAt; }

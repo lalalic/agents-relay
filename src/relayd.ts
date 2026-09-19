@@ -9,7 +9,7 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview } from './store.js';
+import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubJobGraphql } from './store.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
@@ -60,8 +60,23 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = secret && normalized.repository ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
+  const exactJob = async (jobId: string) => {
+    const cached = cachedOverviews.find(item => item.job.id === jobId);
+    if (!cached) return null;
+    try {
+      const refreshed = await loadManagedGitHubJobGraphql(cached.job.repository, cached.job.prNumber, jobId, trusted);
+      if (!refreshed) return null;
+      const index = cachedOverviews.findIndex(item => item.job.id === jobId);
+      if (index >= 0) cachedOverviews[index] = refreshed;
+      try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch {}
+      return { ...refreshed.job, githubState: refreshed.githubState, mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
+    } catch (error) {
+      process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      return null;
+    }
+  };
   const usageRegistry = codexAndZaiUsageRegistry();
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus());
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob);
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }
