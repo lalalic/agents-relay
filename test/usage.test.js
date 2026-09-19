@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, UsageRegistry } from '../dist/usage.js';
+import { CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, UsageRegistry } from '../dist/usage.js';
 
 function jsonl(value) { return JSON.stringify(value) + '\n'; }
 
