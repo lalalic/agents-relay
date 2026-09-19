@@ -247,6 +247,7 @@ test('managed GitHub task submission is gated on a durable job marker', async ()
   const taskIndex = comments.findIndex(item => parseTask(item.body)?.id === 'child');
   assert.ok(jobIndex >= 0);
   assert.ok(taskIndex > jobIndex);
+});
 
 test('agent registrations persist through trusted stores and ignore forged markers', async () => {
   const agent = { id:'researcher', name:'Researcher', responsibility:'public research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
