@@ -8,6 +8,7 @@ import { RepositoryWorkerPool } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { GhApiClient, GitHubStore, listManagedGitHubJobs } from './store.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
+import { codexAndZaiUsageRegistry } from './usage.js';
 
 export interface DaemonArguments { repository: string; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
@@ -32,7 +33,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const dashboardStore = new GitHubStore(client, normalized.repository, fallback.prNumber, trusted);
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = secret ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback.id,undefined,overviews,webhook);
+  const usageRegistry = codexAndZaiUsageRegistry();
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback.id,usageRegistry,overviews,webhook);
   await once(server,'listening');
   const interval=setInterval(()=>void pool.reconcile(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
