@@ -29,6 +29,14 @@ test('daemon arguments support repository pool mode and validate legacy pairing'
   assert.throws(() => normalizeDaemonArguments(['--repo','OWNER/REPO','--pr','1']), /supplied together/);
 });
 
+test('daemon arguments default to workspace mode without changing --repo mode', () => {
+  const workspace = normalizeDaemonArguments(['--workspace', '/tmp/Workspace']);
+  assert.equal(workspace.repository, null);
+  assert.equal(workspace.workspaceRoot, '/tmp/Workspace');
+  assert.equal(workspace.pullRequest, null);
+  assert.throws(() => normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--workspace', '/tmp/Workspace']), /mutually exclusive/);
+});
+
 test('service defaults and package bins use stable package entrypoints', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd.js' });
