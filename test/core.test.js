@@ -48,6 +48,20 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
 });
+test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'record', '--file', file, '--task-id', 'truth-fix', '--project', 'agents-relay', '--summary', 'Reconciled durable state with GitHub truth', '--commit', 'abc123'], { cwd: process.cwd() });
+  const [code] = await once(result, 'exit');
+  assert.equal(code, 0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks[0].adapter, 'orchestrator');
+  assert.equal(saved.tasks[0].agentName, 'orchestrator');
+  assert.equal(saved.tasks[0].state, 'SUCCEEDED');
+  assert.equal(saved.tasks[0].executionId, 'abc123');
+  assert.equal(saved.tasks[0].result.data.commit, 'abc123');
+});
 test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'READY'); assert.equal(value.state,'RUNNING'); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('reconciler launches asynchronously and concurrently', async () => { const a=task('a'), b=task('b'), c=task('c'); const store=new InMemoryStore(job([a,b,c])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',maxConcurrent:2,adapters:[adapter]}); const started=Date.now(); const state=await reconciler.reconcile('j'); assert.ok(Date.now()-started < 100); assert.equal(adapter.launches,2); assert.equal((await store.load('j')).tasks.filter(t=>t.state==='RUNNING').length,2); adapter.resolvers[0].resolve({summary:'a'}); adapter.resolvers[1].resolve({summary:'b'}); await new Promise(resolve=>setTimeout(resolve,30)); adapter.resolvers[2]?.resolve({summary:'c'}); await reconciler.idle(); const done=await store.load('j'); assert.equal(done.tasks.filter(t=>t.state==='SUCCEEDED').length,3); assert.equal(state.state,'RUNNING'); });

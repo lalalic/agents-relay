@@ -13,6 +13,13 @@ test('dashboard exposes the operations-console structure safely', () => {
   assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
 });
 
+test('selected job shows durable title and description', () => {
+  assert.match(dashboardHtml, /field\('Title',job\.title\|\|job\.id\)/);
+  assert.match(dashboardHtml, /field\('Description',job\.description\|\|'—'\)/);
+  assert.match(dashboardHtml, /field\('GitHub state',job\.githubState/);
+  assert.match(dashboardHtml, /field\('Durable state',job\.state\)/);
+});
+
 test('account usage is limited to two real rate-limit percentage bars', () => {
   assert.match(dashboardHtml, /5-hour/);
   assert.match(dashboardHtml, /Weekly/);

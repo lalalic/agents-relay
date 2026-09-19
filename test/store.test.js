@@ -204,6 +204,8 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   const second = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
 
   assert.equal(first.pr.number, second.pr.number);
+  assert.equal(first.job.description, 'body');
+  assert.equal(second.job.description, 'body');
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 1);

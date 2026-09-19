@@ -138,6 +138,7 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
     const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
     const githubState: PullRequestState = pr.merged_at ? 'MERGED' : String(pr.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN';
     for (const job of jobs) {
+      if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
       job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
       output.push({ job, githubState, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
     }
