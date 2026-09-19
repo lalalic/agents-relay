@@ -51,26 +51,29 @@ export class RepositoryWorkerPool {
       } while (this.pending);
     } finally { this.running = false; }
   }
-  private async reconcileOne(repository: string, prNumber: number, jobId: string): Promise<void> {
+  async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (!this.repositories.includes(repository)) return;
     const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
     await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
-      if (event.type === 'job.wake') {
+      if (event.type === 'job.wake' || event.type === 'github.webhook') {
         const repository = typeof event.data?.repository === 'string' ? event.data.repository : '';
         const prNumber = Number(event.data?.prNumber);
         if (repository && Number.isInteger(prNumber) && prNumber > 0) {
-          await this.reconcileOne(repository, prNumber, event.job_id);
+          await this.reconcileTarget(repository, prNumber, event.job_id);
           return;
         }
       }
       if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile();
     });
   }
-  webhookWake(bus: EventBus | undefined, deliveryId: string, event: string, action: string | null): void {
-    if (bus) void bus.publish(eventFor('repository-pool', 'github', null, 'github.webhook', 'queued', `GitHub webhook ${event}${action ? ':' + action : ''}`, 'orchestrator', { deliveryId, event, action }));
-    else void this.reconcile();
+  async webhookWake(bus: EventBus | undefined, job: Job, deliveryId: string, event: string, action: string | null): Promise<void> {
+    if (bus) {
+      await bus.publish(eventFor(job.id, 'github', null, 'github.webhook', 'queued', `GitHub webhook ${event}${action ? ':' + action : ''}`, 'orchestrator', { deliveryId, event, action, repository: job.repository, prNumber: job.prNumber }));
+      return;
+    }
+    await this.reconcileTarget(job.repository, job.prNumber, job.id);
   }
 }

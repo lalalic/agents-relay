@@ -258,7 +258,7 @@ export function serveDashboard(
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: () => Promise<ManagedJobOverview[]>,
-  webhook?: { secret: string; repository: string; pullRequest?: number; wake: (deliveryId: string, event: string, action: string | null) => void },
+  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
 ): Server {
@@ -341,10 +341,10 @@ export function serveDashboard(
       if (!webhook || !verifyGitHubWebhook(webhook.secret, body, signature)) { res.writeHead(401); res.end('Invalid signature'); return; }
       const event = parseGitHubWebhook(req.headers, body);
       if (!event) { res.writeHead(202); res.end('Ignored'); return; }
-      if (event.repository !== webhook.repository || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
+      if (!event.repository || !webhook.repositories.has(event.repository) || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
-      queueMicrotask(() => webhook.wake(event.deliveryId, event.event, event.action));
+      queueMicrotask(() => { void webhook.wake(event); });
       return;
     }
     if (req.url === '/api/jobs') {

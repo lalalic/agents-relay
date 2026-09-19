@@ -9,10 +9,11 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubJobGraphql } from './store.js';
+import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
+import { GitHubWebhookWake } from './github-webhook.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
@@ -56,19 +57,40 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return cachedOverviews;
     }
   };
+  const persistCache = async (): Promise<void> => {
+    try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
+  };
+  const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => {
+    const refreshed = await loadManagedGitHubPullRequestGraphql(repository, prNumber, trusted);
+    cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
+    cachedOverviews.push(...refreshed);
+    cachedOverviews = dashboardManagedJobs(cachedOverviews);
+    await persistCache();
+    return refreshed;
+  };
   const initial = await overviews(); const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
-  const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
-  const webhook = secret && normalized.repository ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
+  const secretFile = value(argv,'--github-webhook-secret-file');
+  const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
+  const webhook = secret ? {
+    secret,
+    repositories: new Set(repositories),
+    wake: async (event: GitHubWebhookWake): Promise<void> => {
+      if (!event.repository || !event.pullRequest) return;
+      try {
+        const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
+        for (const item of refreshed) await pool.webhookWake(bus, item.job, event.deliveryId, event.event, event.action);
+      } catch (error) {
+        process.stderr.write(`warning: webhook PR refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+  } : undefined;
   const exactJob = async (jobId: string) => {
     const cached = cachedOverviews.find(item => item.job.id === jobId);
     if (!cached) return null;
     try {
-      const refreshed = await loadManagedGitHubJobGraphql(cached.job.repository, cached.job.prNumber, jobId, trusted);
+      const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber)).find(item => item.job.id === jobId);
       if (!refreshed) return null;
-      const index = cachedOverviews.findIndex(item => item.job.id === jobId);
-      if (index >= 0) cachedOverviews[index] = refreshed;
-      try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch {}
       return { ...refreshed.job, githubState: refreshed.githubState, mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
     } catch (error) {
       process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
