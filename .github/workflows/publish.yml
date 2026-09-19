@@ -49,7 +49,12 @@ jobs:
             echo 'Unable to find an unused npm patch version after five attempts' >&2
             exit 1
           fi
-          npm version "$next" --no-git-tag-version --ignore-scripts
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$package_version" != "$next" ]; then
+            npm version "$next" --no-git-tag-version --ignore-scripts
+          else
+            echo "package.json is already $next; publishing the initial version without rewriting it."
+          fi
           echo "version=$next" >> "$GITHUB_OUTPUT"
       - name: Verify package contents
         run: |
