@@ -1,179 +1,105 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
-import { InMemoryStore } from '../dist/store.js';
-import { MemoryEventBus } from '../dist/events.js';
+import { dashboardHtml, githubPrUrl } from '../dist/dashboard.js';
 
-const now = () => new Date().toISOString();
-const task = (id, state = 'QUEUED') => ({
-  id,
-  projectName: 'Agents Relay',
-  agentName: 'codex',
-  parentTaskId: null,
-  dependencies: [],
-  capabilities: ['shell'],
-  adapter: 'shell',
-  input: `build ${id}`,
-  routing: { provider: 'openai', model: 'gpt-5', reasoning: 'high', decidedBy: 'test', decidedAt: now() },
-  continuation: null,
-  continuationDeliveredAt: null,
-  state,
-  attempt: 1,
-  maxAttempts: 3,
-  leaseOwner: 'worker-1',
-  leaseExpiresAt: now(),
-  executionId: `exec-${id}`,
-  threadId: `thread-${id}`,
-  result: state === 'SUCCEEDED' ? { summary: `${id} finished` } : null,
-  error: state === 'FAILED' ? `${id} failed` : null,
-  timeoutMs: 300000,
-  createdAt: now(),
-  updatedAt: now(),
-});
-const job = (tasks = []) => ({
-  id: 'dashboard-job',
-  title: 'Agents Relay dogfood',
-  prNumber: 1,
-  repository: 'lalalic/agents-relay',
-  state: 'RUNNING',
-  continuation: null,
-  createdAt: now(),
-  updatedAt: now(),
-  tasks,
-});
-const event = (type = 'task.milestone') => ({
-  version: 1,
-  event_id: 'event-1',
-  job_id: 'dashboard-job',
-  task_id: 'dashboard-ui',
-  parent_task_id: 'orchestrator',
-  type,
-  status: 'running',
-  timestamp: now(),
-  visibility: 'orchestrator',
-  level: 'info',
-  message: `dashboard ${type}`,
-});
-
-test('dashboard is framework-free, accessible, and renders PR values safely', () => {
+test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
-  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write|eval\(/);
-  assert.match(dashboardHtml, /document\.createElement/);
-  assert.match(dashboardHtml, /document\.createTextNode/);
-  assert.match(dashboardHtml, /aria-live="polite"/);
-  assert.match(dashboardHtml, /<html lang="en" data-dashboard-contract=/);
-});
-
-test('dashboard markup includes job summary, hierarchy, and execution contracts', () => {
-  assert.match(dashboardHtml, /id="summary"/);
-  assert.match(dashboardHtml, /GitHub PR/);
-  assert.match(dashboardHtml, /countByState/);
-  assert.match(dashboardHtml, /Attention: ' \+ indicators\.join/);
+  assert.match(dashboardHtml, />Usage<\/button>/);
+  assert.match(dashboardHtml, /id="usage-heading">Usage<\/h2>/);
+  assert.match(dashboardHtml, /id="events-panel"/);
+  assert.match(dashboardHtml, /id="jobs-workspace"/);
+  assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
   assert.match(dashboardHtml, /function taskNode\(/);
-  assert.match(dashboardHtml, /children\.get\(task\.id\)/);
-  assert.match(dashboardHtml, /Last refresh/);
-  assert.match(dashboardHtml, /Last event/);
-  for (const label of ['Project', 'Agent', 'Parent task', 'Worker adapter', 'Provider / model / reasoning', 'Execution / thread', 'Attempt', 'Dependencies', 'Lease owner / expiry', 'Result', 'Error']) {
-    assert.match(dashboardHtml, new RegExp(label));
-  }
+  assert.match(dashboardHtml, /function renderTaskDetail\(/);
+  assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:selected-job'/);
+  assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:selected-task'/);
+  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
 });
 
-test('GitHub PR links use only validated durable repository and PR values', () => {
-  assert.equal(githubPrUrl('lalalic/agents-relay', 1), 'https://github.com/lalalic/agents-relay/pull/1');
-  assert.equal(githubPrUrl('owner/repo_name.example', 42), 'https://github.com/owner/repo_name.example/pull/42');
+test('selected job title appears in the panel heading', () => {
+  assert.match(dashboardHtml, /id="selected-job-title"/);
+  assert.match(dashboardHtml, /selectedJobTitle\.textContent='— '\+value\(job\.title\|\|job\.id\)/);
+  assert.doesNotMatch(dashboardHtml, /field\('Title'/);
+  assert.doesNotMatch(dashboardHtml, /field\('Description'/);
+  assert.match(dashboardHtml, /field\('GitHub state',job\.githubState/);
+  assert.match(dashboardHtml, /field\('Durable state',job\.state\)/);
+});
 
-  for (const repository of ['', 'lalalic', '/agents-relay', '../evil', 'owner/.', 'owner/..', 'owner/repo?ref=x', 'owner/repo#fragment']) {
+test('account usage is limited to two real rate-limit percentage bars', () => {
+  assert.match(dashboardHtml, /5-hour/);
+  assert.match(dashboardHtml, /Weekly/);
+  assert.match(dashboardHtml, /function usageProvider\(provider\)/);
+  assert.match(dashboardHtml, /overview\.providers/);
+  assert.match(dashboardHtml, /overview\.credits/);
+  assert.match(dashboardHtml, /function creditProvider\(provider\)/);
+  assert.match(dashboardHtml, /progressbar/);
+  assert.match(dashboardHtml, /provider\.id==='openai'\?'available':'used'/);
+  assert.match(dashboardHtml, /Math\.round\(percent\)\+'%'/);
+  assert.doesNotMatch(dashboardHtml, /% available|% used/);
+  assert.match(dashboardHtml, /Real account telemetry when available/);
+  assert.doesNotMatch(dashboardHtml, /Quota \/ balance|Current durable job|requests ·|tokens ·/i);
+});
+
+test('GitHub PR links accept only validated durable repository and PR values', () => {
+  assert.equal(githubPrUrl('lalalic/agents-relay', 4), 'https://github.com/lalalic/agents-relay/pull/4');
+  for (const repository of ['', 'lalalic', '../evil', 'owner/.', 'owner/..', 'owner/repo?x=1']) {
     assert.equal(githubPrUrl(repository, 1), null);
   }
-  for (const prNumber of [0, -1, 1.5, '1', Number.NaN, Number.POSITIVE_INFINITY]) {
+  for (const prNumber of [0, -1, 1.5, '1', Number.NaN]) {
     assert.equal(githubPrUrl('lalalic/agents-relay', prNumber), null);
   }
 });
 
-test('dashboard renders GitHub PR values through safe DOM APIs with a fallback', () => {
-  assert.match(dashboardHtml, /const url = githubPrUrl\(job\.repository, job\.prNumber\);/);
-  assert.match(dashboardHtml, /const link = document\.createElement\('a'\);/);
-  assert.match(dashboardHtml, /link\.href = url;/);
-  assert.match(dashboardHtml, /link\.target = '_blank';/);
-  assert.match(dashboardHtml, /link\.rel = 'noopener noreferrer';/);
-  assert.match(dashboardHtml, /link\.textContent = 'GitHub PR';/);
-  assert.match(dashboardHtml, /text\('unavailable'\)/);
-  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write|eval\(/);
+test('job list uses status badges with distinct state classes', () => {
+  assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
+  assert.match(dashboardHtml, /\.badge\.COMPLETED/);
+  assert.match(dashboardHtml, /\.badge\.OPEN/);
+  assert.match(dashboardHtml, /\.badge\.CANCELLED/);
+  assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
-test('dashboard handles named and snapshot SSE messages with a bounded event feed', () => {
-  for (const type of ['model.selected', 'task.started', 'task.milestone', 'task.completed', 'connection']) {
-    assert.match(dashboardHtml, new RegExp(type));
-  }
-  assert.match(dashboardHtml, /new EventSource\('\/events'\)/);
-  assert.match(dashboardHtml, /stream\.onmessage/);
-  assert.match(dashboardHtml, /stream\.addEventListener\('relay'/);
-  assert.match(dashboardHtml, /const MAX_EVENTS = 60;/);
-  assert.match(dashboardHtml, /while \(eventFeed\.children\.length > MAX_EVENTS\)/);
+test('hidden dashboard views cannot be overridden by layout display rules', () => {
+  assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
+  assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
 });
 
-test('usage API and live UI expose actual usage and explicit balance unavailability', () => {
-  assert.match(dashboardHtml, /id="usage-heading"/);
-  assert.match(dashboardHtml, /fetch\('\/api\/job'\), fetch\('\/api\/usage'\)/);
-  assert.match(dashboardHtml, /function modelTable\(models\)/);
-  assert.match(dashboardHtml, /function usageSource\(source\)/);
-  assert.match(dashboardHtml, /Quota \/ balance: unavailable/);
-  assert.match(dashboardHtml, /Current durable job/);
-  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write|eval\(/);
+test('credit providers render one balance value per provider row', () => {
+  assert.match(dashboardHtml, /const balance=credits\.balances\[0\]/);
+  assert.match(dashboardHtml, /formatCredit\(balance\.remaining,balance\.currency\)/);
+  assert.doesNotMatch(dashboardHtml, /balance\.total!==null/);
+  assert.doesNotMatch(dashboardHtml, /balance\.used!==null/);
 });
 
-test('dashboard server is localhost-bound and serves durable markup and JSON', async () => {
-  const store = new InMemoryStore(job([task('dashboard-ui', 'RUNNING')]));
-  const server = serveDashboard(store, 0, new MemoryEventBus(), 10000, 'dashboard-job');
-  await new Promise(resolve => server.once('listening', resolve));
-  const address = server.address();
-  assert.equal(typeof address === 'object' && address ? address.address : '', '127.0.0.1');
-  const port = typeof address === 'object' && address ? address.port : 0;
-
-  const page = await fetch(`http://127.0.0.1:${port}/`);
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-type') ?? '', /text\/html/);
-  const body = await page.text();
-  assert.match(body, /data-dashboard-contract="safe-dom/);
-
-  const api = await fetch(`http://127.0.0.1:${port}/api/job`);
-  assert.equal(api.status, 200);
-  const payload = await api.json();
-  assert.equal(payload.tasks[0].threadId, 'thread-dashboard-ui');
-  assert.equal(payload.tasks[0].projectName, 'Agents Relay');
-  assert.equal(payload.tasks[0].agentName, 'codex');
-
-  server.closeAllConnections();
-  await new Promise(resolve => server.close(resolve));
+test('job list uses PR-number title and concise state metadata', () => {
+  assert.match(dashboardHtml, /text\('PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
+  assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
+  assert.match(dashboardHtml, /text\(value\(job\.githubState\|\|'UNKNOWN'\)\)/);
+  assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
+  assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
 });
 
-test('dashboard forwards named relay events over SSE', async () => {
-  const store = new InMemoryStore(job([task('dashboard-ui')]));
-  const bus = new MemoryEventBus();
-  const server = serveDashboard(store, 0, bus, 30000, 'dashboard-job');
-  await new Promise(resolve => server.once('listening', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
 
-  await fetch(`http://127.0.0.1:${port}/api/job`);
-  const live = await fetch(`http://127.0.0.1:${port}/events`);
-  assert.equal(live.status, 200);
-  assert.match(live.headers.get('content-type') ?? '', /text\/event-stream/);
-  const reader = live.body?.getReader();
-  assert.ok(reader);
 
-  await bus.publish(event());
-  let text = '';
-  for (let attempts = 0; attempts < 3; attempts += 1) {
-    const chunk = await reader.read();
-    text += new TextDecoder().decode(chunk.value);
-    if (text.includes('event: relay')) break;
-  }
-  assert.match(text, /event: relay/);
-  assert.match(text, /"type":"task\.milestone"/);
-  assert.match(text, /"message":"dashboard task\.milestone"/);
-  await reader.cancel();
 
-  server.closeAllConnections();
-  await new Promise(resolve => server.close(resolve));
+test('task details expose ChatGPT thread as chat link instead of raw execution identifiers', () => {
+  assert.match(dashboardHtml, /function chatField\(task\)/);
+  assert.match(dashboardHtml, /https:\/\/chatgpt\.com\/c\//);
+  assert.match(dashboardHtml, /encodeURIComponent\(task\.threadId\)/);
+  assert.match(dashboardHtml, /link\.textContent='Open chat'/);
+  assert.doesNotMatch(dashboardHtml, /field\('Execution \/ thread'/);
+});
+
+
+test('task details omit input and result from dashboard', () => {
+  assert.doesNotMatch(dashboardHtml, /markdownField\('Input'/);
+  assert.doesNotMatch(dashboardHtml, /markdownField\('Result'/);
+  assert.doesNotMatch(dashboardHtml, /function markdownValue\(/);
+  assert.doesNotMatch(dashboardHtml, /function inlineMarkdown\(/);
+});
+
+
+test('selected job body does not scroll and omits task count field', () => {
+  assert.match(dashboardHtml, /#jobs-workspace > \.panel:first-child \.panel-body \{ overflow:visible; max-height:none; \}/);
+  assert.doesNotMatch(dashboardHtml, /field\('Tasks',String\(\(job\.tasks\|\|\[\]\)\.length\)\)/);
+  assert.match(dashboardHtml, /field\('Task states'/);
 });

@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; }
+export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
+export type ManagedJobOverview = { job: Job; githubState: PullRequestState; mergedAt: string | null; closedAt: string | null };
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -77,6 +79,7 @@ export class GitHubStore implements DurableStore {
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
   private async list(): Promise<Comment[]> { const all: Comment[] = []; for (let page = 1; page <= 100; page += 1) { const data = await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments?per_page=100&page=${page}`); if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array'); const values = data.map((x: unknown) => { const v = x as Record<string, unknown>; const user = v.user as Record<string, unknown> | null | undefined; return { id: Number(v.id), body: String(v.body ?? ''), updatedAt: String(v.updated_at ?? ''), authorLogin: typeof user?.login === 'string' ? user.login : null }; }); all.push(...values); if (values.length < 100) break; } return all; }
   async comments(): Promise<Comment[]> { return this.list(); }
+  async pullRequestState(): Promise<PullRequestState> { const value = await this.client.request(`/repos/${this.repository}/pulls/${this.prNumber}`) as Record<string, unknown>; if (value.merged === true || typeof value.merged_at === 'string') return 'MERGED'; return String(value.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN'; }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
@@ -115,6 +118,32 @@ export class GitHubStore implements DurableStore {
     if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
     else await this.comment(renderAgentComment(agent));
   }
+}
+
+export async function listManagedGitHubJobs(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
+  const pullRequests: Array<Record<string, unknown>> = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const value = await client.request(`/repos/${repository}/pulls?state=all&per_page=100&page=${page}`);
+    if (!Array.isArray(value)) throw new Error('GitHub pull request list response was not an array');
+    const pageValues = value as Array<Record<string, unknown>>; pullRequests.push(...pageValues);
+    if (pageValues.length < 100) break;
+  }
+  const output: ManagedJobOverview[] = [];
+  for (const pr of pullRequests) {
+    const number = Number(pr.number); if (!Number.isInteger(number) || number <= 0) continue;
+    const comments = await client.request(`/repos/${repository}/issues/${number}/comments?per_page=100`);
+    if (!Array.isArray(comments)) continue;
+    const trusted = comments.filter(item => { const row = item as Record<string, unknown>; const user = row.user as Record<string, unknown> | undefined; return typeof user?.login === 'string' && trustedAuthors.has(user.login); });
+    const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+    const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
+    const githubState: PullRequestState = pr.merged_at ? 'MERGED' : String(pr.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN';
+    for (const job of jobs) {
+      if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
+      job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
+      output.push({ job, githubState, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
+    }
+  }
+  return output.sort((a, b) => b.job.prNumber - a.job.prNumber);
 }
 
 function isTaskForJob(task: Task, jobId: string, soleTrustedJob: boolean): boolean {

@@ -52,6 +52,14 @@ Use task-level continuation when the sender needs to resume, otherwise the job c
 
 For a ChatGPT worker, use the chatgpt adapter with capabilities model,chatgpt,macbridge. The runtime calls MacBridge's loopback-only ChatGPT conversation endpoint, stores the returned conversation_id as the durable task threadId, and reuses that ID on retry. Pass --chatgpt-project when the worker must run inside one exact ChatGPT Project. MacBridge URL/token overrides are --macbridge-url and --macbridge-token-file; never place the bearer token in job/task markers.
 
+Managed Codex and ChatGPT worker prompts are enriched at launch with the PR URL and durable job/task/parent/project identity; do not duplicate that context manually in task input. Keep one ChatGPT conversation per logical task. Retries reuse the same task conversation, but sibling tasks use separate conversations even when their adapter is the same.
+
+When a job becomes COMPLETED or its GitHub PR is merged, delete all ChatGPT task conversations. Preserve threadId in durable markers, record threadDeletedAt on success, and record/retry threadCleanupError on deletion failure without reopening the job.
+
 V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
 
 Registered agents are result-owning roles with responsibility boundaries; skills are callable capabilities and adapters are execution runtimes. Register agents with `agent-register`, discover them with hard filters using `agent-discover`, and treat claimed capabilities separately from observed evaluations/outcomes. Discovery returns explainable evidence and permits exploration; it does not produce a universal trust score. The future constrained remote surface should authenticate `POST /jobs` and `GET /jobs/:id` only, with public/intention-only jobs separated from private-data or credential work.
+
+Treat GitHub PR state as authoritative at reconciliation boundaries. `MERGED` forces the job to `COMPLETED`; closed-unmerged forces `CANCELLED` and prevents launches. Use the repository-wide dashboard job list to compare GitHub and durable states; repair any mismatch rather than trusting a stale marker.
+
+If already-completed orchestrator work is missing from a managed job, backfill it with `agents-relay record` and the real commit SHA rather than inventing a worker execution. Treat this as a repair path only; new work should be submitted before it starts. Managed job description comes from the GitHub PR body and should remain visible with the job title in the dashboard.

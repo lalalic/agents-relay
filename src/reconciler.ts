@@ -9,13 +9,19 @@ import { EventBus, eventFor } from './events.js';
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; adapters: WorkerAdapter[]; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void> };
 type LiveExecution = { taskId: string; execution: Execution; controller: AbortController; timer: NodeJS.Timeout };
 
+export function managedWorkerInput(job: Job, task: Task): string {
+  if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
+  const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
+  return `[Agents Relay managed task]\nPR: ${prUrl}\nJob: ${job.id}\nTask: ${task.id}\nParent task: ${task.parentTaskId ?? 'none'}\nProject: ${task.projectName ?? 'unspecified'}\n\n${task.input}`;
+}
+
 export class Reconciler {
   private readonly live = new Map<string, LiveExecution>();
   private readonly continuationLive = new Set<string>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
   async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async () => { await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
-  async idle(): Promise<void> { while (this.live.size > 0 || this.continuationLive.size > 0) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
+  async idle(): Promise<void> { while (this.live.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
@@ -23,7 +29,15 @@ export class Reconciler {
     try {
       const job = await this.store.load(jobId);
       const previousState = job.state;
+      const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const now = (this.options.now ?? new Date()).getTime();
+      if (prState !== 'OPEN') {
+        const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
+        for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
+          this.live.get(task.id)?.execution.cancel();
+          transitionTask(task, 'CANCELLED'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+        }
+      }
       for (const task of job.tasks) {
         if (task.state === 'CANCELLED') this.live.get(task.id)?.execution.cancel();
         if (task.state === 'RUNNING' && task.leaseExpiresAt && new Date(task.leaseExpiresAt).getTime() <= now) {
@@ -33,13 +47,20 @@ export class Reconciler {
         }
       }
       const scheduled = schedule(await this.store.load(jobId));
+      if (prState === 'MERGED') { scheduled.state = 'COMPLETED'; scheduled.updatedAt = new Date().toISOString(); }
+      if (prState === 'CLOSED') { scheduled.state = 'CANCELLED'; scheduled.updatedAt = new Date().toISOString(); }
       if (scheduled.state !== previousState) await this.store.saveJob(scheduled);
-      for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
-      const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size);
-      for (const task of scheduled.tasks.filter(t => t.state === 'READY').slice(0, capacity)) await this.launch(scheduled, task);
+      if (prState === 'OPEN') {
+        for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
+        const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size);
+        for (const task of scheduled.tasks.filter(t => t.state === 'READY').slice(0, capacity)) await this.launch(scheduled, task);
+      }
       const finalState = schedule(await this.store.load(jobId));
-      if (finalState.state !== scheduled.state) await this.store.saveJob(finalState);
-      return finalState;
+      if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
+      if (prState === 'CLOSED') { finalState.state = 'CANCELLED'; finalState.updatedAt = new Date().toISOString(); }
+      if (finalState.state !== scheduled.state || finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
+      if (finalState.state === 'COMPLETED' || prState !== 'OPEN') await this.cleanupThreads(finalState);
+      return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
   private async launch(job: Job, task: Task): Promise<void> {
@@ -51,7 +72,8 @@ export class Reconciler {
     transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
     const controller = new AbortController(); let execution: Execution;
-    try { execution = adapter.launch(task, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
+    const workerTask = { ...task, input: managedWorkerInput(job, task) };
+    try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
     task.executionId = execution.id; await this.store.saveTask(task);
     let threadPersistence = Promise.resolve();
     const persistThread = (threadId: string): void => {
@@ -66,7 +88,7 @@ export class Reconciler {
       async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)); },
     );
   }
-  private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
+  private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; task.threadDeletedAt = null; task.threadCleanupError = null; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
   private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId); if (live?.execution.id === executionId) { clearTimeout(live.timer); this.live.delete(taskId); }
     const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (!task || task.executionId !== executionId) return;
@@ -74,6 +96,20 @@ export class Reconciler {
     if (error === null) { task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed`)); await this.deliverContinuation(job, task); }
     else { task.error = error; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'task.failed' : 'task.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Task ${task.id}: ${error}`, task.state === 'FAILED' ? 'user' : 'orchestrator')); }
     void this.reconcile(jobId);
+  }
+  private async cleanupThreads(job: Job): Promise<void> {
+    const adapter = this.options.adapters.find(candidate => candidate.name === 'chatgpt' && candidate.deleteThread);
+    if (!adapter?.deleteThread) return;
+    for (const task of job.tasks.filter(item => item.adapter === 'chatgpt' && item.threadId && !item.threadDeletedAt)) {
+      try {
+        await adapter.deleteThread(task.threadId as string);
+        task.threadDeletedAt = new Date().toISOString(); task.threadCleanupError = null; await this.store.saveTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'thread.deleted', 'succeeded', `Worker thread ${task.threadId} deleted`, 'orchestrator', { threadId: task.threadId }));
+      } catch (error) {
+        task.threadCleanupError = error instanceof Error ? error.message : String(error); await this.store.saveTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'thread.delete.failed', 'failed', `Worker thread cleanup failed: ${task.threadCleanupError}`, 'orchestrator', { threadId: task.threadId }));
+      }
+    }
   }
   private async deliverContinuation(job: Job, task: Task): Promise<void> {
     const continuation = task.continuation ?? job.continuation;

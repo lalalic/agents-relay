@@ -48,6 +48,20 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
 });
+test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'record', '--file', file, '--task-id', 'truth-fix', '--project', 'agents-relay', '--summary', 'Reconciled durable state with GitHub truth', '--commit', 'abc123'], { cwd: process.cwd() });
+  const [code] = await once(result, 'exit');
+  assert.equal(code, 0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks[0].adapter, 'orchestrator');
+  assert.equal(saved.tasks[0].agentName, 'orchestrator');
+  assert.equal(saved.tasks[0].state, 'SUCCEEDED');
+  assert.equal(saved.tasks[0].executionId, 'abc123');
+  assert.equal(saved.tasks[0].result.data.commit, 'abc123');
+});
 test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'READY'); assert.equal(value.state,'RUNNING'); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('reconciler launches asynchronously and concurrently', async () => { const a=task('a'), b=task('b'), c=task('c'); const store=new InMemoryStore(job([a,b,c])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',maxConcurrent:2,adapters:[adapter]}); const started=Date.now(); const state=await reconciler.reconcile('j'); assert.ok(Date.now()-started < 100); assert.equal(adapter.launches,2); assert.equal((await store.load('j')).tasks.filter(t=>t.state==='RUNNING').length,2); adapter.resolvers[0].resolve({summary:'a'}); adapter.resolvers[1].resolve({summary:'b'}); await new Promise(resolve=>setTimeout(resolve,30)); adapter.resolvers[2]?.resolve({summary:'c'}); await reconciler.idle(); const done=await store.load('j'); assert.equal(done.tasks.filter(t=>t.state==='SUCCEEDED').length,3); assert.equal(state.state,'RUNNING'); });
@@ -91,3 +105,70 @@ test('live task leases do not expire before their timeout', async () => {
 });
 test('dashboard uses safe DOM rendering and named live events', () => { assert.equal(dashboardHtml.includes('innerHTML'),false); assert.equal(dashboardHtml.includes("addEventListener('relay'"),true); });
 test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=serveDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
+
+test('managed model worker input includes durable PR context without changing stored task input', async () => {
+  const { managedWorkerInput } = await import('../dist/reconciler.js');
+  const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.input='implement the change';
+  const root=job([t]); root.prNumber=7; root.repository='lalalic/agents-relay';
+  const input=managedWorkerInput(root,t);
+  assert.match(input,/PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
+  assert.match(input,/Job: j/);
+  assert.match(input,/Task: prompt-context/);
+  assert.match(input,/Parent task: parent/);
+  assert.match(input,/Project: agents-relay/);
+  assert.match(input,/implement the change$/);
+  assert.equal(t.input,'implement the change');
+  const shell=task('shell-context'); shell.input='printf ok';
+  assert.equal(managedWorkerInput(root,shell),'printf ok');
+});
+
+test('completed jobs delete each ChatGPT task thread once and retain durable thread ids', async () => {
+  const a=task('chat-a','SUCCEEDED'); a.adapter='chatgpt'; a.threadId='thread-a';
+  const b=task('chat-b','SUCCEEDED'); b.adapter='chatgpt'; b.threadId='thread-b';
+  const c=task('shell-done','SUCCEEDED'); c.threadId='local-thread';
+  const store=new InMemoryStore(job([a,b,c])); const deleted=[];
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  const completed=await reconciler.reconcile('j');
+  assert.equal(completed.state,'COMPLETED');
+  assert.deepEqual(deleted,['thread-a','thread-b']);
+  assert.equal(completed.tasks[0].threadId,'thread-a'); assert.ok(completed.tasks[0].threadDeletedAt);
+  assert.equal(completed.tasks[1].threadId,'thread-b'); assert.ok(completed.tasks[1].threadDeletedAt);
+  assert.equal(completed.tasks[2].threadDeletedAt,undefined);
+  await reconciler.reconcile('j');
+  assert.deepEqual(deleted,['thread-a','thread-b']);
+});
+
+test('failed terminal thread cleanup is durable and retried without reopening the job', async () => {
+  const t=task('cleanup-retry','SUCCEEDED'); t.adapter='chatgpt'; t.threadId='thread-retry-delete';
+  const store=new InMemoryStore(job([t])); let attempts=0;
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async()=>{attempts+=1;if(attempts===1)throw new Error('delete transport down');}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  const first=await reconciler.reconcile('j');
+  assert.equal(first.state,'COMPLETED'); assert.equal(first.tasks[0].threadCleanupError,'delete transport down'); assert.equal(first.tasks[0].threadDeletedAt,undefined);
+  const second=await reconciler.reconcile('j');
+  assert.equal(second.state,'COMPLETED'); assert.equal(second.tasks[0].threadCleanupError,null); assert.ok(second.tasks[0].threadDeletedAt); assert.equal(attempts,2);
+});
+
+test('merged PR cancels unfinished work and deletes existing ChatGPT threads', async () => {
+  const t=task('merged-active','RUNNING'); t.adapter='chatgpt'; t.threadId='thread-merged'; t.executionId='orphan';
+  const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED'; const deleted=[];
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  const result=await reconciler.reconcile('j');
+  assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request merged'); assert.deepEqual(deleted,['thread-merged']); assert.ok(result.tasks[0].threadDeletedAt);
+});
+
+
+test('merged zero-task PR becomes COMPLETED even when scheduler would leave it OPEN', async () => {
+  const root=job([]); const store=new InMemoryStore(root); store.pullRequestState=async()=> 'MERGED';
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const result=await reconciler.reconcile('j');
+  assert.equal(result.state,'COMPLETED');
+});
+
+test('closed unmerged PR cancels queued work and job without launching', async () => {
+  const t=task('closed-queued'); const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'CLOSED'; const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
+  assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
+});

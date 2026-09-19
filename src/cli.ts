@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest } from './store.js';
+import { InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { ShellAdapter, CodexAdapter, ChatGptAdapter } from './adapters.js';
@@ -15,7 +15,7 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration } from './types.js';
 import { discoverAgents } from './registry.js';
-const usage = 'agents-relay <job create|job adopt|job repair|init|submit|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
@@ -57,8 +57,10 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', description: pr.body || undefined, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
   }
+  if (!job.description && pr.body) job.description = pr.body;
+  if (!job.title && pr.title) job.title = pr.title;
   await store.saveJob(job);
   return { job: await store.load(options.id), pr };
 }
@@ -94,7 +96,14 @@ export async function createService(args: string[]): Promise<Service> {
   const requestedUsageDays = Number(arg(args, '--usage-window-days', '1'));
   const usageWindowDays = Number.isInteger(requestedUsageDays) && requestedUsageDays > 0 ? requestedUsageDays : 1;
   const usageRegistry = codexAndZaiUsageRegistry(undefined, usageWindowDays);
-  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry);
+  const repo = arg(args, '--repo');
+  let overviewProvider: (() => Promise<Awaited<ReturnType<typeof listManagedGitHubJobs>>>) | undefined;
+  if (repo) {
+    const overviewClient = new GhApiClient(); const login = await overviewClient.currentLogin();
+    const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]);
+    overviewProvider = () => listManagedGitHubJobs(overviewClient, repo, trusted);
+  }
+  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider);
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
   const watchdog = setInterval(() => void reconciler.reconcile(loaded.job.id), Number(arg(args, '--interval', String(SERVICE_DEFAULTS.watchdogMs)))); watchdog.unref();
@@ -141,6 +150,13 @@ async function main(): Promise<void> {
     await store.saveAgent(agent); console.log(`Registered ${agent.id}`); return;
   }
   if (command === 'agent-discover') { const candidates = discoverAgents(await store.listAgents(), { capabilities: arg(args, '--capabilities').split(',').filter(Boolean), runtime: arg(args, '--runtime') || undefined, availability: arg(args, '--availability').split(',').filter(Boolean) as AgentRegistration['availability'][], trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') }); console.log(JSON.stringify(candidates, null, 2)); return; }
+  if (command === 'record') {
+    const now = new Date().toISOString(); const id = arg(args, '--task-id', randomUUID()); const summary = arg(args, '--summary');
+    if (!summary) throw new Error('record requires --summary');
+    const commit = arg(args, '--commit');
+    const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
+    await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
+  }
   if (command === 'submit') { const now = new Date().toISOString(); const model = arg(args, '--model'); const routing = model ? { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now } satisfies RoutingDecision : undefined; const task: Task = { jobId: job.id, id: arg(args, '--task-id', randomUUID()), projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent') || undefined, parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), adapter: arg(args, '--adapter', 'shell') as AdapterName, input: arg(args, '--input', 'true'), routing, continuation: continuation(args), continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: Number(arg(args, '--max-attempts', '3')), leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: Number(arg(args, '--timeout', '300000')), createdAt: now, updatedAt: now }; await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `Task ${task.id} submitted`); console.log(`Submitted ${task.id}`); return; }
   if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (command === 'retry' || command === 'cancel') { const id = arg(args, '--task-id'); const task = job.tasks.find(item => item.id === id); if (!task) throw new Error(`Task ${id} not found`); task.state = command === 'retry' ? 'READY' : 'CANCELLED'; task.error = command === 'retry' ? null : 'Cancelled by user'; task.updatedAt = new Date().toISOString(); await store.saveTask(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `${task.id} ${command} requested`); console.log(`${id}: ${task.state}`); return; }

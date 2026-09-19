@@ -215,3 +215,22 @@ test('ChatGptAdapter keeps an exposed conversation id when response transport fa
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('ChatGptAdapter deletes a durable conversation through the MacBridge wrapper', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-delete-'));
+  try {
+    const tokenFile = join(root, 'http-token');
+    await writeFile(tokenFile, 'delete-token', { mode: 0o600 });
+    let request;
+    const { ChatGptAdapter } = await import('../dist/adapters.js');
+    const adapter = new ChatGptAdapter({
+      endpoint: 'http://127.0.0.1:9999', tokenFile,
+      fetch: async (input, init) => { request={input:String(input),init}; return new Response(JSON.stringify({ deleted: true }), { status: 200 }); },
+    });
+    await adapter.deleteThread('chat-thread-delete');
+    assert.equal(request.input,'http://127.0.0.1:9999/experimental/chatgpt/conversation');
+    assert.equal(request.init.method,'DELETE');
+    assert.equal(request.init.headers.authorization,'Bearer delete-token');
+    assert.deepEqual(JSON.parse(request.init.body),{conversation_id:'chat-thread-delete'});
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
