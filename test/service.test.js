@@ -15,10 +15,12 @@ test('daemon arguments require and normalize durable identifiers', () => {
   assert.deepEqual(normalized.serviceArguments, argv);
 });
 
-test('daemon argument validation rejects incomplete identifiers', () => {
-  assert.throws(() => normalizeDaemonArguments(['--pr', '1', '--id', 'job']), /--repo is required/);
-  assert.throws(() => normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--pr', '0', '--id', 'job']), /--pr is required/);
-  assert.throws(() => normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--pr', '1']), /--id is required/);
+test('daemon arguments support repository pool mode and validate legacy pairing', () => {
+  const pooled = normalizeDaemonArguments(['--repo','OWNER/REPO','--port','8787']);
+  assert.equal(pooled.pullRequest, null); assert.equal(pooled.jobId, null);
+  assert.throws(() => normalizeDaemonArguments(['--pr','1','--id','job']), /--repo is required/);
+  assert.throws(() => normalizeDaemonArguments(['--repo','OWNER/REPO','--pr','0','--id','job']), /--pr must be positive/);
+  assert.throws(() => normalizeDaemonArguments(['--repo','OWNER/REPO','--pr','1']), /supplied together/);
 });
 
 test('service defaults and package bins use stable package entrypoints', async () => {

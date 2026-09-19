@@ -1,28 +1,42 @@
 #!/usr/bin/env node
-import { createService, isEntrypoint, startService } from './cli.js';
+import { once } from 'node:events';
+import { ChatGptAdapter, CodexAdapter, ShellAdapter } from './adapters.js';
+import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
+import { serveDashboard } from './dashboard.js';
+import { NatsEventBus } from './events.js';
+import { RepositoryWorkerPool } from './pool.js';
+import { Reconciler } from './reconciler.js';
+import { GhApiClient, GitHubStore, listManagedGitHubJobs } from './store.js';
+import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 
-export interface DaemonArguments { repository: string; pullRequest: number; jobId: string; serviceArguments: string[]; }
-
-function value(args: readonly string[], name: string, fallback = ''): string {
-  const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback;
-}
-
+export interface DaemonArguments { repository: string; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
+function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 export function normalizeDaemonArguments(argv: readonly string[]): DaemonArguments {
   const repository = value(argv, '--repo'); if (!repository) throw new Error('--repo is required');
-  const pullRequest = Number(value(argv, '--pr'));
-  if (!Number.isInteger(pullRequest) || pullRequest <= 0) throw new Error('--pr is required');
-  const jobId = value(argv, '--id'); if (!jobId) throw new Error('--id is required');
-  return { repository, pullRequest, jobId, serviceArguments: [...argv] };
+  const prValue = value(argv, '--pr'); const id = value(argv, '--id');
+  if ((prValue && !id) || (!prValue && id)) throw new Error('--pr and --id must be supplied together for legacy single-job mode');
+  const pullRequest = prValue ? Number(prValue) : null; if (pullRequest !== null && (!Number.isInteger(pullRequest) || pullRequest <= 0)) throw new Error('--pr must be positive');
+  return { repository, pullRequest, jobId: id || null, serviceArguments: [...argv] };
 }
-
 export async function runDaemon(argv: readonly string[]): Promise<void> {
-  normalizeDaemonArguments(argv);
-  await startService([...argv]);
+  const normalized = normalizeDaemonArguments(argv);
+  if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
+  const client = new GhApiClient(); const login = await client.currentLogin();
+  const trusted = new Set([login, ...value(argv,'--trusted-authors').split(',').map(x=>x.trim()).filter(Boolean)]);
+  const concurrency = Number(value(argv,'--concurrency','4'));
+  const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter({endpoint:value(argv,'--macbridge-url')||undefined,tokenFile:value(argv,'--macbridge-token-file')||undefined})], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], eventBus:bus });
+  const pool = new RepositoryWorkerPool(client, normalized.repository, trusted, concurrency, makeReconciler);
+  const overviews = () => listManagedGitHubJobs(client, normalized.repository, trusted);
+  const initial = await overviews(); const fallback = initial[0]?.job; if (!fallback) throw new Error('No managed jobs found');
+  const dashboardStore = new GitHubStore(client, normalized.repository, fallback.prNumber, trusted);
+  const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
+  const webhook = secret ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback.id,undefined,overviews,webhook);
+  await once(server,'listening');
+  const interval=setInterval(()=>void pool.reconcile(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
+  const stopWatch = bus ? await bus.subscribe('*',async e=>{if(e.type==='job.wake'||e.type==='github.webhook')await pool.reconcile();}) : async()=>{};
+  const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  console.log('Dashboard listening; repository worker pool active'); void pool.reconcile();
 }
-
-if (isEntrypoint(import.meta.url)) {
-  runDaemon(process.argv.slice(2)).catch(error => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
+if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
