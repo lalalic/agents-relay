@@ -15,7 +15,7 @@ import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
-import { VoiceActionGateway } from './voice-action.js';
+import { MacBridgeVoiceAgentWorker, VoiceAgentGateway } from './voice-agent.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
@@ -102,11 +102,20 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const usageRegistry = codexAndZaiUsageRegistry();
-  const voiceSecretFile = value(argv,'--voice-action-secret-file');
-  const voiceSecret = value(argv,'--voice-action-secret') || process.env.AGENTS_RELAY_VOICE_ACTION_SECRET || (voiceSecretFile ? (await readFile(voiceSecretFile,'utf8')).trim() : '');
-  const voiceRepositories = new Set(value(argv,'--voice-action-repos').split(',').map(item=>item.trim()).filter(Boolean));
-  const voiceActionGateway = voiceSecret && voiceRepositories.size > 0 ? new VoiceActionGateway(client, trusted, voiceSecret, voiceRepositories) : undefined;
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob,voiceActionGateway);
+  const voiceAgentSecretFile = value(argv,'--voice-agent-secret-file');
+  const voiceAgentSecret = value(argv,'--voice-agent-secret') || process.env.AGENTS_RELAY_VOICE_AGENT_SECRET || (voiceAgentSecretFile ? (await readFile(voiceAgentSecretFile,'utf8')).trim() : '');
+  const voiceAgentProjects = new Set(value(argv,'--voice-agent-projects').split(',').map(item=>item.trim()).filter(Boolean));
+  const macBridgeUrl = value(argv,'--macbridge-url') || process.env.AGENTS_RELAY_MACBRIDGE_URL || 'http://127.0.0.1:8788';
+  const macBridgeTokenFile = value(argv,'--macbridge-token-file') || process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE || join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
+  const voiceAgentGateway = voiceAgentSecret && voiceAgentProjects.size > 0
+    ? new VoiceAgentGateway(
+        new MacBridgeVoiceAgentWorker(macBridgeUrl, macBridgeTokenFile, value(argv,'--voice-agent-thinking','high'), Number(value(argv,'--voice-agent-max-runtime','3600'))),
+        voiceAgentSecret,
+        normalized.workspaceRoot ?? defaultWorkspaceRoot(),
+        voiceAgentProjects,
+      )
+    : undefined;
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob,voiceAgentGateway);
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     if (client.rateLimitStatus().limited) return;

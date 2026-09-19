@@ -96,16 +96,31 @@ GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles 
 For work that was completed outside the relay but must be represented truthfully in durable history, use `agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be submitted before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.
 
 
-### Voice Action Gateway
+### Voice Agent Gateway
 
-`agents-relayd` can optionally expose a narrowly scoped signed action endpoint for Voice/web clients that can reach public HTTPS but cannot call local MCP tools. It is disabled unless both a secret and repository allowlist are configured.
+`agents-relayd` can optionally expose a general Voice Agent gateway for clients that can reach public HTTPS but cannot use local MCP tools directly. Voice sends a natural-language request; the daemon accepts it immediately and delegates the work to a server-side ChatGPT/MacBridge agent that follows workspace/project instructions and uses the existing Agents Relay CLI and skills.
+
+The old action-specific `GET /voice/actions/v1/execute` endpoint and its `job.create` / `task.create` schemas are removed. Voice no longer needs to understand the Agents Relay control-plane contract.
 
 ~~~sh
 agents-relayd --workspace ~/Workspace \
-  --voice-action-secret-file ~/.agents-relay/voice-action-secret \
-  --voice-action-repos lalalic/agents-relay
+  --macbridge-url http://127.0.0.1:8788 \
+  --macbridge-token-file ~/Workspace/neo/skills/devmacbridge/.state/http-token \
+  --voice-agent-secret-file ~/.agents-relay/voice-agent-secret \
+  --voice-agent-projects agents-relay,neo
 ~~~
 
-The endpoint is `GET /voice/actions/v1/execute`. Requests carry an HMAC-signed payload plus expiry, with a maximum lifetime of 15 minutes. The gateway rejects unsigned/expired requests and repositories outside the allowlist, disables response caching, and rate-limits requests per client.
+Before switching to Voice, mint a scoped session URL. The default token lifetime is two hours and tokens are capped at eight hours:
 
-Supported signed actions are `job.create` and `task.create`. Replays remain idempotent when the same durable job/task IDs are used: managed job creation reuses the same PR/job marker, while task creation returns the existing task instead of appending a duplicate.
+~~~sh
+agents-relay voice session-url \
+  --base-url https://agents.example.com \
+  --secret-file ~/.agents-relay/voice-agent-secret \
+  --projects agents-relay,neo \
+  --ttl 7200
+~~~
+
+The returned URL points to `GET /voice/agent/v1/message` and already contains the session token. Voice appends `request=<natural language>` and `project=<allowed project>`. The endpoint returns HTTP 202 immediately with `session_id` and `request_id`; execution continues asynchronously on the server. Subsequent messages pass the same `session_id` to continue the same agent conversation. Query `GET /voice/agent/v1/status?token=...&request_id=...` for completion and the worker summary.
+
+`POST /voice/agent/v1/message` is also supported for conventional clients with JSON fields `token`, `request`, `project`, and optional `session_id`. Both message and status responses use `Cache-Control: no-store`. Project access is constrained by both the daemon allowlist and the signed session-token claims.
+
