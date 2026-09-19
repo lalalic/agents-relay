@@ -69,3 +69,11 @@ test('credit providers render one balance value per provider row', () => {
   assert.doesNotMatch(dashboardHtml, /balance\.total!==null/);
   assert.doesNotMatch(dashboardHtml, /balance\.used!==null/);
 });
+
+test('job list uses PR-number title and concise state metadata', () => {
+  assert.match(dashboardHtml, /text\('PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
+  assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
+  assert.match(dashboardHtml, /text\(value\(job\.githubState\|\|'UNKNOWN'\)\)/);
+  assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
+  assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
+});
