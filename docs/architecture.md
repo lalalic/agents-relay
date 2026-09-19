@@ -23,9 +23,23 @@ Registration records identity/name, role and responsibility, claimed capabilitie
 
 The registry does not yet execute remote agents or expose a public marketplace. A constrained ChatGPT/voice/mobile runtime should eventually use a small authenticated service surface with only `POST /jobs` (intention-only/public jobs) and `GET /jobs/:id`; credentials and private payloads must stay out of PR markers and events. Private-data/credential jobs, multi-owner trust, isolation, billing, and public discovery are future security-gated work.
 
+## Execution modes
+
+Jobs persist `executionMode` as `fixed` or `autonomous`; missing mode in legacy
+markers is read as `fixed`. Fixed is the default and keeps the v1 submit flow
+unchanged. Autonomous jobs use the existing task records and parent hierarchy:
+when all currently runnable work is settled and no planner task is active,
+reconciliation appends one durable `kind: "planner"` task. The planner returns
+typed `objective_status`, `assessment`, and `next_tasks` values. Each
+`next_tasks` item becomes a normal child task of that planner task.
+
+Stable task IDs and append-if-same-definition behavior make planner retries
+idempotent. Leases, owner recovery, and completion decisions remain in the
+reconciler; planner output never directly marks a job complete.
+
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep creates no objectives or tasks.
+Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
 
 ## State
 
@@ -37,7 +51,7 @@ Task states:
 
 QUEUED -> READY -> RUNNING -> WAITING|BLOCKED -> SUCCEEDED|FAILED|CANCELLED
 
-A task becomes READY when all declared dependencies have succeeded and any approval gate is satisfied.
+A task becomes READY when all declared dependencies have succeeded and any approval gate is satisfied. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
 
 ## Task record
 

@@ -8,7 +8,7 @@ For GitHub-backed work, create or adopt the PR through Agents Relay itself. This
 
 ~~~sh
 agents-relay job create --repo OWNER/REPO --head feat/example --base main \
-  --id job-1 --title "Objective" --body "PR description"
+  --id job-1 --title "Objective" --body "PR description" --mode fixed
 
 agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --input "echo hello" --adapter shell
@@ -16,6 +16,14 @@ agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
 agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
 agents-relay status --repo OWNER/REPO --pr 12 --id job-1
 ~~~
+
+Jobs default to `fixed`, preserving the original submit-and-run behavior. Use
+`--mode autonomous` with `init` or `job create` to make reconciliation own
+planner progress. The durable status JSON and dashboard show the mode. An
+autonomous runtime needs `--planner-command`; it receives the objective/task
+snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
+Planner-created tasks use stable IDs and the existing parent/subtask tree, so
+retries and daemon restarts do not create duplicate work.
 
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
 

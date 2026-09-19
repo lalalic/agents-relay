@@ -9,6 +9,13 @@ Use Agents Relay for asynchronous work that must survive the current agent proce
 
 GitHub PR comments are durable truth in operational mode. Reload the PR after every event or wake-up and reconcile desired durable state into worker executions; events and NATS are only low-latency notifications and must never be treated as completion.
 
+Jobs are `fixed` by default. Autonomous jobs are explicitly created with
+`--mode autonomous`; reconciliation creates durable planner tasks only after
+the current parent/subtask work is settled. A planner must return typed
+`objective_status`, `assessment`, and `next_tasks`; the runtime owns leases,
+restart recovery, stable-ID deduplication, and completion gates. Planner
+satisfaction does not override failed or blocked work.
+
 ## Managed GitHub bootstrap
 
 For new GitHub-backed work, do not create the PR or job marker with raw gh commands. Use the first-class CLI:

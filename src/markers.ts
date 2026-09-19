@@ -17,7 +17,17 @@ export function parseMarker<T>(body: string, label: string): T | null {
 }
 export function renderJobComment(job: Job): string { return `${marker(JOB_MARKER, { ...job, tasks: undefined })}\n# Agents Relay job: ${job.title}\nState: ${job.state}\nPR: #${job.prNumber}`; }
 export function renderTaskComment(task: Task): string { return `${marker(TASK_MARKER, task)}\n## Task ${task.id}\nState: ${task.state}\n${task.result?.summary ?? task.input}`; }
-export function parseJob(body: string): Job | null { return parseMarker<Job>(body, JOB_MARKER); }
-export function parseTask(body: string): Task | null { return parseMarker<Task>(body, TASK_MARKER); }
+export function parseJob(body: string): Job | null {
+  const job = parseMarker<Job>(body, JOB_MARKER);
+  if (!job) return null;
+  if (job.executionMode === undefined) return { ...job, executionMode: 'fixed' };
+  if (job.executionMode !== 'fixed' && job.executionMode !== 'autonomous') return null;
+  return job;
+}
+export function parseTask(body: string): Task | null {
+  const task = parseMarker<Task>(body, TASK_MARKER);
+  if (!task) return null;
+  return { ...task, kind: task.kind === 'planner' ? 'planner' : 'work' };
+}
 export function renderAgentComment(agent: AgentRegistration): string { return `${marker(AGENT_MARKER, agent)}\n## Registered agent ${agent.name}\nRole: ${agent.role}\nAvailability: ${agent.availability}`; }
 export function parseAgent(body: string): AgentRegistration | null { return parseMarker<AgentRegistration>(body, AGENT_MARKER); }

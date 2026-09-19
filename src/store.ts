@@ -94,7 +94,7 @@ function immutableTaskDefinition(task: Task): unknown {
   } : undefined;
   return {
     jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
-    parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
+    kind: task.kind ?? 'work', parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
     input: task.input, routing, continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };
 }
