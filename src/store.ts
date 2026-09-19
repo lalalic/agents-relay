@@ -110,6 +110,12 @@ function repositoryParts(repository: string): { owner: string; name: string } {
   if (!owner || !name) throw new Error(`Invalid GitHub repository ${repository}`);
   return { owner, name };
 }
+async function headHasNoAheadCommits(client: GitHubClient, repository: string, base: string, head: string): Promise<boolean> {
+  const path = `repos/${repository}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+  const comparison = await client.request(path) as Record<string, unknown>;
+  return Number(comparison.ahead_by) === 0;
+}
+
 async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string, head: string): Promise<void> {
   const { owner, name } = repositoryParts(repository);
   const data = await githubGraphql(
@@ -173,6 +179,11 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
   const existing = await find();
   if (existing) return existing;
   if (!options.title) throw new Error('--title is required when creating a pull request');
+  if (await headHasNoAheadCommits(client, repository, base, options.head)) {
+    await bootstrapEmptyHeadCommit(client, repository, options.head);
+    const afterBootstrap = await find();
+    if (afterBootstrap) return afterBootstrap;
+  }
   const repositoryData = await githubGraphql(client, 'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}', { owner, name });
   const repo = repositoryData.repository as Record<string, unknown> | undefined;
   if (typeof repo?.id !== 'string') throw new Error(`Repository ${repository} not found`);
