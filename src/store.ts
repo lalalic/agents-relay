@@ -1,11 +1,13 @@
 import { Job, Task } from './types.js';
 import { spawn } from 'node:child_process';
-import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
+import { parseAgent, parseAgentRegistry, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, marker, AGENT_MARKER, AGENT_REGISTRY_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; mergedAt: string | null; closedAt: string | null };
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
+export type AgentRegistryScope = { kind: 'repository'; repository?: string } | { kind: 'global'; repository: string };
+export const repositoryAgentScope = (): AgentRegistryScope => ({ kind: 'repository' });
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(scopes?: AgentRegistryScope[]): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration, scope?: AgentRegistryScope): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -89,7 +91,16 @@ export class GitHubStore implements DurableStore {
     job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
     return job;
   }
-  async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
+  async listAgents(scopes: AgentRegistryScope[] = [repositoryAgentScope()]): Promise<AgentRegistration[]> {
+    const collected: AgentRegistration[] = [];
+    for (const scope of scopes) {
+      const targetRepository = registryRepository(this.repository, scope);
+      const issue = await this.findAgentRegistryIssue(targetRepository, scope, false);
+      if (issue !== null) collected.push(...await this.agentsFromIssue(targetRepository, issue));
+      if (scope.kind === 'repository' && targetRepository === this.repository) collected.push(...await this.legacyAgents());
+    }
+    return dedupeAgents(collected);
+  }
   private async comment(body: string): Promise<void> { await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }) }); }
   async saveJob(job: Job): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
@@ -112,12 +123,83 @@ export class GitHubStore implements DurableStore {
     if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
     else await this.appendTask(task);
   }
-  async saveAgent(agent: AgentRegistration): Promise<void> {
-    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
-    const existing = comments.find(comment => parseAgent(comment.body)?.id === agent.id);
-    if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
-    else await this.comment(renderAgentComment(agent));
+  async saveAgent(agent: AgentRegistration, scope: AgentRegistryScope = repositoryAgentScope()): Promise<void> {
+    const targetRepository = registryRepository(this.repository, scope);
+    const issue = await this.findAgentRegistryIssue(targetRepository, scope, true);
+    if (issue === null) throw new Error('Failed to create durable agent registry');
+    const comments = await this.issueComments(targetRepository, issue);
+    const existing = comments.find(comment => this.isTrusted(comment) && parseAgent(comment.body)?.id === agent.id);
+    if (existing) await this.client.request(`/repos/${targetRepository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
+    else await this.client.request(`/repos/${targetRepository}/issues/${issue}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderAgentComment(agent) }) });
   }
+  private async issueComments(repository: string, issueNumber: number): Promise<Comment[]> {
+    const data = await this.client.request(`/repos/${repository}/issues/${issueNumber}/comments?per_page=100`);
+    if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array');
+    return data.map(toComment);
+  }
+  private async agentsFromIssue(repository: string, issueNumber: number): Promise<AgentRegistration[]> {
+    return (await this.issueComments(repository, issueNumber)).filter(comment => this.isTrusted(comment)).map(comment => parseAgent(comment.body)).filter((agent): agent is AgentRegistration => agent !== null);
+  }
+  private async legacyAgents(): Promise<AgentRegistration[]> {
+    const output: AgentRegistration[] = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const data = await this.client.request(`/repos/${this.repository}/issues/comments?sort=updated&direction=desc&per_page=100&page=${page}`);
+      if (!Array.isArray(data)) throw new Error('GitHub repository comments response was not an array');
+      for (const item of data) {
+        const comment = toComment(item);
+        if (!this.isTrusted(comment)) continue;
+        const agent = parseAgent(comment.body);
+        if (agent) output.push(agent);
+      }
+      if (data.length < 100) break;
+    }
+    return output;
+  }
+  private async findAgentRegistryIssue(repository: string, scope: AgentRegistryScope, create: boolean): Promise<number | null> {
+    const matches: number[] = [];
+    for (let page = 1; page <= 10; page += 1) {
+      const data = await this.client.request(`/repos/${repository}/issues?state=all&per_page=100&page=${page}`);
+      if (!Array.isArray(data)) throw new Error('GitHub issues response was not an array');
+      for (const item of data) {
+        const row = item as Record<string, unknown>;
+        const user = row.user as Record<string, unknown> | undefined;
+        const author = typeof user?.login === 'string' ? user.login : null;
+        if (author === null || !this.trustedAuthors.has(author)) continue;
+        const registry = parseAgentRegistry(String(row.body ?? ''));
+        if (!registry || registry.scope !== scope.kind || registry.repository !== repository) continue;
+        const number = Number(row.number);
+        if (Number.isInteger(number) && number > 0) matches.push(number);
+      }
+      if (data.length < 100) break;
+    }
+    if (matches.length > 1) throw new Error(`Repository ${repository} has multiple trusted ${AGENT_REGISTRY_MARKER} markers for ${scope.kind} scope`);
+    if (matches.length === 1) return matches[0];
+    if (!create) return null;
+    const body = marker(AGENT_REGISTRY_MARKER, { scope: scope.kind, repository, createdAt: new Date().toISOString() });
+    const created = await this.client.request(`/repos/${repository}/issues`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: scope.kind === 'global' ? 'Agents Relay global agent registry' : 'Agents Relay agent registry', body }) }) as Record<string, unknown>;
+    const number = Number(created.number);
+    if (!Number.isInteger(number) || number <= 0) throw new Error('GitHub registry issue creation returned an invalid issue number');
+    return number;
+  }
+}
+
+function registryRepository(jobRepository: string, scope: AgentRegistryScope): string {
+  if (scope.kind === 'repository') {
+    if (scope.repository && scope.repository !== jobRepository) throw new Error('Repository-scoped agent lookup cannot cross repositories; use global scope explicitly');
+    return jobRepository;
+  }
+  if (!scope.repository.includes('/')) throw new Error('Global agent registry requires an explicit owner/repository');
+  return scope.repository;
+}
+function toComment(value: unknown): Comment {
+  const row = value as Record<string, unknown>;
+  const user = row.user as Record<string, unknown> | null | undefined;
+  return { id: Number(row.id), body: String(row.body ?? ''), updatedAt: String(row.updated_at ?? ''), authorLogin: typeof user?.login === 'string' ? user.login : null };
+}
+function dedupeAgents(agents: AgentRegistration[]): AgentRegistration[] {
+  const values = new Map<string, AgentRegistration>();
+  for (const agent of agents) if (!values.has(agent.id)) values.set(agent.id, agent);
+  return [...values.values()];
 }
 
 export async function listManagedGitHubJobs(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {

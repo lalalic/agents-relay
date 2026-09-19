@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GitHubStore, InMemoryStore } from '../dist/store.js';
-import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
+import { AGENT_MARKER, AGENT_REGISTRY_MARKER, JOB_MARKER, marker, parseAgentRegistry, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
 const now = () => new Date().toISOString();
 const task = (jobId, id, state = 'QUEUED') => ({
@@ -251,14 +251,123 @@ test('managed GitHub task submission is gated on a durable job marker', async ()
   assert.ok(taskIndex > jobIndex);
 });
 
-test('agent registrations persist through trusted stores and ignore forged markers', async () => {
-  const agent = { id:'researcher', name:'Researcher', responsibility:'public research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
-  const comments = [githubComment(marker(JOB_MARKER, job('job-a'))), githubComment(marker(AGENT_MARKER, agent)), githubComment(marker(AGENT_MARKER, {...agent, id:'forged'}), 'attacker', 1001)];
-  const store = githubWithComments(comments);
-  assert.deepEqual((await store.listAgents()).map(item => item.id), ['researcher']);
-  agent.availability = 'degraded';
-  await store.saveAgent(agent);
-  const fresh = githubWithComments(comments);
-  assert.equal((await fresh.listAgents())[0].availability, 'degraded');
-  assert.equal(parseAgent(comments[1].body).id, 'researcher');
+
+class RegistryGitHubClient {
+  constructor() {
+    this.issues = new Map();
+    this.comments = new Map();
+    this.nextIssue = 20;
+    this.nextComment = 200;
+  }
+  issues;
+  comments;
+  nextIssue;
+  nextComment;
+  seedIssue(repository, body, login = 'bot') {
+    const number = this.nextIssue++;
+    const values = this.issues.get(repository) ?? [];
+    values.push({ number, body, state: 'open', user: { login } });
+    this.issues.set(repository, values);
+    return number;
+  }
+  seedComment(repository, issue, body, login = 'bot') {
+    const key = repository + '#' + issue;
+    const values = this.comments.get(key) ?? [];
+    const value = githubComment(body, login, this.nextComment++);
+    values.push(value);
+    this.comments.set(key, values);
+    return value;
+  }
+}
+RegistryGitHubClient.prototype.request = async function(path, init = {}) {
+  const method = String(init.method ?? 'GET');
+  const issueList = path.match(/^\/repos\/([^/]+\/[^/]+)\/issues\?state=all/);
+  if (method === 'GET' && issueList) return this.issues.get(issueList[1]) ?? [];
+  const repoComments = path.match(/^\/repos\/([^/]+\/[^/]+)\/issues\/comments\?/);
+  if (method === 'GET' && repoComments) {
+    const prefix = repoComments[1] + '#';
+    return [...this.comments.entries()].filter(([key]) => key.startsWith(prefix)).flatMap(([, values]) => values);
+  }
+  const issueComments = path.match(/^\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments/);
+  if (issueComments) {
+    const repository = issueComments[1];
+    const issue = Number(issueComments[2]);
+    const key = repository + '#' + issue;
+    if (method === 'GET') return this.comments.get(key) ?? [];
+    if (method === 'POST') {
+      const body = JSON.parse(String(init.body));
+      return this.seedComment(repository, issue, body.body);
+    }
+  }
+  const createIssue = path.match(/^\/repos\/([^/]+\/[^/]+)\/issues$/);
+  if (method === 'POST' && createIssue) {
+    const repository = createIssue[1];
+    const body = JSON.parse(String(init.body));
+    const number = this.seedIssue(repository, body.body);
+    return { number, body: body.body, state: 'open', user: { login: 'bot' } };
+  }
+  const patchComment = path.match(/^\/repos\/([^/]+\/[^/]+)\/issues\/comments\/(\d+)$/);
+  if (method === 'PATCH' && patchComment) {
+    const repository = patchComment[1];
+    const id = Number(patchComment[2]);
+    const body = JSON.parse(String(init.body));
+    for (const [key, values] of this.comments.entries()) {
+      if (!key.startsWith(repository + '#')) continue;
+      const existing = values.find(item => item.id === id);
+      if (existing) { existing.body = body.body; return existing; }
+    }
+  }
+  throw new Error('Unhandled registry GitHub request: ' + method + ' ' + path);
+};
+
+const registryAgent = id => ({
+  id, name:id, responsibility:'work', role:'worker', capabilities:['typescript'], boundaries:[],
+  endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{},
+  evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},
+  registeredAt:now(), updatedAt:now()
+});
+
+test('repository registry is shared across PR stores and keeps legacy PR agents readable', async () => {
+  const client = new RegistryGitHubClient();
+  const trusted = new Set(['bot']);
+  const legacyIssue = client.seedIssue('owner/repo', 'legacy PR');
+  client.seedComment('owner/repo', legacyIssue, marker(AGENT_MARKER, registryAgent('legacy')));
+
+  const first = new GitHubStore(client, 'owner/repo', 1, trusted);
+  await first.saveAgent(registryAgent('shared'));
+  const second = new GitHubStore(client, 'owner/repo', 9, trusted);
+
+  assert.deepEqual((await second.listAgents()).map(item => item.id).sort(), ['legacy', 'shared']);
+  const registries = (client.issues.get('owner/repo') ?? []).filter(item => parseAgentRegistry(item.body)?.scope === 'repository');
+  assert.equal(registries.length, 1);
+
+  const updated = registryAgent('shared');
+  updated.availability = 'degraded';
+  await second.saveAgent(updated);
+  assert.equal((await first.listAgents()).find(item => item.id === 'shared').availability, 'degraded');
+});
+
+test('registry trusts only configured authors for registry ownership and agent markers', async () => {
+  const client = new RegistryGitHubClient();
+  const trusted = new Set(['bot']);
+  const good = client.seedIssue('owner/repo', marker(AGENT_REGISTRY_MARKER, { scope:'repository', repository:'owner/repo', createdAt:now() }), 'bot');
+  client.seedIssue('owner/repo', marker(AGENT_REGISTRY_MARKER, { scope:'repository', repository:'owner/repo', createdAt:now() }), 'other');
+  client.seedComment('owner/repo', good, marker(AGENT_MARKER, registryAgent('trusted')), 'bot');
+  client.seedComment('owner/repo', good, marker(AGENT_MARKER, registryAgent('ignored')), 'other');
+
+  const store = new GitHubStore(client, 'owner/repo', 9, trusted);
+  assert.deepEqual((await store.listAgents()).map(item => item.id), ['trusted']);
+});
+
+test('global registry lookup is explicit and isolated from repository legacy markers', async () => {
+  const client = new RegistryGitHubClient();
+  const trusted = new Set(['bot']);
+  const globalIssue = client.seedIssue('owner/global-agents', marker(AGENT_REGISTRY_MARKER, { scope:'global', repository:'owner/global-agents', createdAt:now() }));
+  const localIssue = client.seedIssue('owner/repo', 'legacy PR');
+  client.seedComment('owner/global-agents', globalIssue, marker(AGENT_MARKER, registryAgent('global')));
+  client.seedComment('owner/repo', localIssue, marker(AGENT_MARKER, registryAgent('legacy-local')));
+
+  const store = new GitHubStore(client, 'owner/repo', 9, trusted);
+  assert.deepEqual((await store.listAgents([{ kind:'global', repository:'owner/global-agents' }])).map(item => item.id), ['global']);
+  await assert.rejects(() => store.listAgents([{ kind:'repository', repository:'owner/other' }]), /cannot cross repositories/);
 });
