@@ -4,7 +4,7 @@ import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
 import { Job } from './types.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
-import { VoiceActionGateway } from './voice-action.js';
+import { VoiceAgentGateway } from './voice-agent.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -262,7 +262,7 @@ export function serveDashboard(
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
-  voiceActionGateway?: VoiceActionGateway,
+  voiceAgentGateway?: VoiceAgentGateway,
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -331,10 +331,41 @@ export function serveDashboard(
 
   const server = createServer(async (req, res) => {
     const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (requestUrl.pathname === '/voice/actions/v1/execute' && req.method === 'GET') {
-      if (!voiceActionGateway) { res.writeHead(404); res.end('Not found'); return; }
+    if (requestUrl.pathname === '/voice/agent/v1/message' && (req.method === 'GET' || req.method === 'POST')) {
+      if (!voiceAgentGateway) { res.writeHead(404); res.end('Not found'); return; }
       const forwarded = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : undefined;
-      const response = await voiceActionGateway.execute(requestUrl, forwarded ?? req.socket.remoteAddress ?? 'unknown');
+      const clientId = forwarded ?? req.socket.remoteAddress ?? 'unknown';
+      let token = requestUrl.searchParams.get('token') ?? '';
+      let request = requestUrl.searchParams.get('request') ?? '';
+      let project = requestUrl.searchParams.get('project') ?? undefined;
+      let sessionId = requestUrl.searchParams.get('session_id') ?? undefined;
+      if (req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+          token = typeof body.token === 'string' ? body.token : token;
+          request = typeof body.request === 'string' ? body.request : request;
+          project = typeof body.project === 'string' ? body.project : project;
+          sessionId = typeof body.session_id === 'string' ? body.session_id : sessionId;
+        } catch {
+          res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }));
+          return;
+        }
+      }
+      const response = voiceAgentGateway.submit({ token, request, project, sessionId, clientId });
+      res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(response.body));
+      return;
+    }
+    if (requestUrl.pathname === '/voice/agent/v1/status' && req.method === 'GET') {
+      if (!voiceAgentGateway) { res.writeHead(404); res.end('Not found'); return; }
+      const response = voiceAgentGateway.status(
+        requestUrl.searchParams.get('token') ?? '',
+        requestUrl.searchParams.get('request_id') ?? '',
+        requestUrl.searchParams.get('project') ?? undefined,
+      );
       res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(response.body));
       return;
