@@ -1,6 +1,6 @@
 # Running the service
 
-`agents-relayd` starts the reconciler watchdog and dashboard for one durable job. It listens on `127.0.0.1:8787` by default, reconciles every 60 seconds, and refreshes the dashboard every 15 seconds. NATS remains optional; enable it with `--events nats` and configure it with `--nats-url` and `--subject-prefix`.
+`agents-relayd` starts the event-driven reconciler and periodic full-reconciliation watchdog for one durable job. It listens on `127.0.0.1:8787` by default, performs a full durable PR/job sweep every hour, and refreshes the dashboard every 15 seconds. Events remain optional wakeups; each sweep re-reads GitHub PR markers/state and applies the same lease, retry, dependency, parent-continuation, terminal-PR, and ChatGPT-cleanup semantics as an event-driven reconcile. NATS remains optional; enable it with `--events nats` and configure it with `--nats-url` and `--subject-prefix`.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
@@ -12,7 +12,7 @@ Use service overrides as needed:
 
 ```sh
 npx agents-relayd --repo OWNER/REPO --pr 1 --id JOB_ID \
-  --owner runner-a --port 8787 --interval 60000 --refresh-ms 15000 \
+  --owner runner-a --port 8787 --interval 3600000 --refresh-ms 15000 \
   --events nats --nats-url nats://127.0.0.1:4222
 ```
 

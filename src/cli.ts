@@ -16,7 +16,7 @@ import { Server } from 'node:http';
 import { AgentRegistration } from './types.js';
 import { discoverAgents } from './registry.js';
 const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
-export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 60000, dashboardRefreshMs: 15000 } as const;
+export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 3600000, dashboardRefreshMs: 15000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
   constructor(private readonly upstream: EventBus) {}
@@ -106,7 +106,8 @@ export async function createService(args: string[]): Promise<Service> {
   const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider);
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
-  const watchdog = setInterval(() => void reconciler.reconcile(loaded.job.id), Number(arg(args, '--interval', String(SERVICE_DEFAULTS.watchdogMs)))); watchdog.unref();
+  const intervalMs = Number(arg(args, '--interval', String(SERVICE_DEFAULTS.watchdogMs)));
+  const watchdog = setInterval(() => void reconciler.reconcile(loaded.job.id).catch(error => process.stderr.write(`warning: periodic reconciliation failed: ${error instanceof Error ? error.message : String(error)}\n`)), intervalMs); watchdog.unref();
   let stopping: Promise<void> | null = null;
   const service: Service = {
     store: loaded.store,

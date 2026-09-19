@@ -72,7 +72,7 @@ Each ChatGPT task owns its own conversation. Retries reuse that task's conversat
 agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,macbridge \
-  --provider openai --model gpt-5-6-pro --reasoning high \
+  --provider openai --model gpt-5-6-sol --reasoning high \
   --chatgpt-project g-p-EXACT_PROJECT_ID \
   --input "Research the dashboard UX and return implementation guidance."
 ~~~
