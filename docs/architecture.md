@@ -12,6 +12,7 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
 - **Agent adapters** — pluggable execution backends such as Codex and shell commands.
 - **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
+- **Periodic watchdog** — hourly full reconciliation sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state.
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice
@@ -24,7 +25,7 @@ The registry does not yet execute remote agents or expose a public marketplace. 
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened.
+Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep creates no objectives or tasks.
 
 ## State
 

@@ -108,7 +108,7 @@ test('ChatGptAdapter launches through MacBridge and exposes conversation id as t
       input: 'build the feature',
       timeoutMs: 120000,
       threadId: null,
-      routing: { provider: 'openai', model: 'gpt-5-6-pro', reasoning: 'high', projectId: 'g-p-12345678' },
+      routing: { provider: 'openai', model: 'gpt-5-6-sol', reasoning: 'high', projectId: 'g-p-12345678' },
     }, new AbortController().signal);
     let observedThreadId;
     execution.onThreadStarted = threadId => { observedThreadId = threadId; };
@@ -118,7 +118,7 @@ test('ChatGptAdapter launches through MacBridge and exposes conversation id as t
     const body = JSON.parse(request.init.body);
     assert.deepEqual(body, {
       prompt: 'build the feature',
-      model: 'gpt-5-6-pro',
+      model: 'gpt-5-6-sol',
       thinking_effort: 'high',
       max_runtime_seconds: 120,
       project_id: 'g-p-12345678',
