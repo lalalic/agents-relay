@@ -120,24 +120,33 @@ async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string
   const { owner, name } = repositoryParts(repository);
   const data = await githubGraphql(
     client,
-    'query($owner:String!,$name:String!,$qualified:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$qualified){target{oid}}}}',
+    'query($owner:String!,$name:String!,$qualified:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$qualified){target{... on Commit{oid tree{oid}}}}}}',
     { owner, name, qualified: `refs/heads/${head}` }
   );
   const repo = data.repository as Record<string, unknown> | undefined;
   const ref = repo?.ref as Record<string, unknown> | undefined;
   const target = ref?.target as Record<string, unknown> | undefined;
+  const tree = target?.tree as Record<string, unknown> | undefined;
   const expectedHeadOid = typeof target?.oid === 'string' ? target.oid : '';
-  if (!expectedHeadOid) throw new Error(`Unable to resolve head branch ${head}`);
-  const created = await githubGraphql(
-    client,
-    'mutation($repositoryNameWithOwner:String!,$branchName:String!,$expectedHeadOid:GitObjectID!){createCommitOnBranch(input:{branch:{repositoryNameWithOwner:$repositoryNameWithOwner,branchName:$branchName},message:{headline:"chore: bootstrap Agents Relay job"},expectedHeadOid:$expectedHeadOid}){commit{oid}}}',
-    { repositoryNameWithOwner: repository, branchName: head, expectedHeadOid }
-  );
-  const result = created.createCommitOnBranch as Record<string, unknown> | undefined;
-  const commit = result?.commit as Record<string, unknown> | undefined;
-  if (typeof commit?.oid !== 'string' || commit.oid.length === 0) throw new Error(`Unable to create bootstrap commit for ${head}`);
-}
+  const treeOid = typeof tree?.oid === 'string' ? tree.oid : '';
+  if (!expectedHeadOid || !treeOid) throw new Error(`Unable to resolve head branch ${head}`);
 
+  const created = await client.request(`repos/${repository}/git/commits`, {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'chore: bootstrap Agents Relay job',
+      tree: treeOid,
+      parents: [expectedHeadOid],
+    }),
+  }) as Record<string, unknown>;
+  const commitOid = typeof created.sha === 'string' ? created.sha : '';
+  if (!commitOid) throw new Error(`Unable to create bootstrap commit for ${head}`);
+
+  await client.request(`repos/${repository}/git/refs/heads/${head}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ sha: commitOid, force: false }),
+  });
+}
 function pullRequest(value: unknown): PullRequest {
   const item = value as Record<string, unknown>;
   const head = item.head as Record<string, unknown> | undefined;
