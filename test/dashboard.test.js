@@ -18,6 +18,9 @@ test('dashboard exposes the operations-console structure safely', () => {
 
 test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /id="jobs-refresh"/);
+  assert.match(dashboardHtml, /id="selected-job-refresh"/);
+  assert.match(dashboardHtml, /selectedJobRefresh\.addEventListener\('click'/);
+  assert.match(dashboardHtml, /loadJSON\('\/api\/job\?id='/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click'/);
   assert.match(dashboardHtml, /function isTerminalJob\(job\)/);
   assert.match(dashboardHtml, /jobs\.sort\(compareJobs\)/);

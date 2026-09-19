@@ -5,6 +5,14 @@ import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
+const COMPLETED_JOB_HISTORY_LIMIT = 10;
+function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
+function completedAt(item: ManagedJobOverview): string { return item.mergedAt ?? item.closedAt ?? item.job.updatedAt; }
+export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): ManagedJobOverview[] {
+  const unfinished = items.filter(item => !isCompletedManagedJob(item));
+  const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
+  return [...unfinished, ...completed];
+}
 export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
@@ -148,7 +156,7 @@ export class GitHubStore implements DurableStore {
 
 export async function listManagedGitHubJobs(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
   const pullRequests: Array<Record<string, unknown>> = [];
-  for (let page = 1; page <= 10; page += 1) {
+  for (let page = 1; ; page += 1) {
     const value = await client.request(`/repos/${repository}/pulls?state=all&per_page=100&page=${page}`);
     if (!Array.isArray(value)) throw new Error('GitHub pull request list response was not an array');
     const pageValues = value as Array<Record<string, unknown>>; pullRequests.push(...pageValues);

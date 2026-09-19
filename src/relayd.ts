@@ -6,7 +6,7 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { GhApiClient, GitHubStore, listManagedGitHubJobs } from './store.js';
+import { dashboardManagedJobs, GhApiClient, GitHubStore, listManagedGitHubJobs } from './store.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 
@@ -28,7 +28,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter({endpoint:value(argv,'--macbridge-url')||undefined,tokenFile:value(argv,'--macbridge-token-file')||undefined})], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], eventBus:bus });
   const pool = new RepositoryWorkerPool(client, normalized.repository, trusted, concurrency, makeReconciler);
-  const overviews = () => listManagedGitHubJobs(client, normalized.repository, trusted);
+  const overviews = async () => dashboardManagedJobs(await listManagedGitHubJobs(client, normalized.repository, trusted));
   const initial = await overviews(); const fallback = initial[0]?.job; if (!fallback) throw new Error('No managed jobs found');
   const dashboardStore = new GitHubStore(client, normalized.repository, fallback.prNumber, trusted);
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
