@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestMerged?(): Promise<boolean>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -77,6 +77,7 @@ export class GitHubStore implements DurableStore {
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
   private async list(): Promise<Comment[]> { const all: Comment[] = []; for (let page = 1; page <= 100; page += 1) { const data = await this.client.request(`/repos/${this.repository}/issues/${this.prNumber}/comments?per_page=100&page=${page}`); if (!Array.isArray(data)) throw new Error('GitHub comments response was not an array'); const values = data.map((x: unknown) => { const v = x as Record<string, unknown>; const user = v.user as Record<string, unknown> | null | undefined; return { id: Number(v.id), body: String(v.body ?? ''), updatedAt: String(v.updated_at ?? ''), authorLogin: typeof user?.login === 'string' ? user.login : null }; }); all.push(...values); if (values.length < 100) break; } return all; }
   async comments(): Promise<Comment[]> { return this.list(); }
+  async pullRequestMerged(): Promise<boolean> { const value = await this.client.request(`/repos/${this.repository}/pulls/${this.prNumber}`) as Record<string, unknown>; return value.merged === true || typeof value.merged_at === 'string'; }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);

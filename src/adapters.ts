@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision } from './types.js';
 
 export type Execution = { id: string; promise: Promise<Result>; cancel: () => void; threadId?: string; onThreadStarted?: (threadId: string) => void };
-export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; }
+export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; deleteThread?(threadId: string): Promise<void>; }
 function commandExecution(child: ChildProcess, output: () => string, signal: AbortSignal, id: string): Execution { const promise = new Promise<Result>((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve({ summary: output().trim() || 'Command completed' }) : reject(new Error(output().trim() || `Command exited ${code}`))); signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true }); }); return { id, promise, cancel: () => { child.kill('SIGTERM'); } }; }
 export function buildCodexArgs(route: Pick<RoutingDecision, 'provider' | 'model'> & Partial<Pick<RoutingDecision, 'profile' | 'reasoning' | 'cwd'>>, input: string): readonly string[] {
   const args: string[] = ['exec', '--json'];
@@ -85,6 +85,21 @@ export class ChatGptAdapter implements WorkerAdapter {
     this.endpoint = chatGptEndpoint(options.endpoint);
     this.tokenFile = chatGptTokenFile(options.tokenFile);
     this.fetchImpl = options.fetch ?? fetch;
+  }
+  async deleteThread(threadId: string): Promise<void> {
+    const token = (await readFile(this.tokenFile, 'utf8')).trim();
+    if (!token) throw new Error(`MacBridge token file is empty: ${this.tokenFile}`);
+    const response = await this.fetchImpl(this.endpoint, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ conversation_id: threadId }),
+    });
+    if (response.status === 404) return;
+    if (!response.ok) {
+      let detail = '';
+      try { const payload = await response.json() as Record<string, unknown>; detail = typeof payload.error === 'string' ? payload.error : ''; } catch {}
+      throw new Error(detail || `MacBridge ChatGPT conversation delete failed (${response.status})`);
+    }
   }
   launch(task: Task, signal: AbortSignal): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before ChatGPT launch`);

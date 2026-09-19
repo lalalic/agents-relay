@@ -64,6 +64,10 @@ The minimal agent-network surface is machine-driven registration and discovery. 
 
 Use the chatgpt adapter to make a relay task create a real ChatGPT web conversation through the local MacBridge runtime. The returned ChatGPT conversation_id is stored as the task threadId, so lineage is durable and a retry continues the same conversation.
 
+Managed Codex and ChatGPT worker prompts automatically receive the durable PR URL plus job/task/parent/project context before the original task input. The stored task input is not rewritten.
+
+Each ChatGPT task owns its own conversation. Retries reuse that task's conversation; sibling tasks never share a conversation merely because they use the same adapter. When the job reaches COMPLETED, or GitHub reports the PR merged, Agents Relay deletes every ChatGPT task conversation through MacBridge. The durable threadId remains in the task marker with threadDeletedAt for audit history. Failed deletion records threadCleanupError and is retried on later reconciliation without reopening the terminal job.
+
 ~~~sh
 agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
   --task-id research-ui --adapter chatgpt \

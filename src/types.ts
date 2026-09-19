@@ -29,6 +29,7 @@ export type Task = {
   jobId?: string; id: string; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   input: string; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
+  threadDeletedAt?: string | null; threadCleanupError?: string | null;
   result: Result | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
 export type Job = { id: string; title: string; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; createdAt: string; updatedAt: string; tasks: Task[] };
