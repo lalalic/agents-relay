@@ -138,9 +138,23 @@ test('failed terminal thread cleanup is durable and retried without reopening th
 
 test('merged PR cancels unfinished work and deletes existing ChatGPT threads', async () => {
   const t=task('merged-active','RUNNING'); t.adapter='chatgpt'; t.threadId='thread-merged'; t.executionId='orphan';
-  const store=new InMemoryStore(job([t])); store.pullRequestMerged=async()=>true; const deleted=[];
+  const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED'; const deleted=[];
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
   const result=await reconciler.reconcile('j');
   assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request merged'); assert.deepEqual(deleted,['thread-merged']); assert.ok(result.tasks[0].threadDeletedAt);
+});
+
+
+test('merged zero-task PR becomes COMPLETED even when scheduler would leave it OPEN', async () => {
+  const root=job([]); const store=new InMemoryStore(root); store.pullRequestState=async()=> 'MERGED';
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const result=await reconciler.reconcile('j');
+  assert.equal(result.state,'COMPLETED');
+});
+
+test('closed unmerged PR cancels queued work and job without launching', async () => {
+  const t=task('closed-queued'); const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'CLOSED'; const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
+  assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
 });

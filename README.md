@@ -78,3 +78,5 @@ agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
 ~~~
 
 The adapter calls MacBridge's loopback-only /experimental/chatgpt/conversation endpoint. Configure it with --macbridge-url and --macbridge-token-file, or AGENTS_RELAY_MACBRIDGE_URL / AGENTS_RELAY_MACBRIDGE_TOKEN_FILE. By default it uses loopback port MAC_DEV_BRIDGE_HTTP_PORT (or 8788) and the MacBridge menu app token file under ~/Library/Application Support/MacDeveloperBridge/http-token. Secrets are read locally and are never stored in PR markers.
+
+GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.

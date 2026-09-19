@@ -66,6 +66,8 @@ test('dashboard is framework-free, accessible, and renders PR values safely', ()
 
 test('dashboard markup includes job summary, hierarchy, and execution contracts', () => {
   assert.match(dashboardHtml, /id="summary"/);
+  assert.match(dashboardHtml, /id="jobs"/);
+  assert.match(dashboardHtml, /Managed PRs \/ jobs/);
   assert.match(dashboardHtml, /GitHub PR/);
   assert.match(dashboardHtml, /countByState/);
   assert.match(dashboardHtml, /Attention: ' \+ indicators\.join/);
@@ -114,7 +116,7 @@ test('dashboard handles named and snapshot SSE messages with a bounded event fee
 
 test('usage API and live UI expose actual usage and explicit balance unavailability', () => {
   assert.match(dashboardHtml, /id="usage-heading"/);
-  assert.match(dashboardHtml, /fetch\('\/api\/job'\), fetch\('\/api\/usage'\)/);
+  assert.match(dashboardHtml, /fetch\('\/api\/job'\), fetch\('\/api\/jobs'\), fetch\('\/api\/usage'\)/);
   assert.match(dashboardHtml, /function modelTable\(models\)/);
   assert.match(dashboardHtml, /function usageSource\(source\)/);
   assert.match(dashboardHtml, /Quota \/ balance: unavailable/);
@@ -135,6 +137,11 @@ test('dashboard server is localhost-bound and serves durable markup and JSON', a
   assert.match(page.headers.get('content-type') ?? '', /text\/html/);
   const body = await page.text();
   assert.match(body, /data-dashboard-contract="safe-dom/);
+
+  const jobsApi = await fetch(`http://127.0.0.1:${port}/api/jobs`);
+  assert.equal(jobsApi.status, 200);
+  const jobsPayload = await jobsApi.json();
+  assert.equal(jobsPayload[0].job.id, 'dashboard-job');
 
   const api = await fetch(`http://127.0.0.1:${port}/api/job`);
   assert.equal(api.status, 200);

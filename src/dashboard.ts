@@ -1,5 +1,5 @@
 import { createServer, Server } from 'node:http';
-import { DurableStore } from './store.js';
+import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
 
@@ -91,6 +91,12 @@ export const dashboardHtml = `<!doctype html>
       <div class="summary" id="summary" aria-live="polite"></div>
     </section>
 
+    <section aria-labelledby="jobs-heading">
+      <h2 id="jobs-heading">Managed PRs / jobs</h2>
+      <p class="subtle">GitHub PR state and durable Agents Relay state are shown side by side.</p>
+      <div class="table-scroll"><table><thead><tr><th>PR</th><th>Job</th><th>GitHub</th><th>Durable</th><th>Tasks</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table></div>
+    </section>
+
     <section aria-labelledby="tasks-heading">
       <h2 id="tasks-heading">Task hierarchy</h2>
       <ul class="tree" id="tasks"></ul>
@@ -117,6 +123,7 @@ export const dashboardHtml = `<!doctype html>
     const eventFeed = document.querySelector('#events');
     const connection = document.querySelector('#connection');
     const usageRoot = document.querySelector('#usage');
+    const jobsRoot = document.querySelector('#jobs');
     let lastEventAt = '—';
 
     function value(v) { return v === null || v === undefined || v === '' ? '—' : String(v); }
@@ -226,6 +233,22 @@ export const dashboardHtml = `<!doctype html>
         node.append(branch);
       }
       return node;
+    }
+    function drawJobs(items) {
+      jobsRoot.replaceChildren();
+      if (!Array.isArray(items) || !items.length) {
+        const row = jobsRoot.insertRow(); const cell = row.insertCell(); cell.colSpan = 6; cell.className = 'empty'; cell.append(text('No managed jobs found.')); return;
+      }
+      for (const item of items) {
+        const job = item.job || {}; const row = jobsRoot.insertRow();
+        const prCell = row.insertCell(); const url = githubPrUrl(job.repository, job.prNumber);
+        if (url) { const link = document.createElement('a'); link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = '#' + value(job.prNumber); prCell.append(link); } else prCell.append(text(job.prNumber));
+        row.insertCell().append(text(job.id));
+        row.insertCell().append(text(item.githubState));
+        row.insertCell().append(text(job.state));
+        row.insertCell().append(text(Array.isArray(job.tasks) ? job.tasks.length : 0));
+        row.insertCell().append(text(job.updatedAt));
+      }
     }
     function drawTasks(job) {
       const tasks = Array.isArray(job.tasks) ? job.tasks : [];
@@ -337,9 +360,10 @@ export const dashboardHtml = `<!doctype html>
     }
     async function refresh() {
       try {
-        const [jobResponse, usageResponse] = await Promise.all([fetch('/api/job'), fetch('/api/usage')]);
-        if (!jobResponse.ok || !usageResponse.ok) throw new Error('API ' + (!jobResponse.ok ? jobResponse.status : usageResponse.status));
+        const [jobResponse, jobsResponse, usageResponse] = await Promise.all([fetch('/api/job'), fetch('/api/jobs'), fetch('/api/usage')]);
+        if (!jobResponse.ok || !jobsResponse.ok || !usageResponse.ok) throw new Error('API ' + (!jobResponse.ok ? jobResponse.status : !jobsResponse.ok ? jobsResponse.status : usageResponse.status));
         apply(await jobResponse.json());
+        drawJobs(await jobsResponse.json());
         drawUsage(await usageResponse.json());
         lastRefreshAt = new Date().toISOString();
         connection.textContent = 'Live · durable PR state connected';
@@ -370,6 +394,7 @@ export function serveDashboard(
   refreshMs = 15000,
   jobId?: string,
   usageRegistry?: UsageRegistry,
+  overviewProvider?: () => Promise<ManagedJobOverview[]>,
 ): Server {
   const clients = new Set<import('node:http').ServerResponse>();
   let subscribed = false;
@@ -406,6 +431,17 @@ export function serveDashboard(
         res.end((await snapshot()).json);
       } catch (error) {
         res.writeHead(404);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (req.url === '/api/jobs') {
+      try {
+        const items = overviewProvider ? await overviewProvider() : [{ job: await store.load(jobId ?? ''), githubState: 'OPEN', mergedAt: null, closedAt: null }];
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(items));
+      } catch (error) {
+        res.writeHead(503);
         res.end(error instanceof Error ? error.message : String(error));
       }
       return;

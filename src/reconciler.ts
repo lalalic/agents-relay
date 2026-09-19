@@ -29,12 +29,13 @@ export class Reconciler {
     try {
       const job = await this.store.load(jobId);
       const previousState = job.state;
-      const prMerged = await this.store.pullRequestMerged?.() ?? false;
+      const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const now = (this.options.now ?? new Date()).getTime();
-      if (prMerged) {
+      if (prState !== 'OPEN') {
+        const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
         for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
           this.live.get(task.id)?.execution.cancel();
-          transitionTask(task, 'CANCELLED'); task.error = 'Pull request merged'; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+          transitionTask(task, 'CANCELLED'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
         }
       }
       for (const task of job.tasks) {
@@ -46,13 +47,19 @@ export class Reconciler {
         }
       }
       const scheduled = schedule(await this.store.load(jobId));
+      if (prState === 'MERGED') { scheduled.state = 'COMPLETED'; scheduled.updatedAt = new Date().toISOString(); }
+      if (prState === 'CLOSED') { scheduled.state = 'CANCELLED'; scheduled.updatedAt = new Date().toISOString(); }
       if (scheduled.state !== previousState) await this.store.saveJob(scheduled);
-      for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
-      const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size);
-      for (const task of scheduled.tasks.filter(t => t.state === 'READY').slice(0, capacity)) await this.launch(scheduled, task);
+      if (prState === 'OPEN') {
+        for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) void this.deliverContinuation(scheduled, task);
+        const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size);
+        for (const task of scheduled.tasks.filter(t => t.state === 'READY').slice(0, capacity)) await this.launch(scheduled, task);
+      }
       const finalState = schedule(await this.store.load(jobId));
-      if (finalState.state !== scheduled.state) await this.store.saveJob(finalState);
-      if (finalState.state === 'COMPLETED' || prMerged) await this.cleanupThreads(finalState);
+      if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
+      if (prState === 'CLOSED') { finalState.state = 'CANCELLED'; finalState.updatedAt = new Date().toISOString(); }
+      if (finalState.state !== scheduled.state || finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
+      if (finalState.state === 'COMPLETED' || prState !== 'OPEN') await this.cleanupThreads(finalState);
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
