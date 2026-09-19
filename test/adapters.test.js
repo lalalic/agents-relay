@@ -140,3 +140,78 @@ test('ChatGptAdapter continues an existing conversation on retry and normalizes 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('ChatGptAdapter exposes conversation id before the response body completes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-early-thread-'));
+  try {
+    const tokenFile = join(root, 'http-token');
+    await writeFile(tokenFile, 'token', { mode: 0o600 });
+    let finishResponse;
+    const { ChatGptAdapter } = await import('../dist/adapters.js');
+    const adapter = new ChatGptAdapter({
+      endpoint: 'http://127.0.0.1:9999',
+      tokenFile,
+      fetch: async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"conversation_id":"early-chat-thread","complete":'));
+          finishResponse = () => {
+            controller.enqueue(new TextEncoder().encode('true,"assistant_text":"done"}'));
+            controller.close();
+          };
+        },
+      }), { status: 200 }),
+    });
+    const execution = adapter.launch({
+      id: 'early-chat-task', input: 'work', timeoutMs: 10000, threadId: null,
+      routing: { provider: 'openai', model: 'gpt-5-6' },
+    }, new AbortController().signal);
+    let observedThreadId;
+    execution.onThreadStarted = threadId => { observedThreadId = threadId; };
+    for (let attempts = 0; attempts < 100 && observedThreadId === undefined; attempts += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(execution.threadId, 'early-chat-thread');
+    assert.equal(observedThreadId, 'early-chat-thread');
+    assert.equal(typeof finishResponse, 'function');
+    finishResponse();
+    assert.equal((await execution.promise).summary, 'done');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter keeps an exposed conversation id when response transport fails later', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-transport-fail-'));
+  try {
+    const tokenFile = join(root, 'http-token');
+    await writeFile(tokenFile, 'token', { mode: 0o600 });
+    let failResponse;
+    const { ChatGptAdapter } = await import('../dist/adapters.js');
+    const adapter = new ChatGptAdapter({
+      endpoint: 'http://127.0.0.1:9999',
+      tokenFile,
+      fetch: async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"conversation_id":"durable-chat-thread","complete":'));
+          failResponse = () => controller.error(new Error('transport lost after thread creation'));
+        },
+      }), { status: 200 }),
+    });
+    const execution = adapter.launch({
+      id: 'failed-chat-task', input: 'work', timeoutMs: 10000, threadId: null,
+      routing: { provider: 'openai', model: 'gpt-5-6' },
+    }, new AbortController().signal);
+    let observedThreadId;
+    execution.onThreadStarted = threadId => { observedThreadId = threadId; };
+    for (let attempts = 0; attempts < 100 && observedThreadId === undefined; attempts += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(observedThreadId, 'durable-chat-thread');
+    assert.equal(typeof failResponse, 'function');
+    failResponse();
+    await assert.rejects(execution.promise, /transport lost after thread creation/);
+    assert.equal(execution.threadId, 'durable-chat-thread');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

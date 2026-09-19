@@ -5,32 +5,52 @@ description: Create and operate durable asynchronous agent jobs through GitHub P
 
 # Agents Relay
 
-Use Agents Relay for asynchronous work that must survive the current agent process. Create one durable top-level job per objective and submit child tasks with unique IDs, explicit `parentTaskId`, dependencies, capabilities, adapter, timeout, and retry policy. A model-backed task must carry a recorded routing decision (provider, model, optional profile/reasoning/cwd/projectId) before it can launch. Use adapter `codex` for local Codex-compatible workers and adapter `chatgpt` for a ChatGPT web worker created through MacBridge.
+Use Agents Relay for asynchronous work that must survive the current agent process. Create one durable top-level job per objective and submit child tasks with unique IDs, explicit parentTaskId, dependencies, capabilities, adapter, timeout, and retry policy. A model-backed task must carry a recorded routing decision (provider, model, optional profile/reasoning/cwd/projectId) before it can launch. Use adapter codex for local Codex-compatible workers and adapter chatgpt for a ChatGPT web worker created through MacBridge.
 
-GitHub PR comments are durable truth in operational mode. Reload the PR after every event or wake-up and reconcile desired state; events and NATS are only low-latency notifications and must never be treated as completion. Read task results from their marker comments, propagate lineage when delegating, and use artifact references for large outputs.
+GitHub PR comments are durable truth in operational mode. Reload the PR after every event or wake-up and reconcile desired durable state into worker executions; events and NATS are only low-latency notifications and must never be treated as completion.
 
-Use task-level continuation when the sender needs to resume, otherwise the job continuation. Continuation delivery is deduplicated by the durable delivery timestamp. Treat `BLOCKED` as an approval/manual-release state until an explicit retry/release changes it. Cancellation, timeout, and lease expiry are durable state transitions; do not claim success from a worker process exit alone.
+## Managed GitHub bootstrap
 
-Typical CLI flow:
+For new GitHub-backed work, do not create the PR or job marker with raw gh commands. Use the first-class CLI:
 
-```sh
-agents-relay init --repo OWNER/REPO --pr 1 --id JOB_ID --title "Objective"
-agents-relay submit --repo OWNER/REPO --pr 1 --id JOB_ID --task-id child --input "echo work" --adapter shell
-agents-relay reconcile --repo OWNER/REPO --pr 1 --id JOB_ID
-agents-relay status --repo OWNER/REPO --pr 1 --id JOB_ID
-agents-relay serve --repo OWNER/REPO --pr 1 --id JOB_ID
-```
+~~~sh
+agents-relay job create --repo OWNER/REPO --head feat/example --base main \
+  --id JOB_ID --title "Objective" --body "PR description"
+~~~
 
-Use `--file PATH` only for explicit local demo/test mode. Optional `--events nats` enables wake/progress events with `--subject-prefix`; the PR remains authoritative.
+job create resolves an existing open PR with the same head/base before creating one, then persists exactly one trusted agents-relay:job:v1 marker. Re-running the command is idempotent.
 
-For a ChatGPT worker, use the `chatgpt` adapter with capabilities `model,chatgpt,macbridge`. The runtime calls MacBridge's loopback-only ChatGPT conversation endpoint, stores the returned `conversation_id` as the durable task `threadId`, and reuses that ID on retry. Pass `--chatgpt-project` when the worker must run inside one exact ChatGPT Project. MacBridge URL/token overrides are `--macbridge-url` and `--macbridge-token-file`; never place the bearer token in job/task markers.
+To bring an existing unmanaged PR under Agents Relay, even when it has zero comments:
 
-```sh
-agents-relay submit --repo OWNER/REPO --pr 5 --id JOB_ID --task-id chatgpt-research \
-  --adapter chatgpt --capabilities model,chatgpt,macbridge \
-  --provider openai --model gpt-5-6-pro --reasoning high \
-  --chatgpt-project g-p-EXACT_PROJECT_ID --input "Research this task and return the result."
-```
+~~~sh
+agents-relay job adopt --repo OWNER/REPO --pr 6 --id JOB_ID --title "Objective"
+~~~
+
+To repair duplicate markers for that same job:
+
+~~~sh
+agents-relay job repair --repo OWNER/REPO --pr 6 --id JOB_ID
+~~~
+
+A PR carrying a marker for a different job is rejected rather than silently reassigned. Managed task commands must not run until the durable job marker exists; submit/status/reconcile/retry/cancel/serve fail clearly when it is absent.
+
+The legacy init flow remains supported for compatibility, but orchestrators should prefer job create/adopt/repair for GitHub-backed work.
+
+Typical managed flow:
+
+~~~sh
+agents-relay job create --repo OWNER/REPO --head feat/example --id JOB_ID --title "Objective"
+agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID --task-id child --input "echo work" --adapter shell
+agents-relay reconcile --repo OWNER/REPO --pr 12 --id JOB_ID
+agents-relay status --repo OWNER/REPO --pr 12 --id JOB_ID
+agents-relay serve --repo OWNER/REPO --pr 12 --id JOB_ID
+~~~
+
+Use --file PATH only for explicit local demo/test mode. Optional --events nats enables wake/progress events with --subject-prefix; the PR remains authoritative.
+
+Use task-level continuation when the sender needs to resume, otherwise the job continuation. Continuation delivery is deduplicated by the durable delivery timestamp. Treat BLOCKED as an approval/manual-release state until an explicit retry/release changes it. Cancellation, timeout, and lease expiry are durable state transitions; do not claim success from a worker process exit alone.
+
+For a ChatGPT worker, use the chatgpt adapter with capabilities model,chatgpt,macbridge. The runtime calls MacBridge's loopback-only ChatGPT conversation endpoint, stores the returned conversation_id as the durable task threadId, and reuses that ID on retry. Pass --chatgpt-project when the worker must run inside one exact ChatGPT Project. MacBridge URL/token overrides are --macbridge-url and --macbridge-token-file; never place the bearer token in job/task markers.
 
 V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
 

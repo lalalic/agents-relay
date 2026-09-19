@@ -53,11 +53,18 @@ export class Reconciler {
     const controller = new AbortController(); let execution: Execution;
     try { execution = adapter.launch(task, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
     task.executionId = execution.id; await this.store.saveTask(task);
-    execution.onThreadStarted = (threadId: string) => { void this.persistThread(job.id, task.id, execution.id, threadId); };
-    if (execution.threadId) void this.persistThread(job.id, task.id, execution.id, execution.threadId);
+    let threadPersistence = Promise.resolve();
+    const persistThread = (threadId: string): void => {
+      threadPersistence = threadPersistence.then(() => this.persistThread(job.id, task.id, execution.id, threadId));
+    };
+    execution.onThreadStarted = persistThread;
+    if (execution.threadId) persistThread(execution.threadId);
     const timer = setTimeout(() => { controller.abort(); execution.cancel(); }, task.timeoutMs);
     this.live.set(task.id, { taskId: task.id, execution, controller, timer });
-    void execution.promise.then(result => this.finish(job.id, task.id, execution.id, result, null), error => this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)));
+    void execution.promise.then(
+      async result => { await threadPersistence; await this.finish(job.id, task.id, execution.id, result, null); },
+      async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)); },
+    );
   }
   private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
   private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null): Promise<void> {
