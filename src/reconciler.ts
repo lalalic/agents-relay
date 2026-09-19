@@ -5,6 +5,7 @@ import { schedule, transitionTask } from './scheduler.js';
 import { Execution, WorkerAdapter } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
+import { agentAdapter, assertAgentEligible } from './dispatch.js';
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; adapters: WorkerAdapter[]; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void> };
 type LiveExecution = { taskId: string; execution: Execution; controller: AbortController; timer: NodeJS.Timeout };
@@ -64,15 +65,24 @@ export class Reconciler {
     } finally { this.reconciling = false; }
   }
   private async launch(job: Job, task: Task): Promise<void> {
-    const adapter = this.options.adapters.find(x => x.name === task.adapter);
+    let adapter: WorkerAdapter | undefined;
+    if (task.agentId) {
+      const agent = (await this.store.listAgents()).find(candidate => candidate.id === task.agentId);
+      if (!agent) { transitionTask(task, 'FAILED'); task.error = `Registered agent ${task.agentId} not found`; await this.store.saveTask(task); return; }
+      try { assertAgentEligible(agent, task); adapter = agentAdapter(agent, this.options.adapters); }
+      catch (error) { transitionTask(task, 'FAILED'); task.error = error instanceof Error ? error.message : String(error); await this.store.saveTask(task); return; }
+    } else {
+      adapter = this.options.adapters.find(x => x.name === task.adapter);
+      const missing = task.capabilities.filter(capability => !adapter?.capabilities.includes(capability));
+      if (adapter && missing.length > 0) { transitionTask(task, 'FAILED'); task.error = `Adapter ${adapter.id} lacks capabilities: ${missing.join(', ')}`; await this.store.saveTask(task); return; }
+    }
     if (!adapter) { transitionTask(task, 'FAILED'); task.error = `No adapter ${task.adapter}`; await this.store.saveTask(task); return; }
-    const missing = task.capabilities.filter(capability => !adapter.capabilities.includes(capability));
-    if (missing.length > 0) { transitionTask(task, 'FAILED'); task.error = `Adapter ${adapter.id} lacks capabilities: ${missing.join(', ')}`; await this.store.saveTask(task); return; }
     const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs); const startedAt = (this.options.now ?? new Date()).getTime();
     transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
-    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
+    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { agentId: task.agentId, adapter: adapter.id, model: task.routing?.model }));
     const controller = new AbortController(); let execution: Execution;
-    const workerTask = { ...task, input: managedWorkerInput(job, task) };
+    const effectiveTask = { ...task, adapter: adapter.name };
+    const workerTask = { ...effectiveTask, input: managedWorkerInput(job, effectiveTask) };
     try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
     task.executionId = execution.id; await this.store.saveTask(task);
     let threadPersistence = Promise.resolve();

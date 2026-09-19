@@ -76,7 +76,7 @@ function registration(args: string[]): AgentRegistration {
   if (!name || !responsibility || !role || !endpointTarget) throw new Error('--name, --responsibility, --role, and --endpoint are required');
   const endpointKind = arg(args, '--endpoint-kind', 'adapter'); if (!['adapter', 'command', 'http'].includes(endpointKind)) throw new Error('--endpoint-kind must be adapter, command, or http');
   const selectedAvailability = availability(args)?.[0] ?? 'available'; const now = new Date().toISOString();
-  return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: csv(args, '--capabilities'), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
+  return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: csv(args, '--capabilities'), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget, authEnv: arg(args, '--auth-env') || undefined }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
 }
 function discoveryQuery(args: string[]): Parameters<typeof discoverAgents>[1] {
   return { capabilities: csv(args, '--capabilities'), runtime: arg(args, '--runtime') || undefined, endpointKinds: endpointKinds(args), availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), requiredBoundaries: arg(args, '--required-boundaries').split('|').map(value => value.trim()).filter(Boolean), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') };
@@ -207,7 +207,61 @@ async function main(): Promise<void> {
     const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
     await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
   }
-  if (command === 'submit') { const now = new Date().toISOString(); const model = arg(args, '--model'); const routing = model ? { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now } satisfies RoutingDecision : undefined; const task: Task = { jobId: job.id, id: arg(args, '--task-id', randomUUID()), projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent') || undefined, parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), adapter: arg(args, '--adapter', 'shell') as AdapterName, input: arg(args, '--input', 'true'), routing, continuation: continuation(args), continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: Number(arg(args, '--max-attempts', '3')), leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: Number(arg(args, '--timeout', '300000')), createdAt: now, updatedAt: now }; await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `Task ${task.id} submitted`); console.log(`Submitted ${task.id}`); return; }
+  if (command === 'submit') {
+    const now = new Date().toISOString();
+    const selectedAgentId = arg(args, '--agent-id') || undefined;
+    const selectedAgent = selectedAgentId ? (await store.listAgents()).find(agent => agent.id === selectedAgentId) : undefined;
+    if (selectedAgentId && !selectedAgent) throw new Error(`Registered agent ${selectedAgentId} not found`);
+    const model = arg(args, '--model') || selectedAgent?.runtime.model || '';
+    const routing = model ? {
+      provider: arg(args, '--provider') || selectedAgent?.runtime.provider || 'openai',
+      model,
+      profile: arg(args, '--profile') || undefined,
+      reasoning: arg(args, '--reasoning') || undefined,
+      cwd: arg(args, '--cwd') || undefined,
+      projectId: arg(args, '--chatgpt-project') || undefined,
+      decidedBy: 'cli',
+      decidedAt: now,
+    } satisfies RoutingDecision : undefined;
+    const inferredAdapter = selectedAgent
+      ? selectedAgent.endpoint.kind === 'adapter' ? selectedAgent.endpoint.target : selectedAgent.endpoint.kind
+      : arg(args, '--adapter', 'shell');
+    const task: Task = {
+      jobId: job.id,
+      id: arg(args, '--task-id', randomUUID()),
+      projectName: arg(args, '--project') || undefined,
+      agentName: arg(args, '--agent') || selectedAgent?.name,
+      agentId: selectedAgentId,
+      agentRequirements: selectedAgent ? {
+        requiredBoundaries: arg(args, '--required-boundaries').split('|').map(value => value.trim()).filter(Boolean),
+        trustDomains: csv(args, '--trust-domains'),
+        regions: csv(args, '--regions'),
+      } : undefined,
+      parentTaskId: arg(args, '--parent') || null,
+      dependencies: arg(args, '--deps').split(',').filter(Boolean),
+      capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
+      adapter: inferredAdapter as AdapterName,
+      input: arg(args, '--input', 'true'),
+      routing,
+      continuation: continuation(args),
+      continuationDeliveredAt: null,
+      state: 'QUEUED',
+      attempt: 0,
+      maxAttempts: Number(arg(args, '--max-attempts', '3')),
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionId: null,
+      threadId: null,
+      result: null,
+      error: null,
+      timeoutMs: Number(arg(args, '--timeout', '300000')),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job);
+    await publishWake(bus, job, task.id, `Task ${task.id} submitted`);
+    console.log(`Submitted ${task.id}`); return;
+  }
   if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (command === 'retry' || command === 'cancel') { const id = arg(args, '--task-id'); const task = job.tasks.find(item => item.id === id); if (!task) throw new Error(`Task ${id} not found`); task.state = command === 'retry' ? 'READY' : 'CANCELLED'; task.error = command === 'retry' ? null : 'Cancelled by user'; task.updatedAt = new Date().toISOString(); await store.saveTask(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `${task.id} ${command} requested`); console.log(`${id}: ${task.state}`); return; }
   const reconciler = runtime(store, args, bus);

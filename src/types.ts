@@ -1,8 +1,8 @@
 export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
-export type AdapterName = 'shell' | 'codex' | 'chatgpt' | 'orchestrator';
+export type AdapterName = 'shell' | 'codex' | 'chatgpt' | 'command' | 'http' | 'orchestrator';
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
-export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string };
+export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string; authEnv?: string };
 export type AgentEvidence = {
   evaluations: Array<{ taskKind: string; outcome: 'success' | 'failure' | 'timeout'; observedAt: string; summary?: string; latencyMs?: number; cost?: number }>;
   outcomes: { succeeded: number; failed: number; timedOut: number };
@@ -26,7 +26,8 @@ export type AgentRegistration = {
 export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type Task = {
-  jobId?: string; id: string; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
+  jobId?: string; id: string; projectName?: string; agentName?: string; agentId?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
+  agentRequirements?: { requiredBoundaries?: string[]; trustDomains?: string[]; regions?: string[] };
   input: string; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;

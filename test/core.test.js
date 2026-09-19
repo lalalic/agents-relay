@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -227,4 +228,98 @@ test('closed unmerged PR cancels queued work and job without launching', async (
   const t=task('closed-queued'); const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'CLOSED'; const adapter=new FakeAdapter();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
   assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
+});
+
+test('registered agent identity resolves to configured adapter at execution time', async () => {
+  const t=task('registered-adapter'); t.agentId='agent-shell'; t.agentName='Shell Agent'; t.capabilities=['shell'];
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-shell',name:'Shell Agent',responsibility:'execute',role:'worker',capabilities:['shell'],boundaries:['no-credentials'],endpoint:{kind:'adapter',target:'shell'},runtime:{adapter:'shell'},availability:'available',routing:{trustDomains:['public'],regions:['ca']},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  await reconciler.reconcile('j');
+  assert.equal(adapter.launches,1);
+  adapter.resolvers[0].resolve({summary:'registered result'});
+  await reconciler.idle();
+  const finished=(await store.load('j')).tasks[0];
+  assert.equal(finished.agentId,'agent-shell');
+  assert.equal(finished.agentName,'Shell Agent');
+  assert.equal(finished.state,'SUCCEEDED');
+});
+
+test('registered command endpoint dispatches without a shell and preserves lineage', async () => {
+  const t=task('registered-command'); t.agentId='agent-command'; t.agentName='Command Agent'; t.parentTaskId='orchestrator'; t.adapter='command'; t.input='safe value; echo not-shell';
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-command',name:'Command Agent',responsibility:'execute',role:'worker',capabilities:[],boundaries:['local-only'],endpoint:{kind:'command',target:'/usr/bin/printf'},runtime:{adapter:'shell'},availability:'available',routing:{regions:['ca']},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[]});
+  await reconciler.reconcile('j'); await reconciler.idle();
+  const finished=(await store.load('j')).tasks[0];
+  assert.equal(finished.state,'SUCCEEDED');
+  assert.equal(finished.parentTaskId,'orchestrator');
+  assert.equal(finished.result.summary,'safe value; echo not-shell');
+});
+
+test('registered dispatch rechecks availability and boundary constraints before launch', async () => {
+  const t=task('registered-boundary'); t.agentId='agent-boundary'; t.capabilities=['research']; t.agentRequirements={requiredBoundaries:['no-credentials'],trustDomains:['public'],regions:['ca']};
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-boundary',name:'Boundary Agent',responsibility:'research',role:'worker',capabilities:['research'],boundaries:['no-credentials'],endpoint:{kind:'adapter',target:'shell'},runtime:{adapter:'shell'},availability:'offline',routing:{trustDomains:['public'],regions:['ca']},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  const adapter=new FakeAdapter();
+  await new Reconciler(store,{owner:'test',adapters:[adapter]}).reconcile('j');
+  const failed=(await store.load('j')).tasks[0];
+  assert.equal(failed.state,'FAILED');
+  assert.match(failed.error,/offline/);
+  assert.equal(adapter.launches,0);
+});
+
+test('registered remote HTTP endpoint requires an explicit credential reference', async () => {
+  const t=task('registered-http'); t.agentId='agent-http'; t.adapter='http';
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-http',name:'HTTP Agent',responsibility:'execute',role:'worker',capabilities:[],boundaries:['remote'],endpoint:{kind:'http',target:'https://agent.example/jobs'},runtime:{adapter:'http'},availability:'available',routing:{},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  await new Reconciler(store,{owner:'test',adapters:[]}).reconcile('j');
+  const failed=(await store.load('j')).tasks[0];
+  assert.equal(failed.state,'FAILED');
+  assert.match(failed.error,/requires authEnv/);
+});
+
+test('registered adapter retries keep the selected agent and durable task identity', async () => {
+  const t=task('registered-retry'); t.agentId='agent-retry'; t.maxAttempts=2;
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-retry',name:'Retry Agent',responsibility:'execute',role:'worker',capabilities:[],boundaries:[],endpoint:{kind:'adapter',target:'shell'},runtime:{adapter:'shell'},availability:'available',routing:{},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  await reconciler.reconcile('j');
+  adapter.resolvers[0].reject(new Error('first attempt failed'));
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(adapter.launches,2);
+  adapter.resolvers[1].resolve({summary:'recovered'});
+  await reconciler.idle();
+  const finished=(await store.load('j')).tasks[0];
+  assert.equal(finished.id,'registered-retry');
+  assert.equal(finished.agentId,'agent-retry');
+  assert.equal(finished.attempt,2);
+  assert.equal(finished.state,'SUCCEEDED');
+});
+
+test('registered loopback HTTP endpoint dispatches correlated task context', async () => {
+  let body;
+  const server=createServer((request,response)=>{
+    let text=''; request.on('data',chunk=>{text+=chunk;}); request.on('end',()=>{
+      body=JSON.parse(text);
+      response.writeHead(200,{'content-type':'application/json'});
+      response.end(JSON.stringify({summary:'http completed',data:{ok:true}}));
+    });
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try {
+    const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0;
+    const t=task('registered-http-ok'); t.agentId='agent-http-ok'; t.agentName='HTTP Agent'; t.parentTaskId='orchestrator'; t.adapter='http'; t.input='perform remote task';
+    const store=new InMemoryStore(job([t]));
+    await store.saveAgent({id:'agent-http-ok',name:'HTTP Agent',responsibility:'execute',role:'worker',capabilities:[],boundaries:['loopback'],endpoint:{kind:'http',target:'http://127.0.0.1:'+port+'/jobs'},runtime:{adapter:'http'},availability:'available',routing:{},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+    const reconciler=new Reconciler(store,{owner:'test',adapters:[]});
+    await reconciler.reconcile('j'); await reconciler.idle();
+    const finished=(await store.load('j')).tasks[0];
+    assert.equal(finished.state,'SUCCEEDED');
+    assert.equal(finished.result.summary,'http completed');
+    assert.equal(body.jobId,'j'); assert.equal(body.taskId,'registered-http-ok'); assert.equal(body.parentTaskId,'orchestrator');
+    assert.equal(body.input,'perform remote task'); assert.equal(body.attempt,1);
+  } finally { await new Promise(resolve=>server.close(resolve)); }
 });
