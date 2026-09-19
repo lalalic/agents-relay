@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-09-19T16:48:57.305Z",
+  "model": "typesafe/jev",
+  "transport": "Cloudflare Workers AI REST",
+  "repetitions": 1,
+  "confidenceThreshold": 0.75,
+  "currentPolicy": {
+    "cases": 13,
+    "exactAgreementWithReasoningBaseline": 0.46153846153846156,
+    "downstreamQualityProxy": {
+      "definition": "fraction of succeeded durable tasks whose current route agrees with the reasoning baseline; descriptive only because outcome is heavily confounded by implementation/tooling",
+      "succeededCases": 9,
+      "agreementAmongSucceeded": 0.4444444444444444
+    }
+  },
+  "jev": {
+    "status": "blocked_authentication",
+    "reason": "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN with Workers AI Read/Edit permissions.",
+    "results": []
+  }
+}
