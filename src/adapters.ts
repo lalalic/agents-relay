@@ -40,8 +40,15 @@ function chatGptThinkingEffort(reasoning?: string): 'minimal' | 'low' | 'standar
   return 'standard';
 }
 function chatGptEndpoint(base?: string): string {
-  const value = (base ?? process.env.AGENTS_RELAY_MACBRIDGE_URL ?? `http://127.0.0.1:${process.env.MAC_DEV_BRIDGE_HTTP_PORT ?? '8788'}`).replace(/\/+$/, '');
-  return value.endsWith('/experimental/chatgpt/conversation') ? value : `${value}/experimental/chatgpt/conversation`;
+  const configured = (base ?? process.env.AGENTS_RELAY_MACBRIDGE_URL ?? `http://127.0.0.1:${process.env.MAC_DEV_BRIDGE_HTTP_PORT ?? '8788'}`).replace(/\/+$/, '');
+  const url = new URL(configured);
+  if (url.pathname === '/experimental/chatgpt/conversation') return url.toString().replace(/\/$/, '');
+  // --macbridge-url is a service origin. Do not inherit an unrelated API path
+  // such as /v1/responses from a model-router endpoint.
+  url.pathname = '/experimental/chatgpt/conversation';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }
 function chatGptTokenFile(file?: string): string {
   return file ?? process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE ?? process.env.MAC_DEV_BRIDGE_HTTP_TOKEN_FILE ?? join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
