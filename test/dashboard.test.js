@@ -13,8 +13,10 @@ test('dashboard exposes the operations-console structure safely', () => {
   assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
 });
 
-test('selected job stays concise while showing title and lifecycle state', () => {
-  assert.match(dashboardHtml, /field\('Title',job\.title\|\|job\.id\)/);
+test('selected job title appears in the panel heading', () => {
+  assert.match(dashboardHtml, /id="selected-job-title"/);
+  assert.match(dashboardHtml, /selectedJobTitle\.textContent='— '\+value\(job\.title\|\|job\.id\)/);
+  assert.doesNotMatch(dashboardHtml, /field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
   assert.match(dashboardHtml, /field\('GitHub state',job\.githubState/);
   assert.match(dashboardHtml, /field\('Durable state',job\.state\)/);
