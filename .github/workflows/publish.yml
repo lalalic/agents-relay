@@ -75,6 +75,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Tag published version
+        shell: bash
         run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          tag="v${{ steps.version.outputs.version }}"
+          if git ls-remote --exit-code --refs origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; leaving the existing release tag in place."
+            exit 0
+          fi
+          git tag "$tag"
+          git push origin "refs/tags/$tag"

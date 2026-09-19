@@ -1,20 +1,19 @@
 # Local dogfood
 
 ```sh
-npm install && npm run build
-node dist/cli.js init --file /tmp/agents-relay.json --id dogfood --title "Local dogfood"
-node dist/cli.js submit --file /tmp/agents-relay.json --task-id build --input "echo build" --adapter shell
-node dist/cli.js reconcile --file /tmp/agents-relay.json
-node dist/cli.js status --file /tmp/agents-relay.json
+npx agents-relay init --file /tmp/agents-relay.json --id dogfood --title "Local dogfood"
+npx agents-relay submit --file /tmp/agents-relay.json --task-id build --input "echo build" --adapter shell
+npx agents-relay reconcile --file /tmp/agents-relay.json
+npx agents-relay status --file /tmp/agents-relay.json
 ```
 
 Autonomous local jobs use the same file and task tree. The mode is durable and
 defaults to fixed:
 
 ```sh
-node dist/cli.js init --file /tmp/agents-relay-auto.json --id auto --title "Objective" --mode autonomous
-node dist/cli.js reconcile --file /tmp/agents-relay-auto.json --planner-command ./planner.sh
-node dist/cli.js status --file /tmp/agents-relay-auto.json
+npx agents-relay init --file /tmp/agents-relay-auto.json --id auto --title "Objective" --mode autonomous
+npx agents-relay reconcile --file /tmp/agents-relay-auto.json --planner-command ./planner.sh
+npx agents-relay status --file /tmp/agents-relay-auto.json
 ```
 
 `planner.sh` reads the current objective/task snapshot from stdin and prints a

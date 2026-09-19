@@ -80,9 +80,14 @@ test('CLI and daemon help are successful and do not require job storage', () => 
   }
 });
 
-test('published bin files are executable after build', async () => {
+test('published bin files are executable after build and npm pack', async () => {
   assert.equal((await stat('dist/cli.js')).mode & 0o111, 0o111);
   assert.equal((await stat('dist/relayd.js')).mode & 0o111, 0o111);
+  const packed = spawnSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8' });
+  assert.equal(packed.status, 0, packed.stderr);
+  const files = new Map(JSON.parse(packed.stdout)[0].files.map(file => [file.path, file.mode]));
+  assert.equal(files.get('dist/cli.js'), 0o755);
+  assert.equal(files.get('dist/relayd.js'), 0o755);
 });
 
 test('service stop clears watchdog and closes dashboard before resolving', async () => {
