@@ -15,6 +15,12 @@ test('daemon arguments require and normalize durable identifiers', () => {
   assert.deepEqual(normalized.serviceArguments, argv);
 });
 
+test('repository daemon wires account usage telemetry into dashboard', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
+  assert.match(source, /fallback\.id,usageRegistry,overviews,webhook/);
+});
+
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {
   const pooled = normalizeDaemonArguments(['--repo','OWNER/REPO','--port','8787']);
   assert.equal(pooled.pullRequest, null); assert.equal(pooled.jobId, null);
