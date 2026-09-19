@@ -12,7 +12,7 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
 - **Agent adapters** — pluggable execution backends such as Codex and shell commands.
 - **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
-- **Periodic watchdog** — hourly full reconciliation sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state.
+- **Periodic watchdog** — low-frequency recovery sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state (30 minutes with webhook mode by default; 5 minutes without webhooks for compatibility).
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice
@@ -81,7 +81,7 @@ Task submission is append-only at creation time, which avoids a single giant mut
 7. Worker reports progress over the optional event channel.
 8. Relay persists terminal task state/result back into the task comment.
 9. Relay reconciles dependents and/or resumes the parent continuation.
-10. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases.
+10. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
 ## Continuations
 

@@ -28,31 +28,34 @@ export class RepositoryWorkerPool {
     private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
   ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
+  private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
+    // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
+    // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
+    for (const job of terminalManagedJobs(discovered)) {
+      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+      await this.makeReconciler(store, 0).reconcile(job.id);
+    }
+    const jobs = runnableManagedJobs(discovered);
+    let capacity = Math.max(1, this.concurrency);
+    for (const job of jobs) {
+      if (capacity <= 0) break;
+      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+      const ready = job.tasks.filter(task => ['READY','QUEUED','WAITING'].includes(task.state)).length;
+      const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
+      if (!needsLifecycleReconciliation(job) && job.tasks.length > 0) continue;
+      const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
+      await this.makeReconciler(store, allowance).reconcile(job.id);
+      capacity -= allowance;
+    }
+  }
+  async reconcileKnown(discovered: ManagedJobOverview[]): Promise<void> { await this.reconcileDiscovered(discovered); }
   async reconcile(): Promise<void> {
     if (this.running) { this.pending = true; return; }
     this.running = true;
     try {
       do {
         this.pending = false;
-        const discovered = await aggregateManagedGitHubJobs(this.client, this.repositories, this.trustedAuthors);
-        // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
-        // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
-        for (const job of terminalManagedJobs(discovered)) {
-          const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-          await this.makeReconciler(store, 0).reconcile(job.id);
-        }
-        const jobs = runnableManagedJobs(discovered);
-        let capacity = Math.max(1, this.concurrency);
-        for (const job of jobs) {
-          if (capacity <= 0) break;
-          const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-          const ready = job.tasks.filter(task => ['READY','QUEUED','WAITING'].includes(task.state)).length;
-          const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
-          if (!needsLifecycleReconciliation(job) && job.tasks.length > 0) continue;
-          const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
-          await this.makeReconciler(store, allowance).reconcile(job.id);
-          capacity -= allowance;
-        }
+        await this.reconcileDiscovered(await aggregateManagedGitHubJobs(this.client, this.repositories, this.trustedAuthors));
       } while (this.pending);
     } finally { this.running = false; }
   }

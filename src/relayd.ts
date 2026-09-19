@@ -9,7 +9,8 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
+import { githubAuthContext } from './github-auth.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
@@ -30,8 +31,8 @@ export function normalizeDaemonArguments(argv: readonly string[]): DaemonArgumen
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
-  const client = new GhApiClient(); const login = await client.currentLogin();
-  const trusted = new Set([login, ...value(argv,'--trusted-authors').split(',').map(x=>x.trim()).filter(Boolean)]);
+  const auth = await githubAuthContext(argv); const client = auth.client;
+  const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter({endpoint:value(argv,'--macbridge-url')||undefined,tokenFile:value(argv,'--macbridge-token-file')||undefined})], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], eventBus:bus });
@@ -47,7 +48,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as ManagedJobOverview[];
     if (Array.isArray(parsed)) cachedOverviews = parsed;
   } catch { /* first run or invalid cache */ }
-  const overviews = async (): Promise<ManagedJobOverview[]> => {
+  const refreshAll = async (): Promise<ManagedJobOverview[]> => {
+    if (client.rateLimitStatus().limited) return cachedOverviews;
     try {
       cachedOverviews = dashboardManagedJobs(await aggregateManagedGitHubJobs(client, repositories, trusted));
       try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
@@ -57,18 +59,19 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return cachedOverviews;
     }
   };
+  const overviews = async (forceRefresh = false): Promise<ManagedJobOverview[]> => forceRefresh ? refreshAll() : cachedOverviews;
   const persistCache = async (): Promise<void> => {
     try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };
   const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => {
-    const refreshed = await loadManagedGitHubPullRequestGraphql(repository, prNumber, trusted);
+    const refreshed = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted);
     cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
     cachedOverviews.push(...refreshed);
     cachedOverviews = dashboardManagedJobs(cachedOverviews);
     await persistCache();
     return refreshed;
   };
-  const initial = await overviews(); const fallback = initial[0]?.job;
+  const initial = await refreshAll(); const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
@@ -101,12 +104,15 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob);
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
+    if (client.rateLimitStatus().limited) return;
     try { await pool.reconcile(); }
     catch (error) { process.stderr.write(`warning: workspace reconcile unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
   };
-  const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
+  const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
+  const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
-  console.log('Dashboard listening; repository worker pool active'); void reconcileSafely();
+  console.log('Dashboard listening; repository worker pool active');
+  if (!client.rateLimitStatus().limited) void pool.reconcileKnown(initial).catch(error=>process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});

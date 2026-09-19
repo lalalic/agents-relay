@@ -21,7 +21,8 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /id="selected-job-refresh"/);
   assert.match(dashboardHtml, /selectedJobRefresh\.addEventListener\('click'/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/job\?id='/);
-  assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click'/);
+  assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
+  assert.match(dashboardHtml, /\/api\/jobs'\+\(force\?'\?refresh=1'/);
   assert.match(dashboardHtml, /function isTerminalJob\(job\)/);
   assert.match(dashboardHtml, /jobs\.sort\(compareJobs\)/);
   assert.match(dashboardHtml, /COMPLETED','CANCELLED/);
@@ -132,6 +133,13 @@ test('job list exposes repository and repository quick filter without job count 
   assert.doesNotMatch(dashboardHtml, /id="job-count"/);
 });
 
+
+test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
+  assert.match(source, /forceRefresh && requestedJobId && exactJobProvider/);
+  assert.match(source, /snapshot\(requestedJobId, true\)/);
+  assert.match(source, /if \(clients\.size === 0\) return;/);
+});
 
 test('dashboard warns when GitHub API is rate limited', () => {
   assert.match(dashboardHtml, /id="rate-limit-warning"/);

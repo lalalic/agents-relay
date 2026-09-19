@@ -222,7 +222,7 @@ function renderRateLimitStatus(status){
   rateLimitWarning.hidden=false;
 }
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs');jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
+async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
 function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
@@ -231,7 +231,7 @@ function creditProvider(provider){const row=element('section','usage-provider');
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
 function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
-jobsRefresh.addEventListener('click',()=>void refresh());
+jobsRefresh.addEventListener('click',()=>void refresh(true));
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
@@ -257,7 +257,7 @@ export function serveDashboard(
   refreshMs = 300000,
   jobId?: string,
   usageRegistry?: UsageRegistry,
-  overviewProvider?: () => Promise<ManagedJobOverview[]>,
+  overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
@@ -267,10 +267,10 @@ export function serveDashboard(
   const subscribedJobs = new Set<string>();
 
   let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean }> | null = null;
-  const discoveredJobs = async () => {
+  const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
-        ? (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }))
+        ? (await overviewProvider(forceRefresh)).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }))
         : jobId ? [await store.load(jobId)] : [];
       lastKnownJobs = jobs;
       return jobs;
@@ -305,10 +305,10 @@ export function serveDashboard(
     }
   };
 
-  const snapshot = async (requestedJobId = jobId): Promise<{ id: string; json: string }> => {
+  const snapshot = async (requestedJobId = jobId, forceRefresh = false): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
-      if (requestedJobId && exactJobProvider) {
+      if (forceRefresh && requestedJobId && exactJobProvider) {
         const exact = await exactJobProvider(requestedJobId);
         if (exact) return { id: exact.id, json: JSON.stringify(exact) };
       }
@@ -347,10 +347,11 @@ export function serveDashboard(
       queueMicrotask(() => { void webhook.wake(event); });
       return;
     }
-    if (req.url === '/api/jobs') {
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
       try {
         await subscribeDiscovered();
-        const jobs = await discoveredJobs();
+        const forceRefresh = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('refresh') === '1';
+        const jobs = await discoveredJobs(forceRefresh);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(jobs));
       } catch (error) {
@@ -362,7 +363,7 @@ export function serveDashboard(
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {
       try {
         const requestedJobId = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? undefined;
-        const body = (await snapshot(requestedJobId)).json;
+        const body = (await snapshot(requestedJobId, true)).json;
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(body);
       } catch (error) {
@@ -401,6 +402,7 @@ export function serveDashboard(
   });
 
   const interval = setInterval(() => {
+    if (clients.size === 0) return;
     void snapshot().then(value => {
       for (const client of clients) client.write(`data: ${value.json}\n\n`);
     }).catch(() => undefined);
