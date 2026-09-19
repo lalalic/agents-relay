@@ -4,7 +4,7 @@ import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, 
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
-export type ManagedJobOverview = { job: Job; githubState: PullRequestState; mergedAt: string | null; closedAt: string | null };
+export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
 export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
@@ -166,7 +166,7 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
     for (const job of jobs) {
       if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
       job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
-      output.push({ job, githubState, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
+      output.push({ job, githubState, draft: pr.draft === true, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
     }
   }
   return output.sort((a, b) => b.job.prNumber - a.job.prNumber);
