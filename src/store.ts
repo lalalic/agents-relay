@@ -225,12 +225,24 @@ export class GhApiClient implements GitHubClient {
     if (!this.appAuth) throw new Error('GitHub App authentication is not configured');
     return createGitHubAppJwt(this.appAuth, now);
   }
+  private async appRequest(path: string, method: 'GET' | 'POST' = 'GET'): Promise<Record<string, unknown>> {
+    const response = await fetch(`https://api.github.com${path}`, {
+      method,
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${this.appJwt()}`,
+        'x-github-api-version': '2026-03-10',
+        'user-agent': 'agents-relay',
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`GitHub App API ${response.status}: ${text}`);
+    return JSON.parse(text) as Record<string, unknown>;
+  }
   private async installationAccessToken(): Promise<string> {
     if (!this.appAuth) throw new Error('GitHub App authentication is not configured');
     if (this.installationToken && this.installationToken.expiresAt - Date.now() > 5 * 60_000) return this.installationToken.value;
-    const jwt = this.appJwt();
-    const result = await this.spawnGh(['api', `/app/installations/${this.appAuth.installationId}/access_tokens`, '--method', 'POST'], undefined, { ...process.env, GH_TOKEN: jwt, GITHUB_TOKEN: jwt }, false);
-    const parsed = JSON.parse(result) as Record<string, unknown>;
+    const parsed = await this.appRequest(`/app/installations/${this.appAuth.installationId}/access_tokens`, 'POST');
     const token = typeof parsed.token === 'string' ? parsed.token : '';
     const expiresAt = typeof parsed.expires_at === 'string' ? Date.parse(parsed.expires_at) : 0;
     if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error('GitHub App installation token response was invalid');
@@ -289,9 +301,7 @@ export class GhApiClient implements GitHubClient {
   }
   async currentLogin(): Promise<string> {
     if (this.appAuth) {
-      const jwt = this.appJwt();
-      const stdout = await this.spawnGh(['api', '/app'], undefined, { ...process.env, GH_TOKEN: jwt, GITHUB_TOKEN: jwt }, false);
-      const app = JSON.parse(stdout) as Record<string, unknown>;
+      const app = await this.appRequest('/app');
       if (typeof app.slug === 'string' && app.slug.length > 0) return `${app.slug}[bot]`;
       throw new Error('GitHub App identity lookup returned no slug');
     } else {
