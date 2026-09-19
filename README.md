@@ -29,3 +29,18 @@ agents-relay status --repo OWNER/REPO --pr 1 --id job-1
 V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in PR marker comments; store only summaries and artifact references.
 
 Codex/model-backed tasks require `--provider` and `--model` (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [SKILL.md](SKILL.md).
+
+### ChatGPT workers through MacBridge
+
+Use the `chatgpt` adapter to make a relay task create a real ChatGPT web conversation through the local MacBridge runtime. The returned ChatGPT `conversation_id` is stored as the task `threadId`, so lineage is durable and a retry continues the same conversation.
+
+```sh
+agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
+  --task-id research-ui --adapter chatgpt \
+  --capabilities model,chatgpt,macbridge \
+  --provider openai --model gpt-5-6-pro --reasoning high \
+  --chatgpt-project g-p-EXACT_PROJECT_ID \
+  --input "Research the dashboard UX and return implementation guidance."
+```
+
+The adapter calls MacBridge's loopback-only `/experimental/chatgpt/conversation` endpoint. Configure it with `--macbridge-url` and `--macbridge-token-file`, or `AGENTS_RELAY_MACBRIDGE_URL` / `AGENTS_RELAY_MACBRIDGE_TOKEN_FILE`. By default it uses loopback port `MAC_DEV_BRIDGE_HTTP_PORT` (or `8788`) and the MacBridge menu app token file under `~/Library/Application Support/MacDeveloperBridge/http-token`. Secrets are read locally and are never stored in PR markers.

@@ -1,7 +1,7 @@
 export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
-export type AdapterName = 'shell' | 'codex';
-export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; decidedBy: string; decidedAt: string };
+export type AdapterName = 'shell' | 'codex' | 'chatgpt';
+export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type Task = {
   jobId?: string; id: string; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
