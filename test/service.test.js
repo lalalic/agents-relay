@@ -18,7 +18,7 @@ test('daemon arguments require and normalize durable identifiers', () => {
 test('repository daemon wires account usage telemetry into dashboard', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
-  assert.match(source, /fallback\.id,usageRegistry,overviews,webhook/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook/);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {
@@ -41,7 +41,7 @@ test('service defaults and package bins use stable package entrypoints', async (
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd.js' });
   assert.equal(SERVICE_DEFAULTS.port, 8787);
-  assert.equal(SERVICE_DEFAULTS.watchdogMs, 60000);
+  assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
 });
 

@@ -162,7 +162,28 @@ export class GhApiClient implements GitHubClient {
       });
     });
   }
-  async currentLogin(): Promise<string> { const value = await this.request('/user') as Record<string, unknown>; if (typeof value.login !== 'string' || value.login.length === 0) throw new Error('gh authentication did not return a login'); return value.login; }
+  async currentLogin(): Promise<string> {
+    try {
+      const value = await this.request('/user') as Record<string, unknown>;
+      if (typeof value.login === 'string' && value.login.length > 0) return value.login;
+    } catch { /* fall back to gh's locally known active account below */ }
+    return new Promise<string>((resolve, reject) => {
+      const child = spawn('gh', ['auth', 'status', '--active', '--json', 'hosts']);
+      let stdout = '';
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', () => {
+        try {
+          const value = JSON.parse(stdout) as Record<string, unknown>;
+          const hosts = value.hosts as Record<string, unknown[]> | undefined;
+          const github = hosts?.['github.com'];
+          const active = Array.isArray(github) ? github.find(item => (item as Record<string, unknown>).active === true) as Record<string, unknown> | undefined : undefined;
+          if (typeof active?.login === 'string' && active.login.length > 0) { resolve(active.login); return; }
+        } catch { /* handled below */ }
+        reject(new Error('gh authentication did not return a login'));
+      });
+    });
+  }
 }
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}

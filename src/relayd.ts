@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { once } from 'node:events';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { ChatGptAdapter, CodexAdapter, ShellAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GhApiClient, GitHubStore } from './store.js';
+import { dashboardManagedJobs, GhApiClient, GitHubStore, InMemoryStore, ManagedJobOverview } from './store.js';
 import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
@@ -36,17 +39,37 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     : (await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot())).map(item => item.repository);
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler);
-  const overviews = async () => dashboardManagedJobs(await aggregateManagedGitHubJobs(client, repositories, trusted));
-  const initial = await overviews(); const fallback = initial[0]?.job; if (!fallback) throw new Error('No managed jobs found');
-  const dashboardStore = new GitHubStore(client, fallback.repository, fallback.prNumber, trusted);
+  const cacheDirectory = join(homedir(), '.agents-relay');
+  const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
+  let cachedOverviews: ManagedJobOverview[] = [];
+  try {
+    const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as ManagedJobOverview[];
+    if (Array.isArray(parsed)) cachedOverviews = parsed;
+  } catch { /* first run or invalid cache */ }
+  const overviews = async (): Promise<ManagedJobOverview[]> => {
+    try {
+      cachedOverviews = dashboardManagedJobs(await aggregateManagedGitHubJobs(client, repositories, trusted));
+      try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
+      return cachedOverviews;
+    } catch (error) {
+      process.stderr.write(`warning: workspace job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      return cachedOverviews;
+    }
+  };
+  const initial = await overviews(); const fallback = initial[0]?.job;
+  const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = secret && normalized.repository ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
   const usageRegistry = codexAndZaiUsageRegistry();
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback.id,usageRegistry,overviews,webhook);
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook);
   await once(server,'listening');
-  const interval=setInterval(()=>void pool.reconcile(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
+  const reconcileSafely = async (): Promise<void> => {
+    try { await pool.reconcile(); }
+    catch (error) { process.stderr.write(`warning: workspace reconcile unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
+  };
+  const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(SERVICE_DEFAULTS.watchdogMs)))); interval.unref();
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
-  console.log('Dashboard listening; repository worker pool active'); void pool.reconcile();
+  console.log('Dashboard listening; repository worker pool active'); void reconcileSafely();
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});

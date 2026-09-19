@@ -20,7 +20,7 @@ Use service overrides as needed:
 
 ```sh
 npx agents-relayd --repo OWNER/REPO \
-  --port 8787 --interval 60000 --refresh-ms 300000 \
+  --port 8787 --interval 300000 --refresh-ms 300000 \
   --events nats --nats-url nats://127.0.0.1:4222
 ```
 
