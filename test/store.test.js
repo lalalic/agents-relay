@@ -281,3 +281,88 @@ test('agent registrations persist through trusted stores and ignore forged marke
   assert.equal((await fresh.listAgents())[0].availability, 'degraded');
   assert.equal(parseAgent(comments[1].body).id, 'researcher');
 });
+
+
+test('task append is idempotent by job id and task id and rejects conflicting replay', async () => {
+  const durableJob = job('idem');
+  const comments = [githubComment(marker(JOB_MARKER, durableJob), 'bot', 1)];
+  const store = githubWithComments(comments);
+  const first = task('idem', 'child');
+  first.capabilities = ['coding'];
+  await store.appendTask(first);
+  const replay = { ...first, createdAt: now(), updatedAt: now() };
+  await store.appendTask(replay);
+  assert.equal(comments.filter(item => parseTask(item.body)?.id === 'child').length, 1);
+
+  const conflict = { ...replay, input: 'different work' };
+  await assert.rejects(() => store.appendTask(conflict), /different definition/);
+  assert.equal(comments.filter(item => parseTask(item.body)?.id === 'child').length, 1);
+});
+
+test('saveTask collapses duplicate durable markers for one job and task id', async () => {
+  const durableJob = job('dedupe');
+  const child = task('dedupe', 'child');
+  const comments = [
+    githubComment(marker(JOB_MARKER, durableJob), 'bot', 1),
+    githubComment(marker(TASK_MARKER, child), 'bot', 2),
+    githubComment(marker(TASK_MARKER, child), 'bot', 3)
+  ];
+  const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
+  client.comments.set(6, comments);
+  client.nextComment = 4;
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
+  child.state = 'RUNNING';
+  await store.saveTask(child);
+  assert.equal((client.comments.get(6) ?? []).filter(item => parseTask(item.body)?.id === 'child').length, 1);
+  assert.equal((await store.load('dedupe')).tasks[0].state, 'RUNNING');
+});
+
+test('managed job creation bootstraps an empty head branch after GitHub no-commits 422', async () => {
+  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
+  const calls = [];
+  let bootstrapped = false;
+  let pr = null;
+  const comments = [];
+  const client = {
+    currentLogin: async () => 'bot',
+    request: async (path, init = {}) => {
+      const method = String(init.method ?? 'GET');
+      calls.push({ path, method, body: init.body ? JSON.parse(String(init.body)) : null });
+      if (path.includes('/pulls?')) return pr ? [pr] : [];
+      if (method === 'POST' && path.endsWith('/pulls')) {
+        if (!bootstrapped) throw new Error('gh: Validation Failed (HTTP 422)');
+        const body = JSON.parse(String(init.body));
+        pr = { number: 7, title: body.title, body: body.body, state: 'open', head: { ref: body.head }, base: { ref: body.base } };
+        return pr;
+      }
+      if (path.includes('/compare/main...feat/empty')) return { ahead_by: 0 };
+      if (path.endsWith('/git/ref/heads/feat/empty')) return { object: { sha: 'parent' } };
+      if (path.endsWith('/git/commits/parent')) return { tree: { sha: 'tree' } };
+      if (method === 'POST' && path.endsWith('/git/commits')) return { sha: 'bootstrap' };
+      if (method === 'PATCH' && path.endsWith('/git/refs/heads/feat/empty')) { bootstrapped = true; return { object: { sha: 'bootstrap' } }; }
+      if (method === 'GET' && path.includes('/issues/7/comments')) return comments;
+      if (method === 'POST' && path.includes('/issues/7/comments')) {
+        const body = JSON.parse(String(init.body));
+        const comment = githubComment(body.body, 'bot', comments.length + 1);
+        comments.push(comment);
+        return comment;
+      }
+      if (method === 'PATCH' && path.includes('/issues/comments/')) {
+        const id = Number(path.split('/').at(-1));
+        const row = comments.find(item => item.id === id);
+        row.body = JSON.parse(String(init.body)).body;
+        return row;
+      }
+      throw new Error('Unhandled fake request: ' + method + ' ' + path);
+    }
+  };
+
+  const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), {
+    id: 'empty-job', title: 'Empty branch work', head: 'feat/empty', base: 'main', body: 'body'
+  });
+
+  assert.equal(result.pr.number, 7);
+  assert.equal(bootstrapped, true);
+  assert.equal(calls.filter(item => item.path.endsWith('/git/commits') && item.method === 'POST').length, 1);
+  assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
+});

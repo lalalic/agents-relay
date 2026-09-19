@@ -26,7 +26,12 @@ export class InMemoryStore implements DurableStore {
   async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
   async appendTask(task: Task): Promise<void> {
     const key = `${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`;
-    if (this.values.has(key)) throw new Error(`Task ${task.id} already exists in this PR`);
+    const existing = this.values.get(key);
+    if (existing) {
+      const current = parseTask(existing);
+      if (current && sameTaskDefinition(current, task)) return;
+      throw new Error(`Task ${task.id} already exists with a different definition`);
+    }
     this.values.set(key, renderTaskComment(task));
   }
   async saveTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task)); }
@@ -41,6 +46,38 @@ export class InMemoryStore implements DurableStore {
 }
 export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown> };
 export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
+
+function immutableTaskDefinition(task: Task): unknown {
+  const routing = task.routing ? {
+    provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile,
+    reasoning: task.routing.reasoning, cwd: task.routing.cwd, projectId: task.routing.projectId
+  } : undefined;
+  return {
+    jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
+    parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
+    input: task.input, routing, continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
+  };
+}
+function sameTaskDefinition(left: Task, right: Task): boolean {
+  return JSON.stringify(immutableTaskDefinition(left)) === JSON.stringify(immutableTaskDefinition(right));
+}
+async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string, head: string): Promise<void> {
+  const ref = await client.request(`/repos/${repository}/git/ref/heads/${head}`) as Record<string, unknown>;
+  const object = ref.object as Record<string, unknown> | undefined;
+  if (typeof object?.sha !== 'string' || object.sha.length === 0) throw new Error(`Unable to resolve head branch ${head}`);
+  const parentSha = object.sha;
+  const commit = await client.request(`/repos/${repository}/git/commits/${parentSha}`) as Record<string, unknown>;
+  const tree = commit.tree as Record<string, unknown> | undefined;
+  if (typeof tree?.sha !== 'string' || tree.sha.length === 0) throw new Error(`Unable to resolve tree for head branch ${head}`);
+  const created = await client.request(`/repos/${repository}/git/commits`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'chore: bootstrap Agents Relay job', tree: tree.sha, parents: [parentSha] })
+  }) as Record<string, unknown>;
+  if (typeof created.sha !== 'string' || created.sha.length === 0) throw new Error(`Unable to create bootstrap commit for ${head}`);
+  await client.request(`/repos/${repository}/git/refs/heads/${head}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sha: created.sha, force: false })
+  });
+}
 
 function pullRequest(value: unknown): PullRequest {
   const item = value as Record<string, unknown>;
@@ -75,6 +112,25 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
   } catch (error) {
     const raced = await find();
     if (raced) return raced;
+    const message = error instanceof Error ? error.message : String(error);
+    let noCommitsBetween = /No commits between/i.test(message);
+    if (!noCommitsBetween && /HTTP 422/i.test(message)) {
+      try {
+        const comparison = await client.request(`/repos/${repository}/compare/${base}...${options.head}`) as Record<string, unknown>;
+        noCommitsBetween = Number(comparison.ahead_by) === 0;
+      } catch {
+        noCommitsBetween = false;
+      }
+    }
+    if (noCommitsBetween) {
+      await bootstrapEmptyHeadCommit(client, repository, options.head);
+      const afterBootstrap = await find();
+      if (afterBootstrap) return afterBootstrap;
+      return pullRequest(await client.request(`/repos/${repository}/pulls`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: options.title, body: options.body ?? '', head: options.head, base })
+      }));
+    }
     throw error;
   }
 }
@@ -139,12 +195,26 @@ export class GitHubStore implements DurableStore {
     const durable = (await this.list()).filter(comment => this.isTrusted(comment)).filter(comment => parseJob(comment.body)?.id === job.id);
     if (durable.length !== 1) throw new Error(`Failed to persist exactly one ${JOB_MARKER} marker for job ${job.id}`);
   }
-  async appendTask(task: Task): Promise<void> { if (!task.jobId) throw new Error('GitHub task requires jobId'); await this.load(task.jobId); await this.comment(renderTaskComment(task)); }
+  async appendTask(task: Task): Promise<void> {
+    if (!task.jobId) throw new Error('GitHub task requires jobId');
+    await this.load(task.jobId);
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const matches = comments.filter(comment => {
+      const existing = parseTask(comment.body);
+      return existing !== null && existing.jobId === task.jobId && existing.id === task.id;
+    });
+    if (matches.length === 0) { await this.comment(renderTaskComment(task)); return; }
+    const parsed = matches.map(comment => ({ comment, task: parseTask(comment.body) as Task }));
+    if (parsed.some(item => !sameTaskDefinition(item.task, task))) throw new Error(`Task ${task.id} already exists with a different definition`);
+    for (const duplicate of parsed.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.comment.id}`, { method: 'DELETE' });
+  }
   async saveTask(task: Task): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
-    const existing = comments.find(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
-    if (existing) await this.client.request(`/repos/${this.repository}/issues/comments/${existing.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
-    else await this.appendTask(task);
+    const existing = comments.filter(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
+    if (existing.length > 0) {
+      await this.client.request(`/repos/${this.repository}/issues/comments/${existing[0].id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: renderTaskComment(task) }) });
+      for (const duplicate of existing.slice(1)) await this.client.request(`/repos/${this.repository}/issues/comments/${duplicate.id}`, { method: 'DELETE' });
+    } else await this.appendTask(task);
   }
   async saveAgent(agent: AgentRegistration): Promise<void> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
