@@ -77,3 +77,15 @@ test('job list uses PR-number title and concise state metadata', () => {
   assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
 });
+
+
+test('task input and result preserve whitespace and render markdown safely', () => {
+  assert.match(dashboardHtml, /function markdownField\(label,input\)/);
+  assert.match(dashboardHtml, /function markdownValue\(input\)/);
+  assert.match(dashboardHtml, /markdownField\('Input',task\.input\)/);
+  assert.match(dashboardHtml, /markdownField\('Result',task\.result\?\.summary\|\|'—'\)/);
+  assert.match(dashboardHtml, /white-space:pre-wrap/);
+  assert.match(dashboardHtml, /document\.createElement\('pre'\)/);
+  assert.match(dashboardHtml, /document\.createElement\('strong'\)/);
+  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
+});
