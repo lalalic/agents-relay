@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GitHubStore, InMemoryStore } from '../dist/store.js';
-import { JOB_MARKER, marker, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
+import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
 const now = () => new Date().toISOString();
 const task = (jobId, id, state = 'QUEUED') => ({
@@ -143,4 +143,16 @@ test('untrusted task markers are ignored and updates survive a fresh store', asy
   const reloaded = await fresh.load('job-a');
   assert.equal(reloaded.tasks[0].result.summary, 'updated');
   assert.equal(reloaded.tasks.some(item => item.id === 'forged'), false);
+});
+
+test('agent registrations persist through trusted stores and ignore forged markers', async () => {
+  const agent = { id:'researcher', name:'Researcher', responsibility:'public research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
+  const comments = [githubComment(marker(JOB_MARKER, job('job-a'))), githubComment(marker(AGENT_MARKER, agent)), githubComment(marker(AGENT_MARKER, {...agent, id:'forged'}), 'attacker', 1001)];
+  const store = githubWithComments(comments);
+  assert.deepEqual((await store.listAgents()).map(item => item.id), ['researcher']);
+  agent.availability = 'degraded';
+  await store.saveAgent(agent);
+  const fresh = githubWithComments(comments);
+  assert.equal((await fresh.listAgents())[0].availability, 'degraded');
+  assert.equal(parseAgent(comments[1].body).id, 'researcher');
 });
