@@ -20,7 +20,7 @@ export class Reconciler {
   private readonly continuationLive = new Set<string>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
-  async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async () => { await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
+  async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async event => { if (event.type !== 'job.wake' && event.type !== 'github.webhook') return; await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
   async idle(): Promise<void> { while (this.live.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   async reconcile(jobId: string): Promise<Job> {
