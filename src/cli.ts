@@ -4,8 +4,9 @@ import { realpathSync } from 'node:fs';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { dashboardManagedJobs, InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
-import { EventRecord, Job, Task, AdapterName, RoutingDecision } from './types.js';
+import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
+import { githubAuthContext } from './github-auth.js';
+import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { ShellAdapter, CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
@@ -15,8 +16,9 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
+import { CommandObjectivePlanner } from './planner.js';
 const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
-export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, dashboardRefreshMs: 300000 } as const;
+export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
   constructor(private readonly upstream: EventBus) {}
@@ -39,20 +41,22 @@ class ServiceEventBus implements EventBus {
 function arg(args: string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
 function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
-async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const job = JSON.parse(await readFile(file, 'utf8')) as Job; return { store: new InMemoryStore(job), job }; }
-async function githubStore(args: string[]): Promise<GitHubStore> { const client = new GhApiClient(); const login = await client.currentLogin(); const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]); return new GitHubStore(client, repository(args), pullRequest(args), trusted); }
+async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
+async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
 async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }
 async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'agents-relay.events.job')); }
 async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
+export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
+function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
 function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
 
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; priority?: Priority; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -63,9 +67,11 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', description: pr.body || undefined, priority: options.priority ?? 'P2', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
   }
   if (!job.description && pr.body) job.description = pr.body;
+  if (options.objective) job.objective = options.objective;
+  if (options.executionMode) job.executionMode = options.executionMode;
   if (options.priority) job.priority = options.priority;
   else if (!job.priority) job.priority = 'P2';
   if (!job.title && pr.title) job.title = pr.title;
@@ -78,9 +84,9 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const repo = repository(args);
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed GitHub jobs');
-  const client = new GhApiClient();
-  const login = await client.currentLogin();
-  const trustedAuthors = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]);
+  const auth = await githubAuthContext(args);
+  const client = auth.client;
+  const trustedAuthors = auth.trustedAuthors;
   const prValue = arg(args, '--pr');
   const prNumber = prValue ? Number(prValue) : undefined;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
@@ -88,17 +94,19 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const result = await ensureManagedGitHubJob(client, repo, trustedAuthors, {
     id,
     title: arg(args, '--title') || undefined,
+    objective: arg(args, '--objective') || undefined,
     priority: priority(args),
+    executionMode: requestedExecutionMode(args),
     continuation: continuation(args),
     prNumber,
     head: arg(args, '--head') || undefined,
     base: arg(args, '--base', 'main'),
     body: arg(args, '--body') || undefined
   });
-  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, state: result.job.state }, null, 2));
+  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
 }
 
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new ShellAdapter(), new CodexAdapter(arg(args, '--codex', 'codex')), new ChatGptAdapter({ endpoint: arg(args, '--macbridge-url') || undefined, tokenFile: arg(args, '--macbridge-token-file') || undefined })], continuations: [new CodexThreadContinuation(arg(args, '--codex', 'codex')), new CommandContinuation(), new WebhookContinuation()], eventBus: bus, emit }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const plannerCommand = arg(args, '--planner-command'); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new ShellAdapter(), new CodexAdapter(arg(args, '--codex', 'codex')), new ChatGptAdapter({ endpoint: arg(args, '--macbridge-url') || undefined, tokenFile: arg(args, '--macbridge-token-file') || undefined })], continuations: [new CodexThreadContinuation(arg(args, '--codex', 'codex')), new CommandContinuation(), new WebhookContinuation()], planner: plannerCommand ? new CommandObjectivePlanner(plannerCommand) : undefined, eventBus: bus, emit }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined; const reconciler = runtime(loaded.store, args, bus);
@@ -108,9 +116,8 @@ export async function createService(args: string[]): Promise<Service> {
   const repo = arg(args, '--repo');
   let overviewProvider: (() => Promise<Awaited<ReturnType<typeof listManagedGitHubJobs>>>) | undefined;
   if (repo) {
-    const overviewClient = new GhApiClient(); const login = await overviewClient.currentLogin();
-    const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]);
-    overviewProvider = async () => dashboardManagedJobs(await listManagedGitHubJobs(overviewClient, repo, trusted));
+    const overviewAuth = await githubAuthContext(args);
+    overviewProvider = async () => dashboardManagedJobs(await listManagedGitHubJobs(overviewAuth.client, repo, overviewAuth.trustedAuthors));
   }
   const webhookSecret = arg(args, '--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = repo && webhookSecret ? { secret: webhookSecret, repositories: new Set([repo]), pullRequest: loaded.job.prNumber, wake: (event: import('./github-webhook.js').GitHubWebhookWake): void => { const wakeEvent = eventFor(loaded.job.id, 'github', null, 'github.webhook', 'queued', 'GitHub webhook ' + event.event + (event.action ? ':' + event.action : ''), 'orchestrator', { deliveryId: event.deliveryId, event: event.event, action: event.action, repository: event.repository, prNumber: event.pullRequest }); if (bus) void bus.publish(wakeEvent); else void reconciler.reconcile(loaded.job.id); } } : undefined;
@@ -156,7 +163,7 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2); if (!command) throw new Error(usage);
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), priority: priority(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
     const now = new Date().toISOString();

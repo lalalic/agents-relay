@@ -205,11 +205,11 @@ function syncFilters(){
   selectedRepo=repos.includes(previousRepo)?previousRepo:'';
   repoFilter.value=selectedRepo;
 }
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button'+(isCompleteUnmerged(job)?' complete-unmerged':'');button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));meta.append(element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button'+(isCompleteUnmerged(job)?' complete-unmerged':'');button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));meta.append(element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
 function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;rememberSelection();renderAll();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
-function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
-function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent='— '+value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;rememberSelection();}const summary=element('div','job-summary');summary.append(field('GitHub state',job.githubState||'UNKNOWN'),field('Durable state',job.state),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(counts(job.tasks))));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);}
+function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('Kind',task.kind||'work'),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
+function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent='— '+value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;rememberSelection();}const summary=element('div','job-summary');summary.append(field('GitHub state',job.githubState||'UNKNOWN'),field('Durable state',job.state),field('Execution mode',job.executionMode||'fixed'),field('Objective',job.objective||job.description||job.title),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(counts(job.tasks))));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);}
 function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();}
 function isCompleteUnmerged(job){return job.state==='COMPLETED'&&job.githubState==='OPEN';}
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
@@ -223,7 +223,7 @@ function renderRateLimitStatus(status){
   rateLimitWarning.hidden=false;
 }
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs');jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
+async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
 function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
@@ -232,7 +232,7 @@ function creditProvider(provider){const row=element('section','usage-provider');
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
 function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
-jobsRefresh.addEventListener('click',()=>void refresh());
+jobsRefresh.addEventListener('click',()=>void refresh(true));
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
@@ -258,7 +258,7 @@ export function serveDashboard(
   refreshMs = 300000,
   jobId?: string,
   usageRegistry?: UsageRegistry,
-  overviewProvider?: () => Promise<ManagedJobOverview[]>,
+  overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
@@ -269,10 +269,10 @@ export function serveDashboard(
   const subscribedJobs = new Set<string>();
 
   let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean }> | null = null;
-  const discoveredJobs = async () => {
+  const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
-        ? (await overviewProvider()).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }))
+        ? (await overviewProvider(forceRefresh)).map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }))
         : jobId ? [await store.load(jobId)] : [];
       lastKnownJobs = jobs;
       return jobs;
@@ -307,10 +307,10 @@ export function serveDashboard(
     }
   };
 
-  const snapshot = async (requestedJobId = jobId): Promise<{ id: string; json: string }> => {
+  const snapshot = async (requestedJobId = jobId, forceRefresh = false): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
-      if (requestedJobId && exactJobProvider) {
+      if (forceRefresh && requestedJobId && exactJobProvider) {
         const exact = await exactJobProvider(requestedJobId);
         if (exact) return { id: exact.id, json: JSON.stringify(exact) };
       }
@@ -358,10 +358,11 @@ export function serveDashboard(
       queueMicrotask(() => { void webhook.wake(event); });
       return;
     }
-    if (req.url === '/api/jobs') {
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
       try {
         await subscribeDiscovered();
-        const jobs = await discoveredJobs();
+        const forceRefresh = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('refresh') === '1';
+        const jobs = await discoveredJobs(forceRefresh);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(jobs));
       } catch (error) {
@@ -373,7 +374,7 @@ export function serveDashboard(
     if (requestUrl.pathname === '/api/job') {
       try {
         const requestedJobId = requestUrl.searchParams.get('id') ?? undefined;
-        const body = (await snapshot(requestedJobId)).json;
+        const body = (await snapshot(requestedJobId, true)).json;
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(body);
       } catch (error) {
@@ -412,6 +413,7 @@ export function serveDashboard(
   });
 
   const interval = setInterval(() => {
+    if (clients.size === 0) return;
     void snapshot().then(value => {
       for (const client of clients) client.write(`data: ${value.json}\n\n`);
     }).catch(() => undefined);

@@ -1,6 +1,6 @@
 # Running the service
 
-`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. With no `--pr`/`--id`, it discovers Git repositories under `~/Workspace` (or `--workspace PATH`), maps GitHub `origin` remotes to repositories, and watches all discovered repositories together. It listens on `127.0.0.1:8787` by default, performs a full durable PR/job reconciliation sweep every hour, and refreshes GitHub-backed dashboard state every 5 minutes to remain rate-limit safe. NATS and GitHub webhooks remain optional low-latency wakeups; the hourly sweep re-reads durable GitHub state so missed wakeups can still recover.
+`agents-relayd` starts the repository worker pool, event-driven reconciler, periodic recovery watchdog, and dashboard. With no `--pr`/`--id`, it discovers Git repositories under `~/Workspace` (or `--workspace PATH`), maps GitHub `origin` remotes to repositories, and watches all discovered repositories together. It listens on `127.0.0.1:8787` by default. With a GitHub webhook configured, targeted webhook reconciliation is primary and the broad recovery watchdog runs every 30 minutes by default; without a webhook, the compatibility watchdog remains 5 minutes. Dashboard auto-refresh and periodic SSE snapshots use cached workspace state instead of broad GitHub reads. Explicit Jobs refresh performs broad discovery, while selected-job refresh is targeted to one pull request.
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
@@ -20,7 +20,7 @@ Use service overrides as needed:
 
 ```sh
 npx agents-relayd --repo OWNER/REPO \
-  --port 8787 --interval 300000 --refresh-ms 300000 \
+  --port 8787 --interval 1800000 --refresh-ms 300000 \
   --events nats --nats-url nats://127.0.0.1:4222
 ```
 
@@ -39,3 +39,5 @@ npx --package agents-relay --package pm2 pm2 start agents-relayd --name agents-r
 ```
 
 PM2 forwards `SIGINT` and `SIGTERM`. The service clears its watchdog, unsubscribes from wake events, closes the local dashboard server, and exits only after cleanup.
+
+GitHub App installation authentication and the webhook/cache consumption model are documented in [github-app-rate-limit.md](github-app-rate-limit.md).

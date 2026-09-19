@@ -39,7 +39,7 @@ test('managed job aggregation spans repositories', async () => {
     const repository = `${variables.owner}/${variables.name}`;
     const root = jobs[repository];
     if (!root) throw new Error(`unexpected ${repository}`);
-    return {repository:{pullRequests:{nodes:[{number:root.prNumber,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,root)}]}}],pageInfo:{hasNextPage:false,endCursor:null}}}};
+    return {repository:{open:{nodes:[{number:root.prNumber,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,root)}]}}],pageInfo:{hasNextPage:false,endCursor:null}},recentClosed:{nodes:[]}}};
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/neo', 'lalalic/agents-relay'], new Set(['bot']));
   assert.deepEqual(result.map(item => item.job.id).sort(), ['neo-job', 'relay-job']);
@@ -66,9 +66,30 @@ test('managed job aggregation deduplicates duplicate repository inputs', async (
   const rootJob = job('relay-job', 'lalalic/agents-relay', 28);
   const client = { request: async path => { throw new Error(`unexpected REST ${path}`); }, graphql: async () => {
     pullLists += 1;
-    return {repository:{pullRequests:{nodes:[{number:28,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,rootJob)}]}}],pageInfo:{hasNextPage:false,endCursor:null}}}};
+    return {repository:{open:{nodes:[{number:28,body:'',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,rootJob)}]}}],pageInfo:{hasNextPage:false,endCursor:null}},recentClosed:{nodes:[]}}};
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay', 'lalalic/agents-relay'], new Set(['bot']));
   assert.equal(pullLists, 1);
   assert.deepEqual(result.map(item => item.job.id), ['relay-job']);
+});
+
+
+test('managed job discovery paginates all open PRs but bounds closed history', async () => {
+  const openA = job('open-a', 'lalalic/agents-relay', 30);
+  const openB = job('open-b', 'lalalic/agents-relay', 29);
+  const closed = { ...job('closed', 'lalalic/agents-relay', 28), state: 'COMPLETED' };
+  let calls = 0;
+  const node = (root, state='OPEN') => ({number:root.prNumber,body:'',state,isDraft:false,merged:state==='CLOSED',mergedAt:state==='CLOSED'?now():null,closedAt:state==='CLOSED'?now():null,comments:{nodes:[{author:{login:'bot'},body:marker(JOB_MARKER,root)}]}});
+  const client = { request: async path => { throw new Error(`unexpected REST ${path}`); }, graphql: async (query, variables={}) => {
+    calls += 1;
+    if (!variables.cursor) {
+      assert.match(query, /recentClosed:pullRequests\(first:20,states:CLOSED/);
+      return {repository:{open:{nodes:[node(openA)],pageInfo:{hasNextPage:true,endCursor:'next'}},recentClosed:{nodes:[node(closed,'CLOSED')]}}};
+    }
+    assert.doesNotMatch(query, /recentClosed:/);
+    return {repository:{open:{nodes:[node(openB)],pageInfo:{hasNextPage:false,endCursor:null}}}};
+  } };
+  const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay'], new Set(['bot']));
+  assert.equal(calls, 2);
+  assert.deepEqual(result.map(item => item.job.id), ['open-a', 'open-b', 'closed']);
 });

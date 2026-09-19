@@ -1,49 +1,36 @@
 import { Job, Task } from './types.js';
 import { spawn } from 'node:child_process';
+import { createSign } from 'node:crypto';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; nodeId?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
-export async function loadManagedGitHubPullRequestGraphql(repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
+export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
   const [owner, name] = repository.split('/', 2);
-  if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0) return [];
+  if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0 || !client.graphql) return [];
   const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergedAt closedAt body comments(last:100){nodes{author{login} body}}}}}';
-  return new Promise<ManagedJobOverview[]>((resolve, reject) => {
-    const child = spawn('gh', ['api','graphql','-f',`query=${query}`,'-F',`owner=${owner}`,'-F',`name=${name}`,'-F',`number=${prNumber}`]);
-    let stdout=''; let stderr='';
-    child.stdout.on('data',(chunk:Buffer)=>{stdout+=chunk.toString();});
-    child.stderr.on('data',(chunk:Buffer)=>{stderr+=chunk.toString();});
-    child.on('error',reject);
-    child.on('close',code=>{
-      if(code!==0){reject(new Error(stderr.trim()||`gh graphql exited ${code}`));return;}
-      try{
-        const payload=JSON.parse(stdout) as Record<string, unknown>;
-        const data=payload.data as Record<string, unknown> | undefined;
-        const repo=data?.repository as Record<string, unknown> | undefined;
-        const pr=repo?.pullRequest as Record<string, unknown> | undefined;
-        if(!pr){resolve([]);return;}
-        const comments=(pr.comments as Record<string, unknown> | undefined)?.nodes;
-        const trusted=(Array.isArray(comments)?comments:[]).filter(item=>{
-          const row=item as Record<string, unknown>;
-          const author=row.author as Record<string, unknown> | undefined;
-          return typeof author?.login==='string'&&trustedAuthors.has(author.login);
-        });
-        const jobs=trusted.map(item=>parseJob(String((item as Record<string, unknown>).body??''))).filter((item): item is Job=>item!==null);
-        const tasks=trusted.map(item=>parseTask(String((item as Record<string, unknown>).body??''))).filter((item): item is Task=>item!==null);
-        const state=String(pr.state??'').toUpperCase();
-        const githubState: PullRequestState = pr.merged===true ? 'MERGED' : state==='CLOSED' ? 'CLOSED' : 'OPEN';
-        resolve(jobs.map(job=>{
-          job.tasks=tasks.filter(task=>task.jobId===job.id||(!task.jobId&&jobs.length===1));
-          if(!job.description&&typeof pr.body==='string'&&pr.body) job.description=pr.body;
-          return {job,githubState,draft:pr.isDraft===true,mergedAt:typeof pr.mergedAt==='string'?pr.mergedAt:null,closedAt:typeof pr.closedAt==='string'?pr.closedAt:null};
-        }));
-      }catch(error){reject(error);}
-    });
+  const data = await client.graphql(query, { owner, name, number: prNumber }) as Record<string, unknown>;
+  const repo = data.repository as Record<string, unknown> | undefined;
+  const pr = repo?.pullRequest as Record<string, unknown> | undefined;
+  if (!pr) return [];
+  const comments = (pr.comments as Record<string, unknown> | undefined)?.nodes;
+  const trusted = (Array.isArray(comments) ? comments : []).filter(item => {
+    const row = item as Record<string, unknown>; const author = row.author as Record<string, unknown> | undefined;
+    return typeof author?.login === 'string' && trustedAuthors.has(author.login);
+  });
+  const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+  const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
+  const state = String(pr.state ?? '').toUpperCase();
+  const githubState: PullRequestState = pr.merged === true ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  return jobs.map(job => {
+    job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
+    if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
+    return { job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null };
   });
 }
-export async function loadManagedGitHubJobGraphql(repository: string, prNumber: number, jobId: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview | null> {
-  return (await loadManagedGitHubPullRequestGraphql(repository, prNumber, trustedAuthors)).find(item=>item.job.id===jobId) ?? null;
+export async function loadManagedGitHubJobGraphql(client: GitHubClient, repository: string, prNumber: number, jobId: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview | null> {
+  return (await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors)).find(item => item.job.id === jobId) ?? null;
 }
 const COMPLETED_JOB_HISTORY_LIMIT = 10;
 function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
@@ -94,7 +81,7 @@ function immutableTaskDefinition(task: Task): unknown {
   } : undefined;
   return {
     jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
-    parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
+    kind: task.kind ?? 'work', parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
     input: task.input, routing, continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };
 }
@@ -221,81 +208,137 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
     throw error;
   }
 }
+export type GitHubAppAuthOptions = { appId: string; installationId: string; privateKey: string };
+
+function base64Url(value: string | Buffer): string {
+  return Buffer.from(value).toString('base64url');
+}
+
+export function createGitHubAppJwt(options: GitHubAppAuthOptions, now = Math.floor(Date.now() / 1000)): string {
+  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = base64Url(JSON.stringify({ iat: now - 60, exp: now + 540, iss: options.appId }));
+  const unsigned = `${header}.${payload}`;
+  const signer = createSign('RSA-SHA256'); signer.update(unsigned); signer.end();
+  return `${unsigned}.${signer.sign(options.privateKey).toString('base64url')}`;
+}
+
 export class GhApiClient implements GitHubClient {
   private cooldownUntil = 0;
   private rateLimitFailures = 0;
+  private installationToken: { value: string; expiresAt: number } | null = null;
+  constructor(private readonly appAuth: GitHubAppAuthOptions | null = null) {}
   rateLimitStatus(): { limited: boolean; cooldownUntil: string | null } {
     const limited = Date.now() < this.cooldownUntil;
     return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null };
   }
-  async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
-    const payload = JSON.stringify({ query, variables });
-    return new Promise<unknown>((resolve, reject) => {
-      const child = spawn('gh', ['api', 'graphql', '--input', '-']);
-      let stdout = ''; let stderr = '';
+  private assertAvailable(): void {
+    if (Date.now() < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);
+  }
+  private noteFailure(message: string): void {
+    if (!/rate limit|secondary rate|HTTP 429/i.test(message)) return;
+    this.rateLimitFailures += 1;
+    const delay = Math.min(15 * 60_000, 60_000 * (2 ** Math.min(this.rateLimitFailures - 1, 4)));
+    this.cooldownUntil = Date.now() + delay;
+  }
+  private noteSuccess(): void { if (Date.now() >= this.cooldownUntil) this.rateLimitFailures = 0; }
+  private appJwt(now = Math.floor(Date.now() / 1000)): string {
+    if (!this.appAuth) throw new Error('GitHub App authentication is not configured');
+    return createGitHubAppJwt(this.appAuth, now);
+  }
+  private async appRequest(path: string, method: 'GET' | 'POST' = 'GET'): Promise<Record<string, unknown>> {
+    const response = await fetch(`https://api.github.com${path}`, {
+      method,
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${this.appJwt()}`,
+        'x-github-api-version': '2026-03-10',
+        'user-agent': 'agents-relay',
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`GitHub App API ${response.status}: ${text}`);
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+  private async installationAccessToken(): Promise<string> {
+    if (!this.appAuth) throw new Error('GitHub App authentication is not configured');
+    if (this.installationToken && this.installationToken.expiresAt - Date.now() > 5 * 60_000) return this.installationToken.value;
+    const parsed = await this.appRequest(`/app/installations/${this.appAuth.installationId}/access_tokens`, 'POST');
+    const token = typeof parsed.token === 'string' ? parsed.token : '';
+    const expiresAt = typeof parsed.expires_at === 'string' ? Date.parse(parsed.expires_at) : 0;
+    if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error('GitHub App installation token response was invalid');
+    this.installationToken = { value: token, expiresAt };
+    return token;
+  }
+  private async commandEnv(): Promise<NodeJS.ProcessEnv> {
+    if (!this.appAuth) return process.env;
+    const token = await this.installationAccessToken();
+    return { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token };
+  }
+  private async spawnGh(args: string[], input?: string, env: NodeJS.ProcessEnv = process.env, rateLimited = true): Promise<string> {
+    if (rateLimited) this.assertAvailable();
+    return new Promise<string>((resolve, reject) => {
+      const child = spawn('gh', args, { env }); let stdout = ''; let stderr = '';
       child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-      child.on('error', reject);
-      child.stdin.write(payload); child.stdin.end();
+      child.on('error', reject); if (input !== undefined) child.stdin.write(input); child.stdin.end();
       child.on('close', code => {
-        if (code !== 0) { reject(new Error(stderr.trim() || `gh graphql exited ${code}`)); return; }
-        try {
-          const parsed = JSON.parse(stdout) as Record<string, unknown>;
-          if (Array.isArray(parsed.errors) && parsed.errors.length > 0) throw new Error(JSON.stringify(parsed.errors));
-          resolve(parsed.data ?? parsed);
-        } catch (error) { reject(error); }
+        if (code !== 0) { const message = stderr.trim() || `gh exited ${code}`; if (rateLimited) this.noteFailure(message); reject(new Error(message)); return; }
+        if (rateLimited) this.noteSuccess(); resolve(stdout);
       });
     });
   }
+  async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
+    this.assertAvailable();
+    const payload = JSON.stringify({ query, variables });
+    const stdout = await this.spawnGh(['api', 'graphql', '--input', '-'], payload, await this.commandEnv());
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+      const message = JSON.stringify(parsed.errors); this.noteFailure(message); throw new Error(message);
+    }
+    return parsed.data ?? parsed;
+  }
   async request(path: string, init: RequestInit = {}): Promise<unknown> {
-    const now = Date.now();
-    if (now < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);
+    this.assertAvailable();
     const args = ['api', path]; const method = String(init.method ?? 'GET');
     if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-');
-    return new Promise<unknown>((resolve, reject) => {
-      const child = spawn('gh', args); let stdout = ''; let stderr = '';
+    const stdout = await this.spawnGh(args, init.body ? String(init.body) : undefined, await this.commandEnv());
+    if (!stdout.trim()) return null;
+    try { return JSON.parse(stdout) as unknown; } catch { return stdout; }
+  }
+  async localLogin(): Promise<string | null> {
+    return new Promise<string | null>((resolve) => {
+      const child = spawn('gh', ['auth', 'status', '--active', '--json', 'hosts']); let stdout = '';
       child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-      child.on('error', reject); if (init.body) child.stdin.write(String(init.body)); child.stdin.end();
-      child.on('close', code => {
-        if (code !== 0) {
-          const message = stderr.trim() || `gh api exited ${code}`;
-          if (/rate limit|secondary rate|HTTP 429/i.test(message)) {
-            this.rateLimitFailures += 1;
-            const delay = Math.min(15 * 60_000, 60_000 * (2 ** Math.min(this.rateLimitFailures - 1, 4)));
-            this.cooldownUntil = Date.now() + delay;
-          }
-          reject(new Error(message)); return;
-        }
-        this.rateLimitFailures = 0; this.cooldownUntil = 0;
-        if (stdout.trim()) { try { resolve(JSON.parse(stdout) as unknown); } catch { resolve(stdout); } } else resolve(null);
+      child.on('error', () => resolve(null));
+      child.on('close', () => {
+        try {
+          const value = JSON.parse(stdout) as Record<string, unknown>; const hosts = value.hosts as Record<string, unknown[]> | undefined;
+          const github = hosts?.['github.com']; const active = Array.isArray(github) ? github.find(item => (item as Record<string, unknown>).active === true) as Record<string, unknown> | undefined : undefined;
+          resolve(typeof active?.login === 'string' && active.login.length > 0 ? active.login : null);
+        } catch { resolve(null); }
       });
     });
   }
   async currentLogin(): Promise<string> {
-    try {
-      const value = await this.graphql('query { viewer { login } }') as Record<string, unknown>;
-      const viewer = value.viewer as Record<string, unknown> | undefined;
-      if (typeof viewer?.login === 'string' && viewer.login.length > 0) return viewer.login;
-    } catch { /* fall back to gh's locally known active account below */ }
-    return new Promise<string>((resolve, reject) => {
-      const child = spawn('gh', ['auth', 'status', '--active', '--json', 'hosts']);
-      let stdout = '';
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.on('error', reject);
-      child.on('close', () => {
-        try {
-          const value = JSON.parse(stdout) as Record<string, unknown>;
-          const hosts = value.hosts as Record<string, unknown[]> | undefined;
-          const github = hosts?.['github.com'];
-          const active = Array.isArray(github) ? github.find(item => (item as Record<string, unknown>).active === true) as Record<string, unknown> | undefined : undefined;
-          if (typeof active?.login === 'string' && active.login.length > 0) { resolve(active.login); return; }
-        } catch { /* handled below */ }
-        reject(new Error('gh authentication did not return a login'));
-      });
-    });
+    if (this.appAuth) {
+      const app = await this.appRequest('/app');
+      if (typeof app.slug === 'string' && app.slug.length > 0) return `${app.slug}[bot]`;
+      throw new Error('GitHub App identity lookup returned no slug');
+    } else {
+      const local = await this.localLogin();
+      if (local) return local;
+      try {
+        const value = await this.graphql('query { viewer { login } }') as Record<string, unknown>;
+        const viewer = value.viewer as Record<string, unknown> | undefined;
+        if (typeof viewer?.login === 'string' && viewer.login.length > 0) return viewer.login;
+      } catch { /* handled below */ }
+    }
+    const local = await this.localLogin();
+    if (local) return local;
+    throw new Error('gh authentication did not return a login');
   }
 }
+
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
@@ -432,16 +475,12 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
   const [owner, name] = repository.split('/', 2);
   if (!owner || !name) throw new Error(`Invalid GitHub repository ${repository}`);
   const output: ManagedJobOverview[] = [];
-  let cursor: string | null = null;
-  do {
-    const data = await client.graphql(
-      'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){pullRequests(first:50,after:$cursor,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}',
-      { owner, name, cursor }
-    ) as Record<string, unknown>;
-    const repo = data.repository as Record<string, unknown> | undefined;
-    const connection = repo?.pullRequests as Record<string, unknown> | undefined;
-    const nodes = Array.isArray(connection?.nodes) ? connection.nodes as Array<Record<string, unknown>> : [];
+  const seen = new Set<number>();
+  const collect = (nodes: Array<Record<string, unknown>>): void => {
     for (const pr of nodes) {
+      const number = Number(pr.number);
+      if (!Number.isInteger(number) || number <= 0 || seen.has(number)) continue;
+      seen.add(number);
       const comments = pr.comments as Record<string, unknown> | undefined;
       const rows = Array.isArray(comments?.nodes) ? comments.nodes as Array<Record<string, unknown>> : [];
       const trusted = rows.filter(item => {
@@ -452,17 +491,31 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
       const tasks = trusted.map(item => parseTask(String(item.body ?? ''))).filter((item): item is Task => item !== null);
       const state = String(pr.state ?? '').toUpperCase();
       const githubState: PullRequestState = pr.merged === true || state === 'MERGED' ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
-      const number = Number(pr.number);
       for (const job of jobs) {
         if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
-        if (Number.isInteger(number) && number > 0) job.prNumber = number;
-        job.repository = repository;
+        job.prNumber = number; job.repository = repository;
         job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
         output.push({ job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null });
       }
     }
-    const pageInfo = connection?.pageInfo as Record<string, unknown> | undefined;
+  };
+  let cursor: string | null = null;
+  let firstPage = true;
+  do {
+    const query = firstPage
+      ? 'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}} recentClosed:pullRequests(first:20,states:CLOSED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}}}}'
+      : 'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}';
+    const data = await client.graphql(query, { owner, name, cursor }) as Record<string, unknown>;
+    const repo = data.repository as Record<string, unknown> | undefined;
+    const open = repo?.open as Record<string, unknown> | undefined;
+    collect(Array.isArray(open?.nodes) ? open.nodes as Array<Record<string, unknown>> : []);
+    if (firstPage) {
+      const recentClosed = repo?.recentClosed as Record<string, unknown> | undefined;
+      collect(Array.isArray(recentClosed?.nodes) ? recentClosed.nodes as Array<Record<string, unknown>> : []);
+    }
+    const pageInfo = open?.pageInfo as Record<string, unknown> | undefined;
     cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
+    firstPage = false;
   } while (cursor);
   return output.sort((a, b) => b.job.prNumber - a.job.prNumber);
 }

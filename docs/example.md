@@ -8,6 +8,18 @@ node dist/cli.js reconcile --file /tmp/agents-relay.json
 node dist/cli.js status --file /tmp/agents-relay.json
 ```
 
+Autonomous local jobs use the same file and task tree. The mode is durable and
+defaults to fixed:
+
+```sh
+node dist/cli.js init --file /tmp/agents-relay-auto.json --id auto --title "Objective" --mode autonomous
+node dist/cli.js reconcile --file /tmp/agents-relay-auto.json --planner-command ./planner.sh
+node dist/cli.js status --file /tmp/agents-relay-auto.json
+```
+
+`planner.sh` reads the current objective/task snapshot from stdin and prints a
+typed planner result. Its `next_tasks` IDs must remain stable across retries.
+
 For a nested task, submit `--parent build --deps build`; reconciliation releases it only after `build` succeeds.
 
 The same flow against the dogfood PR is:
