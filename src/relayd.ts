@@ -14,6 +14,7 @@ import { isEntrypoint, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
+import { VoiceActionGateway } from './voice-action.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
@@ -98,7 +99,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const usageRegistry = codexAndZaiUsageRegistry();
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob);
+  const voiceSecretFile = value(argv,'--voice-action-secret-file');
+  const voiceSecret = value(argv,'--voice-action-secret') || process.env.AGENTS_RELAY_VOICE_ACTION_SECRET || (voiceSecretFile ? (await readFile(voiceSecretFile,'utf8')).trim() : '');
+  const voiceRepositories = new Set(value(argv,'--voice-action-repos').split(',').map(item=>item.trim()).filter(Boolean));
+  const voiceActionGateway = voiceSecret && voiceRepositories.size > 0 ? new VoiceActionGateway(client, trusted, voiceSecret, voiceRepositories) : undefined;
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob,voiceActionGateway);
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }

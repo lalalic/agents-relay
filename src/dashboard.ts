@@ -4,6 +4,7 @@ import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
 import { Job } from './types.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
+import { VoiceActionGateway } from './voice-action.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -261,6 +262,7 @@ export function serveDashboard(
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
+  voiceActionGateway?: VoiceActionGateway,
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -328,6 +330,15 @@ export function serveDashboard(
   };
 
   const server = createServer(async (req, res) => {
+    const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (requestUrl.pathname === '/voice/actions/v1/execute' && req.method === 'GET') {
+      if (!voiceActionGateway) { res.writeHead(404); res.end('Not found'); return; }
+      const forwarded = typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : undefined;
+      const response = await voiceActionGateway.execute(requestUrl, forwarded ?? req.socket.remoteAddress ?? 'unknown');
+      res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(response.body));
+      return;
+    }
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(dashboardHtml);
@@ -359,9 +370,9 @@ export function serveDashboard(
       }
       return;
     }
-    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {
+    if (requestUrl.pathname === '/api/job') {
       try {
-        const requestedJobId = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? undefined;
+        const requestedJobId = requestUrl.searchParams.get('id') ?? undefined;
         const body = (await snapshot(requestedJobId)).json;
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(body);
