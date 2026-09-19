@@ -54,7 +54,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter({endpoint:value(argv,'--macbridge-url')||undefined,tokenFile:value(argv,'--macbridge-token-file')||undefined})], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
   const repositories = normalized.repository
     ? [normalized.repository]
     : (await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot())).map(item => item.repository);
