@@ -83,7 +83,9 @@ test('credit providers render one balance value per provider row', () => {
 test('job list uses PR-number title and concise state metadata', () => {
   assert.match(dashboardHtml, /text\('PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
+  assert.match(dashboardHtml, /job\.draft\?'badge DRAFT':'/);
   assert.match(dashboardHtml, /job\.draft\?'DRAFT':value\(job\.githubState\|\|'UNKNOWN'\)/);
+  assert.match(dashboardHtml, /\.badge\.DRAFT/);
   assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
 });
