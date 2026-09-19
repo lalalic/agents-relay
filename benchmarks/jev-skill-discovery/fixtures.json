@@ -1,56 +1,238 @@
 {
   "catalog": [
-    {"name":"agents-relay","description":"Create and operate durable asynchronous agent jobs through GitHub PR state, worker adapters, continuations, retries, and live progress events."},
-    {"name":"xchat-orchestrator","description":"Drive repository work through a managed GitHub pull request, local workers, review, validation, and merge lifecycle."},
-    {"name":"model-router","description":"Choose among configured model/provider profiles based on task fit, capability, quota, cost, latency, reliability, privacy, and continuity."},
-    {"name":"events-bus","description":"Publish and consume progress events for orchestrators, workers, and background jobs so delegated work stays observable."},
-    {"name":"browser-harness","description":"Interact with websites using the user's logged-in browser session, including clicking, typing, scraping, and web app testing."},
-    {"name":"daemon-service-manage","description":"Inspect and manage persistent daemons and PM2 services, including status, logs, restart, and persistence."},
-    {"name":"notebooklm","description":"Operate Gemini Notebook / NotebookLM for grounded research, notebook/source management, chat, and artifact generation."},
-    {"name":"neox-phone-mcp","description":"Use the user's iPhone as a local MCP media server and operate Neox phone or Mac capture-tour capabilities."},
-    {"name":"phone-harness","description":"Control an iPhone through iPhone Mirroring or an Android through adb: open apps, tap, type, swipe, and read the screen."},
-    {"name":"skill-builder","description":"Create, review, restructure, and evaluate AI agent skills around user goals, capability trees, prompts, and evals."},
-    {"name":"design-doc-mermaid","description":"Create Mermaid architecture, sequence, activity, and deployment diagrams from text or code."},
-    {"name":"markcut","description":"Create, edit, preview, review, and render videos using Markdown storyboards and Markcut."},
-    {"name":"wechat-bro","description":"Operate and customize WeChat through its orchestrator, watched contacts, escalations, commands, and listeners."},
-    {"name":"tts-stt-sts","description":"Local text-to-speech, speech-to-text, and speech-to-speech workflows."},
-    {"name":"understand-image-video","description":"Analyze images and video for scene understanding, object detection, OCR-like inspection, and UI testing."},
-    {"name":"audio-sourcing","description":"Find and download royalty-free background music and sound effects for video production."},
-    {"name":"create-image-video","description":"Create images and videos using configured Agnes AI generation APIs."},
-    {"name":"post","description":"Publish prepared media to Xiaohongshu, WeChat Channels, TikTok, and YouTube with browser automation."},
-    {"name":"family-tutor","description":"Create and operate a persistent AI tutor with child-specific context, parent controls, Discord channels, and a managed service."},
-    {"name":"ponytail","description":"Apply minimal, YAGNI-oriented implementation choices for coding tasks and avoid unnecessary complexity."},
-    {"name":"find-skills","description":"Discover installable agent skills when the user asks whether a capability exists or wants to extend the agent."},
-    {"name":"autoresearch","description":"Run autonomous iterative experiment loops for measurable programming optimization tasks."},
-    {"name":"devmacbridge","description":"Set up, run, repair, and verify DevMacBridge so web AI clients can operate the user's Mac."},
-    {"name":"none","description":"No candidate skill is required; the request can be handled directly without loading a specialized skill."}
+    {
+      "name": "agents-relay",
+      "description": "Create and operate durable asynchronous agent jobs through GitHub PR state, worker adapters, continuations, retries, and live progress events."
+    },
+    {
+      "name": "xchat-orchestrator",
+      "description": "Drive repository work through a managed GitHub pull request, local workers, review, validation, and merge lifecycle."
+    },
+    {
+      "name": "model-router",
+      "description": "Choose among configured model/provider profiles based on task fit, capability, quota, cost, latency, reliability, privacy, and continuity."
+    },
+    {
+      "name": "events-bus",
+      "description": "Publish and consume progress events for orchestrators, workers, and background jobs so delegated work stays observable."
+    },
+    {
+      "name": "browser-harness",
+      "description": "Interact with websites using the user's logged-in browser session, including clicking, typing, scraping, and web app testing."
+    },
+    {
+      "name": "daemon-service-manage",
+      "description": "Inspect and manage persistent daemons and PM2 services, including status, logs, restart, and persistence."
+    },
+    {
+      "name": "notebooklm",
+      "description": "Operate Gemini Notebook / NotebookLM for grounded research, notebook/source management, chat, and artifact generation."
+    },
+    {
+      "name": "neox-phone-mcp",
+      "description": "Use the user's iPhone as a local MCP media server and operate Neox phone or Mac capture-tour capabilities."
+    },
+    {
+      "name": "phone-harness",
+      "description": "Control an iPhone through iPhone Mirroring or an Android through adb: open apps, tap, type, swipe, and read the screen."
+    },
+    {
+      "name": "skill-builder",
+      "description": "Create, review, restructure, and evaluate AI agent skills around user goals, capability trees, prompts, and evals."
+    },
+    {
+      "name": "design-doc-mermaid",
+      "description": "Create Mermaid architecture, sequence, activity, and deployment diagrams from text or code."
+    },
+    {
+      "name": "markcut",
+      "description": "Create, edit, preview, review, and render videos using Markdown storyboards and Markcut."
+    },
+    {
+      "name": "wechat-bro",
+      "description": "Operate and customize WeChat through its orchestrator, watched contacts, escalations, commands, and listeners."
+    },
+    {
+      "name": "tts-stt-sts",
+      "description": "Local text-to-speech, speech-to-text, and speech-to-speech workflows."
+    },
+    {
+      "name": "understand-image-video",
+      "description": "Analyze images and video for scene understanding, object detection, OCR-like inspection, and UI testing."
+    },
+    {
+      "name": "audio-sourcing",
+      "description": "Find and download royalty-free background music and sound effects for video production."
+    },
+    {
+      "name": "create-image-video",
+      "description": "Create images and videos using configured Agnes AI generation APIs."
+    },
+    {
+      "name": "post",
+      "description": "Publish prepared media to Xiaohongshu, WeChat Channels, TikTok, and YouTube with browser automation."
+    },
+    {
+      "name": "family-tutor",
+      "description": "Create and operate a persistent AI tutor with child-specific context, parent controls, Discord channels, and a managed service."
+    },
+    {
+      "name": "ponytail",
+      "description": "Apply minimal, YAGNI-oriented implementation choices for coding tasks and avoid unnecessary complexity."
+    },
+    {
+      "name": "find-skills",
+      "description": "Discover installable agent skills when the user asks whether a capability exists or wants to extend the agent."
+    },
+    {
+      "name": "autoresearch",
+      "description": "Run autonomous iterative experiment loops for measurable programming optimization tasks."
+    },
+    {
+      "name": "devmacbridge",
+      "description": "Set up, run, repair, and verify DevMacBridge so web AI clients can operate the user's Mac."
+    },
+    {
+      "name": "none",
+      "description": "No candidate skill is required; the request can be handled directly without loading a specialized skill."
+    }
   ],
   "fixtures": [
-    {"id":"historical-managed-pr","task":"Make a managed PR for this repository feature, create durable child tasks, and keep the job observable until review.","expected":"xchat-orchestrator","candidateSetSize":4},
-    {"id":"historical-worker-routing","task":"Why did every worker choose the same model? Route each new worker using the configured model-router rules.","expected":"model-router","candidateSetSize":4},
-    {"id":"historical-progress-events","task":"The async worker is a black box. Publish events and show me each meaningful milestone while it runs.","expected":"events-bus","candidateSetSize":4},
-    {"id":"historical-relay-task","task":"Create a durable Agents Relay child task under the existing PR job and make retries survive daemon restarts.","expected":"agents-relay","candidateSetSize":4},
-    {"id":"historical-notebooklm","task":"Use NotebookLM to research these sources and generate a grounded artifact from the notebook.","expected":"notebooklm","candidateSetSize":8},
-    {"id":"historical-neox-media","task":"Find the latest video on my iPhone through Neox and pull the original file to the Mac.","expected":"neox-phone-mcp","candidateSetSize":8},
-    {"id":"historical-phone-control","task":"Open the app on my iPhone through iPhone Mirroring, tap the settings control, and verify the screen.","expected":"phone-harness","candidateSetSize":8},
-    {"id":"historical-browser-session","task":"Open the logged-in Cloudflare dashboard in my real Chrome session and click through the model page.","expected":"browser-harness","candidateSetSize":8},
-    {"id":"historical-pm2","task":"Check the PM2-managed wechat-bro service, inspect logs, restart it, and verify it remains online.","expected":"daemon-service-manage","candidateSetSize":8},
-    {"id":"historical-skill-refactor","task":"Review this agent skill, rebuild its capability tree, tighten the instructions, and add capability-focused evals.","expected":"skill-builder","candidateSetSize":16},
-    {"id":"historical-mermaid","task":"Make a Mermaid topology diagram showing the tutor orchestrator, parent controls, worker, and Discord channels.","expected":"design-doc-mermaid","candidateSetSize":16},
-    {"id":"historical-markcut","task":"Turn these clips into a short edited demo video using a Markdown storyboard, previews, and final render.","expected":"markcut","candidateSetSize":16},
-    {"id":"historical-wechat","task":"Watch this WeChat contact and escalate messages that need me while the orchestrator handles routine replies.","expected":"wechat-bro","candidateSetSize":16},
-    {"id":"synthetic-speech","task":"Transcribe this local recording, synthesize a replacement voice line, and return the audio file.","expected":"tts-stt-sts","candidateSetSize":16},
-    {"id":"synthetic-vision","task":"Inspect this product-demo video and return structured scene and object observations for each sampled frame.","expected":"understand-image-video","candidateSetSize":16},
-    {"id":"synthetic-audio-source","task":"Find royalty-free background music and three UI transition sound effects for my demo video.","expected":"audio-sourcing","candidateSetSize":24},
-    {"id":"synthetic-social-post","task":"Publish the prepared vertical video to TikTok and YouTube and verify both posts succeeded.","expected":"post","candidateSetSize":24},
-    {"id":"synthetic-tutor","task":"Create a persistent tutoring workflow for my child with separate learner context and parent observation controls.","expected":"family-tutor","candidateSetSize":24},
-    {"id":"synthetic-minimal-code","task":"Refactor this TypeScript helper with the smallest solution that works; avoid new dependencies and boilerplate.","expected":"ponytail","candidateSetSize":24},
-    {"id":"synthetic-find-skill","task":"Is there an installable skill that can work with Blender projects? Find one if it exists.","expected":"find-skills","candidateSetSize":24},
-    {"id":"synthetic-auto-optimize","task":"Iteratively tune this parser against a measurable benchmark, keep improvements, and discard regressions.","expected":"autoresearch","candidateSetSize":24},
-    {"id":"synthetic-macbridge","task":"Repair the DevMacBridge connection so this web ChatGPT thread can call tools on my Mac again.","expected":"devmacbridge","candidateSetSize":24},
-    {"id":"none-general-question","task":"Explain the difference between a process and a thread in an operating system.","expected":"none","candidateSetSize":8},
-    {"id":"none-small-code","task":"What does Array.prototype.map return in JavaScript?","expected":"none","candidateSetSize":16},
-    {"id":"none-writing","task":"Rewrite this one sentence to be more concise: The meeting was moved because people were unavailable.","expected":"none","candidateSetSize":24},
-    {"id":"none-math","task":"Solve 3x + 9 = 24 and show the result.","expected":"none","candidateSetSize":24}
+    {
+      "id": "historical-managed-pr",
+      "task": "Make a managed PR for this repository feature, create durable child tasks, and keep the job observable until review.",
+      "expected": "xchat-orchestrator"
+    },
+    {
+      "id": "historical-worker-routing",
+      "task": "Why did every worker choose the same model? Route each new worker using the configured model-router rules.",
+      "expected": "model-router"
+    },
+    {
+      "id": "historical-progress-events",
+      "task": "The async worker is a black box. Publish events and show me each meaningful milestone while it runs.",
+      "expected": "events-bus"
+    },
+    {
+      "id": "historical-relay-task",
+      "task": "Create a durable Agents Relay child task under the existing PR job and make retries survive daemon restarts.",
+      "expected": "agents-relay"
+    },
+    {
+      "id": "historical-notebooklm",
+      "task": "Use NotebookLM to research these sources and generate a grounded artifact from the notebook.",
+      "expected": "notebooklm"
+    },
+    {
+      "id": "historical-neox-media",
+      "task": "Find the latest video on my iPhone through Neox and pull the original file to the Mac.",
+      "expected": "neox-phone-mcp"
+    },
+    {
+      "id": "historical-phone-control",
+      "task": "Open the app on my iPhone through iPhone Mirroring, tap the settings control, and verify the screen.",
+      "expected": "phone-harness"
+    },
+    {
+      "id": "historical-browser-session",
+      "task": "Open the logged-in Cloudflare dashboard in my real Chrome session and click through the model page.",
+      "expected": "browser-harness"
+    },
+    {
+      "id": "historical-pm2",
+      "task": "Check the PM2-managed wechat-bro service, inspect logs, restart it, and verify it remains online.",
+      "expected": "daemon-service-manage"
+    },
+    {
+      "id": "historical-skill-refactor",
+      "task": "Review this agent skill, rebuild its capability tree, tighten the instructions, and add capability-focused evals.",
+      "expected": "skill-builder"
+    },
+    {
+      "id": "historical-mermaid",
+      "task": "Make a Mermaid topology diagram showing the tutor orchestrator, parent controls, worker, and Discord channels.",
+      "expected": "design-doc-mermaid"
+    },
+    {
+      "id": "historical-markcut",
+      "task": "Turn these clips into a short edited demo video using a Markdown storyboard, previews, and final render.",
+      "expected": "markcut"
+    },
+    {
+      "id": "historical-wechat",
+      "task": "Watch this WeChat contact and escalate messages that need me while the orchestrator handles routine replies.",
+      "expected": "wechat-bro"
+    },
+    {
+      "id": "synthetic-speech",
+      "task": "Transcribe this local recording, synthesize a replacement voice line, and return the audio file.",
+      "expected": "tts-stt-sts"
+    },
+    {
+      "id": "synthetic-vision",
+      "task": "Inspect this product-demo video and return structured scene and object observations for each sampled frame.",
+      "expected": "understand-image-video"
+    },
+    {
+      "id": "synthetic-audio-source",
+      "task": "Find royalty-free background music and three UI transition sound effects for my demo video.",
+      "expected": "audio-sourcing"
+    },
+    {
+      "id": "synthetic-social-post",
+      "task": "Publish the prepared vertical video to TikTok and YouTube and verify both posts succeeded.",
+      "expected": "post"
+    },
+    {
+      "id": "synthetic-tutor",
+      "task": "Create a persistent tutoring workflow for my child with separate learner context and parent observation controls.",
+      "expected": "family-tutor"
+    },
+    {
+      "id": "synthetic-minimal-code",
+      "task": "Refactor this TypeScript helper with the smallest solution that works; avoid new dependencies and boilerplate.",
+      "expected": "ponytail"
+    },
+    {
+      "id": "synthetic-find-skill",
+      "task": "Is there an installable skill that can work with Blender projects? Find one if it exists.",
+      "expected": "find-skills"
+    },
+    {
+      "id": "synthetic-auto-optimize",
+      "task": "Iteratively tune this parser against a measurable benchmark, keep improvements, and discard regressions.",
+      "expected": "autoresearch"
+    },
+    {
+      "id": "synthetic-macbridge",
+      "task": "Repair the DevMacBridge connection so this web ChatGPT thread can call tools on my Mac again.",
+      "expected": "devmacbridge"
+    },
+    {
+      "id": "none-general-question",
+      "task": "Explain the difference between a process and a thread in an operating system.",
+      "expected": "none"
+    },
+    {
+      "id": "none-small-code",
+      "task": "What does Array.prototype.map return in JavaScript?",
+      "expected": "none"
+    },
+    {
+      "id": "none-writing",
+      "task": "Rewrite this one sentence to be more concise: The meeting was moved because people were unavailable.",
+      "expected": "none"
+    },
+    {
+      "id": "none-math",
+      "task": "Solve 3x + 9 = 24 and show the result.",
+      "expected": "none"
+    }
+  ],
+  "candidateSetSizes": [
+    4,
+    8,
+    16,
+    24
   ]
 }

@@ -1,217 +1,174 @@
 {
   "model": "GPT-5.6 Sol",
   "reasoning": "high",
-  "method": "current task adjudication pass; not blinded because the same run curated fixture labels",
+  "method": "current task adjudication pass; not blinded because the same run curated fixture labels; candidate-set-size replay not executed",
   "summary": {
     "n": 26,
     "exactMatch": 1,
     "falsePositiveLoads": 0,
     "missedRequiredSkills": 0,
-    "byCandidateSetSize": {
-      "4": {
-        "n": 4,
-        "exactMatch": 1
-      },
-      "8": {
-        "n": 6,
-        "exactMatch": 1
-      },
-      "16": {
-        "n": 7,
-        "exactMatch": 1
-      },
-      "24": {
-        "n": 9,
-        "exactMatch": 1
-      }
-    },
     "latencyMs": null,
     "inputTokens": null,
     "outputTokens": null,
-    "costUsd": null
+    "costUsd": null,
+    "candidateSetSensitivity": null
   },
   "rows": [
     {
       "id": "historical-managed-pr",
       "expected": "xchat-orchestrator",
       "predicted": "xchat-orchestrator",
-      "correct": true,
-      "candidateSetSize": 4
+      "correct": true
     },
     {
       "id": "historical-worker-routing",
       "expected": "model-router",
       "predicted": "model-router",
-      "correct": true,
-      "candidateSetSize": 4
+      "correct": true
     },
     {
       "id": "historical-progress-events",
       "expected": "events-bus",
       "predicted": "events-bus",
-      "correct": true,
-      "candidateSetSize": 4
+      "correct": true
     },
     {
       "id": "historical-relay-task",
       "expected": "agents-relay",
       "predicted": "agents-relay",
-      "correct": true,
-      "candidateSetSize": 4
+      "correct": true
     },
     {
       "id": "historical-notebooklm",
       "expected": "notebooklm",
       "predicted": "notebooklm",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "historical-neox-media",
       "expected": "neox-phone-mcp",
       "predicted": "neox-phone-mcp",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "historical-phone-control",
       "expected": "phone-harness",
       "predicted": "phone-harness",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "historical-browser-session",
       "expected": "browser-harness",
       "predicted": "browser-harness",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "historical-pm2",
       "expected": "daemon-service-manage",
       "predicted": "daemon-service-manage",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "historical-skill-refactor",
       "expected": "skill-builder",
       "predicted": "skill-builder",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "historical-mermaid",
       "expected": "design-doc-mermaid",
       "predicted": "design-doc-mermaid",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "historical-markcut",
       "expected": "markcut",
       "predicted": "markcut",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "historical-wechat",
       "expected": "wechat-bro",
       "predicted": "wechat-bro",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "synthetic-speech",
       "expected": "tts-stt-sts",
       "predicted": "tts-stt-sts",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "synthetic-vision",
       "expected": "understand-image-video",
       "predicted": "understand-image-video",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "synthetic-audio-source",
       "expected": "audio-sourcing",
       "predicted": "audio-sourcing",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-social-post",
       "expected": "post",
       "predicted": "post",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-tutor",
       "expected": "family-tutor",
       "predicted": "family-tutor",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-minimal-code",
       "expected": "ponytail",
       "predicted": "ponytail",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-find-skill",
       "expected": "find-skills",
       "predicted": "find-skills",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-auto-optimize",
       "expected": "autoresearch",
       "predicted": "autoresearch",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "synthetic-macbridge",
       "expected": "devmacbridge",
       "predicted": "devmacbridge",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "none-general-question",
       "expected": "none",
       "predicted": "none",
-      "correct": true,
-      "candidateSetSize": 8
+      "correct": true
     },
     {
       "id": "none-small-code",
       "expected": "none",
       "predicted": "none",
-      "correct": true,
-      "candidateSetSize": 16
+      "correct": true
     },
     {
       "id": "none-writing",
       "expected": "none",
       "predicted": "none",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     },
     {
       "id": "none-math",
       "expected": "none",
       "predicted": "none",
-      "correct": true,
-      "candidateSetSize": 24
+      "correct": true
     }
   ]
 }

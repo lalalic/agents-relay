@@ -8,6 +8,7 @@ const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const threshold = Number(process.env.JEV_CONFIDENCE_THRESHOLD ?? "0.70");
 const repetitions = Number(process.env.JEV_REPETITIONS ?? "1");
 const inputUsdPerMillion = Number(process.env.JEV_INPUT_USD_PER_MTOKENS ?? "0.042");
+const candidateSetSizes = fixtureData.candidateSetSizes ?? [4, 8, 16, 24];
 
 if (!accountId || !apiToken) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required.");
@@ -26,20 +27,21 @@ function hashString(value) {
   return hash >>> 0;
 }
 
-function candidatesFor(fixture) {
+function candidatesFor(fixture, candidateSetSize) {
   const target = fixture.expected === "none"
     ? null
     : catalog.find((entry) => entry.name === fixture.expected);
   const distractors = catalog.filter((entry) => !target || entry.name !== target.name);
   const start = hashString(fixture.id) % distractors.length;
   const rotated = [...distractors.slice(start), ...distractors.slice(0, start)];
-  const wanted = Math.max(1, fixture.candidateSetSize - (target ? 1 : 0));
+  // candidateSetSize includes the synthetic `none` choice appended below.
+  const wanted = Math.max(0, candidateSetSize - 1 - (target ? 1 : 0));
   const candidates = rotated.slice(0, wanted);
   if (target) {
     const insertAt = hashString(fixture.task) % (candidates.length + 1);
     candidates.splice(insertAt, 0, target);
   }
-  return candidates.slice(0, fixture.candidateSetSize);
+  return candidates.slice(0, Math.max(0, candidateSetSize - 1));
 }
 
 function percentile(values, p) {
@@ -65,8 +67,8 @@ function calibrationError(rows) {
   return weighted;
 }
 
-async function runJev(fixture) {
-  const candidates = candidatesFor(fixture);
+async function runJev(fixture, candidateSetSize) {
+  const candidates = candidatesFor(fixture, candidateSetSize);
   const criteria = Object.fromEntries(candidates.map((entry) => [entry.name, entry.description]));
   criteria.none = "No listed skill is required. The request should be handled directly without loading a specialized skill.";
 
@@ -123,7 +125,7 @@ async function runJev(fixture) {
     predicted,
     confidence,
     probabilities: answer.probabilities ?? {},
-    candidateSetSize: fixture.candidateSetSize,
+    candidateSetSize,
     latencyMs,
     inputTokens: Number(result.usage?.input_tokens ?? 0),
     outputTokens: Number(result.usage?.output_tokens ?? 0),
@@ -137,14 +139,17 @@ const rows = [];
 const failures = [];
 for (let rep = 0; rep < repetitions; rep += 1) {
   for (const fixture of fixtures) {
-    try {
-      rows.push(await runJev(fixture));
-    } catch (error) {
-      failures.push({
-        id: fixture.id,
-        repetition: rep,
-        error: error instanceof Error ? error.message : String(error)
-      });
+    for (const candidateSetSize of candidateSetSizes) {
+      try {
+        rows.push(await runJev(fixture, candidateSetSize));
+      } catch (error) {
+        failures.push({
+          id: fixture.id,
+          repetition: rep,
+          candidateSetSize,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   }
 }
@@ -160,6 +165,8 @@ const falsePositiveLoads = rows.filter((row) => row.expected === "none" && row.p
 const missedRequiredSkills = rows.filter((row) => row.expected !== "none" && row.predicted !== row.expected).length;
 const inputTokens = rows.reduce((sum, row) => sum + row.inputTokens, 0);
 const outputTokens = rows.reduce((sum, row) => sum + row.outputTokens, 0);
+const totalAttempts = rows.length + failures.length;
+const lowConfidenceFallbacks = rows.filter((row) => row.fallback).length;
 
 const byCandidateSetSize = {};
 for (const size of [...new Set(rows.map((row) => row.candidateSetSize))].sort((a, b) => a - b)) {
@@ -193,7 +200,12 @@ const summary = {
   outputTokens,
   estimatedInputCostUsd: (inputTokens / 1_000_000) * inputUsdPerMillion,
   costNote: "Input-token estimate only; default uses the Cloudflare Jev dashboard price observed on 2026-09-19 ($0.042 / 1M input tokens).",
-  fallbackRate: rows.length ? rows.filter((row) => row.fallback).length / rows.length : null,
+  fallbackRate: totalAttempts ? (lowConfidenceFallbacks + failures.length) / totalAttempts : null,
+  fallbackBreakdown: {
+    lowConfidence: lowConfidenceFallbacks,
+    apiOrTransportFailure: failures.length,
+    totalAttempts
+  },
   byCandidateSetSize,
   failures
 };
