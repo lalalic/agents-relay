@@ -17,8 +17,7 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { CommandObjectivePlanner } from './planner.js';
-import { buildVoiceAgentUrl } from './voice-agent.js';
-const usage = 'agents-relay <job create|job adopt|job repair|voice session-url|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
@@ -164,19 +163,6 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2); if (!command) throw new Error(usage);
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
-  if (command === 'voice') {
-    const [action, ...voiceArgs] = args;
-    if (action !== 'session-url') throw new Error(usage);
-    const secretFile = arg(voiceArgs, '--secret-file');
-    const secret = arg(voiceArgs, '--secret') || process.env.AGENTS_RELAY_VOICE_AGENT_SECRET || (secretFile ? (await readFile(secretFile, 'utf8')).trim() : '');
-    const baseUrl = arg(voiceArgs, '--base-url');
-    const projects = arg(voiceArgs, '--projects').split(',').map(item => item.trim()).filter(Boolean);
-    const ttl = Number(arg(voiceArgs, '--ttl', '7200'));
-    if (!secret || !baseUrl || projects.length === 0) throw new Error('voice session-url requires --base-url, --projects, and --secret/--secret-file');
-    if (!Number.isFinite(ttl) || ttl < 60) throw new Error('--ttl must be at least 60 seconds');
-    console.log(buildVoiceAgentUrl(baseUrl, secret, projects, ttl));
-    return;
-  }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
