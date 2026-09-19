@@ -233,18 +233,26 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
     if (pageValues.length < 100) break;
   }
   const output: ManagedJobOverview[] = [];
-  for (const pr of pullRequests) {
-    const number = Number(pr.number); if (!Number.isInteger(number) || number <= 0) continue;
-    const comments = await client.request(`/repos/${repository}/issues/${number}/comments?per_page=100`);
-    if (!Array.isArray(comments)) continue;
-    const trusted = comments.filter(item => { const row = item as Record<string, unknown>; const user = row.user as Record<string, unknown> | undefined; return typeof user?.login === 'string' && trustedAuthors.has(user.login); });
-    const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
-    const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
-    const githubState: PullRequestState = pr.merged_at ? 'MERGED' : String(pr.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN';
-    for (const job of jobs) {
-      if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
-      job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
-      output.push({ job, githubState, draft: pr.draft === true, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
+  const commentConcurrency = 8;
+  for (let index = 0; index < pullRequests.length; index += commentConcurrency) {
+    const batch = pullRequests.slice(index, index + commentConcurrency);
+    const loaded = await Promise.all(batch.map(async pr => {
+      const number = Number(pr.number);
+      if (!Number.isInteger(number) || number <= 0) return { pr, comments: null as unknown[] | null };
+      const comments = await client.request(`/repos/${repository}/issues/${number}/comments?per_page=100`);
+      return { pr, comments: Array.isArray(comments) ? comments : null };
+    }));
+    for (const { pr, comments } of loaded) {
+      if (!comments) continue;
+      const trusted = comments.filter(item => { const row = item as Record<string, unknown>; const user = row.user as Record<string, unknown> | undefined; return typeof user?.login === 'string' && trustedAuthors.has(user.login); });
+      const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+      const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
+      const githubState: PullRequestState = pr.merged_at ? 'MERGED' : String(pr.state ?? '').toLowerCase() === 'closed' ? 'CLOSED' : 'OPEN';
+      for (const job of jobs) {
+        if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
+        job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
+        output.push({ job, githubState, draft: pr.draft === true, mergedAt: typeof pr.merged_at === 'string' ? pr.merged_at : null, closedAt: typeof pr.closed_at === 'string' ? pr.closed_at : null });
+      }
     }
   }
   return output.sort((a, b) => b.job.prNumber - a.job.prNumber);
