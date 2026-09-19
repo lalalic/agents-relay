@@ -20,7 +20,7 @@ npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1
 Jobs default to `fixed`, preserving the original submit-and-run behavior. Use
 `--mode autonomous` with `init` or `job create` to make reconciliation own
 planner progress. The durable status JSON and dashboard show the mode. An
-autonomous runtime needs `--planner-command`; it receives the objective/task
+autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
 snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.

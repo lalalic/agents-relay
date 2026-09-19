@@ -12,7 +12,7 @@ defaults to fixed:
 
 ```sh
 npx agents-relay init --file /tmp/agents-relay-auto.json --id auto --title "Objective" --mode autonomous
-npx agents-relay reconcile --file /tmp/agents-relay-auto.json --planner-command ./planner.sh
+npx agents-relay reconcile --file /tmp/agents-relay-auto.json
 npx agents-relay status --file /tmp/agents-relay-auto.json
 ```
 

@@ -99,24 +99,37 @@ function repositoryParts(repository: string): { owner: string; name: string } {
 }
 async function headHasNoAheadCommits(client: GitHubClient, repository: string, base: string, head: string): Promise<boolean> {
   const path = `repos/${repository}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
-  const comparison = await client.request(path) as Record<string, unknown>;
-  return Number(comparison.ahead_by) === 0;
+  try {
+    const comparison = await client.request(path) as Record<string, unknown>;
+    return Number(comparison.ahead_by) === 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/404|Not Found/i.test(message)) return true;
+    throw error;
+  }
 }
 
-async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string, head: string): Promise<void> {
+async function bootstrapEmptyHeadCommit(client: GitHubClient, repository: string, base: string, head: string): Promise<void> {
   const { owner, name } = repositoryParts(repository);
   const data = await githubGraphql(
     client,
-    'query($owner:String!,$name:String!,$qualified:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$qualified){target{... on Commit{oid tree{oid}}}}}}',
-    { owner, name, qualified: `refs/heads/${head}` }
+    'query($owner:String!,$name:String!,$head:String!,$base:String!){repository(owner:$owner,name:$name){head:ref(qualifiedName:$head){target{... on Commit{oid tree{oid}}}} base:ref(qualifiedName:$base){target{... on Commit{oid tree{oid}}}}}}',
+    { owner, name, head: `refs/heads/${head}`, base: `refs/heads/${base}` }
   );
   const repo = data.repository as Record<string, unknown> | undefined;
-  const ref = repo?.ref as Record<string, unknown> | undefined;
-  const target = ref?.target as Record<string, unknown> | undefined;
+  const headRef = repo?.head as Record<string, unknown> | undefined;
+  const baseRef = repo?.base as Record<string, unknown> | undefined;
+  const target = (headRef?.target ?? baseRef?.target) as Record<string, unknown> | undefined;
   const tree = target?.tree as Record<string, unknown> | undefined;
   const expectedHeadOid = typeof target?.oid === 'string' ? target.oid : '';
   const treeOid = typeof tree?.oid === 'string' ? tree.oid : '';
-  if (!expectedHeadOid || !treeOid) throw new Error(`Unable to resolve head branch ${head}`);
+  if (!expectedHeadOid || !treeOid) throw new Error(`Unable to resolve head branch ${head} or base branch ${base}`);
+  if (!headRef) {
+    await client.request(`repos/${repository}/git/refs`, {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/heads/${head}`, sha: expectedHeadOid }),
+    });
+  }
 
   const created = await client.request(`repos/${repository}/git/commits`, {
     method: 'POST',
@@ -176,7 +189,7 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
   if (existing) return existing;
   if (!options.title) throw new Error('--title is required when creating a pull request');
   if (await headHasNoAheadCommits(client, repository, base, options.head)) {
-    await bootstrapEmptyHeadCommit(client, repository, options.head);
+    await bootstrapEmptyHeadCommit(client, repository, base, options.head);
     const afterBootstrap = await find();
     if (afterBootstrap) return afterBootstrap;
   }
@@ -200,7 +213,7 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
     if (raced) return raced;
     const message = error instanceof Error ? error.message : String(error);
     if (/No commits between|no commits between/i.test(message)) {
-      await bootstrapEmptyHeadCommit(client, repository, options.head);
+      await bootstrapEmptyHeadCommit(client, repository, base, options.head);
       const afterBootstrap = await find();
       if (afterBootstrap) return afterBootstrap;
       return create();
