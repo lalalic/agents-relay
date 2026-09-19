@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GitHubStore, InMemoryStore } from '../dist/store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
 test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
@@ -217,6 +217,17 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 1);
+});
+
+test('dashboard keeps every unfinished job and only the latest ten completed jobs', () => {
+  const overview = (id, state, completedAt) => ({ job: { ...job(id), state, prNumber: Number(id.replace('job-', '')) }, githubState: completedAt ? 'MERGED' : 'OPEN', draft: id === 'job-99', mergedAt: completedAt, closedAt: null });
+  const unfinished = [overview('job-1', 'OPEN', null), overview('job-2', 'FAILED', null)];
+  const completed = Array.from({ length: 12 }, (_, index) => overview(`job-${index + 10}`, 'COMPLETED', `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`));
+  const result = dashboardManagedJobs([...completed, ...unfinished]);
+  assert.deepEqual(result.slice(0, 2).map(item => item.job.id), ['job-1', 'job-2']);
+  assert.equal(result.length, 12);
+  assert.deepEqual(result.slice(2).map(item => item.job.id), ['job-21', 'job-20', 'job-19', 'job-18', 'job-17', 'job-16', 'job-15', 'job-14', 'job-13', 'job-12']);
+  assert.equal(result.some(item => item.job.id === 'job-10'), false);
 });
 
 test('managed job adoption initializes an existing PR with zero comments', async () => {

@@ -116,7 +116,7 @@ export const dashboardHtml = `<!doctype html>
   </section>
   <div class="workspace" id="jobs-workspace">
     <section class="panel" aria-labelledby="workspace-heading">
-      <div class="panel-head"><h2 id="workspace-heading">Selected job <span id="selected-job-title" class="subtle"></span></h2><span id="connection" aria-live="polite">Connecting…</span></div>
+      <div class="panel-head"><h2 id="workspace-heading">Selected job <span id="selected-job-title" class="subtle"></span></h2><div class="panel-actions"><button id="selected-job-refresh" class="refresh-button" type="button">Refresh</button><span id="connection" aria-live="polite">Connecting…</span></div></div>
       <div class="panel-body">
         <div id="job-detail"><div class="skeleton"></div></div>
         <h3 class="section-title">Task hierarchy</h3>
@@ -160,6 +160,7 @@ const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobCount=document.querySelector('#job-count');
 const jobsRefresh=document.querySelector('#jobs-refresh');
+const selectedJobRefresh=document.querySelector('#selected-job-refresh');
 const jobDetail=document.querySelector('#job-detail');
 const taskTree=document.querySelector('#task-tree');
 const taskDetailRoot=document.querySelector('#task-detail');
@@ -191,7 +192,7 @@ function taskNode(task,children,depth){const li=element('li');const row=document
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',value(task.attempt)+' of '+value(task.maxAttempts)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
 function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent='— '+value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;rememberSelection();}const summary=element('div','job-summary');summary.append(field('GitHub state',job.githubState||'UNKNOWN'),field('Durable state',job.state),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(counts(job.tasks))));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);}
-function renderAll(){renderJobList();renderSelectedJob();}
+function renderAll(){jobs.sort(compareJobs);renderJobList();renderSelectedJob();}
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
 function compareJobs(a,b){const terminalDelta=Number(isTerminalJob(a))-Number(isTerminalJob(b));return terminalDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
@@ -205,6 +206,7 @@ async function drawUsage(){try{const overview=await loadJSON('/api/usage');usage
 function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh());
+selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
@@ -216,6 +218,7 @@ stream.addEventListener('relay',message=>{const payload=parseMessage(message);if
 if(location.hash==='#/usage')showView('usage');else showView('jobs');
 setInterval(()=>{if(location.hash!=='#/usage')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
+async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
 </script>
 </body>
 </html>`;
@@ -273,9 +276,15 @@ export function serveDashboard(
     }
   };
 
-  const snapshot = async (): Promise<{ id: string; json: string }> => {
+  const snapshot = async (requestedJobId = jobId): Promise<{ id: string; json: string }> => {
     if (!jobId) throw new Error('Dashboard requires a durable job id');
     await subscribeDiscovered();
+    if (overviewProvider) {
+      const job = (await discoveredJobs()).find(candidate => candidate.id === requestedJobId);
+      if (!job) throw new Error(`Managed job ${requestedJobId ?? ''} not found`);
+      return { id: job.id, json: JSON.stringify(job) };
+    }
+    if (requestedJobId !== jobId) throw new Error(`Managed job ${requestedJobId ?? ''} not found`);
     return { id: jobId, json: JSON.stringify(await store.load(jobId)) };
   };
 
@@ -316,9 +325,10 @@ export function serveDashboard(
       }
       return;
     }
-    if (req.url === '/api/job') {
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {
       try {
-        const body = (await snapshot()).json;
+        const requestedJobId = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? undefined;
+        const body = (await snapshot(requestedJobId)).json;
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(body);
       } catch (error) {

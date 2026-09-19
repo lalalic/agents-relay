@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
+import { dashboardManagedJobs, InMemoryStore, DurableStore, GhApiClient, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { ShellAdapter, CodexAdapter, ChatGptAdapter } from './adapters.js';
@@ -110,7 +110,7 @@ export async function createService(args: string[]): Promise<Service> {
   if (repo) {
     const overviewClient = new GhApiClient(); const login = await overviewClient.currentLogin();
     const trusted = new Set([login, ...arg(args, '--trusted-authors').split(',').map(value => value.trim()).filter(Boolean)]);
-    overviewProvider = () => listManagedGitHubJobs(overviewClient, repo, trusted);
+    overviewProvider = async () => dashboardManagedJobs(await listManagedGitHubJobs(overviewClient, repo, trusted));
   }
   const webhookSecret = arg(args, '--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = repo && webhookSecret ? { secret: webhookSecret, repository: repo, pullRequest: loaded.job.prNumber, wake: (deliveryId: string, event: string, action: string | null): void => { const wakeEvent = eventFor(loaded.job.id, 'github', null, 'github.webhook', 'queued', 'GitHub webhook ' + event + (action ? ':' + action : ''), 'orchestrator', { deliveryId, event, action }); if (bus) void bus.publish(wakeEvent); else void reconciler.reconcile(loaded.job.id); } } : undefined;
