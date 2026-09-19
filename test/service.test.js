@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { normalizeDaemonArguments } from '../dist/relayd.js';
 import { createService, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
+import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
@@ -44,6 +46,32 @@ test('service defaults and package bins use stable package entrypoints', async (
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 1800000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
+});
+
+test('release version selection starts at 1.0.0 and increments only the patch', () => {
+  assert.equal(nextPatchVersion(''), '1.0.0');
+  assert.equal(nextPatchVersion('1.0.0'), '1.0.1');
+  assert.equal(nextPatchVersion('2.7.9'), '2.7.10');
+  assert.throws(() => nextPatchVersion('latest'), /Unsupported npm version/);
+});
+
+test('CLI and daemon help are successful and do not require job storage', () => {
+  for (const [entry, args, expected] of [
+    ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|adopt|repair>'],
+    ['dist/cli.js', ['job', 'create', '--help'], 'Create or reuse an open PR'],
+    ['dist/cli.js', ['submit', '--help'], 'Queue a task for a managed job'],
+    ['dist/relayd.js', ['--help'], 'npx agents-relayd [options]']
+  ]) {
+    const result = spawnSync(process.execPath, [entry, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `${entry} ${args.join(' ')} failed: ${result.stderr}`);
+    assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('published bin files are executable after build', async () => {
+  assert.equal((await stat('dist/cli.js')).mode & 0o111, 0o111);
+  assert.equal((await stat('dist/relayd.js')).mode & 0o111, 0o111);
 });
 
 test('service stop clears watchdog and closes dashboard before resolving', async () => {

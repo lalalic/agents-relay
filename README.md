@@ -44,8 +44,14 @@ Managed GitHub submit/status/reconcile/retry/cancel/serve commands require the d
 The original init command remains supported for backward compatibility:
 
 ~~~sh
-agents-relay init --repo OWNER/REPO --pr 1 --id job-1 --title "Objective"
+npx agents-relay init --repo OWNER/REPO --pr 1 --id job-1 --title "Objective"
 ~~~
+
+## npm publishing
+
+Pushes to `main` run `.github/workflows/publish.yml`: install, test, choose the next npm version, pack-check, and publish. Feature branches do not edit `package.json` versions. If `agents-relay` is not published yet the first release is `1.0.0`; later releases increment only the patch version from the npm registry. The repository must provide an `NPM_TOKEN` Actions secret with permission to publish the public `agents-relay` package.
+
+Normal consumers should invoke the CLI with `npx agents-relay ...` (or `npx agents-relayd ...`).
 
 For explicit local demo/test mode:
 
@@ -55,7 +61,7 @@ npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
 node dist/cli.js submit --file .agents-relay.json --task-id hello --input "echo hello" --adapter shell
 node dist/cli.js reconcile --file .agents-relay.json
-node dist/relayd.js --file .agents-relay.json
+npx agents-relay serve --file .agents-relay.json
 ~~~
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.

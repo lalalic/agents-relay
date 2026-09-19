@@ -17,6 +17,24 @@ import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace
 import { GitHubWebhookWake } from './github-webhook.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
+export const daemonHelp = `Agents Relay daemon runs the dashboard and worker pool.
+
+Usage:
+  npx agents-relayd [options]
+
+Options:
+  --repo OWNER/REPO       Watch one repository
+  --workspace PATH        Discover repositories below PATH (default: ~/Workspace)
+  --port PORT             Dashboard port (default: 8787)
+  --concurrency N         Maximum concurrent workers (default: 4)
+  --interval MS           Recovery interval
+  --events nats            Enable event wakeups
+
+Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+
+Examples:
+  npx agents-relayd --repo OWNER/REPO
+  npx agents-relayd --workspace ~/Workspace`;
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 export function normalizeDaemonArguments(argv: readonly string[]): DaemonArguments {
   const repository = value(argv, '--repo') || null;
@@ -29,6 +47,7 @@ export function normalizeDaemonArguments(argv: readonly string[]): DaemonArgumen
   return { repository, workspaceRoot: repository ? null : workspaceRoot, pullRequest, jobId: id || null, serviceArguments: [...argv] };
 }
 export async function runDaemon(argv: readonly string[]): Promise<void> {
+  if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
   const auth = await githubAuthContext(argv); const client = auth.client;

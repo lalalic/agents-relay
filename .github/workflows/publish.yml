@@ -1,0 +1,76 @@
+name: Build, test, and publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm test
+      - run: chmod +x dist/cli.js dist/relayd.js
+      - name: Select next package version
+        id: version
+        shell: bash
+        run: |
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+          if current="$(npm view agents-relay version --registry=https://registry.npmjs.org 2>"$error_file")"; then
+            :
+          elif grep -q 'E404' "$error_file"; then
+            current=""
+          else
+            cat "$error_file" >&2
+            exit 1
+          fi
+          for attempt in 1 2 3 4 5; do
+            next="$(node scripts/npm-version.mjs "$current")"
+            if npm view "agents-relay@$next" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              current="$next"
+              continue
+            fi
+            break
+          done
+          if npm view "agents-relay@$next" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo 'Unable to find an unused npm patch version after five attempts' >&2
+            exit 1
+          fi
+          npm version "$next" --no-git-tag-version --ignore-scripts
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+      - name: Verify package contents
+        run: |
+          test -x dist/cli.js
+          test -x dist/relayd.js
+          npm pack --dry-run --json > pack.json
+          node -e 'const pack = require("./pack.json")[0]; const bins = new Map(pack.files.map(file => [file.path, file.mode])); for (const file of ["dist/cli.js", "dist/relayd.js"]) { if (bins.get(file) !== 0o755) throw new Error(`${file} is not executable in the package`); }'
+      - name: Publish package
+        shell: bash
+        run: |
+          set -o pipefail
+          publish_error="$(mktemp)"
+          trap 'rm -f "$publish_error"' EXIT
+          if npm publish --access public 2> >(tee "$publish_error" >&2); then
+            exit 0
+          fi
+          if grep -Eq 'EPUBLISH|previously published|cannot publish over' "$publish_error" \
+            && [ "$(npm view agents-relay version --registry=https://registry.npmjs.org 2>/dev/null || true)" = "${{ steps.version.outputs.version }}" ]; then
+            echo "agents-relay@${{ steps.version.outputs.version }} is already published; treating this run as idempotent."
+            exit 0
+          fi
+          exit 1
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

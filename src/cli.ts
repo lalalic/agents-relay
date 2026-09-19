@@ -18,7 +18,138 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget } from './scheduler.js';
-const usage = 'agents-relay <job create|job adopt|job repair|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const help = {
+  root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
+
+Usage:
+  npx agents-relay <command> [options]
+
+Commands:
+  job create|adopt|repair  Create or repair a durable GitHub-backed job
+  init                     Create a local demo job or initialize a GitHub job
+  submit                   Queue a task for a managed job
+  record                   Backfill a completed task into durable history
+  agent-register           Register an agent role and its capabilities
+  agent-discover           Find registered agents matching hard filters
+  status                   Show the durable job state
+  reconcile                Run reconciliation once
+  retry|cancel             Change a task state
+  serve                    Run the dashboard and reconciliation service
+
+Run 'npx agents-relay <command> --help' for command options and examples.
+Use 'node dist/cli.js' only for explicit local development/demo mode.`,
+  job: `Manage a GitHub-backed durable job.
+
+Usage:
+  npx agents-relay job <create|adopt|repair> [options]
+
+Actions:
+  create  Find or create an open PR, then persist its job marker
+  adopt   Attach a job marker to an existing PR
+  repair  Repair duplicate markers for the same job
+
+Common options:
+  --repo OWNER/REPO       GitHub repository (required)
+  --id JOB_ID              Durable job identifier (required)
+  --pr NUMBER              Existing PR number (required for adopt/repair)
+  --title TEXT             Job title
+  --objective TEXT         Objective for autonomous mode
+  --mode fixed|autonomous  Execution mode (default: fixed)
+
+Example:
+  npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1`,
+  'job create': `Create or reuse an open PR and persist one durable job marker.
+
+Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
+Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous.
+
+Example:
+  npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective"`,
+  'job adopt': `Adopt an existing PR as a durable job.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
+Common: --title TEXT, --objective TEXT, --mode fixed|autonomous.
+
+Example:
+  npx agents-relay job adopt --repo OWNER/REPO --pr 12 --id job-12 --title "Objective"`,
+  'job repair': `Repair duplicate durable markers for an existing job.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
+
+Example:
+  npx agents-relay job repair --repo OWNER/REPO --pr 12 --id job-12`,
+  submit: `Queue a task for a managed job.
+
+Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
+Common: --task-id ID, --adapter shell|codex|chatgpt, --priority P0|P1|P2|P3, --max-attempts N.
+
+Example:
+  npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 --task-id build --input "npm test"`,
+  record: `Backfill work completed outside the relay into durable history.
+
+Required: --file PATH or --repo/--pr/--id, plus --summary TEXT.
+Common: --task-id ID, --commit SHA, --project NAME.
+
+Example:
+  npx agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123`,
+  status: `Show the durable state for a job.
+
+Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+
+Example:
+  npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1`,
+  reconcile: `Reconcile a job once, launching ready tasks and persisting results.
+
+Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+
+Example:
+  npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
+  init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
+
+Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
+
+Example:
+  npx agents-relay init --repo OWNER/REPO --pr 12 --id job-1 --title "Objective"`,
+  serve: `Run the dashboard and reconciliation service for a managed job.
+
+Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+Common: --port PORT, --interval MS, --events nats.
+
+Example:
+  npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,
+  'agent-register': `Register an agent role and its execution endpoint.
+
+Required: --file PATH or managed GitHub options, plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET.
+Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --model NAME.
+
+Example:
+  npx agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell`,
+  'agent-discover': `Find registered agents using hard filters.
+
+Required: --file PATH or managed GitHub options.
+Common: --capabilities a,b, --runtime NAME, --availability available,busy, --task-kind NAME, --explore.
+
+Example:
+  npx agents-relay agent-discover --file .agents-relay.json --capabilities shell`,
+  retry: `Retry a task by setting it READY.
+
+Required: --task-id ID and the normal job storage options.
+
+Example:
+  npx agents-relay retry --repo OWNER/REPO --pr 12 --id job-1 --task-id build`,
+  cancel: `Cancel a task.
+
+Required: --task-id ID and the normal job storage options.
+
+Example:
+  npx agents-relay cancel --repo OWNER/REPO --pr 12 --id job-1 --task-id build`
+} as const;
+
+export function helpText(command?: string, action?: string): string {
+  if (command === 'job') return action ? help[`job ${action}` as keyof typeof help] ?? help.job : help.job;
+  return command ? help[command as keyof typeof help] ?? help.root : help.root;
+}
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
 class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
@@ -162,7 +293,9 @@ export function isEntrypoint(moduleUrl: string): boolean {
   try { return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(invoked); } catch { return moduleUrl === `file://${invoked}`; }
 }
 async function main(): Promise<void> {
-  const [command, ...args] = process.argv.slice(2); if (!command) throw new Error(usage);
+  const [command, ...args] = process.argv.slice(2);
+  if (!command || command === '--help' || command === '-h') { console.log(helpText()); return; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' ? args[0] : undefined)); return; }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);

@@ -25,7 +25,7 @@ For a nested task, submit `--parent build --deps build`; reconciliation releases
 The same flow against the dogfood PR is:
 
 ```sh
-node dist/cli.js init --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --title "Dogfood"
-node dist/cli.js submit --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id safe-shell --input "printf dogfood" --adapter shell --capabilities shell
-node dist/cli.js reconcile --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302
+npx agents-relay init --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --title "Dogfood"
+npx agents-relay submit --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id safe-shell --input "printf dogfood" --adapter shell --capabilities shell
+npx agents-relay reconcile --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302
 ```

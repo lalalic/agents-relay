@@ -5,7 +5,7 @@
   "type": "module",
   "bin": { "agents-relay": "dist/cli.js", "agents-relayd": "dist/relayd.js" },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js dist/relayd.js",
     "test": "npm run build && node --test test/*.test.js",
     "dev": "tsx src/cli.ts"
   },
