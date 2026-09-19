@@ -3,8 +3,22 @@ export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' |
 export type AdapterName = 'shell' | 'codex' | 'chatgpt' | 'command' | 'http' | 'orchestrator';
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
 export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string; authEnv?: string };
+export type AgentOutcomeObservation = {
+  jobId?: string;
+  taskId: string;
+  executionId: string;
+  attempt: number;
+  taskKind: string;
+  capabilities: string[];
+  outcome: 'success' | 'failure' | 'timeout';
+  observedAt: string;
+  version: string;
+  summary?: string;
+  latencyMs?: number;
+  cost?: number;
+};
 export type AgentEvidence = {
-  evaluations: Array<{ taskKind: string; outcome: 'success' | 'failure' | 'timeout'; observedAt: string; summary?: string; latencyMs?: number; cost?: number }>;
+  evaluations: AgentOutcomeObservation[];
   outcomes: { succeeded: number; failed: number; timedOut: number };
   lastObservedAt: string | null;
 };

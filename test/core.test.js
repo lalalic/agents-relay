@@ -244,6 +244,18 @@ test('registered agent identity resolves to configured adapter at execution time
   assert.equal(finished.agentId,'agent-shell');
   assert.equal(finished.agentName,'Shell Agent');
   assert.equal(finished.state,'SUCCEEDED');
+  const observed=(await store.listAgents())[0].evidence;
+  assert.deepEqual(observed.outcomes,{succeeded:1,failed:0,timedOut:0});
+  assert.equal(observed.evaluations.length,1);
+  assert.equal(observed.evaluations[0].taskId,'registered-adapter');
+  assert.equal(observed.evaluations[0].executionId,'exec-1');
+  assert.equal(observed.evaluations[0].attempt,1);
+  assert.equal(observed.evaluations[0].taskKind,'Shell Agent');
+  assert.deepEqual(observed.evaluations[0].capabilities,['shell']);
+  assert.equal(observed.evaluations[0].version,'shell');
+  assert.equal(observed.evaluations[0].outcome,'success');
+  assert.equal(typeof observed.evaluations[0].latencyMs,'number');
+  assert.ok(observed.lastObservedAt);
 });
 
 test('registered command endpoint dispatches without a shell and preserves lineage', async () => {
@@ -297,6 +309,50 @@ test('registered adapter retries keep the selected agent and durable task identi
   assert.equal(finished.agentId,'agent-retry');
   assert.equal(finished.attempt,2);
   assert.equal(finished.state,'SUCCEEDED');
+  const evidence=(await store.listAgents())[0].evidence;
+  assert.deepEqual(evidence.outcomes,{succeeded:1,failed:1,timedOut:0});
+  assert.deepEqual(evidence.evaluations.map(item=>item.outcome),['failure','success']);
+  assert.equal(new Set(evidence.evaluations.map(item=>item.executionId)).size,2);
+});
+
+
+test('registered agent evidence records timeout separately from failure', async () => {
+  const t=task('registered-timeout'); t.agentId='agent-timeout'; t.timeoutMs=10; t.maxAttempts=1;
+  const store=new InMemoryStore(job([t]));
+  await store.saveAgent({id:'agent-timeout',name:'Timeout Agent',responsibility:'execute',role:'worker',capabilities:[],boundaries:[],endpoint:{kind:'adapter',target:'shell'},runtime:{adapter:'shell',model:'worker-v2'},availability:'available',routing:{},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()});
+  const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  await reconciler.reconcile('j'); await reconciler.idle();
+  const evidence=(await store.listAgents())[0].evidence;
+  assert.deepEqual(evidence.outcomes,{succeeded:0,failed:0,timedOut:1});
+  assert.equal(evidence.evaluations[0].outcome,'timeout');
+  assert.equal(evidence.evaluations[0].version,'worker-v2');
+});
+
+test('stale reassigned execution cannot double count agent evidence', async () => {
+  const t=task('registered-reassigned'); t.agentId='agent-a';
+  const store=new InMemoryStore(job([t]));
+  const base={responsibility:'execute',role:'worker',capabilities:[],boundaries:[],endpoint:{kind:'adapter',target:'shell'},runtime:{adapter:'shell'},availability:'available',routing:{},evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},registeredAt:now(),updatedAt:now()};
+  await store.saveAgent({...base,id:'agent-a',name:'Agent A'});
+  await store.saveAgent({...base,id:'agent-b',name:'Agent B'});
+  const adapter=new FakeAdapter();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  await reconciler.reconcile('j');
+  const old=adapter.resolvers[0];
+  reconciler.live.delete('registered-reassigned');
+  const durable=await store.load('j'); durable.tasks[0].state='READY'; durable.tasks[0].agentId='agent-b'; await store.saveTask(durable.tasks[0]);
+  await reconciler.reconcile('j');
+  old.resolve({summary:'stale A result'});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  adapter.resolvers[1].resolve({summary:'B result',data:{usage:{costUsd:0.25}}});
+  await reconciler.idle();
+  const agents=await store.listAgents();
+  const a=agents.find(item=>item.id==='agent-a').evidence;
+  const b=agents.find(item=>item.id==='agent-b').evidence;
+  assert.deepEqual(a.outcomes,{succeeded:0,failed:0,timedOut:0});
+  assert.deepEqual(b.outcomes,{succeeded:1,failed:0,timedOut:0});
+  assert.equal(b.evaluations.length,1);
+  assert.equal(b.evaluations[0].cost,0.25);
 });
 
 test('registered loopback HTTP endpoint dispatches correlated task context', async () => {
