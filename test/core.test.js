@@ -34,6 +34,27 @@ test('discovery filters labels, trust domains, regions, runtime, capabilities, a
   assert.equal(discoverAgents([base], { trustDomains:['private'] }).length, 0);
   assert.equal(discoverAgents([base], { regions:['eu'] }).length, 0);
 });
+test('discovery applies security/runtime hard filters and excludes offline by default', () => {
+  const base = { id:'safe', name:'Safe', responsibility:'research', role:'researcher', capabilities:['research'], boundaries:['public-only','no-credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public'],regions:['ca']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
+  const offline = { ...base, id:'offline', availability:'offline' };
+  const command = { ...base, id:'command', endpoint:{kind:'command',target:'worker'} };
+  assert.deepEqual(discoverAgents([offline, command, base]).map(item => item.agent.id), ['command','safe']);
+  assert.deepEqual(discoverAgents([base, command], { endpointKinds:['adapter'], requiredBoundaries:['no-credentials'], trustDomains:['public'], regions:['ca'] }).map(item => item.agent.id), ['safe']);
+  assert.equal(discoverAgents([base], { requiredBoundaries:['private-data'] }).length, 0);
+});
+
+test('discovery ranks task-specific evidence and bounds exploration to one promoted candidate', () => {
+  const base = { id:'new-a', name:'New A', responsibility:'research', role:'researcher', capabilities:['research'], boundaries:[], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
+  const newB = { ...base, id:'new-b' };
+  const strong = { ...base, id:'strong', evidence:{evaluations:[{taskKind:'research',outcome:'success',observedAt:now()},{taskKind:'research',outcome:'success',observedAt:now()}],outcomes:{succeeded:4,failed:1,timedOut:0},lastObservedAt:now()} };
+  const weak = { ...base, id:'weak', evidence:{evaluations:[{taskKind:'research',outcome:'failure',observedAt:now()}],outcomes:{succeeded:8,failed:2,timedOut:0},lastObservedAt:now()} };
+  assert.deepEqual(discoverAgents([weak, newB, strong, base], { taskKind:'research' }).map(item => item.agent.id), ['strong','weak','new-a','new-b']);
+  const explored = discoverAgents([weak, newB, strong, base], { taskKind:'research', explore:true });
+  assert.deepEqual(explored.map(item => item.agent.id), ['strong','new-a','weak','new-b']);
+  assert.match(explored[1].reasons.at(-1), /controlled exploration/);
+  assert.equal(explored[0].ranking.taskKindSuccessRate, 1);
+  assert.equal(explored[2].ranking.taskKindSuccessRate, 0);
+});
 test('task marker metadata round-trips while legacy markers remain compatible', () => {
   const legacy = task('legacy');
   assert.equal(parseTask(marker(TASK_MARKER, legacy)).projectName, undefined);
@@ -67,6 +88,8 @@ test('CLI exposes agent namespace and legacy aliases with validation', async () 
   assert.equal(badAvailability.code,1); assert.match(badAvailability.stderr,/Invalid availability/);
   const badLabels = await run(['agent','register','--file',file,'--name','Bad','--responsibility','test','--role','tester','--endpoint','shell','--labels','broken']);
   assert.equal(badLabels.code,1); assert.match(badLabels.stderr,/key=value/);
+  const badEndpointKind = await run(['agent','discover','--file',file,'--endpoint-kinds','socket']);
+  assert.equal(badEndpointKind.code,1); assert.match(badEndpointKind.stderr,/Invalid endpoint kind/);
 });
 
 test('CLI submit stores optional project and agent metadata with parent', async () => {

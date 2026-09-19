@@ -61,6 +61,11 @@ function availability(args: string[], defaultActive = false): AgentRegistration[
   for (const value of selected) if (!['available', 'degraded', 'offline'].includes(value)) throw new Error(`Invalid availability: ${value}`);
   return selected.length > 0 ? selected as AgentRegistration['availability'][] : undefined;
 }
+function endpointKinds(args: string[]): AgentRegistration['endpoint']['kind'][] | undefined {
+  const values = csv(args, '--endpoint-kinds');
+  for (const value of values) if (!['adapter', 'command', 'http'].includes(value)) throw new Error(`Invalid endpoint kind: ${value}`);
+  return values.length > 0 ? values as AgentRegistration['endpoint']['kind'][] : undefined;
+}
 async function agentStore(args: string[]): Promise<DurableStore> {
   if (arg(args, '--repo')) return githubRegistryStore(args);
   const file = arg(args, '--file'); if (!file) throw new Error('agent commands require --repo or explicit --file demo mode');
@@ -74,7 +79,7 @@ function registration(args: string[]): AgentRegistration {
   return { id: arg(args, '--agent-id', randomUUID()), name, responsibility, role, capabilities: csv(args, '--capabilities'), boundaries: arg(args, '--boundaries').split('|').map(value => value.trim()).filter(Boolean), endpoint: { kind: endpointKind as AgentRegistration['endpoint']['kind'], target: endpointTarget }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: selectedAvailability, routing: { labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions') }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
 }
 function discoveryQuery(args: string[]): Parameters<typeof discoverAgents>[1] {
-  return { capabilities: csv(args, '--capabilities'), runtime: arg(args, '--runtime') || undefined, availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') };
+  return { capabilities: csv(args, '--capabilities'), runtime: arg(args, '--runtime') || undefined, endpointKinds: endpointKinds(args), availability: availability(args, true), labels: labels(args), trustDomains: csv(args, '--trust-domains'), regions: csv(args, '--regions'), requiredBoundaries: arg(args, '--required-boundaries').split('|').map(value => value.trim()).filter(Boolean), trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') };
 }
 async function runAgentCommand(action: string, args: string[]): Promise<void> {
   if (!['register', 'list', 'show', 'discover'].includes(action)) throw new Error(usage);
