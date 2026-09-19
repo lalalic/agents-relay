@@ -48,7 +48,7 @@ Example:
 export AGENTS_RELAY_GITHUB_APP_ID=123456
 export AGENTS_RELAY_GITHUB_APP_INSTALLATION_ID=7890123
 export AGENTS_RELAY_GITHUB_APP_PRIVATE_KEY_FILE=$HOME/.config/agents-relay/github-app.pem
-node dist/relayd.js --workspace ~/Workspace
+npx agents-relayd --workspace ~/Workspace
 ```
 
 When App auth is enabled, Agents Relay trusts both the App bot identity and the current local `gh` user (when one exists). This keeps existing durable markers readable during migration from user auth to App auth.
