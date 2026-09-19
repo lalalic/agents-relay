@@ -6,6 +6,7 @@ import { Job, Priority } from './types.js';
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && !['COMPLETED','FAILED','CANCELLED'].includes(item.job.state)).map(item => item.job).sort(compareJobPriority); }
+export function terminalManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState !== 'OPEN' && ((item.githubState === 'MERGED' && item.job.state !== 'COMPLETED') || (item.githubState === 'CLOSED' && item.job.state !== 'CANCELLED'))).map(item => item.job).sort(compareJobPriority); }
 
 export class RepositoryWorkerPool {
   private running = false;
@@ -23,7 +24,14 @@ export class RepositoryWorkerPool {
     try {
       do {
         this.pending = false;
-        const jobs = runnableManagedJobs(await listManagedGitHubJobs(this.client, this.repository, this.trustedAuthors));
+        const discovered = await listManagedGitHubJobs(this.client, this.repository, this.trustedAuthors);
+        // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
+        // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
+        for (const job of terminalManagedJobs(discovered)) {
+          const store = new GitHubStore(this.client, this.repository, job.prNumber, this.trustedAuthors);
+          await this.makeReconciler(store, 0).reconcile(job.id);
+        }
+        const jobs = runnableManagedJobs(discovered);
         let capacity = Math.max(1, this.concurrency);
         for (const job of jobs) {
           if (capacity <= 0) break;
