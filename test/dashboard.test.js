@@ -62,3 +62,10 @@ test('hidden dashboard views cannot be overridden by layout display rules', () =
   assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
   assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
 });
+
+test('credit providers render one balance value per provider row', () => {
+  assert.match(dashboardHtml, /const balance=credits\.balances\[0\]/);
+  assert.match(dashboardHtml, /formatCredit\(balance\.remaining,balance\.currency\)/);
+  assert.doesNotMatch(dashboardHtml, /balance\.total!==null/);
+  assert.doesNotMatch(dashboardHtml, /balance\.used!==null/);
+});
