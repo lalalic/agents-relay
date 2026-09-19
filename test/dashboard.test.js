@@ -130,3 +130,11 @@ test('job list exposes repository and quick repository/status filters', () => {
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:repo-filter'/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:status-filter'/);
 });
+
+
+test('dashboard warns when GitHub API is rate limited', () => {
+  assert.match(dashboardHtml, /id="rate-limit-warning"/);
+  assert.match(dashboardHtml, /GitHub API rate limit reached\. Showing cached job data\./);
+  assert.match(dashboardHtml, /loadJSON\('\/api\/status'\)/);
+  assert.match(dashboardHtml, /function renderRateLimitStatus\(status\)/);
+});

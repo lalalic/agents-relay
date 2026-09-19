@@ -39,6 +39,7 @@ export const dashboardHtml = `<!doctype html>
     .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
     h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
     .tagline,.subtle { color:var(--muted); font-size:.78rem; }
+    .warning-banner { margin:.65rem 0 0; padding:.5rem .65rem; border:1px solid #e6bf62; border-radius:.4rem; background:#fff4d6; color:#6f4b00; font-size:.78rem; font-weight:700; }
     .tagline { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     nav[role="tablist"] { display:flex; gap:.3rem; margin-top:.65rem; }
     nav button { border:0; border-radius:.35rem; background:transparent; color:var(--muted); padding:.38rem .68rem; font:inherit; font-weight:700; cursor:pointer; }
@@ -106,6 +107,7 @@ export const dashboardHtml = `<!doctype html>
 <body>
 <header>
   <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p></div>
+  <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
@@ -173,6 +175,7 @@ const connection=document.querySelector('#connection');
 const selectedJobTitle=document.querySelector('#selected-job-title');
 const usageRoot=document.querySelector('#usage-root');
 const usageMeta=document.querySelector('#usage-meta');
+const rateLimitWarning=document.querySelector('#rate-limit-warning');
 let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
@@ -214,6 +217,14 @@ function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();render
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
 function compareJobs(a,b){const terminalDelta=Number(isTerminalJob(a))-Number(isTerminalJob(b));return terminalDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
+function renderRateLimitStatus(status){
+  if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
+  const until=status.cooldownUntil?new Date(status.cooldownUntil):null;
+  const suffix=until&&!Number.isNaN(until.getTime())?' Live GitHub refresh will retry after '+until.toLocaleTimeString()+'.':' Live GitHub refresh is temporarily paused.';
+  rateLimitWarning.textContent='GitHub API rate limit reached. Showing cached job data.'+suffix;
+  rateLimitWarning.hidden=false;
+}
+async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
 async function refresh(){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs');jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
 function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
@@ -252,6 +263,7 @@ export function serveDashboard(
   usageRegistry?: UsageRegistry,
   overviewProvider?: () => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repository: string; pullRequest?: number; wake: (deliveryId: string, event: string, action: string | null) => void },
+  statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -356,6 +368,12 @@ export function serveDashboard(
         if (!res.headersSent) res.writeHead(404);
         if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
+      return;
+    }
+    if (req.url === '/api/status') {
+      const status = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(status));
       return;
     }
     if (req.url === '/api/usage') {

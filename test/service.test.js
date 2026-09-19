@@ -18,7 +18,7 @@ test('daemon arguments require and normalize durable identifiers', () => {
 test('repository daemon wires account usage telemetry into dashboard', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
-  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\)/);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {

@@ -137,6 +137,10 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
 export class GhApiClient implements GitHubClient {
   private cooldownUntil = 0;
   private rateLimitFailures = 0;
+  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null } {
+    const limited = Date.now() < this.cooldownUntil;
+    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null };
+  }
   async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const now = Date.now();
     if (now < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);

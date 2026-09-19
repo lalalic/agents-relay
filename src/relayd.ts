@@ -61,7 +61,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = secret && normalized.repository ? {secret,repository:normalized.repository,wake:(deliveryId:string,event:string,action:string|null)=>pool.webhookWake(bus,deliveryId,event,action)} : undefined;
   const usageRegistry = codexAndZaiUsageRegistry();
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook);
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus());
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }
