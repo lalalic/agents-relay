@@ -97,7 +97,7 @@ export const dashboardHtml = `<!doctype html>
   <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p></div>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
-    <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Account usage</button>
+    <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
   </nav>
 </header>
 <main>
@@ -123,7 +123,7 @@ export const dashboardHtml = `<!doctype html>
   </div>
   <section id="usage-view" role="tabpanel" aria-labelledby="usage-tab" hidden>
     <div class="panel">
-      <div class="panel-head"><h2 id="usage-heading">Account usage</h2><span id="usage-meta" class="subtle"></span></div>
+      <div class="panel-head"><h2 id="usage-heading">Usage</h2><span id="usage-meta" class="subtle"></span></div>
       <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
     </div>
   </section>

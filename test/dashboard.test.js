@@ -4,7 +4,8 @@ import { dashboardHtml, githubPrUrl } from '../dist/dashboard.js';
 
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
-  assert.match(dashboardHtml, /Account usage/);
+  assert.match(dashboardHtml, />Usage<\/button>/);
+  assert.match(dashboardHtml, /id="usage-heading">Usage<\/h2>/);
   assert.match(dashboardHtml, /id="events-panel"/);
   assert.match(dashboardHtml, /function taskNode\(/);
   assert.match(dashboardHtml, /function renderTaskDetail\(/);
