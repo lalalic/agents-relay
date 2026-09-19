@@ -1,0 +1,214 @@
+{
+  "candidateSets": {
+    "core8": [
+      {
+        "name": "model-router",
+        "description": "Select among configured model/provider profiles for delegated model work."
+      },
+      {
+        "name": "events-bus",
+        "description": "Publish and consume correlated progress events for delegated/background jobs."
+      },
+      {
+        "name": "browser-harness",
+        "description": "Interact with authenticated or dynamic websites through the user's browser."
+      },
+      {
+        "name": "agents-relay",
+        "description": "Create and operate durable asynchronous agent jobs through GitHub PR state."
+      },
+      {
+        "name": "design-doc-mermaid",
+        "description": "Create Mermaid architecture, sequence, activity, and deployment diagrams."
+      },
+      {
+        "name": "notebooklm",
+        "description": "Operate Gemini Notebook / NotebookLM sources, grounded research, and artifacts."
+      },
+      {
+        "name": "neox-phone-mcp",
+        "description": "Search, analyze, and transfer photos/videos from the user's iPhone through Neox."
+      },
+      {
+        "name": "markcut",
+        "description": "Create, edit, preview, verify, and render videos from Markdown storyboards."
+      }
+    ],
+    "extended16": [
+      {
+        "name": "model-router",
+        "description": "Select among configured model/provider profiles for delegated model work."
+      },
+      {
+        "name": "events-bus",
+        "description": "Publish and consume correlated progress events for delegated/background jobs."
+      },
+      {
+        "name": "browser-harness",
+        "description": "Interact with authenticated or dynamic websites through the user's browser."
+      },
+      {
+        "name": "agents-relay",
+        "description": "Create and operate durable asynchronous agent jobs through GitHub PR state."
+      },
+      {
+        "name": "design-doc-mermaid",
+        "description": "Create Mermaid architecture, sequence, activity, and deployment diagrams."
+      },
+      {
+        "name": "notebooklm",
+        "description": "Operate Gemini Notebook / NotebookLM sources, grounded research, and artifacts."
+      },
+      {
+        "name": "neox-phone-mcp",
+        "description": "Search, analyze, and transfer photos/videos from the user's iPhone through Neox."
+      },
+      {
+        "name": "markcut",
+        "description": "Create, edit, preview, verify, and render videos from Markdown storyboards."
+      },
+      {
+        "name": "daemon-service-manage",
+        "description": "Inspect and manage persistent PM2/daemon/background services."
+      },
+      {
+        "name": "phone-harness",
+        "description": "Control an iPhone or Android UI by taps, typing, swipes, and screen reading."
+      },
+      {
+        "name": "post",
+        "description": "Publish prepared media to social platforms using reusable browser adapters."
+      },
+      {
+        "name": "skill-builder",
+        "description": "Create and improve agent skills and capability-based evals."
+      },
+      {
+        "name": "tts-stt-sts",
+        "description": "Local text-to-speech, speech-to-text, and speech-to-speech."
+      },
+      {
+        "name": "understand-image-video",
+        "description": "Describe and analyze images/video, including screenshots for UI testing."
+      },
+      {
+        "name": "wechat-bro",
+        "description": "Operate and customize WeChat agents, commands, contacts, and escalations."
+      },
+      {
+        "name": "autoresearch",
+        "description": "Run autonomous iterative experiments for measurable programming improvements."
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "route-model-worker",
+      "task": "Choose the configured model/provider for a new coding worker, considering capability, quota, cost and continuity.",
+      "expected": "model-router",
+      "set": "core8"
+    },
+    {
+      "id": "live-job-progress",
+      "task": "A delegated worker will run for several minutes. Stream task.started, milestones and completion back to the user.",
+      "expected": "events-bus",
+      "set": "core8"
+    },
+    {
+      "id": "cloudflare-dashboard",
+      "task": "Use my already logged-in Cloudflare browser session to inspect a dashboard setting and click through the UI.",
+      "expected": "browser-harness",
+      "set": "core8"
+    },
+    {
+      "id": "durable-child-task",
+      "task": "Create a recoverable child task under an existing PR-backed job and reconcile its result after worker death.",
+      "expected": "agents-relay",
+      "set": "core8"
+    },
+    {
+      "id": "architecture-diagram",
+      "task": "Turn this system description into a Mermaid deployment and sequence diagram.",
+      "expected": "design-doc-mermaid",
+      "set": "core8"
+    },
+    {
+      "id": "notebook-grounded-research",
+      "task": "Add sources to my Gemini Notebook and ask grounded questions over them.",
+      "expected": "notebooklm",
+      "set": "core8"
+    },
+    {
+      "id": "iphone-media-search",
+      "task": "Find videos of a dog in my iPhone library and copy the originals to the Mac.",
+      "expected": "neox-phone-mcp",
+      "set": "core8"
+    },
+    {
+      "id": "video-storyboard",
+      "task": "Build and verify a Markdown storyboard for a short video, then render it.",
+      "expected": "markcut",
+      "set": "core8"
+    },
+    {
+      "id": "no-skill-simple-explanation",
+      "task": "Explain what eventual consistency means in distributed systems. No tools or external data needed.",
+      "expected": null,
+      "set": "core8"
+    },
+    {
+      "id": "no-skill-rewrite",
+      "task": "Rewrite this short paragraph to be clearer and more concise.",
+      "expected": null,
+      "set": "extended16"
+    },
+    {
+      "id": "service-restart",
+      "task": "Check which PM2 process owns this daemon, inspect logs, and restart it safely.",
+      "expected": "daemon-service-manage",
+      "set": "extended16"
+    },
+    {
+      "id": "phone-ui-control",
+      "task": "Open Settings on my iPhone, navigate to Bluetooth, and read the visible device list.",
+      "expected": "phone-harness",
+      "set": "extended16"
+    },
+    {
+      "id": "social-publish",
+      "task": "Publish the prepared MP4 and caption to Xiaohongshu and verify the post appears.",
+      "expected": "post",
+      "set": "extended16"
+    },
+    {
+      "id": "skill-eval-design",
+      "task": "Improve this agent skill, define its capability tree, and add representative eval cases.",
+      "expected": "skill-builder",
+      "set": "extended16"
+    },
+    {
+      "id": "speech-transcription",
+      "task": "Transcribe this local audio file and return timestamps.",
+      "expected": "tts-stt-sts",
+      "set": "extended16"
+    },
+    {
+      "id": "screenshot-analysis",
+      "task": "Inspect this screenshot and identify the UI error state and visible controls.",
+      "expected": "understand-image-video",
+      "set": "extended16"
+    },
+    {
+      "id": "wechat-agent",
+      "task": "Pause the WeChat agent for one watched room, inspect status, then resume it.",
+      "expected": "wechat-bro",
+      "set": "extended16"
+    },
+    {
+      "id": "iterative-optimization",
+      "task": "Run repeated code experiments to reduce benchmark latency, keeping only improvements.",
+      "expected": "autoresearch",
+      "set": "extended16"
+    }
+  ]
+}
