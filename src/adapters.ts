@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision } from './types.js';
 
 export type Execution = { id: string; promise: Promise<Result>; cancel: () => void; threadId?: string; onThreadStarted?: (threadId: string) => void };
-export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; recover?(task: Task): Promise<Result | null>; deleteThread?(threadId: string): Promise<void>; }
+export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; recover?(task: Task): Promise<Result | null>; deleteThread?(threadId: string, task?: Pick<Task, 'projectName' | 'routing'>): Promise<void>; }
 function commandExecution(child: ChildProcess, output: () => string, signal: AbortSignal, id: string): Execution { const promise = new Promise<Result>((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve({ summary: output().trim() || 'Command completed' }) : reject(new Error(output().trim() || `Command exited ${code}`))); signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true }); }); return { id, promise, cancel: () => { child.kill('SIGTERM'); } }; }
 export function buildCodexArgs(route: Pick<RoutingDecision, 'provider' | 'model'> & Partial<Pick<RoutingDecision, 'profile' | 'reasoning' | 'cwd'>>, input: string): readonly string[] {
   const args: string[] = ['exec', '--json'];
@@ -195,17 +195,41 @@ export class ChatGptAdapter implements WorkerAdapter {
   private readonly harness: string;
   private readonly runner?: ChatGptAgentRunner;
   private readonly deleted = new Set<string>();
+  private readonly routes = new Map<string, RoutingDecision>();
   constructor(options: ChatGptAdapterOptions = {}) { this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT; this.harness = options.harness ?? process.env.AGENTS_RELAY_AGENT_HARNESS ?? 'codex'; this.runner = options.agentRunner; }
   private async run(request: BrowserWorkerRequest, route: RoutingDecision, signal: AbortSignal): Promise<BrowserWorkerResponse> {
     const definition = await loadBrowserWorkerDefinition(this.agentPath);
     if (signal.aborted) throw new Error('browser-worker execution aborted');
     const run = (this.runner ?? defaultChatGptAgentRunner(this.harness))(definition, request, route, signal);
-    return parseBrowserWorkerResponse(await run.promise);
+    const output = await new Promise<string>((resolve, reject) => {
+      const abort = (): void => { run.cancel(); reject(new Error('browser-worker execution aborted')); };
+      if (signal.aborted) { abort(); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      run.promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+    });
+    return parseBrowserWorkerResponse(output);
   }
-  async deleteThread(threadId: string): Promise<void> {
+  private project(task: Pick<Task, 'projectName' | 'routing'> | undefined, route: RoutingDecision): { name: string; id?: string } {
+    return { name: task?.projectName ?? route.projectId ?? 'default', id: route.projectId };
+  }
+  private exposeThread(execution: Execution, expected: string | null, response: BrowserWorkerResponse): string {
+    const threadId = typeof response.thread_id === 'string' && response.thread_id.trim() ? response.thread_id : undefined;
+    if (!threadId) throw new Error('browser-worker response omitted thread_id');
+    if (expected && threadId !== expected) throw new Error('browser-worker returned a different thread_id');
+    execution.threadId = threadId;
+    execution.onThreadStarted?.(threadId);
+    return threadId;
+  }
+  private validateOperation(response: BrowserWorkerResponse, operation: BrowserWorkerOperation): void {
+    if (response.operation !== operation) throw new Error(`browser-worker response operation mismatch: expected ${operation}, got ${response.operation}`);
+    if (response.status === 'blocked' || response.status === 'failed') throw browserWorkerError(response);
+  }
+  async deleteThread(threadId: string, task?: Pick<Task, 'projectName' | 'routing'>): Promise<void> {
     if (this.deleted.has(threadId)) return;
-    const route: RoutingDecision = { provider: 'openai', model: 'gpt-5', decidedBy: 'adapter', decidedAt: new Date().toISOString() };
-    const response = await this.run({ operation: 'delete', thread_id: threadId, project: { name: 'unknown' }, state: null }, route, new AbortController().signal);
+    const route = task?.routing ?? this.routes.get(threadId);
+    if (!route) throw new Error(`Task routing metadata is required to delete browser-worker thread ${threadId}`);
+    const response = await this.run({ operation: 'delete', thread_id: threadId, project: this.project(task, route), state: null }, route, new AbortController().signal);
+    if (response.operation !== 'delete') throw new Error(`browser-worker response operation mismatch: expected delete, got ${response.operation}`);
     if (response.thread_id && response.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
     if (response.status !== 'deleted' && response.status !== 'not_found') throw browserWorkerError(response);
     this.deleted.add(threadId);
@@ -217,16 +241,38 @@ export class ChatGptAdapter implements WorkerAdapter {
     const abort = (): void => controller.abort();
     if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
     const execution: Execution = { id: randomUUID(), promise: Promise.resolve({ summary: '' }), cancel: abort };
+    const timeout = setTimeout(abort, Math.max(1, task.timeoutMs));
     execution.promise = (async (): Promise<Result> => {
-      const threadId = task.threadId;
-      const request: BrowserWorkerRequest = {
-        operation: threadId ? 'continue' : 'create', thread_id: threadId, project: { name: task.projectName ?? route.projectId ?? 'default', id: route.projectId }, prompt: task.input,
-        thinking_level: thinkingLevel(route.reasoning), state: null,
-      };
-      const response = await this.run(request, route, controller.signal);
-      if (response.thread_id) { execution.threadId = response.thread_id; execution.onThreadStarted?.(response.thread_id); }
-      if (response.status !== 'completed' || response.operation !== 'result' || response.result?.verified !== true || !response.result.message_id || !response.result.text?.trim()) throw browserWorkerError(response);
-      return { summary: response.result.text.trim(), data: { threadId: response.thread_id, messageId: response.result.message_id, verified: true, provider: route.provider, model: route.model } };
+      try {
+        const expectedThreadId = task.threadId;
+        const hasPrompt = Boolean(task.input.trim());
+        const operation: BrowserWorkerOperation = expectedThreadId ? (hasPrompt ? 'continue' : 'resume') : 'create';
+        const request: BrowserWorkerRequest = {
+          operation, thread_id: expectedThreadId, project: this.project(task, route), prompt: hasPrompt ? task.input : undefined,
+          thinking_level: thinkingLevel(route.reasoning), state: null,
+        };
+        const response = await this.run(request, route, controller.signal);
+        const threadId = this.exposeThread(execution, expectedThreadId, response);
+        this.routes.set(threadId, route);
+        this.validateOperation(response, operation);
+        let status = response.status;
+        while (status !== 'awaiting_result' && status !== 'completed') {
+          if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 25);
+            controller.signal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('browser-worker execution aborted')); }, { once: true });
+          });
+          const statusResponse = await this.run({ operation: 'status', thread_id: threadId, project: this.project(task, route), state: null }, route, controller.signal);
+          if (statusResponse.thread_id && statusResponse.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
+          this.validateOperation(statusResponse, 'status');
+          status = statusResponse.status;
+        }
+        const resultResponse = await this.run({ operation: 'result', thread_id: threadId, project: this.project(task, route), state: null }, route, controller.signal);
+        if (resultResponse.thread_id && resultResponse.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
+        this.validateOperation(resultResponse, 'result');
+        if (resultResponse.status !== 'completed' || resultResponse.result?.verified !== true || !resultResponse.result.message_id || !resultResponse.result.text?.trim()) throw browserWorkerError(resultResponse);
+        return { summary: resultResponse.result.text.trim(), data: { threadId, messageId: resultResponse.result.message_id, verified: true, provider: route.provider, model: route.model } };
+      } finally { clearTimeout(timeout); }
     })();
     return execution;
   }
