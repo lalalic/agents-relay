@@ -1,0 +1,36 @@
+{
+  "generatedAt": "2026-09-19T16:48:57.305Z",
+  "model": "typesafe/jev",
+  "transport": "Cloudflare Workers AI REST",
+  "repetitions": 1,
+  "confidenceThreshold": 0.75,
+  "currentPolicy": {
+    "cases": 13,
+    "exactAgreementWithReasoningBaseline": 0.46153846153846156,
+    "downstreamQualityProxy": {
+      "definition": "fraction of succeeded durable tasks whose current route agrees with the reasoning baseline; descriptive only because outcome is heavily confounded by implementation/tooling",
+      "succeededCases": 9,
+      "agreementAmongSucceeded": 0.4444444444444444
+    }
+  },
+  "jev": {
+    "status": "blocked_billing",
+    "reason": "Authenticated Cloudflare dashboard-session smoke request reached typesafe/jev but returned HTTP 402 code 2021: Insufficient balance; add money to your gateway or use BYOK.",
+    "connectivityVerified": true,
+    "httpStatus": 402,
+    "cloudflareErrorCode": 2021,
+    "successfulRuns": 0,
+    "failedRuns": 1,
+    "results": [],
+    "metricsAvailable": false,
+    "accountMutationPerformed": false
+  },
+  "baseline": {
+    "model": "GPT-5.6 Sol",
+    "method": "independent fixture review",
+    "reviewedAt": "2026-09-19",
+    "storedLabelAgreement": 1,
+    "cases": 13,
+    "note": "Judgment reference, not ground truth."
+  }
+}

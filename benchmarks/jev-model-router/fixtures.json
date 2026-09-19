@@ -1,0 +1,262 @@
+[
+  {
+    "id": "pr23-jev-model-router-benchmark",
+    "source": "PR #23 task jev-model-router-benchmark",
+    "task": "Benchmark Cloudflare Workers AI typesafe/jev for model-router decisions using representative real Agents Relay/model-router cases. Keep deterministic eligibility constraints fixed. Compare Jev typed decisions with current model-router decisions and a strong reasoning-model baseline.",
+    "requirements": [
+      "research",
+      "benchmark",
+      "calibration",
+      "cost-latency analysis"
+    ],
+    "risk": "medium",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "reasoning_high",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "running"
+  },
+  {
+    "id": "pr9-registry-scope-contract",
+    "source": "PR #9 task registry-scope-contract",
+    "task": "Design and implement a shared durable agent registry reusable across jobs, with migration/backward compatibility, repository/global lookup semantics, trust boundaries, and focused tests.",
+    "requirements": [
+      "architecture",
+      "coding",
+      "migration",
+      "security",
+      "testing"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "balanced_medium",
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "thinking_standard",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-agent-cli-surface",
+    "source": "PR #9 task agent-cli-surface",
+    "task": "Implement a first-class agent CLI namespace while preserving backward compatibility, exposing filters coherently, adding validation and tests.",
+    "requirements": [
+      "coding",
+      "cli",
+      "compatibility",
+      "testing"
+    ],
+    "risk": "medium",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "balanced_medium",
+    "reasoningBaseline": "balanced_medium",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-discovery-routing-policy",
+    "source": "PR #9 task discovery-routing-policy",
+    "task": "Complete discovery/routing policy with hard filters, evidence ranking, controlled exploration, explainability, and tests.",
+    "requirements": [
+      "routing-policy",
+      "reasoning",
+      "coding",
+      "testing"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "balanced_medium",
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "balanced_medium",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-registered-agent-dispatch",
+    "source": "PR #9 task registered-agent-dispatch",
+    "task": "Wire selected registered agents into safe execution dispatch while preserving identity/runtime separation, security constraints, lineage, retries, continuations, and integration tests.",
+    "requirements": [
+      "coding",
+      "security",
+      "runtime",
+      "integration-testing"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "balanced_medium",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-outcome-evidence-loop",
+    "source": "PR #9 task outcome-evidence-loop",
+    "task": "Implement automatic durable evidence updates from task outcomes, avoid double counting retries, persist via the GitHub marker/store model, and add tests.",
+    "requirements": [
+      "coding",
+      "state-model",
+      "idempotency",
+      "testing"
+    ],
+    "risk": "medium",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "balanced_medium",
+    "reasoningBaseline": "balanced_medium",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-capability-evaluation-scores",
+    "source": "PR #9 task capability-evaluation-scores",
+    "task": "Add evidence-derived per-capability evaluation scores with confidence, sample count, freshness/staleness, min-score discovery constraints, persistence, and tests.",
+    "requirements": [
+      "evaluation-design",
+      "statistics",
+      "coding",
+      "testing"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "balanced_medium",
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "balanced_medium",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-end-to-end-dogfood",
+    "source": "PR #9 task end-to-end-dogfood",
+    "task": "Perform end-to-end verification against the design, exercise registry, hard-filter discovery, dispatch, evidence, scoring, retry/recovery, security boundaries, and full tests/build/diff checks.",
+    "requirements": [
+      "review",
+      "integration-testing",
+      "architecture",
+      "security"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "balanced_medium",
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "reasoning_high",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr9-final-objective-review",
+    "source": "PR #9 task final-objective-review",
+    "task": "Review the full PR objective, durable outcomes, diff, main conflicts, architecture, tests, security boundaries, backward compatibility, and merge readiness without modifying code.",
+    "requirements": [
+      "deep-review",
+      "architecture",
+      "security",
+      "conflict-analysis"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "reasoning_high",
+      "thinking_standard"
+    ],
+    "currentRoute": "reasoning_high",
+    "reasoningBaseline": "reasoning_high",
+    "downstreamOutcome": "running"
+  },
+  {
+    "id": "pr29-p0-idempotent-bootstrap",
+    "source": "PR #29 task fix-idempotent-bootstrap-submit",
+    "task": "Reproduce and fix two recurring P0 orchestration reliability bugs in job create and idempotent submit, add regression tests, build, commit, and push.",
+    "requirements": [
+      "debugging",
+      "coding",
+      "idempotency",
+      "github-api",
+      "testing"
+    ],
+    "risk": "high",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "fast_medium",
+    "reasoningBaseline": "balanced_medium",
+    "downstreamOutcome": "cancelled"
+  },
+  {
+    "id": "pr28-workspace-watch",
+    "source": "PR #28 task implement-workspace-wide-watch",
+    "task": "Implement workspace-wide Git repository discovery, aggregate managed jobs, preserve single-repo compatibility, avoid a second database, and add focused tests.",
+    "requirements": [
+      "coding",
+      "repository-discovery",
+      "backward-compatibility",
+      "testing"
+    ],
+    "risk": "medium",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "fast_medium",
+    "reasoningBaseline": "balanced_medium",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr27-remove-adapter-capability-gate",
+    "source": "PR #27 task remove-adapter-capability-gate",
+    "task": "Remove one incorrect reconciler launch-time capability gate, add focused regression tests, preserve other validation, and keep the diff minimal.",
+    "requirements": [
+      "coding",
+      "targeted-fix",
+      "testing"
+    ],
+    "risk": "low",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium"
+    ],
+    "currentRoute": "fast_medium",
+    "reasoningBaseline": "fast_medium",
+    "downstreamOutcome": "succeeded"
+  },
+  {
+    "id": "pr26-dashboard-job-list",
+    "source": "PR #26 task implement-dashboard-job-list",
+    "task": "Fix dashboard job omission root cause, show all uncompleted jobs plus latest completed history, add selected-job refresh, reduce unnecessary GitHub work, and test ordering/refresh behavior.",
+    "requirements": [
+      "coding",
+      "debugging",
+      "frontend",
+      "github-api",
+      "testing"
+    ],
+    "risk": "medium",
+    "eligibleRoutes": [
+      "fast_medium",
+      "balanced_medium",
+      "reasoning_high"
+    ],
+    "currentRoute": "fast_medium",
+    "reasoningBaseline": "balanced_medium",
+    "downstreamOutcome": "cancelled"
+  }
+]
