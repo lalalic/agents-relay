@@ -79,16 +79,7 @@ test('job list uses PR-number title and concise state metadata', () => {
 });
 
 
-test('task input and result preserve whitespace and render markdown safely', () => {
-  assert.match(dashboardHtml, /function markdownField\(label,input\)/);
-  assert.match(dashboardHtml, /function markdownValue\(input\)/);
-  assert.match(dashboardHtml, /markdownField\('Input',task\.input\)/);
-  assert.match(dashboardHtml, /markdownField\('Result',task\.result\?\.summary\|\|'—'\)/);
-  assert.match(dashboardHtml, /white-space:pre-wrap/);
-  assert.match(dashboardHtml, /document\.createElement\('pre'\)/);
-  assert.match(dashboardHtml, /document\.createElement\('strong'\)/);
-  assert.doesNotMatch(dashboardHtml, /innerHTML|document\.write/);
-});
+
 
 test('task details expose ChatGPT thread as chat link instead of raw execution identifiers', () => {
   assert.match(dashboardHtml, /function chatField\(task\)/);
@@ -96,4 +87,12 @@ test('task details expose ChatGPT thread as chat link instead of raw execution i
   assert.match(dashboardHtml, /encodeURIComponent\(task\.threadId\)/);
   assert.match(dashboardHtml, /link\.textContent='Open chat'/);
   assert.doesNotMatch(dashboardHtml, /field\('Execution \/ thread'/);
+});
+
+
+test('task details omit input and result from dashboard', () => {
+  assert.doesNotMatch(dashboardHtml, /markdownField\('Input'/);
+  assert.doesNotMatch(dashboardHtml, /markdownField\('Result'/);
+  assert.doesNotMatch(dashboardHtml, /function markdownValue\(/);
+  assert.doesNotMatch(dashboardHtml, /function inlineMarkdown\(/);
 });
