@@ -26,6 +26,11 @@ class ServiceEventBus implements EventBus {
     this.unsubscribers.add(unsubscribe);
     return async (): Promise<void> => { this.unsubscribers.delete(unsubscribe); await unsubscribe(); };
   }
+  async subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> {
+    const unsubscribe = await this.upstream.subscribeAll(wake);
+    this.unsubscribers.add(unsubscribe);
+    return async (): Promise<void> => { this.unsubscribers.delete(unsubscribe); await unsubscribe(); };
+  }
   async close(): Promise<void> {
     const pending = [...this.unsubscribers].map(unsubscribe => unsubscribe());
     this.unsubscribers.clear(); await Promise.all(pending);

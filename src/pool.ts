@@ -46,7 +46,7 @@ export class RepositoryWorkerPool {
     } finally { this.running = false; }
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
-    return bus.subscribe('*', async event => { if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(); });
+    return bus.subscribeAll(async event => { if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(); });
   }
   webhookWake(bus: EventBus | undefined, deliveryId: string, event: string, action: string | null): void {
     if (bus) void bus.publish(eventFor('repository-pool', 'github', null, 'github.webhook', 'queued', `GitHub webhook ${event}${action ? ':' + action : ''}`, 'orchestrator', { deliveryId, event, action }));

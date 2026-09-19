@@ -112,7 +112,7 @@ test('thread id persists before a failed execution is retried', async () => {
   const finished=await store.load('j');
   assert.equal(launches,2); assert.equal(retriedThreadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].threadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].state,'SUCCEEDED');
 });
-test('event transport failure is advisory', async () => { const t=task('event-fail'); const store=new InMemoryStore(job([t])); const bus={publish:async()=>{throw new Error('nats down');},subscribe:async()=>{throw new Error('nats down');}}; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'still works'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); });
+test('event transport failure is advisory', async () => { const t=task('event-fail'); const store=new InMemoryStore(job([t])); const bus={publish:async()=>{throw new Error('nats down');},subscribe:async()=>{throw new Error('nats down');},subscribeAll:async()=>{throw new Error('nats down');}}; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'still works'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); });
 test('aggregate edge cases and NATS subject safety are explicit', () => { const empty=job(); assert.equal(schedule(empty).state,'OPEN'); const cancelled=job([task('x','CANCELLED')]); assert.equal(schedule(cancelled).state,'CANCELLED'); assert.throws(()=>subjectToken('bad.id'),/Unsafe/); assert.equal(subjectToken('safe_job-1'),'safe_job-1'); });
 test('live task leases do not expire before their timeout', async () => {
   const startedBeforeLaunch=Date.now(); const t=task('long'); t.timeoutMs=500; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
@@ -129,6 +129,31 @@ test('live task leases do not expire before their timeout', async () => {
 });
 test('dashboard uses safe DOM rendering and named live events', () => { assert.equal(dashboardHtml.includes('innerHTML'),false); assert.equal(dashboardHtml.includes("addEventListener('relay'"),true); });
 test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=serveDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
+
+
+test('memory event bus supports explicit all-job subscriptions without weakening subject safety', async () => {
+  const bus=new MemoryEventBus(); const seen=[]; const unsubscribe=await bus.subscribeAll(async event=>{seen.push(event.job_id);});
+  await bus.publish({version:1,event_id:'e1',job_id:'job-a',task_id:'t',parent_task_id:null,type:'job.wake',status:'queued',timestamp:new Date().toISOString(),visibility:'orchestrator',level:'info',message:'wake'});
+  await bus.publish({version:1,event_id:'e2',job_id:'job-b',task_id:'t',parent_task_id:null,type:'job.wake',status:'queued',timestamp:new Date().toISOString(),visibility:'orchestrator',level:'info',message:'wake'});
+  await unsubscribe(); assert.deepEqual(seen,['job-a','job-b']); assert.throws(()=>subjectToken('*'),/Unsafe/);
+});
+
+test('dashboard returns an error without sending success headers first when durable snapshot fails', async () => {
+  const store={load:async()=>{throw new Error('durable unavailable');},saveJob:async()=>{throw new Error('unused');},appendEvent:async()=>{throw new Error('unused');}};
+  const server=serveDashboard(store,0,undefined,10000,'j'); await new Promise(resolve=>server.once('listening',resolve));
+  const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
+  const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,404); assert.match(await response.text(),/durable unavailable/);
+  server.close();
+});
+
+test('dashboard usage failure returns 503 without double-sending headers', async () => {
+  const store=new InMemoryStore(job()); const usageRegistry={snapshot:async()=>{throw new Error('usage unavailable');}};
+  const server=serveDashboard(store,0,undefined,10000,'j',usageRegistry); await new Promise(resolve=>server.once('listening',resolve));
+  const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
+  const response=await fetch(`http://127.0.0.1:${port}/api/usage`); assert.equal(response.status,503); assert.match(await response.text(),/usage unavailable/);
+  server.close();
+});
+
 
 test('managed model worker input includes durable PR context without changing stored task input', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
