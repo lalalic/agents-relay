@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
-import { detectCycles, dependencyReady, extendRetryBudget, schedule } from '../dist/scheduler.js';
+import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTask } from '../dist/scheduler.js';
 import { CodexAdapter } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler, compareTaskPriority } from '../dist/reconciler.js';
@@ -93,6 +93,19 @@ test('CLI record persists completed orchestrator work without pretending it was 
   assert.equal(saved.tasks[0].state, 'SUCCEEDED');
   assert.equal(saved.tasks[0].executionId, 'abc123');
   assert.equal(saved.tasks[0].result.data.commit, 'abc123');
+});
+test('healthy task states clear stale current errors without deleting history events', () => {
+  for (const state of ['READY','RUNNING','SUCCEEDED']) {
+    const current=task('state-'+state,'FAILED'); current.error='old failure';
+    if (state==='RUNNING') current.state='READY';
+    if (state==='SUCCEEDED') current.state='RUNNING';
+    transitionTask(current,state);
+    assert.equal(current.error,null);
+  }
+  const queued=task('queued-with-old-error','QUEUED'); queued.error='stale dependency error';
+  const scheduled=schedule(job([queued]));
+  assert.equal(scheduled.tasks[0].state,'READY');
+  assert.equal(scheduled.tasks[0].error,null);
 });
 test('manual retry budget advances in three-attempt windows without resetting history', () => {
   assert.equal(extendRetryBudget({attempt:3,maxAttempts:3}),6);

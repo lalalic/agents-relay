@@ -13,7 +13,7 @@ export function schedule(job: Job): Job {
     return job;
   }
   const map = new Map(job.tasks.map(t => [t.id, t]));
-  for (const task of job.tasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) { assertTaskTransition(task.state, 'READY'); task.state = 'READY'; task.updatedAt = new Date().toISOString(); } }
+  for (const task of job.tasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'READY'); }
   const active = job.tasks.some(t => ['READY', 'RUNNING'].includes(t.state)); const blocked = job.tasks.some(t => t.state === 'BLOCKED'); const waiting = job.tasks.some(t => ['QUEUED', 'WAITING'].includes(t.state)); const failed = job.tasks.some(t => t.state === 'FAILED'); const cancelled = job.tasks.every(t => t.state === 'CANCELLED');
   const next = failed ? 'FAILED' : active ? 'RUNNING' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
   if (job.state !== next) { assertJobTransition(job.state, next); job.state = next; job.updatedAt = new Date().toISOString(); }
@@ -24,4 +24,4 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
-export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; task.updatedAt = new Date().toISOString(); }
+export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['READY', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
