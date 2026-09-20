@@ -20,6 +20,7 @@ export async function aggregateManagedGitHubJobs(client: GitHubClient, repositor
 export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
+  private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   constructor(
     private readonly client: GitHubClient,
     repository: string | readonly string[],
@@ -29,6 +30,7 @@ export class RepositoryWorkerPool {
   ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
+    for (const item of discovered) this.jobTargets.set(item.job.id, { repository: item.job.repository, prNumber: item.job.prNumber });
     // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
     // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
     for (const job of terminalManagedJobs(discovered)) {
@@ -61,11 +63,25 @@ export class RepositoryWorkerPool {
   }
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (!this.repositories.includes(repository)) return;
+    this.jobTargets.set(jobId, { repository, prNumber });
     const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
     await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
   }
+  private async handleTerminalEvent(event: import('./types.js').EventRecord): Promise<void> {
+    const target = this.jobTargets.get(event.job_id);
+    if (!target || !this.repositories.includes(target.repository)) {
+      process.stderr.write(`warning: terminal event target unknown for job ${event.job_id}\n`);
+      return;
+    }
+    const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
+    await this.makeReconciler(store, Math.max(1, this.concurrency)).handleEvent(event);
+  }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
+      if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
+        await this.handleTerminalEvent(event);
+        return;
+      }
       if (event.type === 'job.wake' || event.type === 'github.webhook') {
         const repository = typeof event.data?.repository === 'string' ? event.data.repository : '';
         const prNumber = Number(event.data?.prNumber);

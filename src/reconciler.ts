@@ -54,16 +54,17 @@ export class Reconciler {
   private readonly continuationLive = new Set<string>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
+  async handleEvent(event: EventRecord): Promise<void> {
+    if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
+      await this.applyTerminalEvent(event);
+      return;
+    }
+    if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(event.job_id);
+  }
   async watch(jobId: string): Promise<() => Promise<void>> {
     if (!this.options.eventBus) return async () => {};
     try {
-      return await this.options.eventBus.subscribe(jobId, async event => {
-        if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
-          await this.applyTerminalEvent(event);
-          return;
-        }
-        if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(jobId);
-      });
+      return await this.options.eventBus.subscribe(jobId, event => this.handleEvent(event));
     } catch (error) {
       await this.reportTransportFailure(error);
       return async () => {};
