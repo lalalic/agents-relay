@@ -163,7 +163,7 @@ export class Reconciler {
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item)).map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code and do not merge.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item)).map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
     job.state = 'RUNNING'; job.updatedAt = now;
@@ -202,6 +202,10 @@ export class Reconciler {
     }
     job.updatedAt = job.review.updatedAt;
     await this.store.saveJob(job);
+    if (outcome === 'approved' && job.autoMerge !== false && this.store.mergePullRequest) {
+      await this.store.mergePullRequest(headSha);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'review.merged', 'succeeded', 'Reviewer-approved PR #' + job.prNumber + ' merged', 'user', { headSha, autoMerge: true }, { agent: 'reviewer', component: 'agents-relay' }));
+    }
   }
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     for (const task of job.tasks.filter(item => item.state === 'RUNNING')) {

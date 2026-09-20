@@ -40,7 +40,7 @@ export type Task = {
   reviewHeadSha?: string;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
-export type Job = { id: string; title: string; objective?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; review?: ReviewState; headSha?: string; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { id: string; title: string; objective?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; autoMerge?: boolean; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; review?: ReviewState; headSha?: string; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

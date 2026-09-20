@@ -680,6 +680,21 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('approved review auto-merges by default and respects opt-out', async () => {
+  for (const [autoMerge, expected] of [[undefined,1],[false,0]]) {
+    const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-auto',autoMerge};
+    const store=new InMemoryStore(reviewJob); let merges=0; let mergedSha=null;
+    store.mergePullRequest=async sha=>{ merges+=1; mergedSha=sha; };
+    const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+    await reconciler.reconcile('j');
+    const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+    assert.ok(created);
+    await reconciler.handleEvent(eventFor('j',created.id,null,'review.approved','succeeded','approved','orchestrator',{review:{headSha:'sha-auto',summary:'approved',blockingFindings:[]}}));
+    assert.equal(merges,expected);
+    if (expected) assert.equal(mergedSha,'sha-auto');
+  }
+});
+
 test('review outcomes persist durably and old SHA evidence is ignored after head changes', async () => {
   const reviewJob = { ...job([task('work', 'SUCCEEDED')]), headSha: 'sha-review-1' };
   const store = new InMemoryStore(reviewJob);
