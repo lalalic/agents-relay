@@ -3,12 +3,56 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildCodexArgs, CodexAdapter, ChatGptAdapter } from '../dist/adapters.js';
+import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 
 const route = { provider: 'openai', model: 'gpt-5', reasoning: 'high' };
 const task = (overrides = {}) => ({ id: 'chat-task', input: 'do the work', projectName: 'neo', threadId: null, timeoutMs: 1000, routing: route, ...overrides });
 async function fixture() { const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-')); const agentPath = join(root, 'browser-worker.agent.md'); await writeFile(agentPath, '# fake browser worker'); return { root, agentPath }; }
 function fakeRunner(responses, requests = []) { return (_definition, request, _route, signal) => { requests.push(request); let cancel; const promise = new Promise((resolve, reject) => { cancel = () => reject(new Error('cancelled')); if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true }); queueMicrotask(() => { const response = responses.shift(); if (response instanceof Error) reject(response); else resolve(JSON.stringify(response)); }); }); return { promise, cancel }; }; }
+
+test('ChatGptAdapter default runner invokes packaged Browser Harness drivers without Codex or MacBridge', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-direct-browser-worker-'));
+  try {
+    const agents = join(root, 'agents'); const scripts = join(root, 'scripts');
+    await import('node:fs/promises').then(({mkdir}) => Promise.all([mkdir(agents,{recursive:true}),mkdir(scripts,{recursive:true})]));
+    const agentPath = join(agents, 'browser-worker.agent.md'); await writeFile(agentPath, '# direct browser worker');
+    await writeFile(join(scripts,'create_bh.py'), `import json\nprint(json.dumps({"thread_id":"direct-thread","prompt_sent":True}))\n`);
+    await writeFile(join(scripts,'operate_bh.py'), `import json,sys\nop=sys.argv[1]\nif op=="status": print(json.dumps({"thread_id":"direct-thread","status":"awaiting_result"}))\nelif op=="result": print(json.dumps({"thread_id":"direct-thread","status":"completed","message_id":"m-direct","text":"browser harness result"}))\nelif op=="delete": print(json.dumps({"thread_id":"direct-thread","outcome":"deleted","verified":True}))\nelse: print(json.dumps({"thread_id":"direct-thread","status":"awaiting_result"}))\n`);
+    const previous = process.env.AGENTS_RELAY_AGENT_HARNESS; process.env.AGENTS_RELAY_AGENT_HARNESS = '/definitely/not/codex';
+    try {
+      const adapter = new ChatGptAdapter({ agentPath });
+      const execution = adapter.launch(task(), new AbortController().signal);
+      const result = await execution.promise;
+      assert.equal(execution.threadId, 'direct-thread'); assert.equal(result.summary, 'browser harness result'); assert.equal(result.data.verified, true);
+    } finally { if (previous === undefined) delete process.env.AGENTS_RELAY_AGENT_HARNESS; else process.env.AGENTS_RELAY_AGENT_HARNESS = previous; }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('ChatGptAdapter wraps a pre-thread token failure as a launch failure', async () => {
+  const { root } = await fixture();
+  try {
+    const tokenError = new Error("ENOENT: no such file or directory, open '/Users/me/Library/Application Support/MacDeveloperBridge/http-token'");
+    const adapter = new ChatGptAdapter({ agentPath: join(root, 'unused.md'), agentRunner: () => ({ promise: Promise.reject(tokenError), cancel() {} }) });
+    const execution = adapter.launch(task(), new AbortController().signal);
+    await assert.rejects(execution.promise, LaunchFailure);
+    assert.equal(execution.threadId, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('ChatGptAdapter keeps existing-thread failures retryable through the durable thread id', async () => {
+  const { root, agentPath } = await fixture();
+  try {
+    const tokenError = new Error("ENOENT: no such file or directory, open '/Users/me/Library/Application Support/MacDeveloperBridge/http-token'");
+    const adapter = new ChatGptAdapter({ agentPath, agentRunner: () => ({ promise: Promise.reject(tokenError), cancel() {} }) });
+    const execution = adapter.launch(task({ threadId: 'persisted-thread', input: '' }), new AbortController().signal);
+    await assert.rejects(execution.promise, error => {
+      assert.ok(!(error instanceof LaunchFailure));
+      assert.match(error.message, /http-token/);
+      return true;
+    });
+    assert.equal(execution.threadId, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('buildCodexArgs applies provider, model, reasoning, cwd, and profile in order', () => { assert.deepEqual(buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash', reasoning: 'medium', cwd: '/workspace/project', profile: 'relay' }, 'inspect runtime'), ['exec', '--json', '-p', 'relay', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '-c', 'model_reasoning_effort=medium', '-C', '/workspace/project', '--', 'inspect runtime']); });
 test('buildCodexArgs omits absent optional routing fields', () => { assert.deepEqual(buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash' }, 'prompt'), ['exec', '--json', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '--', 'prompt']); });

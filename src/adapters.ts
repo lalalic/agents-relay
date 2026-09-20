@@ -1,7 +1,8 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { access, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision } from './types.js';
 
@@ -126,15 +127,22 @@ export type AgentRun = { promise: Promise<string>; cancel: () => void };
 export type ChatGptAgentRunner = (definition: string, request: BrowserWorkerRequest, route: RoutingDecision, signal: AbortSignal) => AgentRun;
 export type ChatGptAdapterOptions = { agentPath?: string; harness?: string; agentRunner?: ChatGptAgentRunner };
 
+export class LaunchFailure extends Error {}
+
+type BrowserWorkerRuntime = { definition: string; root: string };
 function browserWorkerCandidates(explicit?: string): string[] {
   const roots = (process.env.AGENTS_RELAY_SKILL_ROOTS ?? '').split(':').filter(Boolean);
-  return [explicit, ...roots, join(homedir(), '.codex', 'skills'), join(homedir(), '.agents', 'skills'), join(process.cwd(), 'skills')]
+  const packageSkills = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills');
+  return [explicit, ...roots, packageSkills, join(homedir(), '.codex', 'skills'), join(homedir(), '.agents', 'skills'), join(process.cwd(), 'skills')]
     .filter((value): value is string => Boolean(value))
     .map(value => value.endsWith('browser-worker.agent.md') ? value : join(value, 'chatgpt-browser-worker', 'agents', 'browser-worker.agent.md'));
 }
-async function loadBrowserWorkerDefinition(explicit?: string): Promise<string> {
+async function loadBrowserWorkerRuntime(explicit?: string): Promise<BrowserWorkerRuntime> {
   for (const candidate of browserWorkerCandidates(explicit)) {
-    try { await access(candidate); return readFile(candidate, 'utf8'); } catch { /* try the next installed skill root */ }
+    try {
+      await access(candidate);
+      return { definition: await readFile(candidate, 'utf8'), root: dirname(dirname(candidate)) };
+    } catch { /* try the next installed skill root */ }
   }
   throw new Error('chatgpt-browser-worker agent definition not found; set AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT');
 }
@@ -152,35 +160,60 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
   if (!response.operation || !response.status) throw new Error('browser-worker response omitted operation or status');
   return response;
 }
-function agentPrompt(definition: string, request: BrowserWorkerRequest): string {
-  return `${definition}\n\nReturn only the machine-readable JSON response required by the agent contract.\nREQUEST_JSON:\n${JSON.stringify(request)}`;
+function parseDriverJson(output: string): Record<string, unknown> {
+  const lines = output.trim().split(/\r?\n/).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const value = JSON.parse(lines[index]) as unknown;
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    } catch { /* browser-harness diagnostics may precede the final JSON observation */ }
+  }
+  throw new Error('browser-worker driver returned no JSON observation');
 }
-function defaultChatGptAgentRunner(harness: string): ChatGptAgentRunner {
-  return (definition, request, route, signal): AgentRun => {
-    const child = spawn(harness, buildCodexArgs(route, agentPrompt(definition, request)), { shell: false, cwd: route.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
+  return (_definition, request, _route, signal): AgentRun => {
+    const scripts = join(root, 'scripts');
+    const project = request.project.name;
+    const args = request.operation === 'create'
+      ? [join(scripts, 'create_bh.py'), '--project', project, '--prompt', request.prompt ?? '', '--thinking-level', request.thinking_level ?? 'default']
+      : [join(scripts, 'operate_bh.py'), request.operation, '--thread-id', request.thread_id ?? '', '--project', project,
+          ...(request.operation === 'continue' ? ['--prompt', request.prompt ?? ''] : [])];
+    const child = spawn('python3', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { stderr = appendTail(stderr, chunk.toString()); });
     const promise = new Promise<string>((resolve, reject) => {
       child.on('error', reject);
-      child.on('close', code => code === 0 ? resolve(parseCodexAgentMessage(stdout) ?? stdout.trim()) : reject(new Error(stderr.trim() || `browser-worker harness exited ${code}`)));
+      child.on('close', code => {
+        if (code !== 0) { reject(new Error(stderr.trim() || stdout.trim() || `browser-worker driver exited ${code}`)); return; }
+        try {
+          const observed = parseDriverJson(stdout);
+          const threadId = typeof observed.thread_id === 'string' ? observed.thread_id : request.thread_id;
+          const response: BrowserWorkerResponse = { operation: request.operation, status: 'running', thread_id: threadId ?? null };
+          if (request.operation === 'create') response.status = 'running';
+          else if (request.operation === 'continue') response.status = 'running';
+          else if (request.operation === 'resume') response.status = typeof observed.status === 'string' ? observed.status : 'awaiting_result';
+          else if (request.operation === 'status') response.status = typeof observed.status === 'string' ? observed.status : 'awaiting_result';
+          else if (request.operation === 'result') {
+            response.status = typeof observed.status === 'string' ? observed.status : 'completed';
+            response.result = {
+              message_id: typeof observed.message_id === 'string' ? observed.message_id : undefined,
+              text: typeof observed.text === 'string' ? observed.text : undefined,
+              verified: Boolean(observed.message_id && observed.text),
+              observed_at: new Date().toISOString()
+            };
+          } else if (request.operation === 'delete') {
+            const outcome = typeof observed.outcome === 'string' ? observed.outcome : '';
+            response.status = outcome === 'deleted' || outcome === 'not_found' ? outcome : 'failed';
+            if (response.status === 'failed') response.error = { code: 'cleanup_not_verified', message: 'browser-worker did not verify thread cleanup', retryable: true };
+          }
+          resolve(JSON.stringify(response));
+        } catch (error) { reject(error); }
+      });
       if (signal.aborted) child.kill('SIGTERM'); else signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     });
     return { promise, cancel: () => { child.kill('SIGTERM'); } };
   };
-}
-function parseCodexAgentMessage(output: string): string | undefined {
-  let final: string | undefined;
-  for (const line of output.split(/\r?\n/)) {
-    try {
-      const value = JSON.parse(line) as Record<string, unknown>;
-      const payload = value.payload as Record<string, unknown> | undefined;
-      const item = value.item as Record<string, unknown> | undefined;
-      if (value.type === 'event_msg' && payload?.type === 'task_complete' && typeof payload.last_agent_message === 'string') final = payload.last_agent_message;
-      if (value.type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') final = item.text;
-    } catch { /* harness diagnostics are not the agent response */ }
-  }
-  return final;
 }
 function browserWorkerError(response: BrowserWorkerResponse): Error {
   const detail = response.error?.message || `browser-worker ${response.status}`;
@@ -192,15 +225,14 @@ export class ChatGptAdapter implements WorkerAdapter {
   readonly id = 'chatgpt/browser-worker';
   readonly capabilities = ['model', 'chatgpt', 'browser-harness'] as const;
   private readonly agentPath?: string;
-  private readonly harness: string;
   private readonly runner?: ChatGptAgentRunner;
   private readonly deleted = new Set<string>();
   private readonly routes = new Map<string, RoutingDecision>();
-  constructor(options: ChatGptAdapterOptions = {}) { this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT; this.harness = options.harness ?? process.env.AGENTS_RELAY_AGENT_HARNESS ?? 'codex'; this.runner = options.agentRunner; }
+  constructor(options: ChatGptAdapterOptions = {}) { this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT; this.runner = options.agentRunner; }
   private async run(request: BrowserWorkerRequest, route: RoutingDecision, signal: AbortSignal): Promise<BrowserWorkerResponse> {
-    const definition = await loadBrowserWorkerDefinition(this.agentPath);
+    const runtime = await loadBrowserWorkerRuntime(this.agentPath);
     if (signal.aborted) throw new Error('browser-worker execution aborted');
-    const run = (this.runner ?? defaultChatGptAgentRunner(this.harness))(definition, request, route, signal);
+    const run = (this.runner ?? directBrowserWorkerRunner(runtime.root))(runtime.definition, request, route, signal);
     const output = await new Promise<string>((resolve, reject) => {
       const abort = (): void => { run.cancel(); reject(new Error('browser-worker execution aborted')); };
       if (signal.aborted) { abort(); return; }
@@ -251,7 +283,13 @@ export class ChatGptAdapter implements WorkerAdapter {
           operation, thread_id: expectedThreadId, project: this.project(task, route), prompt: hasPrompt ? task.input : undefined,
           thinking_level: thinkingLevel(route.reasoning), state: null,
         };
-        const response = await this.run(request, route, controller.signal);
+        let response: BrowserWorkerResponse;
+        try { response = await this.run(request, route, controller.signal); }
+        catch (error) {
+          if (controller.signal.aborted) throw error;
+          if (operation === 'create') throw new LaunchFailure(error instanceof Error ? error.message : String(error));
+          throw error;
+        }
         const threadId = this.exposeThread(execution, expectedThreadId, response);
         this.routes.set(threadId, route);
         this.validateOperation(response, operation);

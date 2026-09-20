@@ -1,0 +1,21 @@
+{
+  "job_id": "neo-chatgpt-browser-worker-20260919",
+  "task_id": "chatgpt-thread-1",
+  "project": {"id": "project-1", "name": "neo"},
+  "create": {
+    "operation": "create",
+    "project": {"name": "neo"},
+    "prompt": "Run the assigned task.",
+    "thinking_level": "high"
+  },
+  "thread": {
+    "thread_id": "thread-1",
+    "conversation_url": "https://chatgpt.com/c/thread-1"
+  },
+  "result": {
+    "thread_id": "thread-1",
+    "status": "completed",
+    "text": "The assigned task is complete.",
+    "message_id": "message-1"
+  }
+}

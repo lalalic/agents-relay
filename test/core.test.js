@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
 import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTask } from '../dist/scheduler.js';
-import { CodexAdapter } from '../dist/adapters.js';
+import { CodexAdapter, LaunchFailure } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler, compareTaskPriority } from '../dist/reconciler.js';
 import { MemoryEventBus, eventFor, subjectToken } from '../dist/events.js';
@@ -210,6 +210,24 @@ test('thread id persists before a failed execution is retried', async () => {
   await reconciler.reconcile('j'); await reconciler.idle();
   const finished=await store.load('j');
   assert.equal(launches,2); assert.equal(retriedThreadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].threadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].state,'SUCCEEDED');
+});
+
+test('pre-thread launch failures fail once instead of amplifying starts and retries', async () => {
+  const t = task('launch-token-failure'); t.adapter = 'chatgpt'; t.maxAttempts = 3;
+  t.capabilities = ['model', 'chatgpt', 'browser-harness']; t.routing = { provider: 'chatgpt', model: 'gpt-5.6-sol' };
+  const store = new InMemoryStore(job([t]));
+  const events = [];
+  let launches = 0;
+  const adapter = { name: 'chatgpt', id: 'fake-chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], launch() {
+    launches += 1;
+    return { id: `launch-${launches}`, promise: Promise.reject(new LaunchFailure('ENOENT: MacDeveloperBridge/http-token')), cancel() {} };
+  }};
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], emit: event => events.push(event) });
+  await reconciler.reconcile('j'); await reconciler.idle();
+  const failed = await store.load('j');
+  assert.equal(launches, 1);
+  assert.equal(failed.tasks[0].state, 'FAILED');
+  assert.deepEqual(events.map(event => event.type), ['task.started', 'task.failed']);
 });
 test('worker completion persistence failure is contained and reported without crashing the reconciler', async () => {
   const t=task('persist-fail');

@@ -95,7 +95,7 @@ npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
   --input "Research the dashboard UX and return implementation guidance."
 ~~~
 
-The adapter discovers `chatgpt-browser-worker/agents/browser-worker.agent.md` from `AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT` first, then `AGENTS_RELAY_SKILL_ROOTS`, `~/.codex/skills`, `~/.agents/skills`, and the local `skills` directory. It runs the definition and one typed JSON request through the configured local harness (`AGENTS_RELAY_AGENT_HARNESS`, default `codex`). Normal consumers do not need a Neo source checkout.
+The adapter discovers the packaged `chatgpt-browser-worker` skill from `AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT` first, then `AGENTS_RELAY_SKILL_ROOTS`, the package `skills` directory, `~/.codex/skills`, `~/.agents/skills`, and the local `skills` directory. It invokes that skill's Browser Harness drivers directly; it does not launch Codex, MacDeveloperBridge, or a ChatGPT API transport. Normal consumers do not need a Neo source checkout.
 
 GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.
 

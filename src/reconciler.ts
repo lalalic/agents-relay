@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, Priority } from './types.js';
 import { schedule, transitionTask } from './scheduler.js';
-import { Execution, WorkerAdapter } from './adapters.js';
+import { Execution, LaunchFailure, WorkerAdapter } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
 import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
@@ -124,7 +124,7 @@ export class Reconciler {
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
     const controller = new AbortController(); let execution: Execution;
     const workerTask = { ...task, input: managedWorkerInput(job, task) };
-    try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error)); return; }
+    try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error), { retryable: false }); return; }
     // A worker may reject before durable execution metadata finishes saving. Attach a guard immediately so Node never treats that race as an unhandled rejection; the durable completion handler below still records the outcome.
     void execution.promise.catch(() => undefined);
     task.executionId = execution.id; await this.store.saveTask(task);
@@ -138,7 +138,7 @@ export class Reconciler {
     this.live.set(task.id, { taskId: task.id, execution, controller, timer });
     this.detach(execution.promise.then(
       async result => { await threadPersistence; await this.finish(job.id, task.id, execution.id, result, null); },
-      async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error)); },
+      async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error), { retryable: !(error instanceof LaunchFailure) }); },
     ), job.id, task.id, 'worker completion');
   }
   private async launchPlanner(job: Job, task: Task): Promise<void> {
@@ -186,12 +186,12 @@ export class Reconciler {
     return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter ?? 'shell', input: spec.input, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
   }
   private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; task.threadDeletedAt = null; task.threadCleanupError = null; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
-  private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null): Promise<void> {
+  private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null, options: { retryable?: boolean } = {}): Promise<void> {
     const live = this.live.get(taskId); if (live?.execution.id === executionId) { clearTimeout(live.timer); this.live.delete(taskId); }
     const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (!task || task.executionId !== executionId) return;
     if (task.state === 'CANCELLED') { await this.store.saveTask(task); return; }
     if (error === null) { task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed`)); await this.deliverContinuation(job, task); }
-    else { task.error = error; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'task.failed' : 'task.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Task ${task.id}: ${error}`, task.state === 'FAILED' ? 'user' : 'orchestrator')); }
+    else { const retryable = options.retryable !== false && task.attempt < task.maxAttempts; task.error = error; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, retryable ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'task.failed' : 'task.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Task ${task.id}: ${error}`, task.state === 'FAILED' ? 'user' : 'orchestrator')); }
     this.detach(this.reconcile(jobId), jobId, task.id, 'worker follow-up reconciliation');
   }
   private async cleanupThreads(job: Job): Promise<void> {
