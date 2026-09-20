@@ -63,6 +63,8 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'create', '--help'], 'Create or reuse an open PR'],
     ['dist/cli.js', ['job', 'adopt', '--help'], 'Adopt an existing PR'],
     ['dist/cli.js', ['job', 'repair', '--help'], 'Repair duplicate durable markers'],
+    ['dist/cli.js', ['task', '--help'], 'npx agents-relay task update'],
+    ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable task fields'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
     ['dist/cli.js', ['submit', '--help'], 'Queue a task for a managed job'],
     ['dist/cli.js', ['record', '--help'], 'Backfill work completed outside the relay'],

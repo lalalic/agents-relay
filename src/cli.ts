@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget } from './scheduler.js';
-const usage = 'agents-relay <job|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job|task|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -27,6 +27,7 @@ Usage:
 
 Commands:
   job create|adopt|repair  Create or repair a durable GitHub-backed job
+  task update              Update mutable durable task fields in place
   init                     Create a local demo job or initialize a GitHub job
   submit                   Queue a task for a managed job
   record                   Backfill a completed task into durable history
@@ -79,6 +80,21 @@ Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
 
 Example:
   npx agents-relay job repair --repo OWNER/REPO --pr 12 --id job-12`,
+  task: `Manage a durable task.
+
+Usage:
+  npx agents-relay task update [options]
+
+Actions:
+  update  Update mutable task fields without changing task identity/history`,
+  'task update': `Update mutable durable task fields in place.
+
+Required: --task-id ID and the normal job storage options.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project.
+Use --clear-routing to remove routing metadata. A model update requires --model; provider defaults to the existing provider or openai.
+
+Example:
+  npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
   submit: `Queue a task for a managed job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
@@ -148,6 +164,7 @@ Example:
 
 export function helpText(command?: string, action?: string): string {
   if (command === 'job') return action ? help[`job ${action}` as keyof typeof help] ?? help.job : help.job;
+  if (command === 'task') return action ? help[`task ${action}` as keyof typeof help] ?? help.task : help.task;
   return command ? help[command as keyof typeof help] ?? help.root : help.root;
 }
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
@@ -171,6 +188,8 @@ class ServiceEventBus implements EventBus {
   }
 }
 function arg(args: string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
+function hasArg(args: string[], name: string): boolean { return args.includes(name); }
+function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
 function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
 function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
@@ -209,6 +228,54 @@ export async function ensureManagedGitHubJob(
   if (!job.title && pr.title) job.title = pr.title;
   await store.saveJob(job);
   return { job: await store.load(options.id), pr };
+}
+
+async function runTaskCommand(action: string, args: string[]): Promise<void> {
+  if (action !== 'update') throw new Error(usage);
+  const { store, job, localFile } = await storeFor(args);
+  const id = arg(args, '--task-id');
+  if (!id) throw new Error('task update requires --task-id');
+  const task = job.tasks.find(item => item.id === id);
+  if (!task) throw new Error(`Task ${id} not found`);
+  if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
+
+  if (hasArg(args, '--adapter')) {
+    const adapter = arg(args, '--adapter') as AdapterName;
+    if (!['shell', 'codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('--adapter must be shell, codex, chatgpt, or orchestrator');
+    task.adapter = adapter;
+  }
+  if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
+  if (hasArg(args, '--input')) task.input = arg(args, '--input');
+  if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
+  if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
+  if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null;
+  if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean);
+  if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);
+  task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs);
+  task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
+  if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
+
+  const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
+  if (args.includes('--clear-routing')) task.routing = undefined;
+  else if (routingFlags.some(flag => hasArg(args, flag))) {
+    const current = task.routing;
+    const model = hasArg(args, '--model') ? arg(args, '--model') : current?.model;
+    if (!model) throw new Error('task routing update requires --model when no existing routing is present');
+    task.routing = {
+      provider: hasArg(args, '--provider') ? arg(args, '--provider') : current?.provider ?? 'openai',
+      model,
+      profile: hasArg(args, '--profile') ? arg(args, '--profile') || undefined : current?.profile,
+      reasoning: hasArg(args, '--reasoning') ? arg(args, '--reasoning') || undefined : current?.reasoning,
+      cwd: hasArg(args, '--cwd') ? arg(args, '--cwd') || undefined : current?.cwd,
+      projectId: hasArg(args, '--chatgpt-project') ? arg(args, '--chatgpt-project') || undefined : current?.projectId,
+      decidedBy: 'cli:update',
+      decidedAt: new Date().toISOString()
+    };
+  }
+  task.updatedAt = new Date().toISOString();
+  await store.saveTask(task);
+  await saveLocal(localFile, job);
+  console.log(JSON.stringify(task, null, 2));
 }
 
 async function runJobCommand(action: string, args: string[]): Promise<void> {
@@ -296,8 +363,9 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === '--help' || command === '-h') { console.log(helpText()); return; }
-  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' ? args[0] : undefined)); return; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' ? args[0] : undefined)); return; }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
+  if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
