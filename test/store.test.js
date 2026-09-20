@@ -247,6 +247,13 @@ test('dashboard keeps every unfinished job and only the latest ten completed job
   assert.equal(result.some(item => item.job.id === 'job-10'), false);
 });
 
+test('dashboard terminal history uses latest durable activity for discovery ordering', () => {
+  const overview = (id, updatedAt, mergedAt) => ({ job: { ...job(id), state: 'COMPLETED', updatedAt, prNumber: Number(id.replace('job-', '')) }, githubState: 'MERGED', draft: false, mergedAt, closedAt: null });
+  const items = Array.from({ length: 10 }, (_, index) => overview(`job-${index + 1}`, `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`, `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`));
+  items.push(overview('job-44', '2026-02-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'));
+  assert.deepEqual(dashboardManagedJobs(items).slice(0, 1).map(item => item.job.id), ['job-44']);
+});
+
 test('managed job adoption initializes an existing PR with zero comments', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
