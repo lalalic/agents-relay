@@ -693,6 +693,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'approved', blockingFindings: [], evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'approved');
   assert.equal((await store.load('j')).review?.evidence?.data?.review?.summary, 'approved');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'SUCCEEDED');
   const changed = await store.load('j');
   changed.headSha = 'sha-review-2';
   await store.saveJob(changed);

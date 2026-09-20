@@ -191,6 +191,15 @@ export class Reconciler {
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
     const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
+    if (outcome !== 'started') {
+      task.state = 'SUCCEEDED';
+      task.result = evidence;
+      task.error = null;
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.updatedAt = job.review.updatedAt;
+      await this.store.saveTask(task);
+    }
     job.updatedAt = job.review.updatedAt;
     await this.store.saveJob(job);
   }
