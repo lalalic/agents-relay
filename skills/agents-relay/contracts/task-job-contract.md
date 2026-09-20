@@ -17,11 +17,7 @@ Every worker task has one of three story sizes:
 
 Relay derives the overall execution timeout from `storySize`. If `routing.reasoning` is `high`, Relay doubles the overall execution timeout. Other reasoning levels do not change it.
 
-For ChatGPT Browser Worker tasks, Relay derives start-ack timeout from the effective overall timeout:
-
-`startAckTimeout = clamp(overallTimeout / 3, 1 minute, 5 minutes)`
-
-This applies equally to normal ChatGPT tasks and reviewer tasks. Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-production interface.
+Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-production interface.
 
 ## Worker lifecycle
 

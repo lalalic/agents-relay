@@ -9,7 +9,7 @@ export type StorySize = 'S' | 'M' | 'L';
 export const STORY_SIZE_TIMEOUT_MS: Record<StorySize, number> = { S: 300000, M: 900000, L: 2700000 };
 export function storySizeTimeoutMs(size: StorySize): number { return STORY_SIZE_TIMEOUT_MS[size]; }
 export function taskOverallTimeoutMs(size: StorySize, reasoning?: string): number { return storySizeTimeoutMs(size) * (reasoning?.toLowerCase() === 'high' ? 2 : 1); }
-export function chatGptStartAckTimeoutMs(overallTimeoutMs: number): number { return Math.min(300000, Math.max(60000, Math.floor(overallTimeoutMs / 3))); }
+export function chatGptStartAckTimeoutMs(overallTimeoutMs: number): number { return Math.min(600000, Math.max(120000, Math.floor(overallTimeoutMs / 3))); }
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
 export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string };
 export type AgentEvidence = {
