@@ -46,6 +46,14 @@ test('events follow selected job/task and can return to all tasks', () => {
   assert.match(dashboardHtml, /eventTaskId=null;rememberSelection\(\);clearEvents\(\)/);
 });
 
+test('events replay canonical history when job or task selection changes', () => {
+  assert.match(dashboardHtml, /loadJSON\('\/api\/events\?'/);
+  assert.match(dashboardHtml, /async function loadEventHistory\(\)/);
+  assert.match(dashboardHtml, /void loadEventHistory\(\)/);
+  assert.match(dashboardHtml, /displayedEventIds\.has\(event\.event_id\)/);
+});
+
+
 test('task attempts display as cumulative count over three-attempt windows', () => {
   assert.match(dashboardHtml, /function attemptBudget\(task\)/);
   assert.match(dashboardHtml, /Math\.max\(max,Math\.ceil\(attempt\/3\)\*3\)/);

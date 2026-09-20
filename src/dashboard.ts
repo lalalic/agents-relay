@@ -1,4 +1,7 @@
 import { createServer, Server } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { UsageRegistry } from './usage.js';
@@ -7,6 +10,7 @@ import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './gith
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
+const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -23,6 +27,26 @@ export function githubPrUrl(repository: unknown, prNumber: unknown): string | nu
   const [, owner, repo] = match;
   if (!isSafeRepositorySegment(owner) || !isSafeRepositorySegment(repo)) return null;
   return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
+}
+
+
+async function eventHistory(jobId: string, taskId: string | null, limit: number): Promise<import('./types.js').EventRecord[]> {
+  const boundedLimit = Math.max(1, Math.min(60, limit));
+  let content = '';
+  try { content = await readFile(EVENTS_HISTORY_FILE, 'utf8'); } catch { return []; }
+  const output: import('./types.js').EventRecord[] = [];
+  const lines = content.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0 && output.length < boundedLimit; index -= 1) {
+    const line = lines[index];
+    if (!line) continue;
+    try {
+      const row = JSON.parse(line) as { event?: import('./types.js').EventRecord };
+      const event = row.event;
+      if (!event || event.job_id !== jobId || (taskId && event.task_id !== taskId)) continue;
+      output.push(event);
+    } catch { /* ignore malformed historical rows */ }
+  }
+  return output;
 }
 
 export const dashboardHtml = `<!doctype html>
@@ -185,6 +209,7 @@ let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
 let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
 let eventTaskId=selectedTaskId;
+const displayedEventIds=new Set();
 
 function value(input){return input===null||input===undefined||input===''?'—':String(input);}
 function text(input){return document.createTextNode(value(input));}
@@ -199,8 +224,9 @@ function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.pa
 function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number.isInteger(prNumber)||prNumber<=0)return null;const parts=repository.split('/');if(parts.length!==2)return null;const [owner,repo]=parts;if(!owner||!repo||owner==='.'||owner==='..'||repo==='.'||repo==='..')return null;if(!/^[A-Za-z0-9-]+$/.test(owner)||!/^[A-Za-z0-9._-]+$/.test(repo))return null;return 'https://github.com/'+owner+'/'+repo+'/pull/'+prNumber;}
 function prField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const url=safePrUrl(job.repository,job.prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+job.prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
 function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Chat')));const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'&&task.threadId){const link=document.createElement('a');link.href='https://chatgpt.com/c/'+encodeURIComponent(task.threadId);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open chat';line.append(link);}else line.append(text('—'));box.append(line);return box;}
-function clearEvents(){eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
-function selectJob(id){selectedJob=id;selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();}
+function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
+async function loadEventHistory(){if(!selectedJob){clearEvents();return;}const params=new URLSearchParams({job:selectedJob,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON('/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
+function selectJob(id){selectedJob=id;selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();void loadEventHistory();}
 function filteredJobs(){return jobs.filter(job=>!selectedRepo||job.repository===selectedRepo);}
 function syncFilters(){
   const repos=[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
@@ -210,7 +236,7 @@ function syncFilters(){
   repoFilter.value=selectedRepo;
 }
 function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button'+(isCompleteUnmerged(job)?' complete-unmerged':'');button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.state),text(job.state)),element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));meta.append(element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
-function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;eventTaskId=task.id;rememberSelection();clearEvents();renderAll();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
+function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;eventTaskId=task.id;rememberSelection();clearEvents();renderAll();void loadEventHistory();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function attemptBudget(task){const attempt=Number(task?.attempt)||0;const max=Number(task?.maxAttempts)||0;if(max>=3&&max%3===0){const effectiveMax=Math.max(max,Math.ceil(attempt/3)*3);return attempt+' / 3×'+(effectiveMax/3);}return attempt+' / '+max;}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('Kind',task.kind||'work'),field('State',task.state),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
@@ -228,9 +254,9 @@ function renderRateLimitStatus(status){
   rateLimitWarning.hidden=false;
 }
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
+async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();void loadEventHistory();connection.textContent='Live · durable state connected';connection.className='status-pill ok';}catch(error){connection.textContent='Error · durable state unavailable';connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
-function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob||eventTaskId&&event.task_id!==eventTaskId)return;const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
+function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob||eventTaskId&&event.task_id!==eventTaskId)return;if(event.event_id&&displayedEventIds.has(event.event_id))return;if(event.event_id)displayedEventIds.add(event.event_id);const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
 function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
 function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
 function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
@@ -239,7 +265,7 @@ async function drawUsage(){try{const overview=await loadJSON('/api/usage');usage
 function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
-eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();});
+eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
@@ -380,6 +406,19 @@ export function serveDashboard(
       }
       return;
     }
+
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/events') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const requestedJobId = url.searchParams.get('job') ?? '';
+      const requestedTaskId = url.searchParams.get('task');
+      const requestedLimit = Number(url.searchParams.get('limit') ?? '60');
+      if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) { res.writeHead(400); res.end('Invalid job id'); return; }
+      const events = await eventHistory(requestedJobId, requestedTaskId, Number.isFinite(requestedLimit) ? requestedLimit : 60);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(events));
+      return;
+    }
+
     if (req.url === '/api/status') {
       const status = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
       res.writeHead(200, { 'content-type': 'application/json' });
