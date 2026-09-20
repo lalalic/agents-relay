@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
 import { executionMode } from '../dist/cli.js';
@@ -48,6 +48,29 @@ test('execution mode and planner result markers round-trip', () => {
 test('planner rejects command-like shell tasks and requires output', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',adapter:'codex'}] }), /output is required/);
+});
+
+test('planner priority normalization preserves canonical values and accepts safe aliases', () => {
+  assert.equal(normalizePlannerPriority('P0', 'next_tasks[0].priority'), 'P0');
+  assert.equal(normalizePlannerPriority('p1', 'next_tasks[0].priority'), 'P1');
+  assert.equal(normalizePlannerPriority(' P2 ', 'next_tasks[0].priority'), 'P2');
+  assert.equal(normalizePlannerPriority(3, 'next_tasks[0].priority'), 'P3');
+  assert.equal(normalizePlannerPriority('0', 'next_tasks[0].priority'), 'P0');
+  assert.throws(() => normalizePlannerPriority('high', 'next_tasks[0].priority'), /priority is invalid.*"high"/);
+  assert.throws(() => normalizePlannerPriority(4, 'next_tasks[0].priority'), /priority is invalid.*4/);
+});
+
+test('planner result with a formatting-only priority variation creates a child task', async () => {
+  const bus = new MemoryEventBus();
+  const store = new InMemoryStore(job());
+  let calls = 0;
+  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{ ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
+  const reconciler = new Reconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
+  const stop = await reconciler.watch('auto');
+  await settle(reconciler, 8);
+  const result = await store.load('auto');
+  assert.equal(result.tasks.find(item => item.id === 'work-1')?.priority, 'P1');
+  await stop();
 });
 
 test('default planner agent loads markdown instructions and returns typed planning JSON', async () => {

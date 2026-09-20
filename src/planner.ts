@@ -38,6 +38,20 @@ function stringArray(value: unknown, field: string, fallback: string[] = []): st
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0)) throw new Error(`Planner ${field} must be an array of non-empty strings`);
   return [...value];
 }
+function rawValue(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value === undefined) return 'undefined';
+  try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
+}
+export function normalizePlannerPriority(value: unknown, field: string): Priority {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 3) return `P${value}` as Priority;
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (/^P[0-3]$/i.test(normalized)) return normalized.toUpperCase() as Priority;
+    if (/^[0-3]$/.test(normalized)) return `P${normalized}` as Priority;
+  }
+  throw new Error(`Planner ${field} is invalid: ${rawValue(value)}`);
+}
 function routing(value: unknown, field: string): RoutingDecision | undefined {
   if (value === undefined || value === null) return undefined;
   const route = record(value);
@@ -64,13 +78,13 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const output = task.output === undefined ? undefined : record(task.output);
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
-    if (task.priority !== undefined && !['P0', 'P1', 'P2', 'P3'].includes(String(task.priority))) throw new Error(`Planner next_tasks[${index}].priority is invalid`);
+    const priority = task.priority === undefined ? undefined : normalizePlannerPriority(task.priority, `next_tasks[${index}].priority`);
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
     const timeoutMs = task.timeoutMs === undefined ? 300000 : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, input: task.input, priority: task.priority as Priority | undefined,
+      id, input: task.input, priority,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
       adapter: adapter as AdapterName, output: output as TaskOutput, routing: routing(task.routing, `next_tasks[${index}].routing`),
