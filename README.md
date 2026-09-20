@@ -17,6 +17,14 @@ npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
 npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1
 ~~~
 
+Mutable queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
+
+~~~sh
+npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id child \
+  --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high \
+  --capabilities model,chatgpt,browser-harness
+~~~
+
 Jobs default to `fixed`, preserving the original submit-and-run behavior. Use
 `--mode autonomous` with `init` or `job create` to make reconciliation own
 planner progress. The durable status JSON and dashboard show the mode. An

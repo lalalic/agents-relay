@@ -68,6 +68,35 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
 });
+test('CLI task update mutates safe durable fields in place and preserves execution history', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-'));
+  const file = join(directory, 'job.json');
+  const existing = task('mutable', 'FAILED');
+  existing.attempt = 2; existing.maxAttempts = 3; existing.error = 'old failure';
+  existing.routing = { provider: 'openai', model: 'gpt-old', reasoning: 'medium', decidedBy: 'cli', decidedAt: 'old' };
+  await writeFile(file, JSON.stringify(job([existing])));
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','update','--file',file,'--task-id','mutable','--adapter','chatgpt','--provider','chatgpt','--model','gpt-5.6-sol','--reasoning','high','--capabilities','model,chatgpt,browser-harness','--max-attempts','4','--timeout','900000'], {cwd:process.cwd()});
+  const [code] = await once(result,'exit');
+  assert.equal(code,0);
+  const saved = JSON.parse(await readFile(file,'utf8')); const updated=saved.tasks[0];
+  assert.equal(updated.id,'mutable'); assert.equal(updated.state,'FAILED'); assert.equal(updated.attempt,2); assert.equal(updated.error,'old failure');
+  assert.equal(updated.adapter,'chatgpt'); assert.equal(updated.routing.provider,'chatgpt'); assert.equal(updated.routing.model,'gpt-5.6-sol'); assert.equal(updated.routing.reasoning,'high');
+  assert.deepEqual(updated.capabilities,['model','chatgpt','browser-harness']); assert.equal(updated.maxAttempts,4); assert.equal(updated.timeoutMs,900000);
+  assert.equal(updated.routing.decidedBy,'cli:update');
+  await rm(directory,{recursive:true,force:true});
+});
+
+test('CLI task update rejects active and terminal execution records', async () => {
+  for (const state of ['RUNNING','SUCCEEDED','CANCELLED']) {
+    const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-guard-')); const file=join(directory,'job.json');
+    await writeFile(file, JSON.stringify(job([task('guard',state)])));
+    const result=spawn(process.execPath,[join('dist','cli.js'),'task','update','--file',file,'--task-id','guard','--model','gpt-5.6-sol'],{cwd:process.cwd()});
+    const [code]=await once(result,'exit'); assert.notEqual(code,0);
+    const saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.tasks[0].routing,undefined);
+    await rm(directory,{recursive:true,force:true});
+  }
+});
+
 test('CLI submit reopens a completed job before publishing new work', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-submit-'));
   const file = join(directory, 'job.json');
