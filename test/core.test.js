@@ -222,6 +222,34 @@ test('model task requires an event bus before launch', async () => {
   assert.match(durable.error,/event bus/);
 });
 
+test('Relay publishes process launched and accepts only a worker-owned post-launch start acknowledgement', async () => {
+  const t=task('chat-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100});
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  assert.equal(events.some(event=>event.type==='task.started'),false);
+  assert.equal(events.some(event=>event.type==='task.process.launched'),true);
+  await bus.publish(eventFor('j','chat-start',null,'task.started','running','relay fake','user',{worker_owned:true},{agent:'relay',component:'agents-relay'}));
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await bus.publish(eventFor('j','chat-start',null,'task.started','running','worker began','user',{worker_owned:true},{agent:'chatgpt'}));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(events.some(event=>event.type==='task.process.async_exited'),true);
+  await bus.publish(eventFor('j','chat-start',null,'task.completed','succeeded','durable output','user',undefined,{agent:'chatgpt'}));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  await stop(); await stopEvents();
+});
+
+test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async () => {
+  const t=task('chat-timeout'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus();
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,50));
+  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
+});
+
 test('adapter runtime exit is not task completion', async () => {
   const t=task('runtime-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});

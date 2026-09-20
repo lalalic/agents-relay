@@ -46,6 +46,15 @@ test('events follow selected job/task and can return to all tasks', () => {
   assert.match(dashboardHtml, /eventTaskId=null;rememberSelection\(\);clearEvents\(\)/);
 });
 
+test('dashboard labels relay and worker lifecycle phases distinctly', () => {
+  assert.match(dashboardHtml, /function eventLabel\(type\)/);
+  assert.match(dashboardHtml, /Process launched/);
+  assert.match(dashboardHtml, /Worker started/);
+  assert.match(dashboardHtml, /Sync process exited/);
+  assert.match(dashboardHtml, /Async process exited/);
+  assert.match(dashboardHtml, /task\.process\.async_exited/);
+});
+
 test('events replay canonical history when job or task selection changes', () => {
   assert.match(dashboardHtml, /loadJSON\('\/api\/events\?'/);
   assert.match(dashboardHtml, /async function loadEventHistory\(\)/);

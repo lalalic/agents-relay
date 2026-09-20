@@ -44,4 +44,4 @@ export class NatsEventBus implements EventBus {
     return async () => { active = false; subscription.unsubscribe(); };
   }
 }
-export function eventFor(jobId: string, taskId: string, parentTaskId: string | null, type: string, status: string, message: string, visibility: string = 'orchestrator', data?: Record<string, unknown>): EventRecord { return { version: 1, event_id: randomUUID(), job_id: jobId, task_id: taskId, parent_task_id: parentTaskId, type, status, timestamp: new Date().toISOString(), visibility, level: status === 'failed' || status === 'blocked' ? 'error' : 'info', message, data }; }
+export function eventFor(jobId: string, taskId: string, parentTaskId: string | null, type: string, status: string, message: string, visibility: string = 'orchestrator', data?: Record<string, unknown>, source?: Record<string, unknown>): EventRecord { return { version: 1, event_id: randomUUID(), job_id: jobId, task_id: taskId, parent_task_id: parentTaskId, type, status, timestamp: new Date().toISOString(), visibility, level: status === 'failed' || status === 'blocked' ? 'error' : 'info', message, data, source }; }

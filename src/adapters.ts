@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, writeFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +12,14 @@ export type Execution = {
   cancel: () => void;
   threadId?: string;
   onThreadStarted?: (threadId: string) => void;
+  launched?: Promise<void>;
 };
+export type LaunchContext = { waitForWorkerStart?: Promise<void> };
 export interface WorkerAdapter {
   readonly name: AdapterName;
   readonly id: string;
   readonly capabilities: readonly string[];
-  launch(task: Task, signal: AbortSignal): Execution;
+  launch(task: Task, signal: AbortSignal, context?: LaunchContext): Execution;
 }
 
 export function buildCodexArgs(
@@ -55,7 +57,7 @@ export class CodexAdapter implements WorkerAdapter {
   readonly capabilities = ['model', 'codex'] as const;
   constructor(private readonly command = 'codex') {}
 
-  launch(task: Task, signal: AbortSignal): Execution {
+  launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
     const child = spawn(this.command, buildCodexArgs(task.routing, task.input), {
       shell: false,
@@ -65,6 +67,10 @@ export class CodexAdapter implements WorkerAdapter {
     let stdoutBuffer = '';
     let stderrTail = '';
     let bufferedThreadId: string | undefined;
+    let launchedResolve!: () => void;
+    let launchedReject!: (error: Error) => void;
+    const launched = new Promise<void>((resolve, reject) => { launchedResolve = resolve; launchedReject = reject; });
+    launched.catch(() => {});
     let execution: Execution;
     const consumeLine = (line: string): void => {
       const threadId = parseThreadStarted(line);
@@ -85,7 +91,8 @@ export class CodexAdapter implements WorkerAdapter {
       stderrTail = appendTail(stderrTail, chunk.toString());
     });
     const promise = new Promise<Result>((resolve, reject) => {
-      child.on('error', reject);
+      child.on('error', error => { launchedReject(error); reject(error); });
+      child.once('spawn', launchedResolve);
       child.on('close', code => {
         if (stdoutBuffer) consumeLine(stdoutBuffer);
         if (code === 0) {
@@ -96,7 +103,7 @@ export class CodexAdapter implements WorkerAdapter {
       });
       signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     });
-    execution = { id: randomUUID(), promise, cancel: () => child.kill('SIGTERM') };
+    execution = { id: randomUUID(), promise, launched, cancel: () => child.kill('SIGTERM') };
     execution.threadId = bufferedThreadId;
     return execution;
   }
@@ -112,7 +119,7 @@ export type BrowserWorkerResponse = {
   verified?: boolean;
   error?: { code?: string; message?: string; retryable?: boolean } | null;
 };
-export type AgentRun = { promise: Promise<string>; cancel: () => void };
+export type AgentRun = { promise: Promise<string>; cancel: () => void; submitted?: Promise<string>; release?: () => void };
 export type ChatGptAgentRunner = (
   definition: string,
   request: BrowserWorkerRequest,
@@ -122,6 +129,7 @@ export type ChatGptAgentRunner = (
 export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner };
 
 export class LaunchFailure extends Error {}
+export class StartAckTimeout extends LaunchFailure {}
 
 type BrowserWorkerRuntime = { definition: string; root: string };
 function browserWorkerCandidates(explicit?: string): string[] {
@@ -170,13 +178,21 @@ function parseDriverJson(output: string): BrowserWorkerResponse {
 }
 function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
   return (_definition, request, _route, signal): AgentRun => {
-    const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt];
+    const releaseFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-release-${randomUUID()}`);
+    const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt, '--release-file', releaseFile];
     for (const file of request.files ?? []) args.push('--file', file);
     const child = spawn('python3', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let submitted = false;
+    let submittedResolve: ((value: string) => void) | undefined;
+    let submittedReject: ((error: Error) => void) | undefined;
+    const submittedPromise = new Promise<string>((resolve, reject) => { submittedResolve = resolve; submittedReject = reject; });
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
+      if (!submitted) {
+        try { const response = parseDriverJson(stdout); submitted = true; submittedResolve?.(JSON.stringify(response)); } catch { /* receipt may be split across chunks */ }
+      }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = appendTail(stderr, chunk.toString());
@@ -185,11 +201,14 @@ function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
       child.on('error', reject);
       child.on('close', code => {
         if (code !== 0) {
-          reject(new Error(stderr.trim() || stdout.trim() || `browser-worker driver exited ${code}`));
+          const error = new Error(stderr.trim() || stdout.trim() || `browser-worker driver exited ${code}`);
+          submittedReject?.(error); reject(error);
           return;
         }
         try {
-          resolve(JSON.stringify(parseDriverJson(stdout)));
+          const result = JSON.stringify(parseDriverJson(stdout));
+          if (!submitted) { submitted = true; submittedResolve?.(result); }
+          resolve(result);
         } catch (error) {
           reject(error);
         }
@@ -197,7 +216,9 @@ function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
       if (signal.aborted) child.kill('SIGTERM');
       else signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     });
-    return { promise, cancel: () => child.kill('SIGTERM') };
+    const release = (): void => { void writeFile(releaseFile, 'release').catch(() => {}); };
+    promise.finally(() => { void unlink(releaseFile).catch(() => {}); }).catch(() => {});
+    return { promise, submitted: submittedPromise, release, cancel: () => { release(); child.kill('SIGTERM'); } };
   };
 }
 function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
@@ -229,7 +250,7 @@ export class ChatGptAdapter implements WorkerAdapter {
     this.runner = options.agentRunner;
   }
 
-  launch(task: Task, signal: AbortSignal): Execution {
+  launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before ChatGPT launch`);
     const route = task.routing;
     const controller = new AbortController();
@@ -241,6 +262,10 @@ export class ChatGptAdapter implements WorkerAdapter {
       promise: Promise.resolve({ summary: '' }),
       cancel: abort,
     };
+    let launchResolve!: () => void;
+    let launchReject!: (error: unknown) => void;
+    execution.launched = new Promise<void>((resolve, reject) => { launchResolve = resolve; launchReject = reject; });
+    execution.launched.catch(() => {});
     execution.promise = (async (): Promise<Result> => {
       const runtime = await loadBrowserWorkerRuntime(this.agentPath);
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
@@ -251,8 +276,12 @@ export class ChatGptAdapter implements WorkerAdapter {
         controller.signal,
       );
       try {
-        const output = await run.promise;
+        const output = await (run.submitted ?? run.promise);
         const response = parseBrowserWorkerResponse(output);
+        launchResolve();
+        if (context.waitForWorkerStart) await context.waitForWorkerStart;
+        run.release?.();
+        if (run.submitted) await run.promise;
         return {
           summary: 'ChatGPT task submitted; terminal task state is event-owned',
           data: {
@@ -262,7 +291,10 @@ export class ChatGptAdapter implements WorkerAdapter {
           },
         };
       } catch (error) {
+        launchReject(error);
+        run.release?.();
         if (controller.signal.aborted) throw error;
+        if (error instanceof StartAckTimeout) throw error;
         throw new LaunchFailure(error instanceof Error ? error.message : String(error));
       }
     })();

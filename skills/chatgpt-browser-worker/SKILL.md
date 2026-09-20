@@ -48,9 +48,12 @@ Neo event contract. Events are execution observability, not a third output mode.
 ## Runtime behavior
 
 The worker is one-shot. It opens an isolated worker-owned ChatGPT tab, submits
-the complete task, verifies that ChatGPT accepted the submission, closes its
-owned tab, and returns. ChatGPT continues the task independently and publishes
-the result through the declared output contract.
+the complete task, verifies that ChatGPT accepted the submission, waits for the
+exact post-submission worker `task.started` acknowledgement, then closes its
+owned tab and returns. ChatGPT continues the task independently and publishes
+the result through the declared output contract. If the acknowledgement does
+not arrive within 60 seconds, close only the owned tab and fail with
+`worker_start_timeout`.
 
 The worker must never interact through a pre-existing user ChatGPT tab.
 Browser details, transient conversation identity, submission verification,
