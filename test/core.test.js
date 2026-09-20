@@ -550,7 +550,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
   assert.equal(reviewer?.adapter, 'chatgpt');
   assert.deepEqual(reviewer?.routing, { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: reviewer?.routing?.decidedAt });
-  assert.match(reviewer?.input ?? '', /publish task\.started.*Emit review\.started/);
+  assert.match(reviewer?.input ?? '', /publish task\.started.*worker_owned=true.*Emit review\.started/);
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
