@@ -77,11 +77,15 @@ Task submission is append-only at creation time, which avoids a single giant mut
 3. The relay wakes and reloads the PR.
 4. Scheduler marks dependency-satisfied tasks ready.
 5. Dispatcher validates routing/capabilities and claims a lease.
-6. Adapter launches the worker.
-7. Worker reports progress over the optional event channel.
-8. Relay persists terminal task state/result back into the task comment.
-9. Relay reconciles dependents and/or resumes the parent continuation.
-10. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
+6. Adapter launches/submits the worker; Relay emits `task.process.launched` only after that succeeds.
+7. The worker emits its own correlated `task.started` after real work begins. Relay never synthesizes this event.
+8. Codex emits `task.process.exited` on synchronous runtime exit; ChatGPT emits `task.process.async_exited` after its submit runtime exits while the remote worker may continue.
+9. Worker reports progress and exactly one terminal task event over the canonical event channel.
+10. Relay persists terminal task state/result back into the task comment.
+11. Relay reconciles dependents and/or resumes the parent continuation.
+12. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
+
+The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Its owned Temporary Chat tab is closed only after that acknowledgement. If none arrives within 60 seconds, Relay closes only the owned tab and records an explicit `worker_start_timeout` start-ack failure; process-exit events remain distinct from task terminal events.
 
 ## Continuations
 

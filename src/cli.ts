@@ -46,7 +46,7 @@ Usage:
   npx agents-relay job <create|adopt|repair> [options]
 
 Actions:
-  create  Find or create an open PR, then persist its job marker
+  create  Find or create an open PR, then persist its job marker; use --start to submit the initial task
   adopt   Attach a job marker to an existing PR
   repair  Repair duplicate markers for the same job
 
@@ -57,6 +57,7 @@ Common options:
   --title TEXT             Job title
   --objective TEXT         Objective for autonomous mode
   --mode fixed|autonomous  Execution mode (default: fixed)
+  --start                   Create/reuse the job and submit its initial task
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1`,
@@ -64,6 +65,8 @@ Example:
 
 Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
 Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous.
+With --start, also require --adapter codex|chatgpt, --model MODEL, --output task-pr|file,
+and --input TEXT. The initial task ID defaults to 'initial'; use --task-id to override it.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective"`,
@@ -230,6 +233,49 @@ export async function ensureManagedGitHubJob(
   return { job: await store.load(options.id), pr };
 }
 
+function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput = false): Task {
+  const model = arg(args, '--model');
+  const adapterValue = arg(args, '--adapter');
+  const adapter = (adapterValue || 'codex') as AdapterName;
+  const outputKind = arg(args, '--output');
+  const outputPath = arg(args, '--output-path');
+  const input = arg(args, '--input');
+  if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('submit adapter must be codex or chatgpt');
+  if (!model) throw new Error('submit requires --model for codex/chatgpt tasks');
+  if (requireInput && !input) throw new Error('job create --start requires --input');
+  if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('submit requires --output task-pr|file');
+  if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
+  const routing: RoutingDecision = { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
+  return {
+    jobId: job.id,
+    id: arg(args, '--task-id', 'initial'),
+    priority: priority(args, job.priority ?? 'P2'),
+    projectName: arg(args, '--project') || undefined,
+    agentName: arg(args, '--agent') || undefined,
+    parentTaskId: arg(args, '--parent') || null,
+    dependencies: arg(args, '--deps').split(',').filter(Boolean),
+    capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
+    adapter,
+    input: input || 'true',
+    output: outputKind === 'file' ? { kind: 'file', path: outputPath } : { kind: 'task_pr' },
+    routing,
+    continuation: continuation(args),
+    continuationDeliveredAt: null,
+    state: 'QUEUED',
+    attempt: 0,
+    maxAttempts: Number(arg(args, '--max-attempts', '3')),
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    executionId: null,
+    threadId: null,
+    result: null,
+    error: null,
+    timeoutMs: Number(arg(args, '--timeout', '300000')),
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (action !== 'update') throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
@@ -283,6 +329,12 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const repo = repository(args);
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed GitHub jobs');
+  const start = hasArg(args, '--start');
+  if (start && action !== 'create') throw new Error('--start is only supported by job create');
+  if (start) {
+    if (!hasArg(args, '--adapter')) throw new Error('job create --start requires --adapter codex|chatgpt');
+    workerTaskFromArgs({ id, title: '', executionMode: 'fixed', prNumber: 0, repository: repo, state: 'OPEN', continuation: null, createdAt: '', updatedAt: '', tasks: [] }, args, new Date().toISOString(), true);
+  }
   const auth = await githubAuthContext(args);
   const client = auth.client;
   const trustedAuthors = auth.trustedAuthors;
@@ -302,7 +354,17 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     base: arg(args, '--base', 'main'),
     body: arg(args, '--body') || undefined
   });
-  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
+  if (start) {
+    const task = workerTaskFromArgs(result.job, args, new Date().toISOString(), true);
+    const existing = result.job.tasks.find(item => item.id === task.id);
+    const store = new GitHubStore(client, repo, result.pr.number, trustedAuthors);
+    await store.appendTask(task);
+    if (!existing) {
+      await publishWake(eventBus(args), result.job, task.id, `Task ${task.id} submitted`);
+      result.job.tasks.push(task);
+    }
+  }
+  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state, task: start ? arg(args, '--task-id', 'initial') : undefined }, null, 2));
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
@@ -382,7 +444,7 @@ async function main(): Promise<void> {
     const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
     await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
   }
-  if (command === 'submit') { const now = new Date().toISOString(); const model = arg(args, '--model'); const adapter = arg(args, '--adapter', 'codex') as AdapterName; const outputKind = arg(args, '--output'); const outputPath = arg(args, '--output-path'); if (!['codex','chatgpt'].includes(adapter)) throw new Error('submit adapter must be codex or chatgpt'); if (!model) throw new Error('submit requires --model for codex/chatgpt tasks'); if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('submit requires --output task-pr|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path'); const routing = model ? { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now } satisfies RoutingDecision : undefined; const task: Task = { jobId: job.id, id: arg(args, '--task-id', randomUUID()), priority: priority(args, job.priority ?? 'P2'), projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent') || undefined, parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), adapter, input: arg(args, '--input', 'true'), output: outputKind === 'file' ? { kind: 'file', path: outputPath } : { kind: 'task_pr' }, routing, continuation: continuation(args), continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: Number(arg(args, '--max-attempts', '3')), leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: Number(arg(args, '--timeout', '300000')), createdAt: now, updatedAt: now }; await store.appendTask(task); job.tasks.push(task); if (job.state === 'COMPLETED') { job.state = 'OPEN'; job.updatedAt = now; await store.saveJob(job); } await saveLocal(localFile, job); await publishWake(bus, job, task.id, `Task ${task.id} submitted`); console.log(`Submitted ${task.id}`); return; }
+  if (command === 'submit') { const now = new Date().toISOString(); const task = workerTaskFromArgs(job, args, now); task.id = arg(args, '--task-id', randomUUID()); await store.appendTask(task); job.tasks.push(task); if (job.state === 'COMPLETED') { job.state = 'OPEN'; job.updatedAt = now; await store.saveJob(job); } await saveLocal(localFile, job); await publishWake(bus, job, task.id, `Task ${task.id} submitted`); console.log(`Submitted ${task.id}`); return; }
   if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (command === 'retry' || command === 'cancel') { const id = arg(args, '--task-id'); const task = job.tasks.find(item => item.id === id); if (!task) throw new Error(`Task ${id} not found`); if (command === 'retry') task.maxAttempts = extendRetryBudget(task); task.state = command === 'retry' ? 'READY' : 'CANCELLED'; task.error = command === 'retry' ? null : 'Cancelled by user'; task.updatedAt = new Date().toISOString(); await store.saveTask(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `${task.id} ${command} requested`); console.log(`${id}: ${task.state}`); return; }
   const reconciler = runtime(store, args, bus);

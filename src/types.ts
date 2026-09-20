@@ -38,7 +38,7 @@ export type Task = {
 };
 export type Job = { id: string; title: string; objective?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
-export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; data?: Record<string, unknown> };
+export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
 const jobTransitions: Record<JobState, JobState[]> = { OPEN: ['RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], RUNNING: ['OPEN', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELLED'], WAITING: ['RUNNING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], BLOCKED: ['RUNNING', 'CANCELLED'], COMPLETED: ['RUNNING', 'CANCELLED'], FAILED: ['RUNNING', 'CANCELLED'], CANCELLED: ['RUNNING'] };
 const taskTransitions: Record<TaskState, TaskState[]> = { QUEUED: ['READY', 'BLOCKED', 'CANCELLED'], READY: ['RUNNING', 'BLOCKED', 'FAILED', 'CANCELLED'], RUNNING: ['WAITING', 'BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'READY'], WAITING: ['READY', 'BLOCKED', 'CANCELLED'], BLOCKED: ['READY', 'CANCELLED'], SUCCEEDED: [], FAILED: ['READY', 'CANCELLED'], CANCELLED: [] };
