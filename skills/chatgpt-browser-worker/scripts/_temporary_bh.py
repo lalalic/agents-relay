@@ -55,6 +55,10 @@ def _composer_text(selector):
     }})()""") or ""
 
 
+def _normalized_text(value):
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
 def _attachment_names():
     return js(r"""(() => [...document.querySelectorAll('button[aria-label^="Remove file"]')]
       .map(b => (b.getAttribute('aria-label') || '').replace(/^Remove file\s+\d+:\s*/, ''))
@@ -104,7 +108,7 @@ def _wait_user_turn(before_count, prompt, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
         turns = _user_turns()
-        if len(turns) > before_count and prompt.strip() in turns[-1]["text"]:
+        if len(turns) > before_count and _normalized_text(prompt) in _normalized_text(turns[-1]["text"]):
             return turns[-1]
         time.sleep(.25)
     raise RuntimeError("Temporary Chat prompt did not become an observed user turn")
@@ -154,7 +158,7 @@ if CFG["prompt"].strip() not in _composer_text(selector):
     click_at_xy(info["x"], info["y"])
     press_key("CTRL+A")
     type_text(CFG["prompt"])
-if CFG["prompt"].strip() not in _composer_text(selector):
+if _normalized_text(CFG["prompt"]) not in _normalized_text(_composer_text(selector)):
     raise RuntimeError("Temporary Chat prompt was not observed in the composer")
 
 _click_send()
