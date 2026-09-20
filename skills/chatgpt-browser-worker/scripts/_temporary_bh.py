@@ -55,6 +55,11 @@ def _composer_text(selector):
     }})()""") or ""
 
 
+def _same_text(observed, expected):
+    normalize = lambda value: re.sub(r"\\s+", " ", value or "").strip()
+    return normalize(expected) in normalize(observed)
+
+
 def _normalized_text(value):
     return re.sub(r"\s+", " ", value or "").strip()
 
@@ -149,7 +154,7 @@ attachments = _upload_files(CFG.get("file", []))
 selector = _composer()
 before_count = len(_user_turns())
 fill_input(selector, CFG["prompt"], clear_first=True)
-if CFG["prompt"].strip() not in _composer_text(selector):
+if not _same_text(_composer_text(selector), CFG["prompt"]):
     info = js(f"""(() => {{
       const e=document.querySelector({json.dumps(selector)});
       const r=e.getBoundingClientRect();
