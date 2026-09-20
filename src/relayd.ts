@@ -97,13 +97,18 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const webhook = secret ? {
     secret,
     repositories: new Set(repositories),
+    refresh: async (event: GitHubWebhookWake): Promise<readonly string[]> => {
+      if (!event.repository || !event.pullRequest) return [];
+      const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
+      return refreshed.map(item => item.job.id);
+    },
     wake: async (event: GitHubWebhookWake): Promise<void> => {
       if (!event.repository || !event.pullRequest) return;
       try {
-        const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
+        const refreshed = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
         for (const item of refreshed) await pool.webhookWake(bus, item.job, event.deliveryId, event.event, event.action);
       } catch (error) {
-        process.stderr.write(`warning: webhook PR refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
   } : undefined;

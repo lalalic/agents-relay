@@ -454,7 +454,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1 });
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0 });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
