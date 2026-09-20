@@ -24,6 +24,17 @@ test('repository daemon wires account usage telemetry and the default planner in
   assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),exactJob/);
 });
 
+test('workspace daemon establishes dashboard and event watch before remote refresh', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const cached = source.indexOf('const initial = cachedOverviews');
+  const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
+  const refresh = source.indexOf('void refreshAll()', watch);
+  assert.ok(cached >= 0);
+  assert.ok(watch > cached);
+  assert.ok(refresh > watch);
+  assert.doesNotMatch(source, /const initial = await refreshAll\(\)/);
+});
+
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {
   const pooled = normalizeDaemonArguments(['--repo','OWNER/REPO','--port','8787']);
   assert.equal(pooled.pullRequest, null); assert.equal(pooled.jobId, null);

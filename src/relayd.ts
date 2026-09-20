@@ -90,7 +90,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     await persistCache();
     return refreshed;
   };
-  const initial = await refreshAll(); const fallback = initial[0]?.job;
+  const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
@@ -132,6 +132,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   console.log('Dashboard listening; repository worker pool active');
-  if (!client.rateLimitStatus().limited) void pool.reconcileKnown(initial).catch(error=>process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
+  void refreshAll()
+    .then(items => pool.reconcileKnown(items))
+    .catch(error => process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
