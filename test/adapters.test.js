@@ -56,6 +56,33 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
   }
 });
 
+test('ChatGptAdapter loads chatgpt-browser-worker only from the resolved execution context', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-resolved-browser-worker-'));
+  try {
+    const skillRoot = join(root, 'chatgpt-browser-worker');
+    const agents = join(skillRoot, 'agents');
+    await mkdir(agents, { recursive: true });
+    const skillPath = join(skillRoot, 'SKILL.md');
+    const agentPath = join(agents, 'browser-worker.agent.md');
+    await writeFile(skillPath, '---\nname: chatgpt-browser-worker\n---\n');
+    await writeFile(agentPath, '# resolved browser worker');
+    let definition = '';
+    const adapter = new ChatGptAdapter({
+      agentRunner: (value) => {
+        definition = value;
+        return { promise: Promise.resolve(JSON.stringify({ operation:'submit', status:'submitted', verified:true })), cancel() {} };
+      },
+    });
+    const executionContext = {
+      project:{name:'project',path:root,workspaceRoot:root,neoRoot:null,globalRoot:root}, role:'worker', instructions:[],
+      skills:[{name:'chatgpt-browser-worker',path:skillPath,source:'neo'}], agents:[], runtimes:[],
+      delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
+    };
+    await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;
+    assert.equal(definition, '# resolved browser worker');
+  } finally { await rm(root, { recursive:true, force:true }); }
+});
+
 test('ChatGptAdapter default runner invokes temporary one-shot driver', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-direct-browser-worker-'));
   try {

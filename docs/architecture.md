@@ -133,3 +133,12 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 ## Dogfood
 
 This PR is the first top-level Agents Relay job. Development, review, fixes, and verification remain on this PR until the v1 acceptance criteria are met.
+
+
+## Shared execution context
+
+`resolveExecutionContext(projectPath, role, options)` is the common discovery boundary for XChat-compatible orchestrators and Relay runtimes. It resolves project instructions, skills, visible agents, and adapter/runtime capabilities from three layers with project-local > Neo shared > global `~/.agents` precedence. The resolver returns concrete paths only for the current execution; GitHub-backed durable task records keep semantic names and routing intent rather than filesystem paths.
+
+Planner, reviewer, normal worker, and nested worker launches consume the same resolved structure. The planner may select its visible `planner` agent definition from that context; the ChatGPT adapter consumes the resolved `chatgpt-browser-worker` skill instead of a Relay-owned duplicate. Leaf workers receive the generic resolved context and do not inherit the full top-level `xchat-orchestrator` responsibilities.
+
+Relay remains the only durable delegation boundary. A nested worker may inspect visible agents and propose sub-work, but execution of that sub-work must be a durable child task with `parentTaskId`; direct arbitrary child-agent spawning is outside the contract. This preserves output contracts, leases/retries, model routing, events-bus lifecycle, and review gates. XChat bootstrap code can import the same resolver implementation from the installed `agents-relay` package rather than maintaining a second discovery algorithm.

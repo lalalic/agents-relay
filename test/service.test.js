@@ -165,6 +165,7 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.get('dist/relayd.js'), 0o755);
   assert.equal(files.has('skills/agents-relay/SKILL.md'), true);
   assert.equal(files.has('skills/agents-relay/agents/planner.agent.md'), true);
+  assert.equal(files.has('skills/chatgpt-browser-worker/SKILL.md'), false);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);

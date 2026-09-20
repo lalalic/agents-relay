@@ -78,9 +78,15 @@ For Codex and ChatGPT workers, Agents Relay adds only durable execution identity
 
 The job/task descriptions remain the durable source of intent. Adapters do not invent task meaning.
 
+## Shared execution context
+
+Before planner, reviewer, normal worker, or nested-worker execution, resolve one execution context from the bound project path. The shared resolver owns project instructions, skills, visible agents, and runtime capabilities with project-local > Neo shared > global `~/.agents` precedence. Concrete paths are execution-time data and must not be persisted into durable task records.
+
+Leaf workers consume the resolved instruction/skill/agent paths, not the full top-level XChat orchestrator contract. Nested workers may inspect visible agents, but any delegation must be represented as an Agents Relay durable child task preserving `parentTaskId`, output contract, routing, leases/retries, events, and review gates.
+
 ## ChatGPT worker
 
-The ChatGPT adapter uses the packaged `chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
+The ChatGPT adapter uses the `chatgpt-browser-worker` path from the shared execution context; Relay does not bundle or independently rediscover that skill. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
 
 ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 

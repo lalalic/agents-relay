@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput } from './types.js';
+import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -21,7 +22,7 @@ export type PlannerTaskSpec = {
   timeoutMs?: number;
 };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null };
+export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 
 function record(value: unknown): Record<string, unknown> {
@@ -101,7 +102,7 @@ export function parsePlannerOutput(output: string): PlannerResult {
 }
 
 export function plannerInput(context: PlannerContext): string {
-  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
+  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
 }
 
 export class CommandObjectivePlanner implements ObjectivePlanner {
@@ -137,8 +138,10 @@ function parsePlannerAgentMessage(line: string): string | undefined {
 export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
-    const instructions = await readFile(this.agentFile, 'utf8');
-    const prompt = instructions.trim() + '\n\n## Durable planner input\n\n' + plannerInput(context);
+    const resolvedPlanner = context.executionContext?.agents.find(agent => agent.name === 'planner')?.path;
+    const instructions = await readFile(resolvedPlanner ?? this.agentFile, 'utf8');
+    const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
+    const prompt = instructions.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
       const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdoutBuffer = '';
