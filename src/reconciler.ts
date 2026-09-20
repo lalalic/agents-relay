@@ -10,8 +10,8 @@ import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } f
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
-type LiveExecution = { taskId: string; executionId: string; execution: Execution; controller: AbortController };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
+type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
@@ -52,11 +52,16 @@ export class Reconciler {
   private readonly live = new Map<string, LiveExecution>();
   private readonly plannerLive = new Map<string, LivePlanner>();
   private readonly terminalTimers = new Map<string, NodeJS.Timeout>();
+  private readonly terminalExitGraceTimers = new Map<string, NodeJS.Timeout>();
   private readonly continuationLive = new Set<string>();
   private readonly terminalWaiters = new Map<string, TerminalWaiter>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
   async handleEvent(event: EventRecord): Promise<void> {
+    if (event.type === 'task.started') {
+      this.markWorkerStarted(event);
+      return;
+    }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       await this.applyTerminalEvent(event);
       return;
@@ -265,7 +270,7 @@ export class Reconciler {
     void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 
-    this.live.set(task.id, { taskId: task.id, executionId: durableExecutionId, execution, controller });
+    this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: Date.now(), workerStarted: false });
     const terminalTimer = setTimeout(() => {
       this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
     }, Math.max(1, task.timeoutMs));
@@ -365,6 +370,19 @@ export class Reconciler {
     const timer = this.terminalTimers.get(taskId);
     if (timer) clearTimeout(timer);
     this.terminalTimers.delete(taskId);
+    const graceTimer = this.terminalExitGraceTimers.get(taskId);
+    if (graceTimer) clearTimeout(graceTimer);
+    this.terminalExitGraceTimers.delete(taskId);
+  }
+
+  private markWorkerStarted(event: EventRecord): void {
+    const live = this.live.get(event.task_id);
+    if (!live || event.job_id !== live.jobId) return;
+    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
+    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
+    if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
+    if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
+    live.workerStarted = true;
   }
 
   private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
@@ -378,10 +396,11 @@ export class Reconciler {
 
   private async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
+    const workerStarted = live?.executionId === executionId && live.workerStarted;
     if (live?.executionId === executionId) this.live.delete(taskId);
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    if (!task || task.executionId !== executionId) return;
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
@@ -391,6 +410,29 @@ export class Reconciler {
       { authoritative: false, waitingForTerminalEvent: true, processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
+    if (task.state === 'RUNNING' && task.adapter === 'codex') this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
+  }
+
+  private scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
+    const graceMs = Math.max(1, this.options.terminalExitGraceMs ?? 1000);
+    const timer = setTimeout(() => {
+      this.terminalExitGraceTimers.delete(taskId);
+      this.detach(this.failUnexpectedExit(jobId, taskId, executionId, workerStarted), jobId, taskId, 'unexpected worker process exit');
+    }, graceMs);
+    this.terminalExitGraceTimers.set(taskId, timer);
+  }
+
+  private async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
+    const job = await this.store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
+    const message = workerStarted
+      ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
+      : `Worker ${taskId} exited before publishing task.started`;
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', message, 'user', { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000 }, { agent: 'relay', component: 'agents-relay', watchdog: true });
+    await this.applyTerminalEvent(event);
+    await this.emit(event);
   }
 
   private async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {

@@ -82,6 +82,15 @@ Task submission is append-only at creation time, which avoids a single giant mut
 8. Codex emits `task.process.exited` on synchronous runtime exit; ChatGPT emits `task.process.async_exited` after its submit runtime exits while the remote worker may continue.
 9. Worker reports progress and exactly one terminal task event over the canonical event channel.
 10. Relay persists terminal task state/result back into the task comment.
+
+The ownership boundary is strict: workers own `task.started` and the exact
+terminal task event; Relay owns `task.process.launched` and
+`task.process.exited`/`task.process.async_exited`. If a Codex process exits
+after `task.started` without a terminal event, Relay waits only a short bounded
+grace window and then records an explicit `task.failed` lifecycle-contract
+failure (`worker_exit_without_terminal_event`). That safeguard is not a
+process event promoted to completion, and it is suppressed when a valid
+correlated terminal event has already arrived.
 11. Relay reconciles dependents and/or resumes the parent continuation.
 12. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
