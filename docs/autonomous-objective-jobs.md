@@ -4,7 +4,7 @@ This document records the design, implementation flow, recovery semantics, and v
 
 ## Objective
 
-Existing jobs remain `fixed` by default. An `autonomous` job may grow its own durable task tree until the objective is satisfied. Planning is represented by real tasks rather than hidden generations or a second state store. GitHub-backed durable state remains authoritative.
+Existing jobs remain `fixed` by default. An `autonomous` job may grow its own durable task tree until the objective is satisfied. Planning is represented by real durable planning decisions rather than hidden generations or a second state store. GitHub-backed durable state remains authoritative.
 
 ## Design principles
 
@@ -16,6 +16,30 @@ Existing jobs remain `fixed` by default. An `autonomous` job may grow its own du
 - `in_progress` creates durable child work; `satisfied` stops growth but does not bypass normal completion gates.
 - Failed or blocked work prevents autonomous completion and prevents blindly creating another planning round.
 - Planner and generated task creation are idempotent so repeated reconciliation does not duplicate work.
+
+## Initial planning contract
+
+No executable task may exist without a completed planning decision that created
+it. An orchestrator that knows the initial task set records a completed
+`planner-0` decision with `planningSource: orchestrator`; every initial task
+stores that decision ID, source, and round `0`. Job creation keeps an
+`initialPlanning: pending` barrier while the decision and task comments are
+being appended, so an autonomous watchdog cannot race ahead and create
+`planner-1`. A job created with only an objective may instead create a real
+model planner task first; its children are materialized only after the planner
+is successful.
+
+The lifecycle is therefore:
+
+```text
+fixed:      orchestrator decision -> initial batch -> review/completion
+autonomous: orchestrator decision -> batch -> review gate -> model planner -> batch -> ...
+```
+
+Planning provenance is retained on every task (`planningDecisionId`,
+`planningSource`, and `planningRound`). Nested delegation uses the same Relay
+path: the worker's durable delegation decision is recorded before child tasks,
+and the child retains its worker parent lineage.
 
 ## Autonomous lifecycle
 

@@ -31,6 +31,8 @@ Events are authoritative for model-backed task state.
 
 Agents Relay may launch a Codex process or submit a one-shot ChatGPT browser task, but runtime/process completion is only delivery/runtime evidence. It never means the task completed.
 
+Before planner, reviewer, or worker launch, resolve the execution context for the bound project. The shared resolver owns instruction/skill/agent discovery with project-local > Neo > global precedence; Relay owns durable orchestration. Persist only explicit names, not resolved absolute paths. Workers may inspect visible agents but nested delegation must be a durable Relay child task carrying `parentTaskId`, never a direct child-agent spawn. `chatgpt-browser-worker` is loaded from the resolved shared skill path and is not bundled by Relay.
+
 A running agent MUST use the canonical Neo `events-bus` protocol and publish exactly one correlated terminal event before stopping:
 - `task.completed` after the declared output is durable;
 - `task.failed` when the task cannot complete;
@@ -80,11 +82,21 @@ The job/task descriptions remain the durable source of intent. Adapters do not i
 
 ## ChatGPT worker
 
-The ChatGPT adapter uses the packaged `chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
+The ChatGPT adapter uses the Neo `~/Workspace/neo/skills/chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
 
 ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 
 ## Autonomous planner
+
+No executable task may be materialized without a completed durable planning
+decision. Job creation with caller-supplied initial work records an
+orchestrator-owned `planner-0` decision before its initial tasks; autonomous
+mode must not start a model planner in that case. Objective-only autonomous
+jobs may start a real model planner, and planner children are created only
+after that planner succeeds. Fixed jobs do not automatically create another
+planning round. Each task exposes `planningDecisionId`, `planningSource`, and
+`planningRound` for dashboard lineage. Nested worker delegation must create its
+durable planning decision and children through Relay as well.
 
 Planner-created child tasks must also be descriptive agent work. They must select `codex` or `chatgpt` and include an explicit output contract. A planner must never generate shell-command worker tasks.
 

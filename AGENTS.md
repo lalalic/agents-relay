@@ -14,3 +14,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
+
+## Shared execution context
+
+Use `resolveExecutionContext` for project instructions, skill visibility, visible agents, and runtime capabilities. Keep the precedence project-local > Neo shared > global `~/.agents`; do not add Relay-owned copies of shared skills or hardcode a Neo checkout path. Relay owns durable orchestration and review state, while workers receive the resolved context and delegate nested work only by creating durable Relay child tasks with `parentTaskId`.

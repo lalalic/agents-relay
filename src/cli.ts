@@ -16,7 +16,7 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
-import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
+import { AgentObjectivePlanner, CommandObjectivePlanner, orchestratorPlanningDecision } from './planner.js';
 import { extendRetryBudget } from './scheduler.js';
 const usage = 'agents-relay <job|task|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 const help = {
@@ -215,7 +215,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -226,7 +226,7 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, initialPlanning: options.initialTasks?.length ? { status: 'pending', decisionId: 'planner-0' } : undefined, createdAt: now, updatedAt: now, tasks: [] };
   }
   if (!job.description && pr.body) job.description = pr.body;
   if (options.objective) job.objective = options.objective;
@@ -234,8 +234,44 @@ export async function ensureManagedGitHubJob(
   if (options.priority) job.priority = options.priority;
   else if (!job.priority) job.priority = 'P2';
   if (!job.title && pr.title) job.title = pr.title;
-  await store.saveJob(job);
+  if (options.initialTasks?.length) {
+    const decisionId = job.initialPlanning?.decisionId ?? 'planner-0';
+    // Publish the barrier before touching any task markers. A watchdog may
+    // reconcile between GitHub writes, but it must never infer that an
+    // objective-only autonomous job is ready for planner-1 while the caller's
+    // initial decision is still being materialized.
+    job.initialPlanning = { status: 'pending', decisionId };
+    job.updatedAt = new Date().toISOString();
+    await store.saveJob(job);
+    const decision = orchestratorPlanningDecision(job, options.initialTasks, decisionId, null, 0);
+    if (!(await store.load(options.id)).tasks.some(task => task.id === decision.id)) await store.appendTask(decision);
+    for (const original of options.initialTasks) {
+      const task = { ...original, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator' as const, planningRound: 0 };
+      if (!(await store.load(options.id)).tasks.some(item => item.id === task.id)) await store.appendTask(task);
+    }
+    job.initialPlanning = { status: 'complete', decisionId };
+    job.updatedAt = new Date().toISOString();
+    await store.saveJob(job);
+  } else {
+    await store.saveJob(job);
+  }
   return { job: await store.load(options.id), pr };
+}
+
+async function appendPlannedTask(store: DurableStore, job: Job, task: Task): Promise<Task> {
+  const existing = job.tasks.find(item => item.id === task.id);
+  if (existing) return existing;
+  const decisionId = `plan-${task.id}`;
+  const decision = orchestratorPlanningDecision(job, [task], decisionId, task.parentTaskId, (job.tasks.filter(item => item.kind === 'planner').length), 'orchestrator');
+  if (!job.tasks.some(item => item.id === decision.id)) await store.appendTask(decision);
+  // Keep the worker as the child's direct parent for nested lineage; the
+  // planningDecisionId records the separate durable delegation decision.
+  const planned = { ...task, parentTaskId: task.parentTaskId ?? null, planningDecisionId: decision.id, planningSource: 'orchestrator' as const, planningRound: decision.planningRound };
+  await store.appendTask(planned);
+  // Keep local/demo snapshots self-contained too: a later process must be
+  // able to recover the planning decision, not just its child task marker.
+  job.tasks.push(planned, decision);
+  return planned;
 }
 
 function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput = false): Task {
@@ -338,10 +374,10 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed GitHub jobs');
   const start = hasArg(args, '--start');
+  const initialTask = start ? workerTaskFromArgs({ id, title: '', executionMode: 'fixed', prNumber: 0, repository: repo, state: 'OPEN', continuation: null, createdAt: '', updatedAt: '', tasks: [] }, args, new Date().toISOString(), true) : undefined;
   if (start && action !== 'create') throw new Error('--start is only supported by job create');
   if (start) {
     if (!hasArg(args, '--adapter')) throw new Error('job create --start requires --adapter codex|chatgpt');
-    workerTaskFromArgs({ id, title: '', executionMode: 'fixed', prNumber: 0, repository: repo, state: 'OPEN', continuation: null, createdAt: '', updatedAt: '', tasks: [] }, args, new Date().toISOString(), true);
   }
   const auth = await githubAuthContext(args);
   const client = auth.client;
@@ -360,24 +396,18 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     prNumber,
     head: arg(args, '--head') || undefined,
     base: arg(args, '--base', 'main'),
-    body: arg(args, '--body') || undefined
+    body: arg(args, '--body') || undefined,
+    initialTasks: initialTask ? [initialTask] : undefined
   });
   if (start) {
-    const task = workerTaskFromArgs(result.job, args, new Date().toISOString(), true);
-    const existing = result.job.tasks.find(item => item.id === task.id);
-    const store = new GitHubStore(client, repo, result.pr.number, trustedAuthors);
-    await store.appendTask(task);
-    if (!existing) {
-      await publishWake(eventBus(args), result.job, task.id, `Task ${task.id} submitted`);
-      result.job.tasks.push(task);
-    }
+    await publishWake(eventBus(args), result.job, initialTask?.id ?? 'initial', `Initial planning decision and task ${initialTask?.id ?? 'initial'} recorded`);
   }
   console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state, task: start ? arg(args, '--task-id', 'initial') : undefined }, null, 2));
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtimeReviewer() { return { adapter: 'chatgpt' as const, routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'fixed-chatgpt-reviewer', decidedAt: new Date().toISOString() }, startAckTimeoutMs: 120000 }; }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), projectPath: arg(args, '--project-path') || undefined, maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined; const reconciler = runtime(loaded.store, args, bus);
@@ -451,9 +481,9 @@ async function main(): Promise<void> {
     if (!summary) throw new Error('record requires --summary');
     const commit = arg(args, '--commit');
     const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
-    await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
+    const planned = await appendPlannedTask(store, job, task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
   }
-  if (command === 'submit') { const now = new Date().toISOString(); const task = workerTaskFromArgs(job, args, now); task.id = arg(args, '--task-id', randomUUID()); await store.appendTask(task); job.tasks.push(task); if (job.state === 'COMPLETED') { job.state = 'OPEN'; job.updatedAt = now; await store.saveJob(job); } await saveLocal(localFile, job); await publishWake(bus, job, task.id, `Task ${task.id} submitted`); console.log(`Submitted ${task.id}`); return; }
+  if (command === 'submit') { const now = new Date().toISOString(); const task = workerTaskFromArgs(job, args, now); task.id = arg(args, '--task-id', randomUUID()); const planned = await appendPlannedTask(store, job, task); if (job.state === 'COMPLETED') { job.state = 'OPEN'; job.updatedAt = now; await store.saveJob(job); } await saveLocal(localFile, job); await publishWake(bus, job, planned.id, `Planning decision recorded and task ${planned.id} submitted`); console.log(`Submitted ${planned.id}`); return; }
   if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (command === 'retry' || command === 'cancel') { const id = arg(args, '--task-id'); const task = job.tasks.find(item => item.id === id); if (!task) throw new Error(`Task ${id} not found`); if (command === 'retry') task.maxAttempts = extendRetryBudget(task); task.state = command === 'retry' ? 'READY' : 'CANCELLED'; task.error = command === 'retry' ? null : 'Cancelled by user'; task.updatedAt = new Date().toISOString(); await store.saveTask(task); await saveLocal(localFile, job); await publishWake(bus, job, task.id, `${task.id} ${command} requested`); console.log(`${id}: ${task.state}`); return; }
   const reconciler = runtime(store, args, bus);

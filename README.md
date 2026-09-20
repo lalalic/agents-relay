@@ -31,9 +31,16 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
   --capabilities model,chatgpt,browser-harness
 ~~~
 
-Jobs default to `fixed`, preserving the original submit-and-run behavior. Use
-`--mode autonomous` with `init` or `job create` to make reconciliation own
-planner progress. The durable status JSON and dashboard show the mode. An
+Jobs default to `fixed`, preserving the original submit-and-run behavior. Every
+executable task is now created by a completed durable planning decision. `job
+create --start` records `planner-0` (supplied by the orchestrator) and the
+initial task atomically from the caller's perspective; retrying the command is
+idempotent. Use `--mode autonomous` with `init` or `job create` to make
+reconciliation own planner progress. Autonomous creation with only an objective
+may create a model planner first, but it cannot materialize work until that
+planner succeeds. Fixed jobs never grow another planning round.
+
+The durable status JSON and dashboard show the mode and planning provenance. An
 autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
 snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so
@@ -101,7 +108,7 @@ Every model-backed task declares a durable output with `--output task-pr` or `--
 
 For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The ChatGPT worker-owned tab follows the configured close policy: `after-start` waits for the correlated start acknowledgement, `never` keeps it open for debug, and `after-terminal` waits for a new exact-task terminal event; start-ack failure closes only the owned tab after 60 seconds. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
-The ChatGPT adapter uses the packaged `chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
+The ChatGPT adapter uses the Neo `~/Workspace/neo/skills/chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 
 ~~~sh
 npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \

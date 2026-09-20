@@ -1,8 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput } from './types.js';
+import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource } from './types.js';
+import { ExecutionContext, resolveExecutionContext } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -19,10 +18,22 @@ export type PlannerTaskSpec = {
   continuation?: Task['continuation'];
   maxAttempts?: number;
   timeoutMs?: number;
+  skills?: string[];
+  agents?: string[];
 };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null };
+export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; projectPath?: string; executionContext?: ExecutionContext };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
+export function planningSpec(task: Task): PlannerTaskSpec {
+  if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
+  if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
+  return { id: task.id, input: task.input, priority: task.priority, projectName: task.projectName, agentName: task.agentName, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, skills: task.skills, agents: task.agents };
+}
+export function orchestratorPlanningDecision(job: Job, tasks: readonly Task[], id: string, parentTaskId: string | null, round: number, source: PlanningDecisionSource = 'orchestrator'): Task {
+  const now = new Date().toISOString();
+  return { jobId: job.id, id, kind: 'planner', priority: job.priority, agentName: source === 'orchestrator' ? 'orchestrator' : 'planner', parentTaskId, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: `Planning decision supplied by ${source} for ${tasks.length} task(s)`, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: { summary: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planner decision completed' }, plannerResult: { objective_status: 'in_progress', assessment: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planning decision completed', next_tasks: tasks.map(planningSpec) }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: source, planningRound: round };
+}
+function agentFilePath(agent: { path: string }): string { return agent.path; }
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Planner result must be an object');
@@ -37,6 +48,20 @@ function stringArray(value: unknown, field: string, fallback: string[] = []): st
   if (value === undefined) return fallback;
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0)) throw new Error(`Planner ${field} must be an array of non-empty strings`);
   return [...value];
+}
+function rawValue(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value === undefined) return 'undefined';
+  try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
+}
+export function normalizePlannerPriority(value: unknown, field: string): Priority {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 3) return `P${value}` as Priority;
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (/^P[0-3]$/i.test(normalized)) return normalized.toUpperCase() as Priority;
+    if (/^[0-3]$/.test(normalized)) return `P${normalized}` as Priority;
+  }
+  throw new Error(`Planner ${field} is invalid: ${rawValue(value)}`);
 }
 function routing(value: unknown, field: string): RoutingDecision | undefined {
   if (value === undefined || value === null) return undefined;
@@ -64,17 +89,18 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const output = task.output === undefined ? undefined : record(task.output);
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
-    if (task.priority !== undefined && !['P0', 'P1', 'P2', 'P3'].includes(String(task.priority))) throw new Error(`Planner next_tasks[${index}].priority is invalid`);
+    const priority = task.priority === undefined ? undefined : normalizePlannerPriority(task.priority, `next_tasks[${index}].priority`);
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
     const timeoutMs = task.timeoutMs === undefined ? 300000 : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, input: task.input, priority: task.priority as Priority | undefined,
+      id, input: task.input, priority,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
       adapter: adapter as AdapterName, output: output as TaskOutput, routing: routing(task.routing, `next_tasks[${index}].routing`),
-      continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
+      continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs,
+      skills: stringArray(task.skills, 'skills'), agents: stringArray(task.agents, 'agents')
     };
   });
   return { objective_status: status, assessment: root.assessment, next_tasks };
@@ -87,7 +113,7 @@ export function parsePlannerOutput(output: string): PlannerResult {
 }
 
 export function plannerInput(context: PlannerContext): string {
-  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
+  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
 }
 
 export class CommandObjectivePlanner implements ObjectivePlanner {
@@ -107,8 +133,6 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
 }
 
 
-const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
-
 function parsePlannerAgentMessage(line: string): string | undefined {
   try {
     const value = JSON.parse(line) as Record<string, unknown>;
@@ -121,10 +145,13 @@ function parsePlannerAgentMessage(line: string): string | undefined {
 }
 
 export class AgentObjectivePlanner implements ObjectivePlanner {
-  constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
+  constructor(private readonly command = 'codex', private readonly agentFile?: string) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
-    const instructions = await readFile(this.agentFile, 'utf8');
-    const prompt = instructions.trim() + '\n\n## Durable planner input\n\n' + plannerInput(context);
+    const executionContext = context.executionContext ?? await resolveExecutionContext(context.projectPath ?? process.cwd(), 'planner', undefined, this.agentFile ? undefined : ['planner']);
+    const agentPath = this.agentFile ?? executionContext.agents.find(item => item.name.toLowerCase() === 'planner')?.path;
+    if (!agentPath) throw new Error('No visible planner agent in the resolved execution context');
+    const instructions = await readFile(agentPath, 'utf8');
+    const prompt = instructions.trim() + '\n\n## Resolved execution context\n\n' + JSON.stringify(executionContext) + '\n\n## Durable planner input\n\n' + plannerInput({ ...context, executionContext });
     return await new Promise<PlannerResult>((resolve, reject) => {
       const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdoutBuffer = '';

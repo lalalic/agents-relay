@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { access, readFile, writeFile, unlink } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
+import { ExecutionContext } from './execution-context.js';
 
 export type Execution = {
   id: string;
@@ -14,7 +14,7 @@ export type Execution = {
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
 };
-export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void> };
+export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
   readonly name: AdapterName;
   readonly id: string;
@@ -141,13 +141,9 @@ export class StartAckTimeout extends LaunchFailure {}
 type BrowserWorkerRuntime = { definition: string; root: string };
 function browserWorkerCandidates(explicit?: string): string[] {
   const roots = (process.env.AGENTS_RELAY_SKILL_ROOTS ?? '').split(':').filter(Boolean);
-  const packageSkills = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills');
   return [
     explicit,
     ...roots,
-    packageSkills,
-    join(homedir(), '.codex', 'skills'),
-    join(homedir(), '.agents', 'skills'),
     join(process.cwd(), 'skills'),
   ]
     .filter((value): value is string => Boolean(value))
@@ -157,7 +153,9 @@ function browserWorkerCandidates(explicit?: string): string[] {
         : join(value, 'chatgpt-browser-worker', 'agents', 'browser-worker.agent.md'),
     );
 }
-async function loadBrowserWorkerRuntime(explicit?: string): Promise<BrowserWorkerRuntime> {
+async function loadBrowserWorkerRuntime(explicit?: string, context?: ExecutionContext): Promise<BrowserWorkerRuntime> {
+  const resolved = context?.skills.find(skill => skill.name.toLowerCase() === 'chatgpt-browser-worker');
+  const contextCandidate = resolved ? join(dirname(resolved.path), 'agents', 'browser-worker.agent.md') : undefined;
   for (const candidate of browserWorkerCandidates(explicit)) {
     try {
       await access(candidate);
@@ -165,6 +163,9 @@ async function loadBrowserWorkerRuntime(explicit?: string): Promise<BrowserWorke
     } catch {
       // Try the next installed skill root.
     }
+  }
+  if (contextCandidate) {
+    try { await access(contextCandidate); return { definition: await readFile(contextCandidate, 'utf8'), root: dirname(dirname(contextCandidate)) }; } catch { /* resolver may have exposed only metadata */ }
   }
   throw new Error(
     'chatgpt-browser-worker agent definition not found; set AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT',
@@ -276,7 +277,7 @@ export class ChatGptAdapter implements WorkerAdapter {
     execution.launched = new Promise<void>((resolve, reject) => { launchResolve = resolve; launchReject = reject; });
     execution.launched.catch(() => {});
     execution.promise = (async (): Promise<Result> => {
-      const runtime = await loadBrowserWorkerRuntime(this.agentPath);
+      const runtime = await loadBrowserWorkerRuntime(this.agentPath, context.executionContext);
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
       const run = (this.runner ?? directBrowserWorkerRunner(runtime.root))(

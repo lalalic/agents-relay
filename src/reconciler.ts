@@ -5,17 +5,18 @@ import { schedule, transitionTask } from './scheduler.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
-import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { ObjectivePlanner, orchestratorPlanningDecision, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { ExecutionContext, ExecutionRole, resolveExecutionContext, ResolvedRuntime } from './execution-context.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
+export type ReconcileOptions = { owner: string; projectPath?: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
-export function managedWorkerInput(job: Job, task: Task): string {
+export function managedWorkerInput(job: Job, task: Task, executionContext?: ExecutionContext): string {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
@@ -45,7 +46,12 @@ Before stopping, you MUST publish exactly one terminal event:
 - task.completed only after the declared output is durable;
 - task.failed when execution cannot complete;
 - task.blocked when human/external action is required.
-The ChatGPT/Codex conversation or process exit is never the task result.`;
+The ChatGPT/Codex conversation or process exit is never the task result.${executionContext ? `
+
+[Resolved execution context]
+${JSON.stringify(executionContext)}
+
+Workers may inspect visible agents, but nested work MUST be created as a durable child task through Agents Relay with parentTaskId=${task.id}; never spawn an arbitrary child agent directly.` : ''}`;
 }
 
 export class Reconciler {
@@ -101,6 +107,10 @@ export class Reconciler {
       await this.recoverLostExecutions(job, now);
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       let scheduled = schedule(await this.store.load(jobId));
+      if (prState === 'OPEN') {
+        await this.ensureFinalReview(scheduled, prState, headSha);
+        scheduled = schedule(await this.store.load(jobId));
+      }
       if (prState === 'OPEN' && scheduled.executionMode === 'autonomous') {
         scheduled = schedule(await this.maybeCreatePlanner(scheduled));
       }
@@ -198,18 +208,22 @@ export class Reconciler {
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     if (job.executionMode !== 'autonomous') return job;
+    if (job.initialPlanning?.status === 'pending') return job;
     const planners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(task.state))) return job;
     if (job.tasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
+    if (job.tasks.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
     if (job.tasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
+    if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
     if (latest?.plannerResult?.objective_status === 'satisfied') return job;
+    if (latest && job.review && job.review.outcome !== 'approved') return job;
     const used = new Set(job.tasks.map(task => task.id));
     let number = planners.length + 1;
     let id = `planner-${number}`;
     while (used.has(id)) { number += 1; id = `planner-${number}`; }
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'planner', agentName: 'planner', parentTaskId: latest?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: latest?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'planner', agentName: 'planner', parentTaskId: latest?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: latest?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? 300000, createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: planners.length };
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
@@ -229,8 +243,10 @@ export class Reconciler {
       return;
     }
     let workerInput: string;
+    let executionContext: ExecutionContext;
     try {
-      workerInput = managedWorkerInput(job, task);
+      executionContext = await this.executionContext(task, task.agentName === 'reviewer' ? 'reviewer' : task.parentTaskId ? 'nested-worker' : 'worker');
+      workerInput = managedWorkerInput(job, task, executionContext);
     } catch (error) {
       transitionTask(task, 'BLOCKED');
       task.error = error instanceof Error ? error.message : String(error);
@@ -257,6 +273,7 @@ export class Reconciler {
     const launchContext: LaunchContext = {
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
+      executionContext,
     };
     try {
       execution = adapter.launch(workerTask, controller.signal, launchContext);
@@ -331,9 +348,18 @@ export class Reconciler {
     const timer = setTimeout(() => controller.abort(), task.timeoutMs);
     this.plannerLive.set(task.id, { executionId: executionId as string, controller, timer });
     let promise: Promise<import('./planner.js').PlannerResult>;
-    try { promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId }, controller.signal); }
+    try {
+      const executionContext = await this.executionContext(task, 'planner');
+      promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, projectPath: this.options.projectPath, executionContext }, controller.signal);
+    }
     catch (error) { await this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))); return; }
     this.detach(promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error)))), job.id, task.id, 'planner completion');
+  }
+
+  private async executionContext(task: Task, role: ExecutionRole): Promise<ExecutionContext> {
+    const projectPath = task.routing?.cwd ?? this.options.projectPath ?? process.cwd();
+    const runtimes: ResolvedRuntime[] = this.options.adapters.map(adapter => ({ name: adapter.id, capabilities: [...adapter.capabilities], source: 'adapter' }));
+    return resolveExecutionContext(projectPath, role, task.skills, task.agents, { runtimeCapabilities: runtimes, parentTaskId: task.parentTaskId });
   }
   private async finishPlanner(jobId: string, taskId: string, executionId: string | null, error: Error | null, raw?: import('./planner.js').PlannerResult): Promise<void> {
     const live = this.plannerLive.get(taskId);
@@ -347,22 +373,37 @@ export class Reconciler {
     }
     try {
       const result = parsePlannerResult(raw);
-      for (const spec of result.next_tasks) {
-        const child = this.plannerChild(job, task, spec);
+      const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec));
+      for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
-        if (!existing) await this.store.appendTask(child);
+        if (!existing) continue;
         else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner task ${child.id} already exists with a different definition`);
       }
+      // Complete the durable planning decision before any executable child is
+      // visible. This ordering is the core invariant: a failed planner can
+      // never coexist with work that it appears to have invented.
       task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task);
+      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await this.store.appendTask(child);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.completed', 'succeeded', `Planner ${task.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught); task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
+      const message = caught instanceof Error ? caught.message : String(caught);
+      // The decision is already durably SUCCEEDED at this point. Do not
+      // transition it backwards if child materialization fails: doing so
+      // would either violate the task state machine or make a completed
+      // decision appear to have created unplanned work.
+      if (task.state === 'SUCCEEDED') {
+        task.error = `Child materialization failed: ${message}`;
+        await this.store.saveTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
+      } else {
+        task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
+      }
     }
     this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], skills: spec.skills, agents: spec.agents, adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
   private clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
@@ -520,5 +561,5 @@ export class Reconciler {
 }
 
 function samePlannerChildDefinition(left: Task, right: Task): boolean {
-  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
+  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, skills: left.skills, agents: left.agents, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, skills: right.skills, agents: right.agents, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
 }

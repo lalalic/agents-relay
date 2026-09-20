@@ -17,6 +17,7 @@ Inspect the durable objective and task tree, then decide whether the objective i
   - `{"kind":"file","path":"..."}`.
 - Include routing metadata for every model-backed child task.
 - Do not call an execution agent "codex"; agent identity describes responsibility, while the adapter describes runtime.
+- If a child task includes `priority`, emit the canonical string `P0`, `P1`, `P2`, or `P3` exactly. Do not emit numeric priorities, lowercase aliases, or labels such as `high`/`medium`/`low`.
 - Return no prose outside the JSON result.
 
 ## Output

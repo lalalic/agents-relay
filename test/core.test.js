@@ -67,6 +67,12 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].projectName, 'Agents Relay');
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
+  assert.equal(saved.tasks[0].planningDecisionId, 'plan-child');
+  assert.equal(saved.tasks[0].planningSource, 'orchestrator');
+  assert.equal(saved.tasks[1].id, 'plan-child');
+  assert.equal(saved.tasks[1].kind, 'planner');
+  assert.equal(saved.tasks[1].parentTaskId, 'orchestrator');
+  assert.equal(saved.tasks[1].state, 'SUCCEEDED');
 });
 test('CLI task update mutates safe durable fields in place and preserves execution history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-'));
