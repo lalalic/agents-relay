@@ -361,6 +361,59 @@ test('adapter runtime exit is not task completion', async () => {
   await stop();
 });
 
+test('normal terminal event remains authoritative when Codex exits afterward', async () => {
+  const t=task('success-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','success-then-exit',null,'task.started','running','worker began','user'));
+  await bus.publish(eventFor('j','success-then-exit',null,'task.completed','succeeded','durable output','user'));
+  adapter.resolvers[0].resolve({summary:'runtime exited'});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  assert.equal(events.filter(event=>event.type==='task.failed').length,0);
+  assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
+  await stop(); await stopEvents();
+});
+
+test('worker failure before Codex nonzero exit is not duplicated by the watchdog', async () => {
+  const t=task('failed-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','failed-then-exit',null,'task.started','running','worker began','user'));
+  await bus.publish(eventFor('j','failed-then-exit',null,'task.failed','failed','apply_patch could not be verified','user'));
+  adapter.resolvers[0].reject(new Error('Codex exited 1'));
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+  assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  await stop(); await stopEvents();
+});
+
+test('unexpected Codex exit after task.started fails after a short terminal grace window', async () => {
+  const t=task('exit-without-terminal'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','exit-without-terminal',null,'task.started','running','worker began','user'));
+  adapter.resolvers[0].resolve({summary:'process exited'});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error,/without publishing a terminal/);
+  assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  await stop(); await stopEvents();
+});
+
+test('Codex exit before task.started fails the lifecycle contract without waiting for task timeout', async () => {
+  const t=task('exit-before-start'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'process exited'});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'FAILED'); assert.match(durable.error,/before publishing task.started/); await stop();
+});
+
 test('asynchronous LaunchFailure becomes authoritative delivery failure', async () => {
   const t=task('delivery-fail');
   const store=new InMemoryStore(job([t]));
