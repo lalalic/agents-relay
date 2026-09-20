@@ -9,6 +9,7 @@ from browser_harness import *
 
 CFG = json.load(open("__CFG_PATH__", encoding="utf-8"))
 _OWNED_TABS = []
+_KEEP_OWNED_TAB_OPEN = CFG.get("close_policy", "after-start") == "never"
 
 
 def _new_owned_tab(url):
@@ -21,6 +22,8 @@ def _new_owned_tab(url):
 
 
 def _close_owned_tabs():
+    if _KEEP_OWNED_TAB_OPEN:
+        return
     while _OWNED_TABS:
         try:
             close_tab(_OWNED_TABS.pop())
@@ -185,8 +188,7 @@ print(json.dumps({
 release_file = CFG.get("release_file")
 if not release_file:
     raise RuntimeError("worker release file was not configured")
-deadline = time.time() + 90
-while time.time() < deadline and not os.path.exists(release_file):
+if CFG.get("close_policy", "after-start") == "never":
+    raise SystemExit(0)
+while not os.path.exists(release_file):
     time.sleep(.1)
-if not os.path.exists(release_file):
-    raise RuntimeError("worker start acknowledgement release was not observed")

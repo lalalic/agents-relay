@@ -2,6 +2,7 @@ export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' 
 export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
+export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
 export type ExecutionMode = 'fixed' | 'autonomous';
 export type TaskKind = 'work' | 'planner';
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
@@ -33,7 +34,7 @@ export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_requir
 export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
 export type Task = {
   jobId?: string; id: string; kind?: TaskKind; priority?: Priority; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
-  input: string; output?: TaskOutput; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
+  input: string; output?: TaskOutput; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;

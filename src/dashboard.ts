@@ -10,6 +10,7 @@ import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './gith
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
+type DashboardJob = Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean };
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
 
 function isPositiveInteger(candidate: unknown): candidate is number {
@@ -295,7 +296,7 @@ export function serveDashboard(
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
-  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
+  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<DashboardJob[] | void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
 ): Server {
@@ -303,7 +304,11 @@ export function serveDashboard(
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
-  let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean }> | null = null;
+  let lastKnownJobs: DashboardJob[] | null = null;
+  const publishSnapshots = (jobs: DashboardJob[]): void => {
+    lastKnownJobs = [...(lastKnownJobs ?? []).filter(current => !jobs.some(job => job.id === current.id)), ...jobs];
+    for (const job of jobs) for (const client of clients) client.write(`data: ${JSON.stringify(job)}\n\n`);
+  };
   const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
@@ -381,7 +386,9 @@ export function serveDashboard(
       if (!event.repository || !webhook.repositories.has(event.repository) || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
-      queueMicrotask(() => { void webhook.wake(event); });
+      queueMicrotask(() => {
+        void Promise.resolve(webhook.wake(event)).then(refreshed => { if (refreshed) publishSnapshots(refreshed); }).catch(() => undefined);
+      });
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
@@ -454,7 +461,7 @@ export function serveDashboard(
   const interval = setInterval(() => {
     if (clients.size === 0) return;
     void snapshot().then(value => {
-      for (const client of clients) client.write(`data: ${value.json}\n\n`);
+      publishSnapshots([JSON.parse(value.json) as DashboardJob]);
     }).catch(() => undefined);
   }, Math.max(10000, refreshMs));
   interval.unref();

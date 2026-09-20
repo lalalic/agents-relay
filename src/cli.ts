@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode } from './types.js';
+import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
@@ -93,7 +93,7 @@ Actions:
   'task update': `Update mutable durable task fields in place.
 
 Required: --task-id ID and the normal job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
 Use --clear-routing to remove routing metadata. A model update requires --model; provider defaults to the existing provider or openai.
 
 Example:
@@ -203,6 +203,11 @@ export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '
 async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
 export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
+export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
+  const value = arg(args, '--chatgpt-tab-close-policy', process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY || 'after-start');
+  if (!['after-start', 'never', 'after-terminal'].includes(value)) throw new Error('--chatgpt-tab-close-policy must be after-start, never, or after-terminal');
+  return value as ChatGptTabClosePolicy;
+}
 function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
 function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
 
@@ -246,6 +251,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('submit requires --output task-pr|file');
   if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   const routing: RoutingDecision = { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
+  const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
   return {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
@@ -256,6 +262,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
     dependencies: arg(args, '--deps').split(',').filter(Boolean),
     capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
     adapter,
+    chatgptTabClosePolicy: closePolicy,
     input: input || 'true',
     output: outputKind === 'file' ? { kind: 'file', path: outputPath } : { kind: 'task_pr' },
     routing,
@@ -297,6 +304,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null;
   if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean);
   if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);
+  if (hasArg(args, '--chatgpt-tab-close-policy')) task.chatgptTabClosePolicy = chatGptTabClosePolicy(args);
   task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs);
   task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
@@ -368,7 +376,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter()], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, eventBus: bus, emit }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, eventBus: bus, emit, chatgptTabClosePolicy: policy }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined; const reconciler = runtime(loaded.store, args, bus);

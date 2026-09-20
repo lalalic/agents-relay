@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Task, AdapterName, Result, RoutingDecision } from './types.js';
+import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
 
 export type Execution = {
   id: string;
@@ -14,11 +14,12 @@ export type Execution = {
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
 };
-export type LaunchContext = { waitForWorkerStart?: Promise<void> };
+export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void> };
 export interface WorkerAdapter {
   readonly name: AdapterName;
   readonly id: string;
   readonly capabilities: readonly string[];
+  readonly tabClosePolicy?: ChatGptTabClosePolicy;
   launch(task: Task, signal: AbortSignal, context?: LaunchContext): Execution;
 }
 
@@ -109,7 +110,7 @@ export class CodexAdapter implements WorkerAdapter {
   }
 }
 
-export type BrowserWorkerRequest = { prompt: string; files?: string[] };
+export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabClosePolicy?: ChatGptTabClosePolicy };
 export type BrowserWorkerResponse = {
   operation: 'submit';
   status: 'submitted';
@@ -126,7 +127,13 @@ export type ChatGptAgentRunner = (
   route: RoutingDecision,
   signal: AbortSignal,
 ) => AgentRun;
-export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner };
+export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner; tabClosePolicy?: ChatGptTabClosePolicy };
+
+export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatGptTabClosePolicy = 'after-start'): ChatGptTabClosePolicy {
+  const policy = value || fallback;
+  if (!['after-start', 'never', 'after-terminal'].includes(policy)) throw new Error(`Invalid ChatGPT tab close policy: ${policy}`);
+  return policy as ChatGptTabClosePolicy;
+}
 
 export class LaunchFailure extends Error {}
 export class StartAckTimeout extends LaunchFailure {}
@@ -179,7 +186,7 @@ function parseDriverJson(output: string): BrowserWorkerResponse {
 function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
   return (_definition, request, _route, signal): AgentRun => {
     const releaseFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-release-${randomUUID()}`);
-    const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt, '--release-file', releaseFile];
+    const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt, '--release-file', releaseFile, '--close-policy', request.tabClosePolicy ?? 'after-start'];
     for (const file of request.files ?? []) args.push('--file', file);
     const child = spawn('python3', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -244,10 +251,12 @@ export class ChatGptAdapter implements WorkerAdapter {
   readonly capabilities = ['model', 'chatgpt', 'browser-harness'] as const;
   private readonly agentPath?: string;
   private readonly runner?: ChatGptAgentRunner;
+  readonly tabClosePolicy: ChatGptTabClosePolicy;
 
   constructor(options: ChatGptAdapterOptions = {}) {
     this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT;
     this.runner = options.agentRunner;
+    this.tabClosePolicy = chatGptTabClosePolicy(options.tabClosePolicy ?? process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY);
   }
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
@@ -269,9 +278,10 @@ export class ChatGptAdapter implements WorkerAdapter {
     execution.promise = (async (): Promise<Result> => {
       const runtime = await loadBrowserWorkerRuntime(this.agentPath);
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
+      const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
       const run = (this.runner ?? directBrowserWorkerRunner(runtime.root))(
         runtime.definition,
-        { prompt: task.input },
+        { prompt: task.input, tabClosePolicy: policy },
         route,
         controller.signal,
       );
@@ -279,8 +289,12 @@ export class ChatGptAdapter implements WorkerAdapter {
         const output = await (run.submitted ?? run.promise);
         const response = parseBrowserWorkerResponse(output);
         launchResolve();
-        if (context.waitForWorkerStart) await context.waitForWorkerStart;
-        run.release?.();
+        if (policy === 'after-start' && context.waitForWorkerStart) await context.waitForWorkerStart;
+        else if (policy === 'after-terminal') {
+          if (!context.waitForTerminal) throw new Error('ChatGPT after-terminal tab close policy requires a terminal event barrier');
+          await context.waitForTerminal;
+        }
+        if (policy !== 'never') run.release?.();
         if (run.submitted) await run.promise;
         return {
           summary: 'ChatGPT task submitted; terminal task state is event-owned',
@@ -292,7 +306,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         };
       } catch (error) {
         launchReject(error);
-        run.release?.();
+        if (policy !== 'never') run.release?.();
         if (controller.signal.aborted) throw error;
         if (error instanceof StartAckTimeout) throw error;
         throw new LaunchFailure(error instanceof Error ? error.message : String(error));

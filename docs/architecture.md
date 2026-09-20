@@ -85,7 +85,9 @@ Task submission is append-only at creation time, which avoids a single giant mut
 11. Relay reconciles dependents and/or resumes the parent continuation.
 12. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
-The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Its owned Temporary Chat tab is closed only after that acknowledgement. If none arrives within 60 seconds, Relay closes only the owned tab and records an explicit `worker_start_timeout` start-ack failure; process-exit events remain distinct from task terminal events.
+The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Its owned Temporary Chat tab uses the configurable `after-start` policy by default; `never` keeps it open for tests/debugging, and `after-terminal` waits for a new, correlated `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled` event before closing it. Stale or wrong-task events never satisfy either barrier. If no start acknowledgement arrives within 60 seconds, Relay closes only the owned tab under `after-start` and records an explicit `worker_start_timeout` start-ack failure; process-exit events remain distinct from task terminal events.
+
+Configure the daemon or CLI service with `--chatgpt-tab-close-policy after-start|never|after-terminal`, or set `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`. The default is `after-start`.
 
 ## Continuations
 

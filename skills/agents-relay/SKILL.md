@@ -78,7 +78,7 @@ The job/task descriptions remain the durable source of intent. Adapters do not i
 
 ## ChatGPT worker
 
-The ChatGPT adapter uses the packaged `chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, closes the owned tab, and returns a submission receipt.
+The ChatGPT adapter uses the packaged `chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
 
 ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 

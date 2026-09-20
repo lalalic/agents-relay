@@ -17,6 +17,7 @@ def main() -> int:
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--file", action="append", default=[])
     parser.add_argument("--release-file", required=True)
+    parser.add_argument("--close-policy", choices=["after-start", "never", "after-terminal"], default="after-start")
     args = parser.parse_args()
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as handle:
         json.dump(vars(args), handle, ensure_ascii=False)
