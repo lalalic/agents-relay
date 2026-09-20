@@ -448,6 +448,46 @@ test('merged zero-task PR becomes COMPLETED even when scheduler would leave it O
   assert.equal(result.state,'COMPLETED');
 });
 
+test('completed jobs create one SHA-bound reviewer task and suppress duplicates', async () => {
+  const work = task('work', 'SUCCEEDED');
+  const reviewJob = { ...job([work]), headSha: 'sha-review-1' };
+  const store = new InMemoryStore(reviewJob);
+  const bus = new MemoryEventBus();
+  const adapter = new FakeAdapter();
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1 });
+  await reconciler.reconcile('j');
+  let saved = await store.load('j');
+  assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+  assert.equal(saved.tasks.find(item => item.agentName === 'reviewer')?.reviewHeadSha, 'sha-review-1');
+  await reconciler.reconcile('j');
+  saved = await store.load('j');
+  assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+});
+
+test('review outcomes persist durably and old SHA evidence is ignored after head changes', async () => {
+  const reviewJob = { ...job([task('work', 'SUCCEEDED')]), headSha: 'sha-review-1' };
+  const store = new InMemoryStore(reviewJob);
+  const bus = new MemoryEventBus();
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
+  await reconciler.reconcile('j');
+  const created = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(created);
+  await reconciler.handleEvent(eventFor('j', created.id, null, 'review.started', 'running', 'started', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'gates passed', evidence: ['tests'] } }));
+  assert.equal((await store.load('j')).review?.outcome, 'started');
+  await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'approved', blockingFindings: [], evidence: ['tests'] } }));
+  assert.equal((await store.load('j')).review?.outcome, 'approved');
+  assert.equal((await store.load('j')).review?.evidence?.data?.review?.summary, 'approved');
+  const changed = await store.load('j');
+  changed.headSha = 'sha-review-2';
+  await store.saveJob(changed);
+  await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'stale approval', 'orchestrator', { headSha: 'sha-review-1' }));
+  assert.equal((await store.load('j')).review?.headSha, 'sha-review-1');
+  await reconciler.reconcile('j');
+  const refreshed = await store.load('j');
+  assert.equal(refreshed.review?.headSha, 'sha-review-2');
+  assert.equal(refreshed.tasks.filter(item => item.agentName === 'reviewer').length, 2);
+});
+
 test('open zero-task jobs remain create-only and do not consume reconciliation capacity', () => {
   const root = job([]);
   assert.equal(root.state, 'OPEN');

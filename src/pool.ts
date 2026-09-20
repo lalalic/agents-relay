@@ -80,7 +80,7 @@ export class RepositoryWorkerPool {
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
-      if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
+      if (['task.completed', 'task.failed', 'task.blocked', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) {
         await this.handleTerminalEvent(event);
         return;
       }

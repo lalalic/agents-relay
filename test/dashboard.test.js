@@ -203,3 +203,9 @@ test('completed but unmerged jobs are pinned and highlighted for merge follow-up
   assert.match(dashboardHtml, /mergePendingDelta/);
   assert.match(dashboardHtml, /job\.state==='COMPLETED'&&job\.githubState==='OPEN'/);
 });
+test('dashboard exposes reviewer approval, changes-required, stale, and merge-ready states', () => {
+  assert.match(dashboardHtml, /MERGE READY · approved/);
+  assert.match(dashboardHtml, /STALE · awaiting review/);
+  assert.match(dashboardHtml, /Review changes required/);
+  assert.match(dashboardHtml, /Review head SHA/);
+});
