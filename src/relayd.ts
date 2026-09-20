@@ -53,7 +53,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const auth = await githubAuthContext(argv); const client = auth.client;
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
-  const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
+  const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','neo.events.job')) : undefined;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
   const repositories = normalized.repository
     ? [normalized.repository]

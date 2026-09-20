@@ -34,7 +34,11 @@ ${task.input}
 ${output}
 
 [Execution event contract]
-Use the normal events bus with exactly Job ${job.id} and Task ${task.id}.
+Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
+Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
+publish through the federated MCP tool events__publish; do not open NATS directly.
+For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
+
 You MAY publish progress events while working.
 Before stopping, you MUST publish exactly one terminal event:
 - task.completed only after the declared output is durable;

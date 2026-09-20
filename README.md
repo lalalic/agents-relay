@@ -93,7 +93,7 @@ Managed tasks are descriptive work for agents, not shell commands. Use `codex` o
 
 Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay enriches the prompt with the PR URL, job/task identity, output contract, and mandatory terminal-event contract.
 
-For Codex and ChatGPT, **events are authoritative task state**. A process exit or browser submission receipt does not complete a task. The executing agent must publish exactly one correlated `task.completed`, `task.failed`, or `task.blocked` event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. A process exit or browser submission receipt does not complete a task. The executing agent must publish exactly one correlated `task.completed`, `task.failed`, or `task.blocked` event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
 The ChatGPT adapter uses the packaged `chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, closes the owned tab, and returns. It does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 

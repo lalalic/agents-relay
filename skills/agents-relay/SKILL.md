@@ -31,10 +31,12 @@ Events are authoritative for model-backed task state.
 
 Agents Relay may launch a Codex process or submit a one-shot ChatGPT browser task, but runtime/process completion is only delivery/runtime evidence. It never means the task completed.
 
-A running agent MUST publish exactly one correlated terminal event before stopping:
+A running agent MUST use the canonical Neo `events-bus` protocol and publish exactly one correlated terminal event before stopping:
 - `task.completed` after the declared output is durable;
 - `task.failed` when the task cannot complete;
 - `task.blocked` when external or human action is required.
+
+Event publishing is not an Agents Relay CLI responsibility. Sandboxed Codex and hosted ChatGPT workers use the federated `events__publish` MCP tool from `events-bus`; direct non-sandbox local workers may use the caller-provided `NEO_EVENTS_EMIT`. Agents Relay subscribes to the canonical `neo.events.job.<job_id>.>` stream and maps terminal events into durable task state.
 
 The event must carry the exact durable `job_id` and `task_id`. Progress events are optional.
 
