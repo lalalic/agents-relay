@@ -163,7 +163,7 @@ export class Reconciler {
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer').map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code and do not merge.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item)).map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code and do not merge.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
     job.state = 'RUNNING'; job.updatedAt = now;
@@ -174,8 +174,11 @@ export class Reconciler {
     const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'READY');
     if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
   }
+  private isSupersededTask(task: Task): boolean {
+    return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
+  }
   private preReviewGatesPass(job: Job): boolean {
-    return job.tasks.filter(task => task.agentName !== 'reviewer').every(task => task.state === 'SUCCEEDED');
+    return job.tasks.filter(task => task.agentName !== 'reviewer' && !this.isSupersededTask(task)).every(task => task.state === 'SUCCEEDED');
   }
   private async applyReviewEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);

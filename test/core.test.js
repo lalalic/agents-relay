@@ -451,6 +451,23 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 });
 
 
+test('final review ignores explicitly superseded cancelled history', async () => {
+  const succeeded=task('done','SUCCEEDED');
+  const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
+  const store=new InMemoryStore({...job([succeeded,superseded]),state:'COMPLETED'});
+  const bus=new MemoryEventBus();
+  const reviewer={name:'chatgpt',id:'fake-reviewer',capabilities:['model','chatgpt'],launch:()=>({id:'review-runtime',launched:Promise.resolve(),promise:Promise.resolve({summary:'submitted'}),cancel(){}})};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[reviewer],eventBus:bus,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  // emulate open PR/head in the in-memory store
+  store.pullRequestState=async()=>({state:'OPEN',draft:false,mergedAt:null,closedAt:null});
+  store.headSha=async()=> 'abc1234567890';
+  await reconciler.reconcile('j'); await reconciler.idle();
+  const saved=await store.load('j');
+  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(review);
+  assert.deepEqual(review.dependencies,['done']);
+});
+
 test('async launch and delivery rejection emits exactly one task.failed', async () => {
   const t=task('dedupe-launch'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const error=new LaunchFailure('same failure');
