@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardHtml, githubPrUrl } from '../dist/dashboard.js';
+import { once } from 'node:events';
+import { createHmac } from 'node:crypto';
+import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
+import { InMemoryStore } from '../dist/store.js';
 
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
@@ -186,6 +189,37 @@ test('dashboard SSE sends short keepalive comments independent of durable snapsh
   assert.match(source, /const SSE_HEARTBEAT_MS = 15000/);
   assert.match(source, /client\.write\(': heartbeat\\n\\n'\)/);
   assert.match(source, /clearInterval\(heartbeat\)/);
+});
+
+test('webhook refresh broadcasts the targeted snapshot before wake errors', async () => {
+  const job = { id: 'webhook-job', title: 'Fresh webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
+    secret: 'test-secret',
+    repositories: new Set(['owner/repo']),
+    refresh: async () => [job.id],
+    wake: async () => { throw new Error('reconciliation unavailable'); }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const base = `http://127.0.0.1:${address.port}`;
+  const stream = await fetch(`${base}/events`);
+  assert.equal(stream.status, 200);
+  const reader = stream.body?.getReader();
+  assert.ok(reader);
+  await reader.read();
+  const body = Buffer.from(JSON.stringify({ action: 'synchronize', repository: { full_name: 'owner/repo' }, pull_request: { number: 50 } }));
+  const signature = 'sha256=' + createHmac('sha256', 'test-secret').update(body).digest('hex');
+  const webhook = await fetch(`${base}/webhooks/github`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-github-delivery': 'delivery-1', 'x-github-event': 'pull_request', 'x-hub-signature-256': signature }, body });
+  assert.equal(webhook.status, 202);
+  let delivered = '';
+  for (let attempt = 0; attempt < 20 && !delivered.includes('Fresh webhook state'); attempt += 1) {
+    const chunk = await reader.read();
+    delivered += new TextDecoder().decode(chunk.value);
+  }
+  assert.match(delivered, /Fresh webhook state/);
+  await reader.cancel();
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
 test('dashboard warns when GitHub API is rate limited', () => {

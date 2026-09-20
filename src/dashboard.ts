@@ -295,7 +295,7 @@ export function serveDashboard(
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
-  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
+  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
 ): Server {
@@ -359,6 +359,11 @@ export function serveDashboard(
     return { id: jobId, json: JSON.stringify(await store.load(jobId)) };
   };
 
+  const broadcastSnapshots = async (jobIds: readonly string[] = []): Promise<void> => {
+    const snapshots = await Promise.all((jobIds.length > 0 ? jobIds : [undefined]).map(requestedJobId => snapshot(requestedJobId)));
+    for (const value of snapshots) for (const client of clients) client.write(`data: ${value.json}\n\n`);
+  };
+
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
     return JSON.stringify(await usageRegistry.snapshot());
@@ -381,7 +386,13 @@ export function serveDashboard(
       if (!event.repository || !webhook.repositories.has(event.repository) || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
-      queueMicrotask(() => { void webhook.wake(event); });
+      queueMicrotask(() => {
+        void (webhook.refresh ? webhook.refresh(event) : Promise.resolve([]))
+          .then(jobIds => broadcastSnapshots(jobIds))
+          .catch(error => process.stderr.write(`warning: webhook dashboard snapshot unavailable: ${error instanceof Error ? error.message : String(error)}\n`))
+          .then(() => webhook.wake(event))
+          .catch(error => process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
+      });
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
