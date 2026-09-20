@@ -420,11 +420,12 @@ test('merged zero-task PR becomes COMPLETED even when scheduler would leave it O
   assert.equal(result.state,'COMPLETED');
 });
 
-test('open zero-task jobs remain observable for lifecycle reconciliation without creating intent', () => {
+test('open zero-task jobs remain create-only and do not consume reconciliation capacity', () => {
   const root = job([]);
   assert.equal(root.state, 'OPEN');
-  assert.equal(needsLifecycleReconciliation(root), true);
+  assert.equal(needsLifecycleReconciliation(root), false);
   assert.deepEqual(root.tasks, []);
+  assert.match(dashboardHtml, /Awaiting initial task/);
 });
 
 test('closed unmerged PR cancels queued work and job without launching', async () => {
