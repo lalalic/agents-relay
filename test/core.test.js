@@ -551,7 +551,7 @@ test('managed model worker input includes durable PR context without changing st
   assert.match(input,/Task: prompt-context/);
   assert.match(input,/Parent task: parent/);
   assert.match(input,/Project: agents-relay/);
-  assert.match(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract\]/); assert.match(input,/MUST publish exactly one terminal event/);
+  assert.match(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract — mandatory\]/); assert.match(input,/FIRST execution action/); assert.match(input,/task\.started/); assert.match(input,/MUST publish exactly one canonical terminal event/); assert.match(input,/publish task\.failed with the concrete reason BEFORE exiting/); assert.match(input,/Never exit after task\.started without publishing exactly one terminal task event/); assert.match(input,/\[Final event gate\]/);
   assert.equal(t.input,'implement the change');
 });
 

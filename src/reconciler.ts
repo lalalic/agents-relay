@@ -34,18 +34,32 @@ ${task.input}
 [Output contract]
 ${output}
 
-[Execution event contract]
+[Execution event contract — mandatory]
 Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
 Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
 publish through the federated MCP tool events__publish; do not open NATS directly.
 For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
 
+As your FIRST execution action, before reading files, editing code, running commands, or doing other work,
+you MUST publish exactly one canonical task.started event for this exact Job/Task.
+
 You MAY publish progress events while working.
-Before stopping, you MUST publish exactly one terminal event:
+Before returning or allowing the worker process to exit, you MUST publish exactly one canonical terminal event:
 - task.completed only after the declared output is durable;
-- task.failed when execution cannot complete;
-- task.blocked when human/external action is required.
-The ChatGPT/Codex conversation or process exit is never the task result.`;
+- task.failed for implementation, tool, command, test, patch, commit, push, runtime, or other execution failure that prevents completion;
+- task.blocked only when genuine human/external action is required;
+- task.cancelled only when execution was cancelled.
+
+If any execution step fails and you cannot continue, publish task.failed with the concrete reason BEFORE exiting.
+Never exit after task.started without publishing exactly one terminal task event.
+Do not publish duplicate terminal task events.
+The worker owns task.started and task terminal events. Relay-owned task.process.launched, task.process.exited,
+and task.process.async_exited are process lifecycle only and NEVER replace the worker task lifecycle.
+The ChatGPT/Codex conversation or process exit is never the task result.
+
+[Final event gate]
+Before your final return, verify that a terminal event for this exact Job/Task was published.
+If no terminal event has been published, publish task.failed before exiting.`;
 }
 
 export class Reconciler {
