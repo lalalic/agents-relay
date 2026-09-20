@@ -560,11 +560,14 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0 });
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } } });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
-  assert.equal(saved.tasks.find(item => item.agentName === 'reviewer')?.reviewHeadSha, 'sha-review-1');
+  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
+  assert.equal(reviewer?.adapter, 'chatgpt');
+  assert.deepEqual(reviewer?.routing, { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: reviewer?.routing?.decidedAt });
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
