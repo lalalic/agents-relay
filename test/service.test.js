@@ -88,6 +88,8 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'repair', '--help'], 'Repair duplicate durable markers'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task update'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable task fields'],
+    ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
+    ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
     ['dist/cli.js', ['submit', '--help'], 'Queue a task for a managed job'],
     ['dist/cli.js', ['record', '--help'], 'Backfill work completed outside the relay'],

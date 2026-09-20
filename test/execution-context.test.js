@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 import { managedWorkerInput } from '../dist/reconciler.js';
 
@@ -106,5 +107,28 @@ test('nested worker prompt exposes resolved context and only permits durable Rel
     assert.match(prompt, /Role: nested-worker/);
     assert.match(prompt, /durable Agents Relay child task with parentTaskId=child/);
     assert.match(prompt, /do not directly spawn arbitrary child agents/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('context resolve CLI exposes the same resolver for XChat without durable state', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-context-cli-'));
+  try {
+    const workspace = join(root, 'workspace');
+    const project = join(workspace, 'project');
+    const globalRoot = join(root, 'global');
+    await Promise.all([mkdir(project, { recursive: true }), mkdir(globalRoot, { recursive: true })]);
+    await skill(globalRoot, 'shared');
+    await skill(project, 'local');
+    const result = spawnSync(process.execPath, [
+      'dist/cli.js', 'context', 'resolve', '--project-path', project, '--role', 'orchestrator',
+      '--workspace-root', workspace, '--neo-root', 'none', '--global-root', globalRoot, '--skills', 'local'
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const context = JSON.parse(result.stdout);
+    assert.equal(context.role, 'orchestrator');
+    assert.equal(context.project.path, await realpath(project));
+    assert.deepEqual(context.skills.map(item => item.name), ['local']);
+    assert.equal(context.delegation.mode, 'relay-child-task');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

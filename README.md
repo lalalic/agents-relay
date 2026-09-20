@@ -91,6 +91,14 @@ V1 assumes one active runner/daemon per job. Use a distributed atomic lease befo
 
 Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
 
+XChat and other orchestrators can consume Relay's exact shared discovery implementation without duplicating filesystem search logic:
+
+~~~sh
+npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator
+~~~
+
+The command resolves concrete paths only for the current execution. Use `--skills` / `--agents` for explicit selections; no resolved absolute path is written into durable task state.
+
 The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
 
 ### Agent worker lifecycle

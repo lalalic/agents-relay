@@ -18,7 +18,8 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget } from './scheduler.js';
-const usage = 'agents-relay <job|task|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
+const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -28,6 +29,7 @@ Usage:
 Commands:
   job create|adopt|repair  Create or repair a durable GitHub-backed job
   task update              Update mutable durable task fields in place
+  context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   submit                   Queue a task for a managed job
   record                   Backfill a completed task into durable history
@@ -98,6 +100,21 @@ Use --clear-routing to remove routing metadata. A model update requires --model;
 
 Example:
   npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  context: `Resolve the shared execution context used by XChat and Relay.
+
+Usage:
+  npx agents-relay context resolve --project-path PATH --role ROLE [options]
+
+Actions:
+  resolve  Resolve instructions, visible skills/agents, and runtime/delegation metadata`,
+  'context resolve': `Resolve shared execution context without creating durable state.
+
+Required: --project-path PATH.
+Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
+Root overrides for testing/configuration: --workspace-root PATH, --neo-root PATH|none, --global-root PATH.
+
+Example:
+  npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator`,
   submit: `Queue a task for a managed job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
@@ -168,6 +185,7 @@ Example:
 export function helpText(command?: string, action?: string): string {
   if (command === 'job') return action ? help[`job ${action}` as keyof typeof help] ?? help.job : help.job;
   if (command === 'task') return action ? help[`task ${action}` as keyof typeof help] ?? help.task : help.task;
+  if (command === 'context') return action ? help[`context ${action}` as keyof typeof help] ?? help.context : help.context;
   return command ? help[command as keyof typeof help] ?? help.root : help.root;
 }
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
@@ -332,6 +350,24 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(task, null, 2));
 }
 
+async function runContextCommand(action: string, args: string[]): Promise<void> {
+  if (action !== 'resolve') throw new Error(usage);
+  const projectPath = arg(args, '--project-path');
+  if (!projectPath) throw new Error('context resolve requires --project-path');
+  const roleValue = arg(args, '--role', 'orchestrator');
+  const roles: ExecutionRole[] = ['orchestrator', 'planner', 'reviewer', 'worker', 'nested-worker'];
+  if (!roles.includes(roleValue as ExecutionRole)) throw new Error('--role must be orchestrator, planner, reviewer, worker, or nested-worker');
+  const neoRootArg = arg(args, '--neo-root');
+  const context = await resolveExecutionContext(projectPath, roleValue as ExecutionRole, {
+    workspaceRoot: arg(args, '--workspace-root') || undefined,
+    neoRoot: neoRootArg === 'none' ? null : neoRootArg || undefined,
+    globalRoot: arg(args, '--global-root') || undefined,
+    explicitSkills: arg(args, '--skills').split(',').filter(Boolean),
+    explicitAgents: arg(args, '--agents').split(',').filter(Boolean),
+  });
+  console.log(JSON.stringify(context, null, 2));
+}
+
 async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'adopt', 'repair'].includes(action)) throw new Error(usage);
   const repo = repository(args);
@@ -434,9 +470,10 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === '--help' || command === '-h') { console.log(helpText()); return; }
-  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' ? args[0] : undefined)); return; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' || command === 'context' ? args[0] : undefined)); return; }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
+  if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
