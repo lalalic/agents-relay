@@ -127,6 +127,7 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
 
 
 const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
+const DEFAULT_TASK_JOB_CONTRACT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'contracts', 'task-job-contract.md');
 
 function parsePlannerAgentMessage(line: string): string | undefined {
   try {
@@ -143,7 +144,8 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
     const instructions = await readFile(this.agentFile, 'utf8');
-    const prompt = instructions.trim() + '\n\n## Durable planner input\n\n' + plannerInput(context);
+    const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
+    const prompt = instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
       const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdoutBuffer = '';

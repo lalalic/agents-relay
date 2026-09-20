@@ -112,24 +112,24 @@ test('planner satisfaction cannot bypass failed or blocked completion gates', ()
 
 
 test('story sizes map only the overall execution timeout', () => {
-  assert.equal(storySizeTimeoutMs('S'),120000);
-  assert.equal(storySizeTimeoutMs('M'),300000);
-  assert.equal(storySizeTimeoutMs('L'),900000);
-  assert.equal(taskOverallTimeoutMs('M','high'),600000);
-  assert.equal(taskOverallTimeoutMs('L','high'),1800000);
-  assert.equal(taskOverallTimeoutMs('M','medium'),300000);
+  assert.equal(storySizeTimeoutMs('S'),300000);
+  assert.equal(storySizeTimeoutMs('M'),900000);
+  assert.equal(storySizeTimeoutMs('L'),2700000);
+  assert.equal(taskOverallTimeoutMs('M','high'),1800000);
+  assert.equal(taskOverallTimeoutMs('L','high'),5400000);
+  assert.equal(taskOverallTimeoutMs('M','medium'),900000);
   const sized=parsePlannerResult({objective_status:'in_progress',assessment:'size',next_tasks:[{id:'large',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'L'}]});
   assert.equal(sized.next_tasks[0].storySize,'L');
-  assert.equal(sized.next_tasks[0].timeoutMs,900000);
+  assert.equal(sized.next_tasks[0].timeoutMs,2700000);
   const defaulted=parsePlannerResult({objective_status:'in_progress',assessment:'default',next_tasks:[{id:'medium',input:'work',adapter:'codex',output:{kind:'task_pr'}}]});
   assert.equal(defaulted.next_tasks[0].storySize,'M');
-  assert.equal(defaulted.next_tasks[0].timeoutMs,300000);
+  assert.equal(defaulted.next_tasks[0].timeoutMs,900000);
 });
 
 
 test('planner doubles story-size timeout only for high reasoning', () => {
   const high=parsePlannerResult({objective_status:'in_progress',assessment:'high',next_tasks:[{id:'high',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'high',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
-  assert.equal(high.next_tasks[0].timeoutMs,600000);
+  assert.equal(high.next_tasks[0].timeoutMs,1800000);
   const normal=parsePlannerResult({objective_status:'in_progress',assessment:'normal',next_tasks:[{id:'normal',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'medium',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
-  assert.equal(normal.next_tasks[0].timeoutMs,300000);
+  assert.equal(normal.next_tasks[0].timeoutMs,900000);
 });

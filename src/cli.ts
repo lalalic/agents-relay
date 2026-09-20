@@ -101,7 +101,7 @@ Example:
   submit: `Queue a task for a managed job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
-Required for worker tasks: --adapter codex|chatgpt, --model MODEL, and --output task-pr|file. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --max-attempts N. Model-backed execution requires --events nats in the running reconciler/daemon.
+Required for worker tasks: --adapter codex|chatgpt, --model MODEL, and --output task-pr|file. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --max-attempts N. Story size defaults to M. Task producers follow the shared Task / Job Contract; prefer --story-size over raw --timeout. Model-backed execution requires --events nats in the running reconciler/daemon.
 
 Example:
   npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter codex --provider openai --model gpt-5-6 --output task-pr --input "Run the required tests and report the result through events."`,
@@ -384,7 +384,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtimeReviewer() { return { adapter: 'chatgpt' as const, routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'fixed-chatgpt-reviewer', decidedAt: new Date().toISOString() }, startAckTimeoutMs: 120000 }; }
+export function runtimeReviewer() { return { adapter: 'chatgpt' as const, routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'fixed-chatgpt-reviewer', decidedAt: new Date().toISOString() } }; }
 export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {

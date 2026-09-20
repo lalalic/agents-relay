@@ -77,7 +77,7 @@ test('CLI submit defaults story size to M and derives overall timeout from size'
   const saved=JSON.parse(await readFile(file,'utf8'));
   const created=saved.tasks.find(item=>item.id==='sized');
   assert.equal(created.storySize,'L');
-  assert.equal(created.timeoutMs,900000);
+  assert.equal(created.timeoutMs,2700000);
   await rm(dir,{recursive:true,force:true});
 });
 
@@ -291,11 +291,11 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
   const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
 
-test('ChatGPT reviewer can use a longer start acknowledgement window', async () => {
+test('ChatGPT reviewer uses the same start acknowledgement policy as normal ChatGPT tasks', async () => {
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
-  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()},startAckTimeoutMs:100};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer});
+  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'RUNNING');
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',{worker_owned:true},{agent:'mcp'}));

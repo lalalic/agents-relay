@@ -7,6 +7,10 @@ description: Create and operate durable asynchronous agent jobs through GitHub P
 
 Use Agents Relay when an orchestrator needs durable delegated work that survives the current process.
 
+## Required shared contract
+
+Before creating, planning, reviewing, or managing a job/task, read and follow `contracts/task-job-contract.md`. This is the canonical producer/runtime protocol for story size, lifecycle events, review, and auto-merge.
+
 ## Core task contract
 
 A managed child task is always a descriptive unit of work. It says what an agent must accomplish; it is never a shell command.
