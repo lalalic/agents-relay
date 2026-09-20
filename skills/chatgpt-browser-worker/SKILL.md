@@ -49,7 +49,11 @@ Neo event contract. Events are execution observability, not a third output mode.
 
 The worker is one-shot. It opens an isolated worker-owned ChatGPT tab, submits
 the complete task, verifies that ChatGPT accepted the submission, and applies
-the configured tab-close policy. `after-start` waits for the exact
+the configured tab-close policy. Attachment presence is not upload readiness:
+the worker waits for every expected attachment to be visibly present, for
+observable upload/processing indicators to clear, and for Send to remain
+enabled across stable polls. Attachment-bearing prompts receive a longer
+bounded readiness window. `after-start` waits for the exact
 post-submission worker `task.started` acknowledgement, `never` leaves the owned
 tab open for debugging, and `after-terminal` waits for a new exact-task
 `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled` event.

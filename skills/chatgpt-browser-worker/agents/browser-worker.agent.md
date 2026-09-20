@@ -26,8 +26,9 @@ If the output declaration is missing or ambiguous, do not invent one.
   select a Project, or submit through a pre-existing user ChatGPT tab.
 - Use Temporary Chat and the account's existing default model/thinking
   settings. Do not change model or thinking settings.
-- Upload requested files, submit the complete task prompt, and verify that the
-  submission became a new user turn.
+- Upload requested files, wait for all expected attachments to finish observable
+  upload/processing, wait for Send to remain enabled across stable polls, submit
+  the complete task prompt, and verify that the submission became a new user turn.
 - Once submission is verified, follow the configured owned-tab close policy:
   `after-start` closes after a new worker-owned `task.started` event, `never`
   leaves the owned tab open for test/debug use, and `after-terminal` closes only
