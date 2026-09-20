@@ -42,7 +42,7 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -64,6 +64,7 @@ export class InMemoryStore implements DurableStore {
     this.values.set(key, renderTaskComment(task));
   }
   async saveTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task)); }
+  async headSha(): Promise<string | null> { const jobs = [...this.values.values()].map(parseJob).filter((x): x is Job => x !== null); return jobs[0]?.headSha ?? jobs[0]?.review?.headSha ?? null; }
   async listAgents(): Promise<AgentRegistration[]> { return [...this.values.values()].map(parseAgent).filter((x): x is AgentRegistration => x !== null); }
   async saveAgent(agent: AgentRegistration): Promise<void> { this.values.set(`${AGENT_MARKER}:${agent.id}`, renderAgentComment(agent)); }
   async comments(): Promise<Comment[]> { return [...this.values.values()].map((body, i) => ({ id: i + 1, body, updatedAt: new Date().toISOString(), authorLogin: 'local' })); }
@@ -410,6 +411,13 @@ export class GitHubStore implements DurableStore {
     const pr = await this.prNode();
     if (pr.merged === true || typeof pr.mergedAt === 'string') return 'MERGED';
     return String(pr.state ?? '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  }
+  async headSha(): Promise<string | null> {
+    const { owner, name } = this.repoParts();
+    const data = await this.graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid}}}', { owner, name, number: this.prNumber });
+    const repository = data.repository as Record<string, unknown> | undefined;
+    const pr = repository?.pullRequest as Record<string, unknown> | undefined;
+    return typeof pr?.headRefOid === 'string' ? pr.headRefOid : null;
   }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));

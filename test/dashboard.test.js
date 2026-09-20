@@ -46,6 +46,15 @@ test('events follow selected job/task and can return to all tasks', () => {
   assert.match(dashboardHtml, /eventTaskId=null;rememberSelection\(\);clearEvents\(\)/);
 });
 
+test('dashboard labels relay and worker lifecycle phases distinctly', () => {
+  assert.match(dashboardHtml, /function eventLabel\(type\)/);
+  assert.match(dashboardHtml, /Process launched/);
+  assert.match(dashboardHtml, /Worker started/);
+  assert.match(dashboardHtml, /Sync process exited/);
+  assert.match(dashboardHtml, /Async process exited/);
+  assert.match(dashboardHtml, /task\.process\.async_exited/);
+});
+
 test('events replay canonical history when job or task selection changes', () => {
   assert.match(dashboardHtml, /loadJSON\('\/api\/events\?'/);
   assert.match(dashboardHtml, /async function loadEventHistory\(\)/);
@@ -193,4 +202,10 @@ test('completed but unmerged jobs are pinned and highlighted for merge follow-up
   assert.match(dashboardHtml, /complete-unmerged/);
   assert.match(dashboardHtml, /mergePendingDelta/);
   assert.match(dashboardHtml, /job\.state==='COMPLETED'&&job\.githubState==='OPEN'/);
+});
+test('dashboard exposes reviewer approval, changes-required, stale, and merge-ready states', () => {
+  assert.match(dashboardHtml, /MERGE READY · approved/);
+  assert.match(dashboardHtml, /STALE · awaiting review/);
+  assert.match(dashboardHtml, /Review changes required/);
+  assert.match(dashboardHtml, /Review head SHA/);
 });

@@ -177,4 +177,16 @@ print(json.dumps({
     "diagnostic_thread_id": _diagnostic_thread_id(),
     "user_message_id": user_turn.get("id") or None,
     "verified": True,
-}, ensure_ascii=False))
+}, ensure_ascii=False), flush=True)
+
+# Keep the owned Temporary Chat tab alive until Relay observes the worker's
+# post-launch task.started acknowledgement.  The parent releases this file;
+# atexit then closes only this worker-owned tab.
+release_file = CFG.get("release_file")
+if not release_file:
+    raise RuntimeError("worker release file was not configured")
+deadline = time.time() + 90
+while time.time() < deadline and not os.path.exists(release_file):
+    time.sleep(.1)
+if not os.path.exists(release_file):
+    raise RuntimeError("worker start acknowledgement release was not observed")

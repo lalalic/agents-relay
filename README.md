@@ -10,6 +10,11 @@ For GitHub-backed work, create or adopt the PR through Agents Relay itself. This
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id job-1 --title "Objective" --body "PR description" --mode fixed
 
+# Create/reuse the managed job and submit its initial task atomically
+npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
+  --id job-1 --start --task-id initial --adapter codex --provider openai \
+  --model MODEL --output task-pr --input "Implement the objective and publish a terminal event."
+
 npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
   --input "Implement the described child task and publish a terminal event."
@@ -35,6 +40,7 @@ Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.
 
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
+Use `--start` to create/reuse the job and submit its initial task in one invocation. Start mode requires explicit `--adapter`, `--model`, `--output`, and non-empty `--input`; the task ID defaults to `initial`. Re-running with the same task definition reuses that task and never duplicates it. Omitting `--start` preserves create-only behavior, leaving an `OPEN` job with zero tasks until a caller submits work.
 
 To adopt an existing unmanaged PR, including a PR with no comments:
 
@@ -93,7 +99,7 @@ Managed tasks are descriptive work for agents, not shell commands. Use `codex` o
 
 Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay enriches the prompt with the PR URL, job/task identity, output contract, and mandatory terminal-event contract.
 
-For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. A process exit or browser submission receipt does not complete a task. The executing agent must publish exactly one correlated `task.completed`, `task.failed`, or `task.blocked` event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its submission runtime exits; neither substitutes for `task.completed`, `task.failed`, or `task.blocked`. The ChatGPT worker-owned tab remains open until the correlated worker start acknowledgement arrives, or is closed and failed with `worker_start_timeout` after 60 seconds. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
 The ChatGPT adapter uses the packaged `chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, closes the owned tab, and returns. It does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
-import { Job, Task, EventRecord, Priority } from './types.js';
+import { Job, Task, EventRecord, Priority, ReviewOutcome } from './types.js';
 import { schedule, transitionTask } from './scheduler.js';
-import { Execution, LaunchFailure, WorkerAdapter } from './adapters.js';
+import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
 import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
@@ -10,7 +10,7 @@ import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } f
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void> };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number } };
 type LiveExecution = { taskId: string; executionId: string; execution: Execution; controller: AbortController };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 
@@ -59,6 +59,7 @@ export class Reconciler {
       await this.applyTerminalEvent(event);
       return;
     }
+    if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) { await this.applyReviewEvent(event); return; }
     if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(event.job_id);
   }
   async watch(jobId: string): Promise<() => Promise<void>> {
@@ -79,6 +80,9 @@ export class Reconciler {
       const job = await this.store.load(jobId);
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
+      const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
+      if (headSha) job.headSha = headSha;
+      await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
@@ -108,8 +112,62 @@ export class Reconciler {
       if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
       if (prState === 'CLOSED') { finalState.state = 'CANCELLED'; finalState.updatedAt = new Date().toISOString(); }
       if (finalState.state !== scheduled.state || finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
+      await this.ensureFinalReview(finalState, prState, headSha);
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
+  }
+  private async currentHeadSha(job: Job): Promise<string | null> { return await this.store.headSha?.() ?? job.headSha ?? job.review?.headSha ?? null; }
+  private async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
+    if (!headSha || !job.review || job.review.headSha === headSha || job.review.outcome === 'stale') return;
+    job.review = { ...job.review, outcome: 'stale', updatedAt: new Date().toISOString() };
+    const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
+    if (staleTask && ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(staleTask.state)) {
+      this.live.get(staleTask.id)?.execution.cancel();
+      transitionTask(staleTask, 'CANCELLED');
+      staleTask.error = 'Review evidence became stale after the PR head changed';
+      staleTask.leaseOwner = null;
+      staleTask.leaseExpiresAt = null;
+      await this.store.saveTask(staleTask);
+    }
+    await this.store.saveJob(job);
+  }
+  private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
+    if (prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
+    if (!this.preReviewGatesPass(job)) return;
+    const review = job.review;
+    if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
+    const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
+    if (reviewTasks.some(task => ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(task.state))) return;
+    if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
+    const id = `final-review-${headSha.slice(0, 12)}`;
+    const now = new Date().toISOString();
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer').map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First verify the deterministic pre-review gates have passed, then inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code and do not merge.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    await this.store.appendTask(task);
+    job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
+    job.state = 'RUNNING'; job.updatedAt = now;
+    await this.store.saveJob(job);
+    await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha}`, 'orchestrator', { headSha, agentName: 'reviewer' }));
+    const ready = schedule(await this.store.load(job.id));
+    await this.store.saveJob(ready);
+    const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'READY');
+    if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
+  }
+  private preReviewGatesPass(job: Job): boolean {
+    return job.tasks.filter(task => task.agentName !== 'reviewer').every(task => task.state === 'SUCCEEDED');
+  }
+  private async applyReviewEvent(event: EventRecord): Promise<void> {
+    const job = await this.store.load(event.job_id);
+    const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
+    const reviewData = event.data?.review && typeof event.data.review === 'object' ? event.data.review as Record<string, unknown> : undefined;
+    const headSha = typeof reviewData?.headSha === 'string' ? reviewData.headSha : typeof event.data?.headSha === 'string' ? event.data.headSha : task?.reviewHeadSha;
+    if (!task || !headSha || task.reviewHeadSha !== headSha) return;
+    const outcome: ReviewOutcome = event.type === 'review.started' ? 'started' : event.type === 'review.approved' ? 'approved' : event.type === 'review.changes_required' ? 'changes_required' : 'blocked';
+    const currentHeadSha = await this.store.headSha?.();
+    if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
+    const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
+    job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
+    job.updatedAt = job.review.updatedAt;
+    await this.store.saveJob(job);
   }
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     for (const task of job.tasks.filter(item => item.state === 'RUNNING')) {
@@ -181,17 +239,21 @@ export class Reconciler {
     task.executionId = randomUUID();
     const durableExecutionId = task.executionId;
     await this.store.saveTask(task);
-    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
-
     const controller = new AbortController();
     let execution: Execution;
     const workerTask = { ...task, input: workerInput };
+    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now()) : null;
+    const launchContext: LaunchContext = startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {};
     try {
-      execution = adapter.launch(workerTask, controller.signal);
+      execution = adapter.launch(workerTask, controller.signal, launchContext);
     } catch (error) {
+      await startAckSetup?.stop();
       await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
       return;
     }
+
+    void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
+    if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 
     this.live.set(task.id, { taskId: task.id, executionId: durableExecutionId, execution, controller });
     const terminalTimer = setTimeout(() => {
@@ -202,7 +264,9 @@ export class Reconciler {
     this.detach(
       execution.promise.then(
         result => this.runtimeSettled(job.id, task.id, durableExecutionId, result, null),
-        error => error instanceof LaunchFailure
+        error => error instanceof StartAckTimeout
+          ? this.failLaunch(job.id, task.id, durableExecutionId, error.message, 'start-ack')
+          : error instanceof LaunchFailure
           ? this.failLaunch(job.id, task.id, durableExecutionId, error.message, 'delivery')
           : this.runtimeSettled(job.id, task.id, durableExecutionId, null, error instanceof Error ? error.message : String(error)),
       ),
@@ -210,6 +274,35 @@ export class Reconciler {
       task.id,
       'worker runtime completion',
     );
+  }
+
+  private async startAck(jobId: string, taskId: string, launchBarrier: number): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
+    if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
+    let resolveAck!: () => void;
+    let rejectAck!: (error: Error) => void;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const ack = new Promise<void>((resolve, reject) => { resolveAck = resolve; rejectAck = reject; });
+    const unsubscribe = await this.options.eventBus.subscribe(jobId, async event => {
+      if (settled || event.type !== 'task.started' || event.job_id !== jobId || event.task_id !== taskId) return;
+      const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
+      const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
+      const workerOwned = event.data?.worker_owned === true || ['codex', 'chatgpt'].includes(sourceAgent);
+      if (!workerOwned || sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
+      if (!event.timestamp || new Date(event.timestamp).getTime() < launchBarrier) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolveAck();
+    });
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void unsubscribe();
+      rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_timeout: no worker task.started start-ack`));
+    }, this.options.startAckTimeoutMs ?? 60000);
+    let stopped = false;
+    const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer); await unsubscribe(); };
+    return { ack, stop };
   }
 
   private async launchPlanner(job: Job, task: Task): Promise<void> {
@@ -264,11 +357,11 @@ export class Reconciler {
     this.terminalTimers.delete(taskId);
   }
 
-  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' = 'launch'): Promise<void> {
+  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase });
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
     await this.applyTerminalEvent(event);
     await this.emit(event);
   }
@@ -281,11 +374,12 @@ export class Reconciler {
     if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
-      error ? 'worker.runtime.failed' : 'worker.runtime.exited',
+      task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
       error ? 'failed' : 'succeeded',
       error ?? result?.summary ?? 'Worker runtime exited',
       'orchestrator',
-      { authoritative: false, waitingForTerminalEvent: true },
+      { authoritative: false, waitingForTerminalEvent: true, processError: error },
+      { agent: 'relay', component: 'agents-relay' },
     ));
   }
 
