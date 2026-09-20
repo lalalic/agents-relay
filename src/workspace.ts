@@ -53,6 +53,18 @@ export async function discoverWorkspaceRepositories(root: string): Promise<Disco
   return [...unique.values()].sort((a, b) => a.repository.localeCompare(b.repository));
 }
 
+
+export async function resolveWorkspaceRepositoryPath(repository: string, root = defaultWorkspaceRoot()): Promise<string> {
+  const match = (await discoverWorkspaceRepositories(root)).find(item => item.repository === repository);
+  if (!match) throw new Error(`Repository ${repository} not found under workspace ${resolve(root)}; pass --project-path explicitly`);
+  return match.path;
+}
+
+export async function resolveManagedProjectPath(repository: string | undefined, explicitProjectPath = '', root = defaultWorkspaceRoot(), cwd = process.cwd()): Promise<string> {
+  if (explicitProjectPath) return resolve(explicitProjectPath);
+  return repository ? resolveWorkspaceRepositoryPath(repository, root) : resolve(cwd);
+}
+
 function repositoryPathRank(path: string, root: string): number {
   const relativePath = relative(root, path);
   if (!relativePath.includes('/')) return 0;

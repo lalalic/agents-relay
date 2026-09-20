@@ -13,7 +13,7 @@ import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, l
 import { githubAuthContext } from './github-auth.js';
 import { isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
+import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
@@ -54,10 +54,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','neo.events.job')) : undefined;
-  const discoveredRepositories = normalized.repository ? [] : await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot());
+  const workspaceRoot = normalized.workspaceRoot ?? defaultWorkspaceRoot();
+  const discoveredRepositories = normalized.repository ? [] : await discoverWorkspaceRepositories(workspaceRoot);
   const repositories = normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);
   const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? (value(argv,'--project-path') || process.cwd()) });
+  const explicitProjectPath = value(argv,'--project-path');
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler);
   const cacheDirectory = join(homedir(), '.agents-relay');

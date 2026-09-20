@@ -99,7 +99,6 @@ async function instructionPaths(projectPath: string, workspaceRoot: string, neoR
     if (await exists(path)) { const concrete = await realpath(path); if (!found.some(item => item.path === concrete)) found.push({ path: concrete, source }); }
   };
   await add(join(globalRoot, 'AGENTS.md'), 'global');
-  if (neoRoot && neoRoot !== projectPath) await add(join(neoRoot, 'AGENTS.md'), 'neo');
   if (isWithin(projectPath, workspaceRoot)) {
     const segments = relative(workspaceRoot, projectPath).split(sep).filter(Boolean);
     let cursor = workspaceRoot;

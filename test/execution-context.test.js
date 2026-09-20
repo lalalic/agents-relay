@@ -63,7 +63,9 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     assert.deepEqual(byAgent.get('duplicate').trustDomains, ['local']);
     assert.deepEqual(byAgent.get('duplicate').delegation, []);
     assert.equal(byAgent.get('reviewer').path, await realpath(reviewer));
-    assert.deepEqual(context.instructions.map(item => item.source), ['global', 'neo', 'project', 'project']);
+    assert.deepEqual(context.instructions.map(item => item.source), ['global', 'project', 'project']);
+    const neoAgents = await realpath(join(neo, 'AGENTS.md'));
+    assert.equal(context.instructions.some(item => item.path === neoAgents), false);
     assert.deepEqual(context.runtimes, [{ name: 'codex', id: undefined, capabilities: ['model', 'codex'], source: 'runtime' }]);
 
     const selected = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, neoRoot: neo, globalRoot, explicitSkills: ['neo-only'], explicitAgents: ['reviewer'] });

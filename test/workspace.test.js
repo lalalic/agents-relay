@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
-import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote } from '../dist/workspace.js';
+import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, resolveManagedProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -25,6 +25,20 @@ test('workspace discovery finds nested git checkouts and GitHub origins', async 
     }
     assert.deepEqual(await discoverGitRepositories(root), [nested, repo]);
     assert.deepEqual(await discoverWorkspaceRepositories(root), [{ path: nested, repository: 'lalalic/agents-relay' }, { path: repo, repository: 'lalalic/neo' }]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('repository path resolution uses managed repository identity instead of launcher cwd', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-repository-path-'));
+  try {
+    const repo = join(root, 'agents-relay');
+    await mkdir(repo, { recursive: true });
+    await exec('git', ['init', '-q', repo]);
+    await exec('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:lalalic/agents-relay.git']);
+    assert.equal(await resolveWorkspaceRepositoryPath('lalalic/agents-relay', root), repo);
+    assert.equal(await resolveManagedProjectPath('lalalic/agents-relay', '', root, join(root, 'launcher')), repo);
+    assert.notEqual(await resolveManagedProjectPath('lalalic/agents-relay', '', root, join(root, 'launcher')), join(root, 'launcher'));
+    await assert.rejects(resolveWorkspaceRepositoryPath('lalalic/missing', root), /pass --project-path explicitly/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
