@@ -233,6 +233,26 @@ test('adapter runtime exit is not task completion', async () => {
   await stop();
 });
 
+test('asynchronous LaunchFailure becomes authoritative delivery failure', async () => {
+  const t=task('delivery-fail');
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const events=[];
+  const stop=await bus.subscribe('j',async event=>{events.push(event);});
+  const adapter={
+    name:'codex',id:'delivery-test',capabilities:['model','codex'],
+    launch:()=>({id:'exec-delivery',promise:Promise.reject(new LaunchFailure('submit was not accepted')),cancel(){}})
+  };
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  await reconciler.reconcile('j');
+  await reconciler.idle();
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error,/Worker delivery failed/);
+  assert.equal(events.some(event=>event.type==='task.failed' && event.data?.phase==='delivery'),true);
+  await stop();
+});
+
 test('correlated terminal completed event is authoritative', async () => {
   const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});

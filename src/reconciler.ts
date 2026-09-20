@@ -202,7 +202,9 @@ export class Reconciler {
     this.detach(
       execution.promise.then(
         result => this.runtimeSettled(job.id, task.id, durableExecutionId, result, null),
-        error => this.runtimeSettled(job.id, task.id, durableExecutionId, null, error instanceof Error ? error.message : String(error)),
+        error => error instanceof LaunchFailure
+          ? this.failLaunch(job.id, task.id, durableExecutionId, error.message, 'delivery')
+          : this.runtimeSettled(job.id, task.id, durableExecutionId, null, error instanceof Error ? error.message : String(error)),
       ),
       job.id,
       task.id,
@@ -262,11 +264,11 @@ export class Reconciler {
     this.terminalTimers.delete(taskId);
   }
 
-  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string): Promise<void> {
+  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' = 'launch'): Promise<void> {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker launch failed: ${message}`, 'user', { phase: 'launch' });
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase });
     await this.applyTerminalEvent(event);
     await this.emit(event);
   }
