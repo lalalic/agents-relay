@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
-import { Job, Task, EventRecord, Priority, ReviewOutcome } from './types.js';
+import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy } from './types.js';
 import { schedule, transitionTask } from './scheduler.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
@@ -10,9 +10,10 @@ import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } f
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number } };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
 type LiveExecution = { taskId: string; executionId: string; execution: Execution; controller: AbortController };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
+type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
 export function managedWorkerInput(job: Job, task: Task): string {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
@@ -52,10 +53,11 @@ export class Reconciler {
   private readonly plannerLive = new Map<string, LivePlanner>();
   private readonly terminalTimers = new Map<string, NodeJS.Timeout>();
   private readonly continuationLive = new Set<string>();
+  private readonly terminalWaiters = new Map<string, TerminalWaiter>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
   async handleEvent(event: EventRecord): Promise<void> {
-    if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       await this.applyTerminalEvent(event);
       return;
     }
@@ -243,11 +245,19 @@ export class Reconciler {
     let execution: Execution;
     const workerTask = { ...task, input: workerInput };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now()) : null;
-    const launchContext: LaunchContext = startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {};
+    const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
+    const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
+      ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
+      : null;
+    const launchContext: LaunchContext = {
+      ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
+      ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
+    };
     try {
       execution = adapter.launch(workerTask, controller.signal, launchContext);
     } catch (error) {
       await startAckSetup?.stop();
+      terminalWait?.cancel();
       await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
       return;
     }
@@ -404,10 +414,14 @@ export class Reconciler {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
     if (!task || !['codex', 'chatgpt'].includes(task.adapter) || task.state !== 'RUNNING') return;
+    const terminalWaiter = this.terminalWaiters.get(task.id);
+    if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
     this.clearExecution(task.id, task.executionId);
     task.leaseOwner = null;
     task.leaseExpiresAt = null;
     task.updatedAt = event.timestamp || new Date().toISOString();
+    this.terminalWaiters.get(task.id)?.resolve();
+    this.terminalWaiters.delete(task.id);
     if (event.type === 'task.completed') {
       task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
       task.error = null;
@@ -422,8 +436,24 @@ export class Reconciler {
       task.error = event.message || `Task ${task.id} blocked`;
       transitionTask(task, 'BLOCKED');
       await this.store.saveTask(task);
+    } else if (event.type === 'task.cancelled') {
+      task.error = event.message || `Task ${task.id} cancelled`;
+      transitionTask(task, 'CANCELLED');
+      await this.store.saveTask(task);
     }
     this.detach(this.reconcile(job.id), job.id, task.id, 'terminal-event reconciliation');
+  }
+  private terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>(resolver => { resolve = resolver; });
+    this.terminalWaiters.set(taskId, { executionId, launchBarrier, resolve });
+    return {
+      promise,
+      cancel: () => {
+        const current = this.terminalWaiters.get(taskId);
+        if (current?.executionId === executionId) this.terminalWaiters.delete(taskId);
+      },
+    };
   }
   private async deliverContinuation(job: Job, task: Task): Promise<void> {
     const continuation = task.continuation ?? job.continuation;

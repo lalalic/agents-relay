@@ -28,11 +28,13 @@ If the output declaration is missing or ambiguous, do not invent one.
   settings. Do not change model or thinking settings.
 - Upload requested files, submit the complete task prompt, and verify that the
   submission became a new user turn.
-- Once submission is verified, keep the worker-owned tab open until Relay has
-  observed a new worker-owned `task.started` event for the exact job/task, then
-  close the tab and return. Do not wait for the assistant response and do not
-  reopen or poll the conversation. If the start acknowledgement does not arrive
-  within 60 seconds, close only the owned tab and report a start-ack timeout.
+- Once submission is verified, follow the configured owned-tab close policy:
+  `after-start` closes after a new worker-owned `task.started` event, `never`
+  leaves the owned tab open for test/debug use, and `after-terminal` closes only
+  after a new exact-task `task.completed`, `task.failed`, `task.blocked`, or
+  `task.cancelled` event. Never close a user tab. Do not wait for the assistant
+  response or reopen/poll the conversation. If the start acknowledgement does
+  not arrive within 60 seconds, close only the owned tab and report a timeout.
 - Treat any observed conversation/thread identity only as diagnostic evidence,
   never as a resumable handle.
 - Progress and terminal success/failure for the actual delegated task are

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
 import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTask } from '../dist/scheduler.js';
-import { CodexAdapter, LaunchFailure } from '../dist/adapters.js';
+import { CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { Reconciler, compareTaskPriority } from '../dist/reconciler.js';
 import { MemoryEventBus, eventFor, subjectToken } from '../dist/events.js';
@@ -242,12 +242,100 @@ test('Relay publishes process launched and accepts only a worker-owned post-laun
   await stop(); await stopEvents();
 });
 
+test('after-start ChatGPT policy does not install a terminal close barrier', async () => {
+  const t=task('chat-after-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let terminalBarrier;
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){terminalBarrier=context.waitForTerminal; return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-start'});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
+  assert.equal(terminalBarrier,undefined);
+  await bus.publish(eventFor('j','chat-after-start',null,'task.started','running','worker began','user',{worker_owned:true},{agent:'chatgpt'}));
+  await bus.publish(eventFor('j','chat-after-start',null,'task.completed','succeeded','durable output','user',undefined,{agent:'chatgpt'}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); await stop();
+});
+
 test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async () => {
   const t=task('chat-timeout'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,50));
   const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
+});
+
+test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal events', async () => {
+  const t=task('chat-terminal'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let released=false;
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(async()=>{await context.waitForWorkerStart; await context.waitForTerminal; released=true; return {summary:'submitted'};})(),cancel(){}};}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-terminal'});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','other',null,'task.completed','succeeded','wrong task','user'));
+  await bus.publish({...eventFor('j','chat-terminal',null,'task.completed','succeeded','stale','user'),timestamp:new Date(0).toISOString()});
+  assert.equal(released,false); assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await bus.publish(eventFor('j','chat-terminal',null,'task.started','running','worker began','user',{worker_owned:true},{agent:'chatgpt'}));
+  await bus.publish(eventFor('j','other',null,'task.failed','failed','wrong task','user'));
+  assert.equal(released,false);
+  await bus.publish(eventFor('j','chat-terminal',null,'task.completed','succeeded','durable output','user',undefined,{agent:'chatgpt'}));
+  await reconciler.idle();
+  assert.equal(released,true); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); await stop();
+});
+
+test('ChatGPT after-terminal close waits for a fresh exact terminal event', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-close-policy-'));
+  const agentPath = join(directory, 'browser-worker.agent.md');
+  await writeFile(agentPath, '# fake browser worker');
+  let released = false;
+  try {
+    const t = task('chat-terminal'); t.adapter = 'chatgpt';
+    const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus();
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      tabClosePolicy: 'after-terminal',
+      agentRunner: () => ({
+        promise: Promise.resolve('done'),
+        submitted: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })),
+        release: () => { released = true; },
+        cancel() {},
+      }),
+    });
+    const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
+    const stop = await reconciler.watch('j');
+    await reconciler.reconcile('j');
+    const stale = new Date(0).toISOString();
+    await bus.publish({ ...eventFor('j', 'chat-terminal', null, 'task.completed', 'succeeded', 'stale', 'user'), timestamp: stale });
+    await bus.publish(eventFor('j', 'other-task', null, 'task.completed', 'succeeded', 'wrong task', 'user'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(released, false);
+    assert.equal((await store.load('j')).tasks[0].state, 'RUNNING');
+    await bus.publish(eventFor('j', 'chat-terminal', null, 'task.started', 'running', 'worker began', 'user', { worker_owned: true }, { agent: 'chatgpt' }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(released, false);
+    await bus.publish(eventFor('j', 'chat-terminal', null, 'task.failed', 'failed', 'durable failure', 'user', undefined, { agent: 'chatgpt' }));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(released, true);
+    assert.equal((await store.load('j')).tasks[0].state, 'FAILED');
+    await stop();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('ChatGPT cancelled terminal event closes after-terminal tab and preserves runtime separation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-chatgpt-cancel-policy-'));
+  const agentPath = join(directory, 'browser-worker.agent.md');
+  await writeFile(agentPath, '# fake browser worker');
+  let released = false;
+  try {
+    const t = task('chat-cancelled'); t.adapter = 'chatgpt';
+    const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus();
+    const adapter = new ChatGptAdapter({ agentPath, tabClosePolicy: 'after-terminal', agentRunner: () => ({ promise: Promise.resolve('done'), submitted: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })), release: () => { released = true; }, cancel() {} }) });
+    const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
+    const stop = await reconciler.watch('j'); await reconciler.reconcile('j');
+    await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.started', 'running', 'worker began', 'user', { worker_owned: true }, { agent: 'chatgpt' }));
+    await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.cancelled', 'cancelled', 'cancelled by worker', 'user', undefined, { agent: 'chatgpt' }));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(released, true);
+    assert.equal((await store.load('j')).tasks[0].state, 'CANCELLED');
+    await stop();
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('adapter runtime exit is not task completion', async () => {
@@ -395,6 +483,24 @@ test('workspace webhook accepts configured repositories and forwards exact PR id
   assert.equal(received[0].repository,'lalalic/agents-relay');
   assert.equal(received[0].pullRequest,9);
   server.close();
+});
+
+test('webhook refresh immediately pushes the refreshed dashboard snapshot even when reconciliation fails', async () => {
+  const selected={...job([task('webhook-task','SUCCEEDED')]),id:'webhook-job',repository:'lalalic/agents-relay',prNumber:9};
+  const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','READY')]};
+  const secret='workspace-secret'; let reconciliationFailed=false;
+  const server=serveDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:selected,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),wake:async()=>{
+    void Promise.reject(new Error('reconciliation failed')).catch(()=>{ reconciliationFailed=true; });
+    return [{...refreshed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}];
+  }});
+  await new Promise(resolve=>server.once('listening',resolve));
+  const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
+  const stream=await fetch(`http://127.0.0.1:${port}/events`); const reader=stream.body.getReader(); await reader.read();
+  const body=JSON.stringify({action:'synchronize',repository:{full_name:'lalalic/agents-relay'},pull_request:{number:9}});
+  const signature='sha256='+createHmac('sha256',secret).update(body).digest('hex');
+  await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'freshness-delivery','x-github-event':'pull_request','x-hub-signature-256':signature},body});
+  let received=''; for (;;) { const chunk=await reader.read(); received+=Buffer.from(chunk.value??[]).toString(); if (received.includes('fresh-task')) break; }
+  assert.equal(reconciliationFailed,true); assert.match(received,/fresh-task/); reader.cancel(); server.close();
 });
 
 test('memory event bus supports explicit all-job subscriptions without weakening subject safety', async () => {

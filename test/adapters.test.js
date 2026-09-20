@@ -46,7 +46,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
     const execution = adapter.launch(task(), new AbortController().signal);
     const result = await execution.promise;
     assert.equal(requests.length, 1);
-    assert.deepEqual(requests[0], { prompt: 'do the work' });
+    assert.deepEqual(requests[0], { prompt: 'do the work', tabClosePolicy: 'after-start' });
     assert.equal(execution.threadId, undefined);
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'diagnostic-only');
@@ -103,6 +103,67 @@ test('ChatGptAdapter wraps submission transport failure as LaunchFailure', async
       agentRunner: () => ({ promise: Promise.reject(new Error('browser unavailable')), cancel() {} }),
     });
     await assert.rejects(adapter.launch(task(), new AbortController().signal).promise, LaunchFailure);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter tab close policy releases only at the configured barrier', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-policy-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    for (const policy of ['after-start', 'never', 'after-terminal']) {
+      let released = false;
+      let resolveTerminal;
+      const terminal = new Promise(resolve => { resolveTerminal = resolve; });
+      const adapter = new ChatGptAdapter({
+        agentPath,
+        tabClosePolicy: policy,
+        agentRunner: () => ({
+        promise: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })),
+          submitted: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })),
+          release: () => { released = true; },
+          cancel() {},
+        }),
+      });
+      const execution = adapter.launch(task(), new AbortController().signal, {
+        waitForWorkerStart: Promise.resolve(),
+        waitForTerminal: terminal,
+      });
+      if (policy === 'after-terminal') {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(released, false);
+        resolveTerminal();
+      }
+      await execution.promise;
+      assert.equal(released, policy !== 'never', policy);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter rejects an unknown tab close policy', () => {
+  assert.throws(() => new ChatGptAdapter({ tabClosePolicy: 'later' }), /Invalid ChatGPT tab close policy/);
+});
+
+test('ChatGptAdapter passes the close policy to the browser worker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-policy-request-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    let request;
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      tabClosePolicy: 'never',
+      agentRunner: (_definition, value) => {
+        request = value;
+        return { promise: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })), cancel() {} };
+      },
+    });
+    await adapter.launch(task(), new AbortController().signal).promise;
+    assert.equal(request.tabClosePolicy, 'never');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
