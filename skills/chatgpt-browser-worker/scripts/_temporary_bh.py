@@ -144,13 +144,16 @@ else:
 attachments = _upload_files(CFG.get("file", []))
 selector = _composer()
 before_count = len(_user_turns())
-info = js(f"""(() => {{
-  const e=document.querySelector({json.dumps(selector)});
-  const r=e.getBoundingClientRect();
-  return {{x:r.x+r.width/2,y:r.y+r.height/2}};
-}})()""")
-click_at_xy(info["x"], info["y"])
-type_text(CFG["prompt"])
+fill_input(selector, CFG["prompt"], clear_first=True)
+if CFG["prompt"].strip() not in _composer_text(selector):
+    info = js(f"""(() => {{
+      const e=document.querySelector({json.dumps(selector)});
+      const r=e.getBoundingClientRect();
+      return {{x:r.x+r.width/2,y:r.y+r.height/2}};
+    }})()""")
+    click_at_xy(info["x"], info["y"])
+    press_key("CTRL+A")
+    type_text(CFG["prompt"])
 if CFG["prompt"].strip() not in _composer_text(selector):
     raise RuntimeError("Temporary Chat prompt was not observed in the composer")
 
