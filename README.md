@@ -10,6 +10,11 @@ For GitHub-backed work, create or adopt the PR through Agents Relay itself. This
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id job-1 --title "Objective" --body "PR description" --mode fixed
 
+# Create/reuse the managed job and submit its initial task atomically
+npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
+  --id job-1 --start --task-id initial --adapter codex --provider openai \
+  --model MODEL --output task-pr --input "Implement the objective and publish a terminal event."
+
 npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
   --input "Implement the described child task and publish a terminal event."
@@ -35,6 +40,7 @@ Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.
 
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
+Use `--start` to create/reuse the job and submit its initial task in one invocation. Start mode requires explicit `--adapter`, `--model`, `--output`, and non-empty `--input`; the task ID defaults to `initial`. Re-running with the same task definition reuses that task and never duplicates it. Omitting `--start` preserves create-only behavior, leaving an `OPEN` job with zero tasks until a caller submits work.
 
 To adopt an existing unmanaged PR, including a PR with no comments:
 

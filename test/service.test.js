@@ -94,6 +94,12 @@ test('CLI and daemon help are successful and do not require job storage', () => 
   }
 });
 
+test('job create help documents explicit create-only and create-and-start modes', () => {
+  const result = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
+  assert.match(result.stdout, /--start/);
+  assert.match(result.stdout, /initial task ID defaults to 'initial'/);
+});
+
 test('published bin files are executable after build and npm pack', async () => {
   assert.equal((await stat('dist/cli.js')).mode & 0o111, 0o111);
   assert.equal((await stat('dist/relayd.js')).mode & 0o111, 0o111);

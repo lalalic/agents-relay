@@ -7,6 +7,7 @@ const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && !item.draft && !['COMPLETED','CANCELLED'].includes(item.job.state)).map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
+  if (job.tasks.length === 0) return true;
   if (job.tasks.some(task => ['READY','QUEUED','WAITING'].includes(task.state))) return true;
   return job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);
 }
@@ -44,7 +45,7 @@ export class RepositoryWorkerPool {
       const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
       const ready = job.tasks.filter(task => ['READY','QUEUED','WAITING'].includes(task.state)).length;
       const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
-      if (!needsLifecycleReconciliation(job) && job.tasks.length > 0) continue;
+      if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
       await this.makeReconciler(store, allowance).reconcile(job.id);
       capacity -= allowance;
