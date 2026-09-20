@@ -488,10 +488,10 @@ test('workspace webhook accepts configured repositories and forwards exact PR id
 test('webhook refresh immediately pushes the refreshed dashboard snapshot even when reconciliation fails', async () => {
   const selected={...job([task('webhook-task','SUCCEEDED')]),id:'webhook-job',repository:'lalalic/agents-relay',prNumber:9};
   const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','READY')]};
-  const secret='workspace-secret'; let reconciliationFailed=false;
-  const server=serveDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:selected,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),wake:async()=>{
-    void Promise.reject(new Error('reconciliation failed')).catch(()=>{ reconciliationFailed=true; });
-    return [{...refreshed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}];
+  const secret='workspace-secret'; let reconciliationFailed=false; let current=selected; let wakeResolve;
+  const wakeDone=new Promise(resolve=>{wakeResolve=resolve;});
+  const server=serveDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:current,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),refresh:async()=>{current=refreshed; return ['webhook-job'];},wake:async()=>{
+    try { throw new Error('reconciliation failed'); } catch { reconciliationFailed=true; throw new Error('reconciliation failed'); } finally { wakeResolve(); }
   }});
   await new Promise(resolve=>server.once('listening',resolve));
   const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
@@ -499,8 +499,10 @@ test('webhook refresh immediately pushes the refreshed dashboard snapshot even w
   const body=JSON.stringify({action:'synchronize',repository:{full_name:'lalalic/agents-relay'},pull_request:{number:9}});
   const signature='sha256='+createHmac('sha256',secret).update(body).digest('hex');
   await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'freshness-delivery','x-github-event':'pull_request','x-hub-signature-256':signature},body});
-  let received=''; for (;;) { const chunk=await reader.read(); received+=Buffer.from(chunk.value??[]).toString(); if (received.includes('fresh-task')) break; }
-  assert.equal(reconciliationFailed,true); assert.match(received,/fresh-task/); reader.cancel(); server.close();
+  let received=''; const readFreshSnapshot=(async()=>{for (;;) { const chunk=await reader.read(); received+=Buffer.from(chunk.value??[]).toString(); if (received.includes('fresh-task')) return; if (chunk.done) throw new Error('dashboard event stream ended before refreshed snapshot'); }})();
+  await Promise.race([readFreshSnapshot,new Promise((_,reject)=>setTimeout(()=>reject(new Error('timed out waiting for refreshed dashboard snapshot')),1000))]);
+  await Promise.race([wakeDone,new Promise((_,reject)=>setTimeout(()=>reject(new Error('timed out waiting for webhook wake')),1000))]);
+  assert.equal(reconciliationFailed,true); assert.match(received,/fresh-task/); await reader.cancel(); server.close();
 });
 
 test('memory event bus supports explicit all-job subscriptions without weakening subject safety', async () => {
