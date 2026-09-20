@@ -486,6 +486,31 @@ test('async launch and delivery rejection emits exactly one task.failed', async 
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
   assert.equal((await store.load('j')).tasks[0].state,'FAILED');
 });
+test('late worker events recover a watchdog timeout failure', async () => {
+  const t=task('late-worker','FAILED'); t.adapter='chatgpt'; t.error='Worker start-ack failed: worker_start_timeout'; t.failureReason='worker_start_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
+  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.started','running','worker really started','user',{worker_owned:true},{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:01.000Z'});
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.completed','succeeded','worker really completed','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:02.000Z'});
+  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'SUCCEEDED'); assert.equal(durable.error,null);
+});
+
+test('late completed event directly recovers terminal timeout failure', async () => {
+  const t=task('late-complete','FAILED'); t.adapter='chatgpt'; t.error='Task late-complete timed out waiting for the mandatory terminal worker event'; t.failureReason='terminal_event_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
+  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','late-complete',null,'task.completed','succeeded','done after timeout','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:03.000Z'});
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+});
+
+test('late events do not revive genuine failures or stale watchdog events', async () => {
+  const genuine=task('genuine','FAILED'); genuine.adapter='chatgpt'; genuine.error='worker reported failure'; genuine.updatedAt='2026-09-20T20:00:00.000Z';
+  const stale=task('stale','FAILED'); stale.adapter='chatgpt'; stale.error='Task stale timed out waiting for the mandatory terminal worker event'; stale.failureReason='terminal_event_timeout'; stale.updatedAt='2026-09-20T20:00:05.000Z';
+  const store=new InMemoryStore(job([genuine,stale])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','genuine',null,'task.started','running','late','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:01.000Z'});
+  await reconciler.handleEvent({...eventFor('j','stale',null,'task.completed','succeeded','old completion','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:04.000Z'});
+  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'FAILED');
+});
+
 test('correlated terminal completed event is authoritative', async () => {
   const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});

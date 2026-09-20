@@ -74,7 +74,7 @@ export class Reconciler {
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
   async handleEvent(event: EventRecord): Promise<void> {
     if (event.type === 'task.started') {
-      this.markWorkerStarted(event);
+      await this.markWorkerStarted(event);
       return;
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
@@ -406,14 +406,41 @@ export class Reconciler {
     this.terminalExitGraceTimers.delete(taskId);
   }
 
-  private markWorkerStarted(event: EventRecord): void {
-    const live = this.live.get(event.task_id);
-    if (!live || event.job_id !== live.jobId) return;
+  private async markWorkerStarted(event: EventRecord): Promise<void> {
     const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
     const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
     if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
-    if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
-    live.workerStarted = true;
+    const live = this.live.get(event.task_id);
+    if (live && event.job_id === live.jobId) {
+      if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
+      live.workerStarted = true;
+      return;
+    }
+    const job = await this.store.load(event.job_id);
+    const task = job.tasks.find(item => item.id === event.task_id);
+    if (!task || task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
+    if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
+    transitionTask(task, 'RUNNING');
+    task.failureReason = undefined;
+    task.error = null;
+    task.updatedAt = event.timestamp || new Date().toISOString();
+    await this.store.saveTask(task);
+    this.detach(this.reconcile(job.id), job.id, task.id, 'late worker-start reconciliation');
+  }
+
+  private isRecoverableWatchdogFailure(task: Task): boolean {
+    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event'].includes(task.failureReason ?? '')) return true;
+    const error = task.error ?? '';
+    return error.includes('worker_start_timeout')
+      || error.includes('timed out waiting for the mandatory terminal worker event')
+      || error.includes('exited before publishing task.started')
+      || error.includes('exited after task.started without publishing a terminal task event');
+  }
+
+  private isWorkerOwnedEvent(event: EventRecord): boolean {
+    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
+    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
+    return sourceAgent !== 'relay' && sourceComponent !== 'agents-relay';
   }
 
   private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
@@ -491,7 +518,14 @@ export class Reconciler {
   private async applyTerminalEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !['codex', 'chatgpt'].includes(task.adapter) || task.state !== 'RUNNING') return;
+    if (!task || !['codex', 'chatgpt'].includes(task.adapter)) return;
+    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
+      if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
+      transitionTask(task, 'RUNNING');
+      task.failureReason = undefined;
+      task.error = null;
+    }
+    if (task.state !== 'RUNNING') return;
     const terminalWaiter = this.terminalWaiters.get(task.id);
     if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
     this.clearExecution(task.id, task.executionId);
@@ -503,11 +537,13 @@ export class Reconciler {
     if (event.type === 'task.completed') {
       task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
       task.error = null;
+      task.failureReason = undefined;
       transitionTask(task, 'SUCCEEDED');
       await this.store.saveTask(task);
       await this.deliverContinuation(job, task);
     } else if (event.type === 'task.failed') {
       task.error = event.message || `Task ${task.id} failed`;
+      task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
       transitionTask(task, 'FAILED');
       await this.store.saveTask(task);
     } else if (event.type === 'task.blocked') {
