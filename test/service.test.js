@@ -22,6 +22,7 @@ test('all service runtimes use the fixed ChatGPT final reviewer policy', async (
   assert.equal(reviewer.adapter, 'chatgpt');
   assert.equal(reviewer.routing.provider, 'chatgpt');
   assert.equal(reviewer.routing.model, 'account-defaults');
+  assert.equal(reviewer.startAckTimeoutMs, 120000);
   const cliSource = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const daemonSource = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(cliSource, /reviewer: runtimeReviewer\(\)/);

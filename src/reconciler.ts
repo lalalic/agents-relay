@@ -10,7 +10,7 @@ import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } f
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
 type LiveExecution = { taskId: string; executionId: string; execution: Execution; controller: AbortController };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
@@ -244,7 +244,7 @@ export class Reconciler {
     const controller = new AbortController();
     let execution: Execution;
     const workerTask = { ...task, input: workerInput };
-    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now()) : null;
+    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), task.agentName === 'reviewer' ? this.options.reviewer?.startAckTimeoutMs : undefined) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
       ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
@@ -286,7 +286,7 @@ export class Reconciler {
     );
   }
 
-  private async startAck(jobId: string, taskId: string, launchBarrier: number): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
+  private async startAck(jobId: string, taskId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
     if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
     let resolveAck!: () => void;
     let rejectAck!: (error: Error) => void;
@@ -309,7 +309,7 @@ export class Reconciler {
       settled = true;
       void unsubscribe();
       rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_timeout: no worker task.started start-ack`));
-    }, this.options.startAckTimeoutMs ?? 60000);
+    }, timeoutMs);
     let stopped = false;
     const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer); await unsubscribe(); };
     return { ack, stop };
