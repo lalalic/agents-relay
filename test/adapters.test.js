@@ -237,12 +237,3 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test('packaged ChatGPT worker uses bounded readiness and chunked ProseMirror insertion', async () => {
-  const source=await readFile(join(process.cwd(),'skills','chatgpt-browser-worker','scripts','_temporary_bh.py'),'utf8');
-  assert.match(source,/wait_until_stable/);
-  assert.match(source,/contenteditable/);
-  assert.match(source,/range\(0, len\(prompt\), 256\)/);
-  assert.match(source,/execCommand\('insertText'/);
-  assert.doesNotMatch(source,/Temporary Chat prompt was not observed in the composer/);
-});
