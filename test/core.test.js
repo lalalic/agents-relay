@@ -262,6 +262,18 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
   const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
 
+test('ChatGPT reviewer can use a longer start acknowledgement window', async () => {
+  const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
+  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()},startAckTimeoutMs:100};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
+  const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'RUNNING');
+  await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',{worker_owned:true},{agent:'mcp'}));
+  await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,{agent:'chatgpt'}));
+  await new Promise(resolve=>setTimeout(resolve,10)); await stop();
+});
+
 test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal events', async () => {
   const t=task('chat-terminal'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let released=false;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(async()=>{await context.waitForWorkerStart; await context.waitForTerminal; released=true; return {summary:'submitted'};})(),cancel(){}};}};
@@ -562,11 +574,15 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0 });
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } } });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
-  assert.equal(saved.tasks.find(item => item.agentName === 'reviewer')?.reviewHeadSha, 'sha-review-1');
+  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
+  assert.equal(reviewer?.adapter, 'chatgpt');
+  assert.deepEqual(reviewer?.routing, { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: reviewer?.routing?.decidedAt });
+  assert.match(reviewer?.input ?? '', /publish task\.started.*worker_owned=true.*Emit review\.started/);
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);

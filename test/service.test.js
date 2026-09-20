@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { normalizeDaemonArguments } from '../dist/relayd.js';
-import { createService, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
+import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
 test('daemon arguments require and normalize durable identifiers', () => {
@@ -15,6 +15,18 @@ test('daemon arguments require and normalize durable identifiers', () => {
   assert.equal(normalized.pullRequest, 1);
   assert.equal(normalized.jobId, 'JOB_ID');
   assert.deepEqual(normalized.serviceArguments, argv);
+});
+
+test('all service runtimes use the fixed ChatGPT final reviewer policy', async () => {
+  const reviewer = runtimeReviewer();
+  assert.equal(reviewer.adapter, 'chatgpt');
+  assert.equal(reviewer.routing.provider, 'chatgpt');
+  assert.equal(reviewer.routing.model, 'account-defaults');
+  assert.equal(reviewer.startAckTimeoutMs, 120000);
+  const cliSource = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+  const daemonSource = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(cliSource, /reviewer: runtimeReviewer\(\)/);
+  assert.match(daemonSource, /reviewer:runtimeReviewer\(\)/);
 });
 
 test('repository daemon wires account usage telemetry and the default planner into workspace reconciliation', async () => {

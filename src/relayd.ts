@@ -11,7 +11,7 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { isEntrypoint, runtimePlanner, startService, SERVICE_DEFAULTS } from './cli.js';
+import { isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -54,7 +54,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','neo.events.job')) : undefined;
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus, reviewer:runtimeReviewer() });
   const repositories = normalized.repository
     ? [normalized.repository]
     : (await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot())).map(item => item.repository);
