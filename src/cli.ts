@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy } from './types.js';
+import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
@@ -93,7 +93,7 @@ Actions:
   'task update': `Update mutable durable task fields in place.
 
 Required: --task-id ID and the normal job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
 Use --clear-routing to remove routing metadata. A model update requires --model; provider defaults to the existing provider or openai.
 
 Example:
@@ -202,6 +202,7 @@ async function saveLocal(file: string | null, job: Job): Promise<void> { if (fil
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
 async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
+function storySize(args: string[], fallback: StorySize = 'M'): StorySize { const value = arg(args, '--story-size', fallback).toUpperCase(); if (!['S','M','L'].includes(value)) throw new Error('--story-size must be S, M, or L'); return value as StorySize; }
 export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
 export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
   const value = arg(args, '--chatgpt-tab-close-policy', process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY || 'after-start');
@@ -253,10 +254,13 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
   if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   const routing: RoutingDecision = { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
+  const size = storySize(args);
+  const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing.reasoning)) : taskOverallTimeoutMs(size, routing.reasoning);
   return {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
     priority: priority(args, job.priority ?? 'P2'),
+    storySize: size,
     projectName: arg(args, '--project') || undefined,
     agentName: arg(args, '--agent') || undefined,
     parentTaskId: arg(args, '--parent') || null,
@@ -278,7 +282,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
     threadId: null,
     result: null,
     error: null,
-    timeoutMs: Number(arg(args, '--timeout', '300000')),
+    timeoutMs,
     createdAt: now,
     updatedAt: now
   };
@@ -299,6 +303,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.adapter = adapter;
   }
   if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
+  if (hasArg(args, '--story-size')) { task.storySize = storySize(args, task.storySize ?? 'M'); if (!hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize, task.routing?.reasoning); }
   if (hasArg(args, '--input')) task.input = arg(args, '--input');
   if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
   if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
@@ -326,7 +331,8 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
       decidedBy: 'cli:update',
       decidedAt: new Date().toISOString()
     };
-  }
+
+    if (hasArg(args, '--reasoning') && !hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);  }
   task.updatedAt = new Date().toISOString();
   await store.saveTask(task);
   await saveLocal(localFile, job);

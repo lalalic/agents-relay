@@ -2,13 +2,14 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, taskOverallTimeoutMs } from './types.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
   id: string;
   input: string;
   priority?: Priority;
+  storySize?: StorySize;
   projectName?: string;
   agentName?: string;
   dependencies?: string[];
@@ -79,15 +80,19 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
     const priority = task.priority === undefined ? undefined : normalizePlannerPriority(task.priority, `next_tasks[${index}].priority`);
+    const sizeValue = task.storySize === undefined ? 'M' : String(task.storySize).toUpperCase();
+    if (!['S','M','L'].includes(sizeValue)) throw new Error('Planner next_tasks[' + index + '].storySize must be S, M, or L');
+    const storySize = sizeValue as StorySize;
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
-    const timeoutMs = task.timeoutMs === undefined ? 300000 : task.timeoutMs;
+    const route = routing(task.routing, 'next_tasks[' + index + '].routing');
+    const timeoutMs = task.timeoutMs === undefined ? taskOverallTimeoutMs(storySize, route?.reasoning) : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, input: task.input, priority,
+      id, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
-      adapter: adapter as AdapterName, output: output as TaskOutput, routing: routing(task.routing, `next_tasks[${index}].routing`),
+      adapter: adapter as AdapterName, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };
   });

@@ -68,6 +68,19 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
 });
+test('CLI submit defaults story size to M and derives overall timeout from size', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'agents-relay-story-size-'));
+  const file=join(dir,'job.json');
+  const root=job([]); root.executionMode='fixed'; await writeFile(file,JSON.stringify(root));
+  const child=spawn(process.execPath,[join('dist','cli.js'),'submit','--file',file,'--task-id','sized','--adapter','codex','--model','gpt-test','--output','task-pr','--story-size','L'],{cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  const created=saved.tasks.find(item=>item.id==='sized');
+  assert.equal(created.storySize,'L');
+  assert.equal(created.timeoutMs,900000);
+  await rm(dir,{recursive:true,force:true});
+});
+
 test('CLI task update mutates safe durable fields in place and preserves execution history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-'));
   const file = join(directory, 'job.json');

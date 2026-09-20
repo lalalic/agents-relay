@@ -83,7 +83,7 @@ function immutableTaskDefinition(task: Task): unknown {
     reasoning: task.routing.reasoning, cwd: task.routing.cwd, projectId: task.routing.projectId
   } : undefined;
   return {
-    jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
+    jobId: task.jobId, id: task.id, priority: task.priority, storySize: task.storySize ?? 'M', projectName: task.projectName, agentName: task.agentName,
     kind: task.kind ?? 'work', parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
     input: task.input, output: task.output, routing, chatgptTabClosePolicy: task.chatgptTabClosePolicy ?? 'after-start', continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };

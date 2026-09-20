@@ -5,6 +5,10 @@ export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
 export type ExecutionMode = 'fixed' | 'autonomous';
 export type TaskKind = 'work' | 'planner';
+export type StorySize = 'S' | 'M' | 'L';
+export const STORY_SIZE_TIMEOUT_MS: Record<StorySize, number> = { S: 120000, M: 300000, L: 900000 };
+export function storySizeTimeoutMs(size: StorySize): number { return STORY_SIZE_TIMEOUT_MS[size]; }
+export function taskOverallTimeoutMs(size: StorySize, reasoning?: string): number { return storySizeTimeoutMs(size) * (reasoning?.toLowerCase() === 'high' ? 2 : 1); }
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
 export type AgentEndpoint = { kind: 'adapter' | 'command' | 'http'; target: string };
 export type AgentEvidence = {
@@ -33,7 +37,7 @@ export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
 export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_required' | 'blocked' | 'stale';
 export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
 export type Task = {
-  jobId?: string; id: string; kind?: TaskKind; priority?: Priority; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
+  jobId?: string; id: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   input: string; output?: TaskOutput; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
