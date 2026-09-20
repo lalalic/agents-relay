@@ -84,6 +84,7 @@ test('managed job discovery paginates all open PRs but bounds closed history', a
     calls += 1;
     if (!variables.cursor) {
       assert.match(query, /recentClosed:pullRequests\(first:20,states:CLOSED/);
+      assert.match(query, /recentMerged:pullRequests\(first:20,states:MERGED/);
       return {repository:{open:{nodes:[node(openA)],pageInfo:{hasNextPage:true,endCursor:'next'}},recentClosed:{nodes:[node(closed,'CLOSED')]}}};
     }
     assert.doesNotMatch(query, /recentClosed:/);
@@ -92,4 +93,16 @@ test('managed job discovery paginates all open PRs but bounds closed history', a
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay'], new Set(['bot']));
   assert.equal(calls, 2);
   assert.deepEqual(result.map(item => item.job.id), ['open-a', 'open-b', 'closed']);
+});
+
+test('managed job discovery retains recent merged PRs when closed history is crowded', async () => {
+  const merged = { ...job('merged-44', 'lalalic/agents-relay', 44), state: 'COMPLETED' };
+  const node = (root, state) => ({ number: root.prNumber, body: '', state, isDraft: false, merged: state === 'MERGED', mergedAt: state === 'MERGED' ? now() : null, closedAt: state === 'CLOSED' ? now() : null, comments: { nodes: [{ author: { login: 'bot' }, body: marker(JOB_MARKER, root) }] } });
+  const cancelled = Array.from({ length: 20 }, (_, index) => node({ ...job(`cancelled-${index}`, 'lalalic/agents-relay', index + 1), state: 'CANCELLED' }, 'CLOSED'));
+  const client = { request: async path => { throw new Error(`unexpected REST ${path}`); }, graphql: async query => {
+    assert.match(query, /recentMerged:pullRequests\(first:20,states:MERGED/);
+    return { repository: { open: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }, recentMerged: { nodes: [node(merged, 'MERGED')] }, recentClosed: { nodes: cancelled } } };
+  } };
+  const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay'], new Set(['bot']));
+  assert.equal(result.some(item => item.job.id === 'merged-44'), true);
 });

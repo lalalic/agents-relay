@@ -34,7 +34,9 @@ export async function loadManagedGitHubJobGraphql(client: GitHubClient, reposito
 }
 const COMPLETED_JOB_HISTORY_LIMIT = 10;
 function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
-function completedAt(item: ManagedJobOverview): string { return item.mergedAt ?? item.closedAt ?? item.job.updatedAt; }
+function completedAt(item: ManagedJobOverview): string {
+  return [item.job.updatedAt, item.mergedAt, item.closedAt].filter((value): value is string => typeof value === 'string' && value.length > 0).sort().at(-1) ?? '';
+}
 export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): ManagedJobOverview[] {
   const unfinished = items.filter(item => !isCompletedManagedJob(item));
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
@@ -516,13 +518,15 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
   let firstPage = true;
   do {
     const query = firstPage
-      ? 'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}} recentClosed:pullRequests(first:20,states:CLOSED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}}}}'
+      ? 'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}} recentMerged:pullRequests(first:20,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}} recentClosed:pullRequests(first:20,states:CLOSED,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}}}}}'
       : 'query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){open:pullRequests(first:50,after:$cursor,states:OPEN,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number body state isDraft merged mergedAt closedAt comments(first:100){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}';
     const data = await client.graphql(query, { owner, name, cursor }) as Record<string, unknown>;
     const repo = data.repository as Record<string, unknown> | undefined;
     const open = repo?.open as Record<string, unknown> | undefined;
     collect(Array.isArray(open?.nodes) ? open.nodes as Array<Record<string, unknown>> : []);
     if (firstPage) {
+      const recentMerged = repo?.recentMerged as Record<string, unknown> | undefined;
+      collect(Array.isArray(recentMerged?.nodes) ? recentMerged.nodes as Array<Record<string, unknown>> : []);
       const recentClosed = repo?.recentClosed as Record<string, unknown> | undefined;
       collect(Array.isArray(recentClosed?.nodes) ? recentClosed.nodes as Array<Record<string, unknown>> : []);
     }

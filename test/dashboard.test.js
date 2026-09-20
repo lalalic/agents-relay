@@ -36,6 +36,16 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /MERGED','CLOSED/);
 });
 
+test('events follow selected job/task and can return to all tasks', () => {
+  assert.match(dashboardHtml, /id="events-all-tasks"/);
+  assert.match(dashboardHtml, /let eventTaskId=selectedTaskId/);
+  assert.match(dashboardHtml, /eventTaskId=task\.id;rememberSelection\(\);clearEvents\(\)/);
+  assert.match(dashboardHtml, /eventTaskId&&event\.task_id!==eventTaskId/);
+  assert.match(dashboardHtml, /eventsAllTasks\.addEventListener\('click'/);
+  assert.match(dashboardHtml, /eventTaskId=null;clearEvents\(\);renderEventScope\(\)/);
+  assert.match(dashboardHtml, /eventTaskId=null;rememberSelection\(\);clearEvents\(\)/);
+});
+
 test('task attempts display as cumulative count over three-attempt windows', () => {
   assert.match(dashboardHtml, /function attemptBudget\(task\)/);
   assert.match(dashboardHtml, /Math\.max\(max,Math\.ceil\(attempt\/3\)\*3\)/);
