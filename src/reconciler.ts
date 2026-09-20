@@ -199,7 +199,7 @@ export class Reconciler {
     if (!adapter?.deleteThread) return;
     for (const task of job.tasks.filter(item => item.adapter === 'chatgpt' && item.threadId && !item.threadDeletedAt)) {
       try {
-        await adapter.deleteThread(task.threadId as string);
+        await adapter.deleteThread(task.threadId as string, task);
         task.threadDeletedAt = new Date().toISOString(); task.threadCleanupError = null; await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'thread.deleted', 'succeeded', `Worker thread ${task.threadId} deleted`, 'orchestrator', { threadId: task.threadId }));
       } catch (error) {

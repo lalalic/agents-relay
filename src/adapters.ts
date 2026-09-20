@@ -1,12 +1,12 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision } from './types.js';
 
 export type Execution = { id: string; promise: Promise<Result>; cancel: () => void; threadId?: string; onThreadStarted?: (threadId: string) => void };
-export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; recover?(task: Task): Promise<Result | null>; deleteThread?(threadId: string): Promise<void>; }
+export interface WorkerAdapter { readonly name: AdapterName; readonly id: string; readonly capabilities: readonly string[]; launch(task: Task, signal: AbortSignal): Execution; recover?(task: Task): Promise<Result | null>; deleteThread?(threadId: string, task?: Pick<Task, 'projectName' | 'routing'>): Promise<void>; }
 function commandExecution(child: ChildProcess, output: () => string, signal: AbortSignal, id: string): Execution { const promise = new Promise<Result>((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve({ summary: output().trim() || 'Command completed' }) : reject(new Error(output().trim() || `Command exited ${code}`))); signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true }); }); return { id, promise, cancel: () => { child.kill('SIGTERM'); } }; }
 export function buildCodexArgs(route: Pick<RoutingDecision, 'provider' | 'model'> & Partial<Pick<RoutingDecision, 'profile' | 'reasoning' | 'cwd'>>, input: string): readonly string[] {
   const args: string[] = ['exec', '--json'];
@@ -105,82 +105,134 @@ export class CodexAdapter implements WorkerAdapter {
 }
 
 
-type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-export type ChatGptAdapterOptions = { endpoint?: string; tokenFile?: string; fetch?: FetchLike };
-function chatGptThinkingEffort(reasoning?: string): 'minimal' | 'low' | 'standard' | 'high' | 'max' {
-  if (reasoning === 'minimal' || reasoning === 'low' || reasoning === 'standard' || reasoning === 'high' || reasoning === 'max') return reasoning;
-  if (reasoning === 'medium') return 'standard';
-  if (reasoning === 'xhigh' || reasoning === 'extra-high') return 'max';
-  return 'standard';
+export type BrowserWorkerOperation = 'create' | 'resume' | 'continue' | 'status' | 'result' | 'delete';
+export type BrowserWorkerRequest = {
+  operation: BrowserWorkerOperation;
+  thread_id: string | null;
+  project: { name: string; id?: string };
+  prompt?: string;
+  thinking_level?: 'default' | 'low' | 'medium' | 'high';
+  state: Record<string, unknown> | null;
+};
+export type BrowserWorkerResponse = {
+  operation: BrowserWorkerOperation;
+  status: string;
+  thread_id?: string | null;
+  result?: { message_id?: string; text?: string; verified?: boolean; observed_at?: string };
+  error?: { code?: string; message?: string; retryable?: boolean } | null;
+  state?: Record<string, unknown>;
+};
+export type AgentRun = { promise: Promise<string>; cancel: () => void };
+export type ChatGptAgentRunner = (definition: string, request: BrowserWorkerRequest, route: RoutingDecision, signal: AbortSignal) => AgentRun;
+export type ChatGptAdapterOptions = { agentPath?: string; harness?: string; agentRunner?: ChatGptAgentRunner };
+
+function browserWorkerCandidates(explicit?: string): string[] {
+  const roots = (process.env.AGENTS_RELAY_SKILL_ROOTS ?? '').split(':').filter(Boolean);
+  return [explicit, ...roots, join(homedir(), '.codex', 'skills'), join(homedir(), '.agents', 'skills'), join(process.cwd(), 'skills')]
+    .filter((value): value is string => Boolean(value))
+    .map(value => value.endsWith('browser-worker.agent.md') ? value : join(value, 'chatgpt-browser-worker', 'agents', 'browser-worker.agent.md'));
 }
-function chatGptEndpoint(base?: string): string {
-  const configured = (base ?? process.env.AGENTS_RELAY_MACBRIDGE_URL ?? `http://127.0.0.1:${process.env.MAC_DEV_BRIDGE_HTTP_PORT ?? '8788'}`).replace(/\/+$/, '');
-  const url = new URL(configured);
-  if (url.pathname === '/experimental/chatgpt/conversation') return url.toString().replace(/\/$/, '');
-  // --macbridge-url is a service origin. Do not inherit an unrelated API path
-  // such as /v1/responses from a model-router endpoint.
-  url.pathname = '/experimental/chatgpt/conversation';
-  url.search = '';
-  url.hash = '';
-  return url.toString();
-}
-function chatGptTokenFile(file?: string): string {
-  return file ?? process.env.AGENTS_RELAY_MACBRIDGE_TOKEN_FILE ?? process.env.MAC_DEV_BRIDGE_HTTP_TOKEN_FILE ?? join(homedir(), 'Library', 'Application Support', 'MacDeveloperBridge', 'http-token');
-}
-function chatGptConversationId(text: string): string | undefined {
-  const match = /\"conversation_id\"\s*:\s*\"((?:\\.|[^\"\\])*)\"/.exec(text);
-  if (!match) return undefined;
-  try { const value = JSON.parse(`\"${match[1]}\"`) as unknown; return typeof value === 'string' ? value : undefined; } catch { return undefined; }
-}
-async function readChatGptResponse(response: Response, onConversationId: (conversationId: string) => void): Promise<string> {
-  if (!response.body) {
-    const text = await response.text();
-    const conversationId = chatGptConversationId(text);
-    if (conversationId) onConversationId(conversationId);
-    return text;
+async function loadBrowserWorkerDefinition(explicit?: string): Promise<string> {
+  for (const candidate of browserWorkerCandidates(explicit)) {
+    try { await access(candidate); return readFile(candidate, 'utf8'); } catch { /* try the next installed skill root */ }
   }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    text += decoder.decode(value, { stream: true });
-    const conversationId = chatGptConversationId(text);
-    if (conversationId) onConversationId(conversationId);
+  throw new Error('chatgpt-browser-worker agent definition not found; set AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT');
+}
+function thinkingLevel(reasoning?: string): 'default' | 'low' | 'medium' | 'high' {
+  if (reasoning === 'low' || reasoning === 'medium' || reasoning === 'high') return reasoning;
+  if (reasoning === 'minimal') return 'low';
+  return 'default';
+}
+function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
+  const text = output.trim().replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { throw new Error('browser-worker returned non-JSON output'); }
+  if (!value || typeof value !== 'object') throw new Error('browser-worker returned an invalid JSON response');
+  const response = value as BrowserWorkerResponse;
+  if (!response.operation || !response.status) throw new Error('browser-worker response omitted operation or status');
+  return response;
+}
+function agentPrompt(definition: string, request: BrowserWorkerRequest): string {
+  return `${definition}\n\nReturn only the machine-readable JSON response required by the agent contract.\nREQUEST_JSON:\n${JSON.stringify(request)}`;
+}
+function defaultChatGptAgentRunner(harness: string): ChatGptAgentRunner {
+  return (definition, request, route, signal): AgentRun => {
+    const child = spawn(harness, buildCodexArgs(route, agentPrompt(definition, request)), { shell: false, cwd: route.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = appendTail(stderr, chunk.toString()); });
+    const promise = new Promise<string>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', code => code === 0 ? resolve(parseCodexAgentMessage(stdout) ?? stdout.trim()) : reject(new Error(stderr.trim() || `browser-worker harness exited ${code}`)));
+      if (signal.aborted) child.kill('SIGTERM'); else signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+    });
+    return { promise, cancel: () => { child.kill('SIGTERM'); } };
+  };
+}
+function parseCodexAgentMessage(output: string): string | undefined {
+  let final: string | undefined;
+  for (const line of output.split(/\r?\n/)) {
+    try {
+      const value = JSON.parse(line) as Record<string, unknown>;
+      const payload = value.payload as Record<string, unknown> | undefined;
+      const item = value.item as Record<string, unknown> | undefined;
+      if (value.type === 'event_msg' && payload?.type === 'task_complete' && typeof payload.last_agent_message === 'string') final = payload.last_agent_message;
+      if (value.type === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') final = item.text;
+    } catch { /* harness diagnostics are not the agent response */ }
   }
-  text += decoder.decode();
-  const conversationId = chatGptConversationId(text);
-  if (conversationId) onConversationId(conversationId);
-  return text;
+  return final;
+}
+function browserWorkerError(response: BrowserWorkerResponse): Error {
+  const detail = response.error?.message || `browser-worker ${response.status}`;
+  return new Error(response.error?.code ? `${response.error.code}: ${detail}` : detail);
 }
 
 export class ChatGptAdapter implements WorkerAdapter {
   readonly name = 'chatgpt' as const;
-  readonly id = 'chatgpt/macbridge';
-  readonly capabilities = ['model', 'chatgpt', 'macbridge'] as const;
-  private readonly endpoint: string;
-  private readonly tokenFile: string;
-  private readonly fetchImpl: FetchLike;
-  constructor(options: ChatGptAdapterOptions = {}) {
-    this.endpoint = chatGptEndpoint(options.endpoint);
-    this.tokenFile = chatGptTokenFile(options.tokenFile);
-    this.fetchImpl = options.fetch ?? fetch;
-  }
-  async deleteThread(threadId: string): Promise<void> {
-    const token = (await readFile(this.tokenFile, 'utf8')).trim();
-    if (!token) throw new Error(`MacBridge token file is empty: ${this.tokenFile}`);
-    const response = await this.fetchImpl(this.endpoint, {
-      method: 'DELETE',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ conversation_id: threadId }),
+  readonly id = 'chatgpt/browser-worker';
+  readonly capabilities = ['model', 'chatgpt', 'browser-harness'] as const;
+  private readonly agentPath?: string;
+  private readonly harness: string;
+  private readonly runner?: ChatGptAgentRunner;
+  private readonly deleted = new Set<string>();
+  private readonly routes = new Map<string, RoutingDecision>();
+  constructor(options: ChatGptAdapterOptions = {}) { this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT; this.harness = options.harness ?? process.env.AGENTS_RELAY_AGENT_HARNESS ?? 'codex'; this.runner = options.agentRunner; }
+  private async run(request: BrowserWorkerRequest, route: RoutingDecision, signal: AbortSignal): Promise<BrowserWorkerResponse> {
+    const definition = await loadBrowserWorkerDefinition(this.agentPath);
+    if (signal.aborted) throw new Error('browser-worker execution aborted');
+    const run = (this.runner ?? defaultChatGptAgentRunner(this.harness))(definition, request, route, signal);
+    const output = await new Promise<string>((resolve, reject) => {
+      const abort = (): void => { run.cancel(); reject(new Error('browser-worker execution aborted')); };
+      if (signal.aborted) { abort(); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      run.promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
     });
-    if (response.status === 404) return;
-    if (!response.ok) {
-      let detail = '';
-      try { const payload = await response.json() as Record<string, unknown>; detail = typeof payload.error === 'string' ? payload.error : ''; } catch {}
-      throw new Error(detail || `MacBridge ChatGPT conversation delete failed (${response.status})`);
-    }
+    return parseBrowserWorkerResponse(output);
+  }
+  private project(task: Pick<Task, 'projectName' | 'routing'> | undefined, route: RoutingDecision): { name: string; id?: string } {
+    return { name: task?.projectName ?? route.projectId ?? 'default', id: route.projectId };
+  }
+  private exposeThread(execution: Execution, expected: string | null, response: BrowserWorkerResponse): string {
+    const threadId = typeof response.thread_id === 'string' && response.thread_id.trim() ? response.thread_id : undefined;
+    if (!threadId) throw new Error('browser-worker response omitted thread_id');
+    if (expected && threadId !== expected) throw new Error('browser-worker returned a different thread_id');
+    execution.threadId = threadId;
+    execution.onThreadStarted?.(threadId);
+    return threadId;
+  }
+  private validateOperation(response: BrowserWorkerResponse, operation: BrowserWorkerOperation): void {
+    if (response.operation !== operation) throw new Error(`browser-worker response operation mismatch: expected ${operation}, got ${response.operation}`);
+    if (response.status === 'blocked' || response.status === 'failed') throw browserWorkerError(response);
+  }
+  async deleteThread(threadId: string, task?: Pick<Task, 'projectName' | 'routing'>): Promise<void> {
+    if (this.deleted.has(threadId)) return;
+    const route = task?.routing ?? this.routes.get(threadId);
+    if (!route) throw new Error(`Task routing metadata is required to delete browser-worker thread ${threadId}`);
+    const response = await this.run({ operation: 'delete', thread_id: threadId, project: this.project(task, route), state: null }, route, new AbortController().signal);
+    if (response.operation !== 'delete') throw new Error(`browser-worker response operation mismatch: expected delete, got ${response.operation}`);
+    if (response.thread_id && response.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
+    if (response.status !== 'deleted' && response.status !== 'not_found') throw browserWorkerError(response);
+    this.deleted.add(threadId);
   }
   launch(task: Task, signal: AbortSignal): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before ChatGPT launch`);
@@ -189,42 +241,38 @@ export class ChatGptAdapter implements WorkerAdapter {
     const abort = (): void => controller.abort();
     if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
     const execution: Execution = { id: randomUUID(), promise: Promise.resolve({ summary: '' }), cancel: abort };
+    const timeout = setTimeout(abort, Math.max(1, task.timeoutMs));
     execution.promise = (async (): Promise<Result> => {
-      const token = (await readFile(this.tokenFile, 'utf8')).trim();
-      if (!token) throw new Error(`MacBridge token file is empty: ${this.tokenFile}`);
-      const body: Record<string, unknown> = {
-        prompt: task.input,
-        model: route.model,
-        thinking_effort: chatGptThinkingEffort(route.reasoning),
-        max_runtime_seconds: Math.max(30, Math.min(3600, Math.ceil(task.timeoutMs / 1000))),
-      };
-      if (route.projectId) body.project_id = route.projectId;
-      if (task.threadId) body.conversation_id = task.threadId;
-      const response = await this.fetchImpl(this.endpoint, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      let exposedConversationId: string | undefined;
-      const exposeConversationId = (conversationId: string): void => {
-        if (exposedConversationId === conversationId) return;
-        exposedConversationId = conversationId;
-        execution.threadId = conversationId;
-        execution.onThreadStarted?.(conversationId);
-      };
-      const text = await readChatGptResponse(response, exposeConversationId);
-      let payload: Record<string, unknown>;
-      try { payload = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error(`MacBridge returned unreadable ChatGPT response (${response.status})`); }
-      const conversationId = typeof payload.conversation_id === 'string' ? payload.conversation_id : exposedConversationId;
-      if (conversationId) exposeConversationId(conversationId);
-      if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : `MacBridge ChatGPT request failed (${response.status})`);
-      if (payload.complete !== true) throw new Error('MacBridge ChatGPT conversation did not complete');
-      const assistantText = typeof payload.assistant_text === 'string' ? payload.assistant_text.trim() : '';
-      return {
-        summary: assistantText || 'ChatGPT conversation completed',
-        data: { conversationId, provider: route.provider, model: route.model },
-      };
+      try {
+        const expectedThreadId = task.threadId;
+        const hasPrompt = Boolean(task.input.trim());
+        const operation: BrowserWorkerOperation = expectedThreadId ? (hasPrompt ? 'continue' : 'resume') : 'create';
+        const request: BrowserWorkerRequest = {
+          operation, thread_id: expectedThreadId, project: this.project(task, route), prompt: hasPrompt ? task.input : undefined,
+          thinking_level: thinkingLevel(route.reasoning), state: null,
+        };
+        const response = await this.run(request, route, controller.signal);
+        const threadId = this.exposeThread(execution, expectedThreadId, response);
+        this.routes.set(threadId, route);
+        this.validateOperation(response, operation);
+        let status = response.status;
+        while (status !== 'awaiting_result' && status !== 'completed') {
+          if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 25);
+            controller.signal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('browser-worker execution aborted')); }, { once: true });
+          });
+          const statusResponse = await this.run({ operation: 'status', thread_id: threadId, project: this.project(task, route), state: null }, route, controller.signal);
+          if (statusResponse.thread_id && statusResponse.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
+          this.validateOperation(statusResponse, 'status');
+          status = statusResponse.status;
+        }
+        const resultResponse = await this.run({ operation: 'result', thread_id: threadId, project: this.project(task, route), state: null }, route, controller.signal);
+        if (resultResponse.thread_id && resultResponse.thread_id !== threadId) throw new Error('browser-worker returned a different thread_id');
+        this.validateOperation(resultResponse, 'result');
+        if (resultResponse.status !== 'completed' || resultResponse.result?.verified !== true || !resultResponse.result.message_id || !resultResponse.result.text?.trim()) throw browserWorkerError(resultResponse);
+        return { summary: resultResponse.result.text.trim(), data: { threadId, messageId: resultResponse.result.message_id, verified: true, provider: route.provider, model: route.model } };
+      } finally { clearTimeout(timeout); }
     })();
     return execution;
   }

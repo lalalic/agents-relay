@@ -198,9 +198,9 @@ test('continuation delivery has a durable dedupe marker', async () => { const t=
 test('continuation failures remain retryable and succeed once', async () => { const t=task('retry-cont'); t.continuation={kind:'command',target:'echo'}; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); let attempts=0; const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],continuations:[{kind:'command',continue:async()=>{attempts+=1;if(attempts<3)throw new Error('temporary');}}]}); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'result'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].continuationDeliveredAt,null); await reconciler.reconcile('j'); await reconciler.idle(); assert.equal(attempts,3); assert.ok((await store.load('j')).tasks[0].continuationDeliveredAt); });
 test('stale completion cannot delete a replacement execution', async () => { const t=task('race'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); await reconciler.reconcile('j'); const old=adapter.resolvers[0]; reconciler.live.delete('race'); const durable=await store.load('j'); durable.tasks[0].state='READY'; await store.saveTask(durable.tasks[0]); await reconciler.reconcile('j'); assert.equal(adapter.launches,2); old.resolve({summary:'old'}); await new Promise(resolve=>setTimeout(resolve,20)); assert.equal(reconciler.live.has('race'),true); adapter.resolvers[1].resolve({summary:'new'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].result.summary,'new'); });
 test('thread id persists before a failed execution is retried', async () => {
-  const t=task('thread-retry'); t.adapter='chatgpt'; t.capabilities=['model','chatgpt','macbridge']; t.routing={provider:'openai',model:'gpt-5-6'};
+  const t=task('thread-retry'); t.adapter='chatgpt'; t.capabilities=['model','chatgpt','browser-harness']; t.routing={provider:'openai',model:'gpt-5-6'};
   const store=new InMemoryStore(job([t])); let launches=0; let retriedThreadId;
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(taskState){
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(taskState){
     launches+=1; retriedThreadId=launches===2 ? taskState.threadId : retriedThreadId;
     let execution;
     const promise=launches===1 ? new Promise((resolve,reject)=>queueMicrotask(()=>{execution.threadId='persisted-chat-thread';execution.onThreadStarted?.('persisted-chat-thread');reject(new Error('transport failed after thread creation'));})) : Promise.resolve({summary:'continued same conversation'});
@@ -316,7 +316,7 @@ test('completed jobs delete each ChatGPT task thread once and retain durable thr
   const b=task('chat-b','SUCCEEDED'); b.adapter='chatgpt'; b.threadId='thread-b';
   const c=task('shell-done','SUCCEEDED'); c.threadId='local-thread';
   const store=new InMemoryStore(job([a,b,c])); const deleted=[];
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
   const completed=await reconciler.reconcile('j');
   assert.equal(completed.state,'COMPLETED');
@@ -331,7 +331,7 @@ test('completed jobs delete each ChatGPT task thread once and retain durable thr
 test('failed terminal thread cleanup is durable and retried without reopening the job', async () => {
   const t=task('cleanup-retry','SUCCEEDED'); t.adapter='chatgpt'; t.threadId='thread-retry-delete';
   const store=new InMemoryStore(job([t])); let attempts=0;
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async()=>{attempts+=1;if(attempts===1)throw new Error('delete transport down');}};
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async()=>{attempts+=1;if(attempts===1)throw new Error('delete transport down');}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
   const first=await reconciler.reconcile('j');
   assert.equal(first.state,'COMPLETED'); assert.equal(first.tasks[0].threadCleanupError,'delete transport down'); assert.equal(first.tasks[0].threadDeletedAt,undefined);
@@ -342,7 +342,7 @@ test('failed terminal thread cleanup is durable and retried without reopening th
 test('merged PR cancels unfinished work and deletes existing ChatGPT threads', async () => {
   const t=task('merged-active','RUNNING'); t.adapter='chatgpt'; t.threadId='thread-merged'; t.executionId='orphan';
   const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED'; const deleted=[];
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','macbridge'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
   const result=await reconciler.reconcile('j');
   assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request merged'); assert.deepEqual(deleted,['thread-merged']); assert.ok(result.tasks[0].threadDeletedAt);
