@@ -454,14 +454,10 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
-  const store=new InMemoryStore({...job([succeeded,superseded]),state:'COMPLETED'});
+  const store=new InMemoryStore({...job([succeeded,superseded]),state:'COMPLETED',headSha:'abc1234567890'});
   const bus=new MemoryEventBus();
-  const reviewer={name:'chatgpt',id:'fake-reviewer',capabilities:['model','chatgpt'],launch:()=>({id:'review-runtime',launched:Promise.resolve(),promise:Promise.resolve({summary:'submitted'}),cancel(){}})};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[reviewer],eventBus:bus,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
-  // emulate open PR/head in the in-memory store
-  store.pullRequestState=async()=>({state:'OPEN',draft:false,mergedAt:null,closedAt:null});
-  store.headSha=async()=> 'abc1234567890';
-  await reconciler.reconcile('j'); await reconciler.idle();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  await reconciler.reconcile('j');
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
   assert.ok(review);
