@@ -20,6 +20,28 @@ export class NatsEventBus implements EventBus {
   async publish(event: EventRecord): Promise<void> { const nats = await this.moduleLoaded(); const subject = `${this.subjectPrefix}.${subjectToken(event.job_id)}.${event.type}`; (await this.client()).publish(subject, nats.StringCodec().encode(JSON.stringify(event))); }
   async subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { return this.subscribeSubject(`${this.subjectPrefix}.${subjectToken(jobId)}.>`, wake); }
   async subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { return this.subscribeSubject(`${this.subjectPrefix}.>`, wake); }
-  private async subscribeSubject(subject: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { const nats = await this.moduleLoaded(); const codec = nats.StringCodec(); const subscription: Subscription = (await this.client()).subscribe(subject); let active = true; void (async () => { for await (const message of subscription) { if (!active) break; try { await wake(JSON.parse(codec.decode(message.data)) as EventRecord); } catch { /* malformed events never become durable state */ } } })(); return async () => { active = false; subscription.unsubscribe(); }; }
+  private async subscribeSubject(subject: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> {
+    const nats = await this.moduleLoaded();
+    const codec = nats.StringCodec();
+    const subscription: Subscription = (await this.client()).subscribe(subject);
+    let active = true;
+    void (async () => {
+      for await (const message of subscription) {
+        if (!active) break;
+        let event: EventRecord;
+        try {
+          event = JSON.parse(codec.decode(message.data)) as EventRecord;
+        } catch {
+          continue;
+        }
+        try {
+          await wake(event);
+        } catch (error) {
+          process.stderr.write(`warning: event handler failed for ${subject}: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+      }
+    })();
+    return async () => { active = false; subscription.unsubscribe(); };
+  }
 }
 export function eventFor(jobId: string, taskId: string, parentTaskId: string | null, type: string, status: string, message: string, visibility: string = 'orchestrator', data?: Record<string, unknown>): EventRecord { return { version: 1, event_id: randomUUID(), job_id: jobId, task_id: taskId, parent_task_id: parentTaskId, type, status, timestamp: new Date().toISOString(), visibility, level: status === 'failed' || status === 'blocked' ? 'error' : 'info', message, data }; }
