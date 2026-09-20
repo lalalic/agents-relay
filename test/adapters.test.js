@@ -1,65 +1,151 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 
-const route = { provider: 'openai', model: 'gpt-5', reasoning: 'high' };
-const task = (overrides = {}) => ({ id: 'chat-task', input: 'do the work', projectName: 'neo', threadId: null, timeoutMs: 1000, routing: route, ...overrides });
-async function fixture() { const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-')); const agentPath = join(root, 'browser-worker.agent.md'); await writeFile(agentPath, '# fake browser worker'); return { root, agentPath }; }
-function fakeRunner(responses, requests = []) { return (_definition, request, _route, signal) => { requests.push(request); let cancel; const promise = new Promise((resolve, reject) => { cancel = () => reject(new Error('cancelled')); if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true }); queueMicrotask(() => { const response = responses.shift(); if (response instanceof Error) reject(response); else resolve(JSON.stringify(response)); }); }); return { promise, cancel }; }; }
+const route = { provider: 'openai', model: 'gpt-5' };
+const task = (overrides = {}) => ({
+  id: 'chat-task',
+  input: 'do the work',
+  output: { kind: 'task_pr' },
+  timeoutMs: 1000,
+  routing: route,
+  ...overrides,
+});
 
-test('ChatGptAdapter default runner invokes packaged Browser Harness drivers without Codex or MacBridge', async () => {
+function fakeRunner(response, requests = []) {
+  return (_definition, request, _route, signal) => {
+    requests.push(request);
+    return {
+      promise: signal.aborted
+        ? Promise.reject(new Error('aborted'))
+        : Promise.resolve(JSON.stringify(response)),
+      cancel() {},
+    };
+  };
+}
+
+test('ChatGptAdapter is one-shot submit and returns delivery receipt only', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const requests = [];
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      agentRunner: fakeRunner({
+        operation: 'submit',
+        status: 'submitted',
+        verified: true,
+        diagnostic_thread_id: 'diagnostic-only',
+        user_message_id: 'u-1',
+      }, requests),
+    });
+    const execution = adapter.launch(task(), new AbortController().signal);
+    const result = await execution.promise;
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0], { prompt: 'do the work' });
+    assert.equal(execution.threadId, undefined);
+    assert.equal(result.data.submitted, true);
+    assert.equal(result.data.diagnosticThreadId, 'diagnostic-only');
+    assert.match(result.summary, /terminal task state is event-owned/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter default runner invokes temporary one-shot driver', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-direct-browser-worker-'));
   try {
-    const agents = join(root, 'agents'); const scripts = join(root, 'scripts');
-    await import('node:fs/promises').then(({mkdir}) => Promise.all([mkdir(agents,{recursive:true}),mkdir(scripts,{recursive:true})]));
-    const agentPath = join(agents, 'browser-worker.agent.md'); await writeFile(agentPath, '# direct browser worker');
-    await writeFile(join(scripts,'create_bh.py'), `import json\nprint(json.dumps({"thread_id":"direct-thread","prompt_sent":True}))\n`);
-    await writeFile(join(scripts,'operate_bh.py'), `import json,sys\nop=sys.argv[1]\nif op=="status": print(json.dumps({"thread_id":"direct-thread","status":"awaiting_result"}))\nelif op=="result": print(json.dumps({"thread_id":"direct-thread","status":"completed","message_id":"m-direct","text":"browser harness result"}))\nelif op=="delete": print(json.dumps({"thread_id":"direct-thread","outcome":"deleted","verified":True}))\nelse: print(json.dumps({"thread_id":"direct-thread","status":"awaiting_result"}))\n`);
-    const previous = process.env.AGENTS_RELAY_AGENT_HARNESS; process.env.AGENTS_RELAY_AGENT_HARNESS = '/definitely/not/codex';
-    try {
-      const adapter = new ChatGptAdapter({ agentPath });
-      const execution = adapter.launch(task(), new AbortController().signal);
-      const result = await execution.promise;
-      assert.equal(execution.threadId, 'direct-thread'); assert.equal(result.summary, 'browser harness result'); assert.equal(result.data.verified, true);
-    } finally { if (previous === undefined) delete process.env.AGENTS_RELAY_AGENT_HARNESS; else process.env.AGENTS_RELAY_AGENT_HARNESS = previous; }
-  } finally { await rm(root, { recursive: true, force: true }); }
+    const agents = join(root, 'agents');
+    const scripts = join(root, 'scripts');
+    await mkdir(agents, { recursive: true });
+    await mkdir(scripts, { recursive: true });
+    const agentPath = join(agents, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# direct browser worker');
+    await writeFile(join(scripts, 'temporary_bh.py'), [
+      '#!/usr/bin/env python3',
+      'import json',
+      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1"}))',
+    ].join('\n'), { mode: 0o700 });
+    const result = await new ChatGptAdapter({ agentPath }).launch(task(), new AbortController().signal).promise;
+    assert.equal(result.data.submitted, true);
+    assert.equal(result.data.diagnosticThreadId, 'd-1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
-test('ChatGptAdapter wraps a pre-thread token failure as a launch failure', async () => {
-  const { root } = await fixture();
+test('ChatGptAdapter rejects unverified or failed submission receipts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-'));
   try {
-    const tokenError = new Error("ENOENT: no such file or directory, open '/Users/me/Library/Application Support/MacDeveloperBridge/http-token'");
-    const adapter = new ChatGptAdapter({ agentPath: join(root, 'unused.md'), agentRunner: () => ({ promise: Promise.reject(tokenError), cancel() {} }) });
-    const execution = adapter.launch(task(), new AbortController().signal);
-    await assert.rejects(execution.promise, LaunchFailure);
-    assert.equal(execution.threadId, undefined);
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('ChatGptAdapter keeps existing-thread failures retryable through the durable thread id', async () => {
-  const { root, agentPath } = await fixture();
-  try {
-    const tokenError = new Error("ENOENT: no such file or directory, open '/Users/me/Library/Application Support/MacDeveloperBridge/http-token'");
-    const adapter = new ChatGptAdapter({ agentPath, agentRunner: () => ({ promise: Promise.reject(tokenError), cancel() {} }) });
-    const execution = adapter.launch(task({ threadId: 'persisted-thread', input: '' }), new AbortController().signal);
-    await assert.rejects(execution.promise, error => {
-      assert.ok(!(error instanceof LaunchFailure));
-      assert.match(error.message, /http-token/);
-      return true;
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const bad = new ChatGptAdapter({
+      agentPath,
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: false }),
     });
-    assert.equal(execution.threadId, undefined);
-  } finally { await rm(root, { recursive: true, force: true }); }
+    await assert.rejects(bad.launch(task(), new AbortController().signal).promise, LaunchFailure);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
-test('buildCodexArgs applies provider, model, reasoning, cwd, and profile in order', () => { assert.deepEqual(buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash', reasoning: 'medium', cwd: '/workspace/project', profile: 'relay' }, 'inspect runtime'), ['exec', '--json', '-p', 'relay', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '-c', 'model_reasoning_effort=medium', '-C', '/workspace/project', '--', 'inspect runtime']); });
-test('buildCodexArgs omits absent optional routing fields', () => { assert.deepEqual(buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash' }, 'prompt'), ['exec', '--json', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '--', 'prompt']); });
-test('CodexAdapter buffers a thread id emitted before callback attachment', async () => { const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-')); try { const command = join(root, 'codex'); await writeFile(command, [`#!/bin/sh`, `printf '%s\\n' '${JSON.stringify({ type: 'thread.started', thread_id: 'early-thread' })}'`, 'while true; do sleep 0.1; done'].join('\n'), { mode: 0o700 }); await chmod(command, 0o700); const execution = new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm-5.3-flash' } }, new AbortController().signal); let observed; execution.onThreadStarted = value => { observed = value; }; execution.promise.catch(() => {}); for (let i = 0; i < 100 && observed === undefined; i += 1) await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(execution.threadId, 'early-thread'); assert.equal(observed, 'early-thread'); execution.cancel(); await execution.promise.catch(() => {}); } finally { await rm(root, { recursive: true, force: true }); } });
-test('CodexAdapter maps the final assistant message and bounds failed stderr', async () => { const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-output-')); try { const command = join(root, 'codex'); await writeFile(command, [`#!/bin/sh`, `printf '%s\\n' '${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'final result' } })}'`, `printf '%s\\n' '${'e'.repeat(70000)}' >&2`, 'exit 1'].join('\n'), { mode: 0o700 }); await chmod(command, 0o700); await assert.rejects(new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm-5.3-flash' } }, new AbortController().signal).promise, error => { assert.ok(Buffer.byteLength(error.message) <= 16384); return true; }); } finally { await rm(root, { recursive: true, force: true }); } });
-test('ChatGptAdapter creates, persists identity, polls status, and maps a verified result', async () => { const { root, agentPath } = await fixture(); try { const requests = []; const adapter = new ChatGptAdapter({ agentPath, agentRunner: fakeRunner([{ operation: 'create', status: 'running', thread_id: 'thread-1' }, { operation: 'status', status: 'awaiting_result', thread_id: 'thread-1' }, { operation: 'result', status: 'completed', thread_id: 'thread-1', result: { message_id: 'm-1', text: 'finished', verified: true } }], requests) }); const execution = adapter.launch(task(), new AbortController().signal); let observed; execution.onThreadStarted = value => { observed = value; }; const result = await execution.promise; assert.deepEqual(requests.map(request => request.operation), ['create', 'status', 'result']); assert.equal(requests[0].project.name, 'neo'); assert.equal(requests[0].thinking_level, 'high'); assert.equal(observed, 'thread-1'); assert.equal(execution.threadId, 'thread-1'); assert.equal(result.summary, 'finished'); assert.equal(result.data.verified, true); } finally { await rm(root, { recursive: true, force: true }); } });
-test('ChatGptAdapter continues or resumes the observed thread before polling', async () => { const { root, agentPath } = await fixture(); try { const requests = []; const adapter = new ChatGptAdapter({ agentPath, agentRunner: fakeRunner([{ operation: 'continue', status: 'awaiting_result', thread_id: 'thread-1' }, { operation: 'result', status: 'completed', thread_id: 'thread-1', result: { message_id: 'm-2', text: 'continued', verified: true } }], requests) }); const result = await adapter.launch(task({ threadId: 'thread-1' }), new AbortController().signal).promise; assert.deepEqual(requests.map(request => request.operation), ['continue', 'result']); assert.equal(result.summary, 'continued'); const resumeRequests = []; const resuming = new ChatGptAdapter({ agentPath, agentRunner: fakeRunner([{ operation: 'resume', status: 'awaiting_result', thread_id: 'thread-1' }, { operation: 'result', status: 'completed', thread_id: 'thread-1', result: { message_id: 'm-3', text: 'resumed', verified: true } }], resumeRequests) }); await resuming.launch(task({ threadId: 'thread-1', input: '' }), new AbortController().signal).promise; assert.equal(resumeRequests[0].operation, 'resume'); } finally { await rm(root, { recursive: true, force: true }); } });
-test('ChatGptAdapter rejects blocked status, thread mismatches, failed results, and unverified results', async () => { const { root, agentPath } = await fixture(); try { const cases = [ [{ operation: 'create', status: 'running', thread_id: 'thread-b' }, { operation: 'status', status: 'blocked', thread_id: 'thread-b', error: { code: 'authentication_required', message: 'sign in', retryable: false } }], [{ operation: 'create', status: 'running', thread_id: 'thread-1' }, { operation: 'status', status: 'awaiting_result', thread_id: 'thread-2' }], [{ operation: 'create', status: 'running', thread_id: 'thread-f' }, { operation: 'status', status: 'awaiting_result', thread_id: 'thread-f' }, { operation: 'result', status: 'failed', thread_id: 'thread-f', error: { code: 'not_verified', message: 'not verified' } }], [{ operation: 'create', status: 'running', thread_id: 'thread-u' }, { operation: 'status', status: 'awaiting_result', thread_id: 'thread-u' }, { operation: 'result', status: 'completed', thread_id: 'thread-u', result: { message_id: 'm', text: 'maybe', verified: false } }] ]; for (const responses of cases) { const expectedThreadId = responses[0].thread_id; const adapter = new ChatGptAdapter({ agentPath, agentRunner: fakeRunner(responses) }); const execution = adapter.launch(task(), new AbortController().signal); await assert.rejects(execution.promise); assert.equal(execution.threadId, expectedThreadId); } } finally { await rm(root, { recursive: true, force: true }); } });
-test('ChatGptAdapter preserves identity through cancellation and deletes via the worker with Project routing', async () => { const { root, agentPath } = await fixture(); try { const controller = new AbortController(); const pendingRunner = (_definition, _request, _route, signal) => ({ promise: new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })), cancel() {} }); const adapter = new ChatGptAdapter({ agentPath, agentRunner: pendingRunner }); const execution = adapter.launch(task(), controller.signal); controller.abort(); await assert.rejects(execution.promise, /aborted/); let calls = 0; const deleting = new ChatGptAdapter({ agentPath, agentRunner: (_definition, request, route) => { calls += 1; assert.equal(request.operation, 'delete'); assert.equal(request.thread_id, 'gone'); assert.equal(request.project.name, 'neo'); assert.equal(route.model, 'gpt-5'); return { promise: Promise.resolve(JSON.stringify({ operation: 'delete', status: 'not_found', thread_id: 'gone' })), cancel() {} }; } }); await deleting.deleteThread('gone', task()); await deleting.deleteThread('gone', task()); assert.equal(calls, 1); } finally { await rm(root, { recursive: true, force: true }); } });
-test('ChatGptAdapter bounds a non-cooperative status runner by task timeout', async () => { const { root, agentPath } = await fixture(); try { const requests = []; let calls = 0; const adapter = new ChatGptAdapter({ agentPath, agentRunner: (_definition, request, _route, signal) => { requests.push(request); calls += 1; if (calls === 1) return { promise: Promise.resolve(JSON.stringify({ operation: 'create', status: 'running', thread_id: 'thread-timeout' })), cancel() {} }; return { promise: new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })), cancel() {} }; } }); const execution = adapter.launch(task({ timeoutMs: 100 }), new AbortController().signal); await assert.rejects(execution.promise, /aborted/); assert.equal(execution.threadId, 'thread-timeout'); assert.deepEqual(requests.map(request => request.operation), ['create', 'status']); } finally { await rm(root, { recursive: true, force: true }); } });
+test('ChatGptAdapter wraps submission transport failure as LaunchFailure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      agentRunner: () => ({ promise: Promise.reject(new Error('browser unavailable')), cancel() {} }),
+    });
+    await assert.rejects(adapter.launch(task(), new AbortController().signal).promise, LaunchFailure);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('buildCodexArgs applies provider, model, reasoning, cwd, and profile in order', () => {
+  assert.deepEqual(
+    buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash', reasoning: 'medium', cwd: '/workspace/project', profile: 'relay' }, 'inspect runtime'),
+    ['exec', '--json', '-p', 'relay', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '-c', 'model_reasoning_effort=medium', '-C', '/workspace/project', '--', 'inspect runtime'],
+  );
+});
+
+test('CodexAdapter process exit is runtime-only, not a task result', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, ['#!/bin/sh', 'exit 0'].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const result = await new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm' } }, new AbortController().signal).promise;
+    assert.match(result.summary, /terminal task state is event-owned/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CodexAdapter still exposes diagnostic thread id without making it completion evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-thread-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, [
+      '#!/bin/sh',
+      `printf '%s\\n' '${JSON.stringify({ type: 'thread.started', thread_id: 'early-thread' })}'`,
+      'sleep 0.05',
+      'exit 0',
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const execution = new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm' } }, new AbortController().signal);
+    let observed;
+    execution.onThreadStarted = value => { observed = value; };
+    await execution.promise;
+    assert.equal(execution.threadId, 'early-thread');
+    assert.equal(observed, 'early-thread');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

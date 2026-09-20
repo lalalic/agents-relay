@@ -11,22 +11,60 @@ const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void> };
-type LiveExecution = { taskId: string; execution: Execution; controller: AbortController; timer: NodeJS.Timeout };
+type LiveExecution = { taskId: string; executionId: string; execution: Execution; controller: AbortController };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 
 export function managedWorkerInput(job: Job, task: Task): string {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
+  if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
-  return `[Agents Relay managed task]\nPR: ${prUrl}\nJob: ${job.id}\nTask: ${task.id}\nParent task: ${task.parentTaskId ?? 'none'}\nProject: ${task.projectName ?? 'unspecified'}\n\n${task.input}`;
+  const output = task.output.kind === 'file'
+    ? `file\nPath: ${task.output.path}`
+    : `task/PR\nPR: ${prUrl}\nTask: ${task.id}`;
+  return `[Agents Relay managed task]
+PR: ${prUrl}
+Job: ${job.id}
+Task: ${task.id}
+Parent task: ${task.parentTaskId ?? 'none'}
+Project: ${task.projectName ?? 'unspecified'}
+
+${task.input}
+
+[Output contract]
+${output}
+
+[Execution event contract]
+Use the normal events bus with exactly Job ${job.id} and Task ${task.id}.
+You MAY publish progress events while working.
+Before stopping, you MUST publish exactly one terminal event:
+- task.completed only after the declared output is durable;
+- task.failed when execution cannot complete;
+- task.blocked when human/external action is required.
+The ChatGPT/Codex conversation or process exit is never the task result.`;
 }
 
 export class Reconciler {
   private readonly live = new Map<string, LiveExecution>();
   private readonly plannerLive = new Map<string, LivePlanner>();
+  private readonly terminalTimers = new Map<string, NodeJS.Timeout>();
   private readonly continuationLive = new Set<string>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
-  async watch(jobId: string): Promise<() => Promise<void>> { if (!this.options.eventBus) return async () => {}; try { return await this.options.eventBus.subscribe(jobId, async event => { if (event.type !== 'job.wake' && event.type !== 'github.webhook') return; await this.reconcile(jobId); }); } catch (error) { await this.reportTransportFailure(error); return async () => {}; } }
+  async watch(jobId: string): Promise<() => Promise<void>> {
+    if (!this.options.eventBus) return async () => {};
+    try {
+      return await this.options.eventBus.subscribe(jobId, async event => {
+        if (['task.completed', 'task.failed', 'task.blocked'].includes(event.type)) {
+          await this.applyTerminalEvent(event);
+          return;
+        }
+        if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(jobId);
+      });
+    } catch (error) {
+      await this.reportTransportFailure(error);
+      return async () => {};
+    }
+  }
   async idle(): Promise<void> { while (this.live.size > 0 || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   async reconcile(jobId: string): Promise<Job> {
@@ -37,7 +75,6 @@ export class Reconciler {
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const now = (this.options.now ?? new Date()).getTime();
-      await this.recoverFinishedWorkers(job);
       if (prState !== 'OPEN') {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
         for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
@@ -66,7 +103,6 @@ export class Reconciler {
       if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
       if (prState === 'CLOSED') { finalState.state = 'CANCELLED'; finalState.updatedAt = new Date().toISOString(); }
       if (finalState.state !== scheduled.state || finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
-      if (finalState.state === 'COMPLETED' || prState !== 'OPEN') await this.cleanupThreads(finalState);
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
@@ -81,7 +117,12 @@ export class Reconciler {
       if (task.attempt < task.maxAttempts) {
         transitionTask(task, 'READY'); task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
       } else {
-        transitionTask(task, 'FAILED'); task.error = expired ? 'Lease expired after maximum attempts' : 'Execution owner restarted after maximum attempts'; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+        task.error = expired ? 'Lease expired after maximum attempts' : 'Execution owner restarted after maximum attempts';
+        task.leaseOwner = null;
+        task.leaseExpiresAt = null;
+        transitionTask(task, 'FAILED');
+        await this.store.saveTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: expired ? 'lease_expired' : 'execution_owner_lost' }));
       }
     }
   }
@@ -103,44 +144,67 @@ export class Reconciler {
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
   }
-  private async recoverFinishedWorkers(job: Job): Promise<void> {
-    for (const task of job.tasks.filter(item => item.state === 'RUNNING' && !this.live.has(item.id) && item.threadId)) {
-      const adapter = this.options.adapters.find(candidate => candidate.name === task.adapter);
-      if (!adapter?.recover) continue;
-      let result: Task['result'] | null = null;
-      try { result = await adapter.recover(task); } catch { result = null; }
-      if (!result) continue;
-      task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null;
-      transitionTask(task, 'SUCCEEDED');
-      await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.recovered', 'succeeded', `Recovered completed task ${task.id} from durable worker thread`, 'orchestrator', { threadId: task.threadId }));
-    }
-  }
   private async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
-    if (!adapter) { transitionTask(task, 'FAILED'); task.error = `No adapter ${task.adapter}`; await this.store.saveTask(task); return; }
-    const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs); const startedAt = (this.options.now ?? new Date()).getTime();
-    transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString(); task.executionId = randomUUID(); await this.store.saveTask(task);
+    if (!adapter) {
+      transitionTask(task, 'FAILED');
+      task.error = `No adapter ${task.adapter}`;
+      await this.store.saveTask(task);
+      return;
+    }
+    if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
+      transitionTask(task, 'BLOCKED');
+      task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
+      await this.store.saveTask(task);
+      return;
+    }
+    let workerInput: string;
+    try {
+      workerInput = managedWorkerInput(job, task);
+    } catch (error) {
+      transitionTask(task, 'BLOCKED');
+      task.error = error instanceof Error ? error.message : String(error);
+      await this.store.saveTask(task);
+      return;
+    }
+    const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs);
+    const startedAt = (this.options.now ?? new Date()).getTime();
+    transitionTask(task, 'RUNNING');
+    task.attempt += 1;
+    task.leaseOwner = this.options.owner;
+    task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
+    task.executionId = randomUUID();
+    const durableExecutionId = task.executionId;
+    await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started`, 'user', { adapter: adapter.id, model: task.routing?.model }));
-    const controller = new AbortController(); let execution: Execution;
-    const workerTask = { ...task, input: managedWorkerInput(job, task) };
-    try { execution = adapter.launch(workerTask, controller.signal); } catch (error) { await this.finish(job.id, task.id, task.executionId, null, error instanceof Error ? error.message : String(error), { retryable: false }); return; }
-    // A worker may reject before durable execution metadata finishes saving. Attach a guard immediately so Node never treats that race as an unhandled rejection; the durable completion handler below still records the outcome.
-    void execution.promise.catch(() => undefined);
-    task.executionId = execution.id; await this.store.saveTask(task);
-    let threadPersistence = Promise.resolve();
-    const persistThread = (threadId: string): void => {
-      threadPersistence = threadPersistence.then(() => this.persistThread(job.id, task.id, execution.id, threadId));
-    };
-    execution.onThreadStarted = persistThread;
-    if (execution.threadId) persistThread(execution.threadId);
-    const timer = setTimeout(() => { controller.abort(); execution.cancel(); }, task.timeoutMs);
-    this.live.set(task.id, { taskId: task.id, execution, controller, timer });
-    this.detach(execution.promise.then(
-      async result => { await threadPersistence; await this.finish(job.id, task.id, execution.id, result, null); },
-      async error => { await threadPersistence; await this.finish(job.id, task.id, execution.id, null, error instanceof Error ? error.message : String(error), { retryable: !(error instanceof LaunchFailure) }); },
-    ), job.id, task.id, 'worker completion');
+
+    const controller = new AbortController();
+    let execution: Execution;
+    const workerTask = { ...task, input: workerInput };
+    try {
+      execution = adapter.launch(workerTask, controller.signal);
+    } catch (error) {
+      await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    this.live.set(task.id, { taskId: task.id, executionId: durableExecutionId, execution, controller });
+    const terminalTimer = setTimeout(() => {
+      this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
+    }, Math.max(1, task.timeoutMs));
+    this.terminalTimers.set(task.id, terminalTimer);
+
+    this.detach(
+      execution.promise.then(
+        result => this.runtimeSettled(job.id, task.id, durableExecutionId, result, null),
+        error => this.runtimeSettled(job.id, task.id, durableExecutionId, null, error instanceof Error ? error.message : String(error)),
+      ),
+      job.id,
+      task.id,
+      'worker runtime completion',
+    );
   }
+
   private async launchPlanner(job: Job, task: Task): Promise<void> {
     const planner = this.options.planner;
     if (!planner) { task.attempt = task.maxAttempts; task.error = 'No objective planner configured'; transitionTask(task, 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user')); return; }
@@ -183,30 +247,82 @@ export class Reconciler {
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter ?? 'shell', input: spec.input, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
   }
-  private async persistThread(jobId: string, taskId: string, executionId: string, threadId: string): Promise<void> { const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (task?.executionId === executionId && task.state === 'RUNNING') { task.threadId = threadId; task.threadDeletedAt = null; task.threadCleanupError = null; await this.store.saveTask(task); await this.emit(eventFor(jobId, taskId, task.parentTaskId, 'thread.started', 'running', `Worker thread ${threadId} started`, 'orchestrator', { threadId })); } }
-  private async finish(jobId: string, taskId: string, executionId: string | null, result: Task['result'], error: string | null, options: { retryable?: boolean } = {}): Promise<void> {
-    const live = this.live.get(taskId); if (live?.execution.id === executionId) { clearTimeout(live.timer); this.live.delete(taskId); }
-    const job = await this.store.load(jobId); const task = job.tasks.find(item => item.id === taskId); if (!task || task.executionId !== executionId) return;
-    if (task.state === 'CANCELLED') { await this.store.saveTask(task); return; }
-    if (error === null) { task.result = result; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed`)); await this.deliverContinuation(job, task); }
-    else { const retryable = options.retryable !== false && task.attempt < task.maxAttempts; task.error = error; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, retryable ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'task.failed' : 'task.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Task ${task.id}: ${error}`, task.state === 'FAILED' ? 'user' : 'orchestrator')); }
-    this.detach(this.reconcile(jobId), jobId, task.id, 'worker follow-up reconciliation');
+  private clearExecution(taskId: string, executionId?: string | null): void {
+    const live = this.live.get(taskId);
+    if (!executionId || live?.executionId === executionId) this.live.delete(taskId);
+    const timer = this.terminalTimers.get(taskId);
+    if (timer) clearTimeout(timer);
+    this.terminalTimers.delete(taskId);
   }
-  private async cleanupThreads(job: Job): Promise<void> {
-    const adapter = this.options.adapters.find(candidate => candidate.name === 'chatgpt' && candidate.deleteThread);
-    if (!adapter?.deleteThread) return;
-    for (const task of job.tasks.filter(item => item.adapter === 'chatgpt' && item.threadId && !item.threadDeletedAt)) {
-      try {
-        await adapter.deleteThread(task.threadId as string, task);
-        task.threadDeletedAt = new Date().toISOString(); task.threadCleanupError = null; await this.store.saveTask(task);
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'thread.deleted', 'succeeded', `Worker thread ${task.threadId} deleted`, 'orchestrator', { threadId: task.threadId }));
-      } catch (error) {
-        task.threadCleanupError = error instanceof Error ? error.message : String(error); await this.store.saveTask(task);
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'thread.delete.failed', 'failed', `Worker thread cleanup failed: ${task.threadCleanupError}`, 'orchestrator', { threadId: task.threadId }));
-      }
+
+  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string): Promise<void> {
+    const job = await this.store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker launch failed: ${message}`, 'user', { phase: 'launch' });
+    await this.applyTerminalEvent(event);
+    await this.emit(event);
+  }
+
+  private async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
+    const live = this.live.get(taskId);
+    if (live?.executionId === executionId) this.live.delete(taskId);
+    const job = await this.store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    await this.emit(eventFor(
+      jobId, taskId, task.parentTaskId,
+      error ? 'worker.runtime.failed' : 'worker.runtime.exited',
+      error ? 'failed' : 'succeeded',
+      error ?? result?.summary ?? 'Worker runtime exited',
+      'orchestrator',
+      { authoritative: false, waitingForTerminalEvent: true },
+    ));
+  }
+
+  private async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {
+    const live = this.live.get(taskId);
+    if (live?.executionId === executionId) {
+      live.controller.abort();
+      live.execution.cancel();
     }
+    const job = await this.store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') {
+      this.clearExecution(taskId, executionId);
+      return;
+    }
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Task ${taskId} timed out waiting for the mandatory terminal worker event`, 'user', { reason: 'terminal_event_timeout', timeoutMs: task.timeoutMs });
+    await this.applyTerminalEvent(event);
+    await this.emit(event);
+  }
+
+  private async applyTerminalEvent(event: EventRecord): Promise<void> {
+    const job = await this.store.load(event.job_id);
+    const task = job.tasks.find(item => item.id === event.task_id);
+    if (!task || !['codex', 'chatgpt'].includes(task.adapter) || task.state !== 'RUNNING') return;
+    this.clearExecution(task.id, task.executionId);
+    task.leaseOwner = null;
+    task.leaseExpiresAt = null;
+    task.updatedAt = event.timestamp || new Date().toISOString();
+    if (event.type === 'task.completed') {
+      task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
+      task.error = null;
+      transitionTask(task, 'SUCCEEDED');
+      await this.store.saveTask(task);
+      await this.deliverContinuation(job, task);
+    } else if (event.type === 'task.failed') {
+      task.error = event.message || `Task ${task.id} failed`;
+      transitionTask(task, 'FAILED');
+      await this.store.saveTask(task);
+    } else if (event.type === 'task.blocked') {
+      task.error = event.message || `Task ${task.id} blocked`;
+      transitionTask(task, 'BLOCKED');
+      await this.store.saveTask(task);
+    }
+    this.detach(this.reconcile(job.id), job.id, task.id, 'terminal-event reconciliation');
   }
   private async deliverContinuation(job: Job, task: Task): Promise<void> {
     const continuation = task.continuation ?? job.continuation;
@@ -231,5 +347,5 @@ export class Reconciler {
 }
 
 function samePlannerChildDefinition(left: Task, right: Task): boolean {
-  return JSON.stringify({ id: left.id, input: left.input, priority: left.priority, projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, priority: right.priority, projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
+  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
 }

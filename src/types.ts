@@ -1,7 +1,7 @@
 export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
-export type AdapterName = 'shell' | 'codex' | 'chatgpt' | 'orchestrator';
+export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
 export type ExecutionMode = 'fixed' | 'autonomous';
 export type TaskKind = 'work' | 'planner';
 export type AgentAvailability = 'available' | 'degraded' | 'offline';
@@ -28,9 +28,10 @@ export type AgentRegistration = {
 };
 export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
+export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
 export type Task = {
   jobId?: string; id: string; kind?: TaskKind; priority?: Priority; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
-  input: string; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
+  input: string; output?: TaskOutput; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;

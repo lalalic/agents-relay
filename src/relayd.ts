@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ChatGptAdapter, CodexAdapter, ShellAdapter } from './adapters.js';
+import { ChatGptAdapter, CodexAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
@@ -54,7 +54,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','agents-relay.events.job')) : undefined;
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new ShellAdapter(),new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
   const repositories = normalized.repository
     ? [normalized.repository]
     : (await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot())).map(item => item.repository);

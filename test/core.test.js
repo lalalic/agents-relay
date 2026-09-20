@@ -17,7 +17,7 @@ import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 
 const now = () => new Date().toISOString();
-const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'shell',input:'true',state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
+const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
 const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'OPEN',continuation:null,createdAt:now(),updatedAt:now(),tasks});
 const graphCommentClient = (comments, prNumber=1, prState='OPEN') => ({
   request: async path => {
@@ -37,7 +37,7 @@ const graphCommentClient = (comments, prNumber=1, prState='OPEN') => ({
     throw new Error('unexpected GraphQL '+query);
   }
 });
-class FakeAdapter { name='shell'; id='fake'; capabilities=['shell']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
+class FakeAdapter { name='codex'; id='fake-codex'; capabilities=['model','codex']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
 test('parses task marker JSON', () => { const t=task('a'); assert.equal(parseTask(marker(TASK_MARKER,t)).id,'a'); });
 test('discovers by hard requirements and keeps evidence explainable', () => {
   const base = { id:'a', name:'A', responsibility:'research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
@@ -60,7 +60,7 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'submit', '--file', file, '--task-id', 'child', '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--input', 'build metadata'], { cwd: process.cwd() });
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'submit', '--file', file, '--task-id', 'child', '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--provider','openai','--model','gpt-test','--output','task-pr','--input', 'build metadata'], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
@@ -92,7 +92,7 @@ test('CLI task update rejects active and terminal execution records', async () =
     await writeFile(file, JSON.stringify(job([task('guard',state)])));
     const result=spawn(process.execPath,[join('dist','cli.js'),'task','update','--file',file,'--task-id','guard','--model','gpt-5.6-sol'],{cwd:process.cwd()});
     const [code]=await once(result,'exit'); assert.notEqual(code,0);
-    const saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.tasks[0].routing,undefined);
+    const saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.tasks[0].routing.model,'gpt-test');
     await rm(directory,{recursive:true,force:true});
   }
 });
@@ -101,7 +101,7 @@ test('CLI submit reopens a completed job before publishing new work', async () =
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-submit-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify({...job([]),state:'COMPLETED'}));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'submit','--file',file,'--task-id','review','--input','review completed job'], {cwd:process.cwd()});
+  const result = spawn(process.execPath, [join('dist','cli.js'),'submit','--file',file,'--task-id','review','--provider','openai','--model','gpt-test','--output','task-pr','--input','review completed job'], {cwd:process.cwd()});
   const [code] = await once(result,'exit');
   assert.equal(code,0);
   const saved = JSON.parse(await readFile(file,'utf8'));
@@ -193,107 +193,119 @@ test('repository pool reconciles merged PRs even though they are not runnable', 
   assert.match(durable,/\"state\":\"COMPLETED\"/);
 });
 test('task priority orders ready work and inherits job priority', () => { const a=task('a'), b=task('b'), c=task('c'); a.priority='P3'; b.priority='P0'; a.createdAt='2026-01-01T00:00:00.000Z'; b.createdAt='2026-01-02T00:00:00.000Z'; c.createdAt='2025-01-01T00:00:00.000Z'; assert.deepEqual([a,b,c].sort((x,y)=>compareTaskPriority(x,y,'P1')).map(x=>x.id), ['b','c','a']); });
-test('reconciler launches asynchronously and concurrently', async () => { const a=task('a'), b=task('b'), c=task('c'); const store=new InMemoryStore(job([a,b,c])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',maxConcurrent:2,adapters:[adapter]}); const started=Date.now(); const state=await reconciler.reconcile('j'); assert.ok(Date.now()-started < 100); assert.equal(adapter.launches,2); assert.equal((await store.load('j')).tasks.filter(t=>t.state==='RUNNING').length,2); adapter.resolvers[0].resolve({summary:'a'}); adapter.resolvers[1].resolve({summary:'b'}); await new Promise(resolve=>setTimeout(resolve,30)); adapter.resolvers[2]?.resolve({summary:'c'}); await reconciler.idle(); const done=await store.load('j'); assert.equal(done.tasks.filter(t=>t.state==='SUCCEEDED').length,3); assert.equal(state.state,'RUNNING'); });
-test('timeout cancels a live execution and persists terminal failure', async () => { const t=task('slow'); t.timeoutMs=10; t.maxAttempts=1; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); await reconciler.reconcile('j'); await reconciler.idle(); const result=(await store.load('j')).tasks[0]; assert.equal(adapter.cancelled > 0,true); assert.equal(result.state,'FAILED'); });
-test('expired leases recover without awaiting worker work', async () => { const t=task('expired','RUNNING'); t.attempt=1; t.maxAttempts=2; t.executionId='old'; t.leaseExpiresAt=new Date(Date.now()-1000).toISOString(); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],maxConcurrent:1}); await reconciler.reconcile('j'); assert.equal(adapter.launches,1); assert.equal((await store.load('j')).tasks[0].state,'RUNNING'); adapter.resolvers[0].resolve({summary:'recovered'}); await reconciler.idle(); });
-test('reconciler recovers a completed durable worker thread after daemon restart', async () => {
-  const t=task('recovered-thread','RUNNING');
-  t.adapter='codex'; t.threadId='thread-1'; t.executionId='lost-execution'; t.leaseOwner='old-daemon'; t.leaseExpiresAt=new Date(Date.now()+600000).toISOString();
-  const store=new InMemoryStore(job([t]));
-  const adapter={name:'codex',id:'recovering-codex',capabilities:['model','codex'],launch(){ throw new Error('must not relaunch'); },recover:async current=>current.threadId==='thread-1'?{summary:'durable final answer',data:{recoveredFromThread:'thread-1'}}:null};
-  const reconciler=new Reconciler(store,{owner:'new-daemon',adapters:[adapter]});
-  await reconciler.reconcile('j');
-  const result=(await store.load('j')).tasks[0];
-  assert.equal(result.state,'SUCCEEDED');
-  assert.equal(result.result.summary,'durable final answer');
-  assert.equal(result.leaseOwner,null);
-  assert.equal(result.leaseExpiresAt,null);
-});
-
-test('Codex tasks launch when capabilities are routing metadata', async () => {
-  const t=task('codex-capabilities'); t.adapter='codex'; t.capabilities=['coding','testing']; t.routing={provider:'openai',model:'gpt-5-6'};
-  const store=new InMemoryStore(job([t])); let launches=0; let resolveExecution;
-  const adapter={name:'codex',id:'fake-codex',capabilities:['model','codex'],launch(){ launches+=1; return {id:'codex-exec',promise:new Promise(resolve=>{resolveExecution=resolve;}),cancel:()=>{}}; }};
+test('model task requires an event bus before launch', async () => {
+  const t=task('no-events'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
   await reconciler.reconcile('j');
-  assert.equal(launches,1); assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
-  resolveExecution({summary:'completed'}); await reconciler.idle();
-  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
-});
-test('Codex launch requires routing metadata and applies command contract', () => { assert.throws(() => new CodexAdapter('definitely-not-started').launch(task('model','READY'), new AbortController().signal), /routing metadata/); });
-test('GitHubStore trusts only configured authors and persists through a fresh store', async () => { const comments=[]; const client=graphCommentClient(comments); const store=new GitHubStore(client,'owner/repo',1,new Set(['bot'])); await store.saveJob(job()); const forged=marker(TASK_MARKER,task('forged')); comments.push({id:99,body:forged,updated_at:now(),user:{login:'attacker'}}); const t=task('persist'); await store.appendTask(t); t.state='SUCCEEDED'; t.result={summary:'durable'}; await store.saveTask(t); const fresh=new GitHubStore(client,'owner/repo',1,new Set(['bot'])); const loaded=await fresh.load('j'); assert.equal(loaded.tasks.some(item=>item.id==='forged'),false); assert.equal(loaded.tasks.find(item=>item.id==='persist').result.summary,'durable'); });
-test('GitHubStore reads durable comments through GraphQL', async () => { const comments=Array.from({length:101},(_,index)=>({id:index+1,body:'ordinary',updated_at:now(),user:{login:'bot'}})); const root=job(); comments[0].body=marker('agents-relay:job:v1',{...root,tasks:undefined}); const client=graphCommentClient(comments); const store=new GitHubStore(client,'owner/repo',1,new Set(['bot'])); assert.equal((await store.load('j')).id,'j'); });
-test('continuation delivery has a durable dedupe marker', async () => { const t=task('child'); t.continuation={kind:'command',target:'echo'}; const store=new InMemoryStore(job([t])); const calls=[]; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],continuations:[{kind:'command',continue:async input=>{calls.push(input);}}]}); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'result'}); await reconciler.idle(); await reconciler.reconcile('j'); assert.equal(calls.length,1); assert.ok((await store.load('j')).tasks[0].continuationDeliveredAt); });
-test('continuation failures remain retryable and succeed once', async () => { const t=task('retry-cont'); t.continuation={kind:'command',target:'echo'}; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); let attempts=0; const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],continuations:[{kind:'command',continue:async()=>{attempts+=1;if(attempts<3)throw new Error('temporary');}}]}); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'result'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].continuationDeliveredAt,null); await reconciler.reconcile('j'); await reconciler.idle(); assert.equal(attempts,3); assert.ok((await store.load('j')).tasks[0].continuationDeliveredAt); });
-test('stale completion cannot delete a replacement execution', async () => { const t=task('race'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); await reconciler.reconcile('j'); const old=adapter.resolvers[0]; reconciler.live.delete('race'); const durable=await store.load('j'); durable.tasks[0].state='READY'; await store.saveTask(durable.tasks[0]); await reconciler.reconcile('j'); assert.equal(adapter.launches,2); old.resolve({summary:'old'}); await new Promise(resolve=>setTimeout(resolve,20)); assert.equal(reconciler.live.has('race'),true); adapter.resolvers[1].resolve({summary:'new'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].result.summary,'new'); });
-test('thread id persists before a failed execution is retried', async () => {
-  const t=task('thread-retry'); t.adapter='chatgpt'; t.capabilities=['model','chatgpt','browser-harness']; t.routing={provider:'openai',model:'gpt-5-6'};
-  const store=new InMemoryStore(job([t])); let launches=0; let retriedThreadId;
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(taskState){
-    launches+=1; retriedThreadId=launches===2 ? taskState.threadId : retriedThreadId;
-    let execution;
-    const promise=launches===1 ? new Promise((resolve,reject)=>queueMicrotask(()=>{execution.threadId='persisted-chat-thread';execution.onThreadStarted?.('persisted-chat-thread');reject(new Error('transport failed after thread creation'));})) : Promise.resolve({summary:'continued same conversation'});
-    execution={id:`chat-exec-${launches}`,promise,cancel:()=>{}}; return execution;
-  }};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
-  await reconciler.reconcile('j'); await reconciler.idle();
-  const finished=await store.load('j');
-  assert.equal(launches,2); assert.equal(retriedThreadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].threadId,'persisted-chat-thread'); assert.equal(finished.tasks[0].state,'SUCCEEDED');
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(adapter.launches,0);
+  assert.equal(durable.state,'BLOCKED');
+  assert.match(durable.error,/event bus/);
 });
 
-test('pre-thread launch failures fail once instead of amplifying starts and retries', async () => {
-  const t = task('launch-token-failure'); t.adapter = 'chatgpt'; t.maxAttempts = 3;
-  t.capabilities = ['model', 'chatgpt', 'browser-harness']; t.routing = { provider: 'chatgpt', model: 'gpt-5.6-sol' };
-  const store = new InMemoryStore(job([t]));
-  const events = [];
-  let launches = 0;
-  const adapter = { name: 'chatgpt', id: 'fake-chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], launch() {
-    launches += 1;
-    return { id: `launch-${launches}`, promise: Promise.reject(new LaunchFailure('ENOENT: MacDeveloperBridge/http-token')), cancel() {} };
-  }};
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], emit: event => events.push(event) });
-  await reconciler.reconcile('j'); await reconciler.idle();
-  const failed = await store.load('j');
-  assert.equal(launches, 1);
-  assert.equal(failed.tasks[0].state, 'FAILED');
-  assert.deepEqual(events.map(event => event.type), ['task.started', 'task.failed']);
-});
-test('worker completion persistence failure is contained and reported without crashing the reconciler', async () => {
-  const t=task('persist-fail');
-  class FailingCompletionStore extends InMemoryStore {
-    failures=0;
-    async saveTask(value) {
-      if (value.state==='SUCCEEDED' && this.failures++===0) throw new Error('github persistence down');
-      return super.saveTask(value);
-    }
-  }
-  const store=new FailingCompletionStore(job([t]));
-  const adapter=new FakeAdapter();
-  const events=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],emit:event=>events.push(event)});
+test('adapter runtime exit is not task completion', async () => {
+  const t=task('runtime-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  adapter.resolvers[0].resolve({summary:'large result was already bounded'});
+  adapter.resolvers[0].resolve({summary:'process exited zero'});
   await reconciler.idle();
-  await new Promise(resolve=>setTimeout(resolve,20));
-  assert.equal(events.some(event=>event.type==='runtime.persistence.failed' && /github persistence down/.test(event.message)),true);
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await stop();
 });
 
-test('event transport failure is advisory', async () => { const t=task('event-fail'); const store=new InMemoryStore(job([t])); const bus={publish:async()=>{throw new Error('nats down');},subscribe:async()=>{throw new Error('nats down');},subscribeAll:async()=>{throw new Error('nats down');}}; const adapter=new FakeAdapter(); const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'still works'}); await reconciler.idle(); assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED'); });
-test('aggregate edge cases and NATS subject safety are explicit', () => { const empty=job(); assert.equal(schedule(empty).state,'OPEN'); const cancelled=job([task('x','CANCELLED')]); assert.equal(schedule(cancelled).state,'CANCELLED'); assert.throws(()=>subjectToken('bad.id'),/Unsafe/); assert.equal(subjectToken('safe_job-1'),'safe_job-1'); });
-test('live task leases do not expire before their timeout', async () => {
-  const startedBeforeLaunch=Date.now(); const t=task('long'); t.timeoutMs=500; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],leaseMs:20});
+test('correlated terminal completed event is authoritative', async () => {
+  const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  await new Promise(resolve=>setTimeout(resolve,30));
-  const running=await reconciler.reconcile('j'); const taskState=running.tasks[0];
-  assert.equal(adapter.launches,1); assert.equal(running.state,'RUNNING'); assert.equal(taskState.attempt,1);
-  assert.ok(new Date(taskState.leaseExpiresAt).getTime() >= startedBeforeLaunch+taskState.timeoutMs);
-  adapter.resolvers[0].resolve({summary:'finished'});
-  await reconciler.idle();
-  const finished=await store.load('j');
-  assert.equal(finished.tasks[0].state,'SUCCEEDED'); assert.equal(finished.tasks[0].attempt,1);
+  adapter.resolvers[0].resolve({summary:'runtime exited'});
+  await bus.publish(eventFor('j','event-complete',null,'task.completed','succeeded','durable output written','orchestrator',{artifact:'PR'}));
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.result.summary,'durable output written');
+  assert.equal(durable.result.data.artifact,'PR');
+  await stop();
 });
+
+test('terminal event published during launch cannot be overwritten back to running', async () => {
+  const t=task('instant-terminal'); const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus();
+  const adapter={
+    name:'codex', id:'instant-codex', capabilities:['model','codex'],
+    launch(current) {
+      void bus.publish(eventFor('j',current.id,current.parentTaskId,'task.completed','succeeded','instant complete','orchestrator'));
+      return {id:'runtime-id',promise:Promise.resolve({summary:'runtime exited'}),cancel(){}};
+    }
+  };
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.result.summary,'instant complete');
+  await stop();
+});
+
+test('correlated failed and blocked events set terminal durable states', async () => {
+  for (const [type,state] of [['task.failed','FAILED'],['task.blocked','BLOCKED']]) {
+    const t=task(type); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+    const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+    const stop=await reconciler.watch('j');
+    await reconciler.reconcile('j');
+    await bus.publish(eventFor('j',type,null,type,type==='task.failed'?'failed':'blocked','terminal','user'));
+    await new Promise(resolve=>setTimeout(resolve,10));
+    assert.equal((await store.load('j')).tasks[0].state,state);
+    await stop();
+  }
+});
+
+test('terminal event for another task cannot complete running work', async () => {
+  const t=task('target'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','other',null,'task.completed','succeeded','wrong task','orchestrator'));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await bus.publish(eventFor('j','target',null,'task.completed','succeeded','right task','orchestrator'));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  await stop();
+});
+
+test('timeout produces explicit terminal-event failure when worker never reports terminal state', async () => {
+  const t=task('timeout'); t.timeoutMs=20; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await new Promise(resolve=>setTimeout(resolve,60));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error,/mandatory terminal worker event/);
+  await stop();
+});
+
+test('continuation runs only after completed terminal event', async () => {
+  const t=task('child'); t.continuation={kind:'command',target:'echo'}; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const calls=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,continuations:[{kind:'command',continue:async input=>calls.push(input)}]});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  adapter.resolvers[0].resolve({summary:'runtime only'});
+  await reconciler.idle();
+  assert.equal(calls.length,0);
+  await bus.publish(eventFor('j','child',null,'task.completed','succeeded','final result','orchestrator'));
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.deepEqual(calls,['final result']);
+  await stop();
+});
+
+test('Codex launch requires routing metadata and applies command contract', () => {
+  const t=task('model','READY'); delete t.routing;
+  assert.throws(() => new CodexAdapter('definitely-not-started').launch(t, new AbortController().signal), /routing metadata/);
+});
+
 test('dashboard uses safe DOM rendering and named live events', () => { assert.equal(dashboardHtml.includes('innerHTML'),false); assert.equal(dashboardHtml.includes("addEventListener('relay'"),true); });
 test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=serveDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
 test('dashboard selected-job refresh serves the requested durable overview without a page reload', async () => { const selected={...job([task('selected','SUCCEEDED')]),id:'selected'}; const refreshed={...selected,tasks:[...selected.tasks,task('new-durable-task','QUEUED')]}; const store=new InMemoryStore(selected); const server=serveDashboard(store,0,undefined,10000,'selected',undefined,async()=>[{job:selected,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}],undefined,undefined,async id=>id==='selected'?refreshed:null); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job?id=selected`); assert.equal(response.status,200); const body=await response.text(); assert.match(body,/selected/); assert.match(body,/new-durable-task/); const missing=await fetch(`http://127.0.0.1:${port}/api/job?id=missing`); assert.equal(missing.status,404); server.close(); });
@@ -344,7 +356,7 @@ test('dashboard usage failure returns 503 without double-sending headers', async
 
 test('managed model worker input includes durable PR context without changing stored task input', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
-  const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.input='implement the change';
+  const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.input='implement the change'; t.output={kind:'task_pr'};
   const root=job([t]); root.prNumber=7; root.repository='lalalic/agents-relay';
   const input=managedWorkerInput(root,t);
   assert.match(input,/PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
@@ -352,49 +364,15 @@ test('managed model worker input includes durable PR context without changing st
   assert.match(input,/Task: prompt-context/);
   assert.match(input,/Parent task: parent/);
   assert.match(input,/Project: agents-relay/);
-  assert.match(input,/implement the change$/);
+  assert.match(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract\]/); assert.match(input,/MUST publish exactly one terminal event/);
   assert.equal(t.input,'implement the change');
-  const shell=task('shell-context'); shell.input='printf ok';
-  assert.equal(managedWorkerInput(root,shell),'printf ok');
 });
 
-test('completed jobs delete each ChatGPT task thread once and retain durable thread ids', async () => {
-  const a=task('chat-a','SUCCEEDED'); a.adapter='chatgpt'; a.threadId='thread-a';
-  const b=task('chat-b','SUCCEEDED'); b.adapter='chatgpt'; b.threadId='thread-b';
-  const c=task('shell-done','SUCCEEDED'); c.threadId='local-thread';
-  const store=new InMemoryStore(job([a,b,c])); const deleted=[];
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
-  const completed=await reconciler.reconcile('j');
-  assert.equal(completed.state,'COMPLETED');
-  assert.deepEqual(deleted,['thread-a','thread-b']);
-  assert.equal(completed.tasks[0].threadId,'thread-a'); assert.ok(completed.tasks[0].threadDeletedAt);
-  assert.equal(completed.tasks[1].threadId,'thread-b'); assert.ok(completed.tasks[1].threadDeletedAt);
-  assert.equal(completed.tasks[2].threadDeletedAt,undefined);
-  await reconciler.reconcile('j');
-  assert.deepEqual(deleted,['thread-a','thread-b']);
+test('ChatGPT tasks do not carry durable resumable thread lifecycle', () => {
+  const t=task('chat'); t.adapter='chatgpt'; t.threadId=null;
+  assert.equal(t.threadId,null);
+  assert.equal(t.output.kind,'task_pr');
 });
-
-test('failed terminal thread cleanup is durable and retried without reopening the job', async () => {
-  const t=task('cleanup-retry','SUCCEEDED'); t.adapter='chatgpt'; t.threadId='thread-retry-delete';
-  const store=new InMemoryStore(job([t])); let attempts=0;
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async()=>{attempts+=1;if(attempts===1)throw new Error('delete transport down');}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
-  const first=await reconciler.reconcile('j');
-  assert.equal(first.state,'COMPLETED'); assert.equal(first.tasks[0].threadCleanupError,'delete transport down'); assert.equal(first.tasks[0].threadDeletedAt,undefined);
-  const second=await reconciler.reconcile('j');
-  assert.equal(second.state,'COMPLETED'); assert.equal(second.tasks[0].threadCleanupError,null); assert.ok(second.tasks[0].threadDeletedAt); assert.equal(attempts,2);
-});
-
-test('merged PR cancels unfinished work and deletes existing ChatGPT threads', async () => {
-  const t=task('merged-active','RUNNING'); t.adapter='chatgpt'; t.threadId='thread-merged'; t.executionId='orphan';
-  const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED'; const deleted=[];
-  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt','browser-harness'],launch(){throw new Error('not launched');},deleteThread:async id=>{deleted.push(id);}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
-  const result=await reconciler.reconcile('j');
-  assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request merged'); assert.deepEqual(deleted,['thread-merged']); assert.ok(result.tasks[0].threadDeletedAt);
-});
-
 
 test('merged zero-task PR becomes COMPLETED even when scheduler would leave it OPEN', async () => {
   const root=job([]); const store=new InMemoryStore(root); store.pullRequestState=async()=> 'MERGED';

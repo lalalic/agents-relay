@@ -1,102 +1,62 @@
 ---
 name: chatgpt-browser-worker
-description: Manage ChatGPT work threads through the authenticated browser-harness session, including Project selection, thinking-level requests, durable thread identity, resume/status/result retrieval, and cleanup.
+description: Submit an isolated one-shot ChatGPT browser worker task through browser-harness with a required durable output destination.
 ---
 
 # ChatGPT browser worker
 
-This skill is the browser-backed ChatGPT worker contract for Neo. It uses the
-existing `browser-harness` command as its only browser interaction layer. It
-does not use the MacBridge ChatGPT runtime, ChatGPT APIs, copied cookies, or a
-second browser automation stack.
+Use this skill to hand one self-contained task to ChatGPT through the authenticated
+browser session. The caller does not manage ChatGPT threads, model selection,
+thinking level, polling, or result retrieval.
 
-## Capability contract
+## Output contract
 
-The worker boundary exposes these lifecycle operations:
+Every task handed to this worker MUST declare exactly one durable output mode
+before the worker is launched.
 
-```text
-create(project, prompt, thinking_level) -> ThreadState
-resume(thread_id, project)             -> ThreadState
-status(thread_id)                      -> StatusObservation
-result(thread_id)                      -> ThreadResult
-delete(thread_id)                      -> DeletedThreadState
-```
+### 1. Task / PR output
 
-`project.name` is required when creating or resuming a thread. `project.id` is
-optional because the UI may not expose it at every boundary. The adapter must
-select and verify that Project before sending the first prompt. A resumed
-thread keeps its recorded Project identity; callers cannot silently move it to
-another Project.
+Use this for repository or managed-task work.
 
-Thinking levels are split into `requested_thinking_level` and
-`effective_thinking_level`. Requested values are `default`, `low`, `medium`,
-and `high`; effective values may additionally be `unknown`. `default` leaves
-the account's current/default setting unchanged. The adapter must preserve
-`unknown` rather than guessing from a label or silently downgrading a request.
+The task prompt must identify the exact managed task/PR that owns the result.
+The worker performs the requested work directly against that task/PR and records
+its final outcome there.
 
-## Durable identity and state
+Output:
+task/PR
+<exact managed task/PR identity and required final action>
 
-Persist the returned state after every successful lifecycle transition. The
-durable key is the ChatGPT `thread_id`; a URL, title, or browser tab index is
-not an identity. Records retain a deleted thread as a tombstone so a stale
-caller cannot recreate or accidentally reuse it. The complete JSON schema and
-valid transition table are in [references/contract.md](references/contract.md).
+### 2. File output
 
-Pure validation and transition helpers live in `scripts/contract.py`, with
-focused tests in `tests/test_contract.py`. The browser-harness driver is
-intentionally injected through the semantic port described in the reference;
-the contract layer does not import or launch `browser-harness`.
-Run `python3 -m pytest skills/chatgpt-browser-worker/tests` from the repository
-root.
+Use this for research, analysis, reports, or other artifact-producing work.
 
-For the Neo/Leo and Agents Relay handoff—task IDs, run-local state, event
-ownership, and the create/resume/result/delete invocation sequence—see
-[references/orchestration.md](references/orchestration.md). The outer
-orchestrator may use MacBridge as a transport, but this worker never treats
-MacBridge as the ChatGPT runtime.
+The task prompt must name the exact file path. That file is the authoritative
+result.
 
-The runtime entry point is the
-[browser-worker agent](agents/browser-worker.agent.md). Callers launch that
-agent with a typed lifecycle intent; they must not directly call
-`create_bh.py` or `operate_bh.py`. Those scripts are helper implementations
-that the agent may use, repair, or bypass while preserving this skill's
-browser-harness and verification contract.
+Output:
+file
+<exact file path>
 
-The browser-worker agent's `create` intent starts a new ChatGPT chat when the
-attached tab is already a conversation and emits JSON with the observed
-`thread_id`, conversation URL, selected Project, and thinking observation.
-`scripts/create_bh.py` is only a helper for that agent, not a caller-facing
-runtime contract.
+A Browser ChatGPT worker task without one of these output declarations is
+invalid and must not be launched. The orchestrator chooses and writes the output
+contract when it creates the worker task; the worker must not invent or change
+the destination.
 
-For implementation/debugging, the agent may use the helper equivalent for an
-existing thread with the durable identity from persisted state:
+Progress and terminal success/failure are always reported through the normal
+Neo event contract. Events are execution observability, not a third output mode.
 
-```text
-python3 scripts/operate_bh.py resume --thread-id ID --project NAME
-python3 scripts/operate_bh.py continue --thread-id ID --project NAME --prompt TEXT
-python3 scripts/operate_bh.py status --thread-id ID --project NAME
-python3 scripts/operate_bh.py result --thread-id ID --project NAME
-python3 scripts/operate_bh.py delete --thread-id ID --project NAME
-```
+## Runtime behavior
 
-Each command performs one serial browser-harness operation. The injected
-semantic adapter in `scripts/operations.py` is the testable boundary; it does
-not import MacBridge or a ChatGPT runtime API.
+The worker is one-shot. It opens an isolated worker-owned ChatGPT tab, submits
+the complete task, verifies that ChatGPT accepted the submission, closes its
+owned tab, and returns. ChatGPT continues the task independently and publishes
+the result through the declared output contract.
 
-## Verification boundary
+The worker must never interact through a pre-existing user ChatGPT tab.
+Browser details, transient conversation identity, submission verification,
+model/default-thinking behavior, and tab cleanup are implementation concerns of
+the worker and are not part of the caller-facing contract.
 
-The worker may report `completed` only from an observed assistant message and
-normalized result. A process exit, click, URL change, or tab title alone is not
-proof that a thread was created, resumed, completed, or deleted. Authentication
-walls, MFA, consent, ambiguous account/project selection, and unverified
-thinking levels are `blocked` or `failed` conditions and must not be
-self-healed.
-
-Delete targets the exact durable conversation URL, requires an observed action
-and confirmation, and verifies that the requested thread is no longer visible.
-Repeated cleanup is idempotent (`not_found` is accepted); archive/undo UI
-controls are evidence only and never revive a deleted tombstone.
-
-Keep credentials, prompts containing private data, and browser runtime state
-out of durable state and events. Runtime artifacts belong under the caller's
-ignored `runs/` directory.
+The runtime entry point is the browser-worker agent. Callers launch that agent
+with the complete task prompt and declared output; they do not call helper
+scripts directly.

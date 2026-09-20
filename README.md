@@ -1,6 +1,6 @@
 # Agents Relay
 
-Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. GitHub PR comments are the source of truth; events only wake the reconciler and update the dashboard.
+Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. GitHub PR comments store durable workflow state; correlated terminal events are authoritative for model-backed task lifecycle transitions.
 
 ## Quick start
 
@@ -11,7 +11,8 @@ npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id job-1 --title "Objective" --body "PR description" --mode fixed
 
 npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
-  --task-id child --input "echo hello" --adapter shell
+  --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
+  --input "Implement the described child task and publish a terminal event."
 
 npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
 npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1
@@ -67,14 +68,14 @@ For explicit local demo/test mode:
 npm install
 npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
-node dist/cli.js submit --file .agents-relay.json --task-id hello --input "echo hello" --adapter shell
+node dist/cli.js submit --file .agents-relay.json --task-id hello --adapter codex --provider openai --model MODEL --output task-pr --input "Complete the described task"
 node dist/cli.js reconcile --file .agents-relay.json
 npx agents-relay serve --file .agents-relay.json
 ~~~
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
 
-reconcile leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. agents-relayd (or the equivalent npx agents-relay serve) is the watchdog/dashboard mode and can use --events nats --subject-prefix PREFIX for optional wakeups. See [docs/service.md](docs/service.md). --file PATH is explicit local demo/test mode only.
+reconcile leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. agents-relayd (or the equivalent npx agents-relay serve) is the watchdog/dashboard mode. Model-backed workers require --events nats; the event transport carries authoritative terminal worker events as well as wake/progress traffic. See [docs/service.md](docs/service.md). --file PATH is explicit local demo/test mode only.
 
 `agents-relayd` without `--pr`/`--id` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, keeps only GitHub `origin` remotes, and aggregates their managed PR jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo OWNER/REPO` remains the single-repository pool mode.
 
@@ -86,24 +87,24 @@ Codex/model-backed tasks require --provider and --model (or equivalent routing m
 
 The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
 
-### ChatGPT workers through the browser-worker agent
+### Agent worker lifecycle
 
-Use the chatgpt adapter to launch the installed `chatgpt-browser-worker` agent through a local model harness. The observed ChatGPT `thread_id` is stored as the task `threadId`, so lineage is durable and a retry continues the same conversation.
+Managed tasks are descriptive work for agents, not shell commands. Use `codex` or `chatgpt` for worker tasks. Commands such as tests, build tools, Markad Vision, ffmpeg, and other CLIs are invoked by the orchestrator or by an executing agent; they are not worker adapters.
 
-Managed Codex and ChatGPT worker prompts automatically receive the durable PR URL plus job/task/parent/project context before the original task input. The stored task input is not rewritten.
+Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay enriches the prompt with the PR URL, job/task identity, output contract, and mandatory terminal-event contract.
 
-Each ChatGPT task owns its own conversation. Retries reuse that task's conversation; sibling tasks never share a conversation merely because they use the same adapter. When the job reaches COMPLETED, or GitHub reports the PR merged, Agents Relay asks the browser-worker agent to delete every ChatGPT task conversation. The durable threadId remains in the task marker with threadDeletedAt for audit history. Failed deletion records threadCleanupError and is retried on later reconciliation without reopening the terminal job.
+For Codex and ChatGPT, **events are authoritative task state**. A process exit or browser submission receipt does not complete a task. The executing agent must publish exactly one correlated `task.completed`, `task.failed`, or `task.blocked` event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+
+The ChatGPT adapter uses the packaged `chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, closes the owned tab, and returns. It does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 
 ~~~sh
 npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,browser-harness \
-  --provider openai --model gpt-5-6-sol --reasoning high \
-  --chatgpt-project g-p-EXACT_PROJECT_ID \
-  --input "Research the dashboard UX and return implementation guidance."
+  --provider openai --model MODEL \
+  --output file --output-path runs/research-ui.md \
+  --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
-
-The adapter discovers the packaged `chatgpt-browser-worker` skill from `AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT` first, then `AGENTS_RELAY_SKILL_ROOTS`, the package `skills` directory, `~/.codex/skills`, `~/.agents/skills`, and the local `skills` directory. It invokes that skill's Browser Harness drivers directly; it does not launch Codex, MacDeveloperBridge, or a ChatGPT API transport. Normal consumers do not need a Neo source checkout.
 
 GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.
 

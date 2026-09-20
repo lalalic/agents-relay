@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, Task, AdapterName, RoutingDecision } from './types.js';
+import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput } from './types.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -14,6 +14,7 @@ export type PlannerTaskSpec = {
   dependencies?: string[];
   capabilities?: string[];
   adapter?: AdapterName;
+  output?: TaskOutput;
   routing?: RoutingDecision;
   continuation?: Task['continuation'];
   maxAttempts?: number;
@@ -58,8 +59,11 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (ids.has(id)) throw new Error(`Planner next_tasks contains duplicate id ${id}`);
     ids.add(id);
     if (typeof task.input !== 'string' || task.input.length === 0) throw new Error(`Planner next_tasks[${index}].input is required`);
-    const adapter = task.adapter === undefined ? 'shell' : task.adapter;
-    if (!['shell', 'codex', 'chatgpt', 'orchestrator'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter is invalid`);
+    const adapter = task.adapter;
+    if (adapter === undefined || !['codex', 'chatgpt'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter must be codex or chatgpt`);
+    const output = task.output === undefined ? undefined : record(task.output);
+    if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
+    if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
     if (task.priority !== undefined && !['P0', 'P1', 'P2', 'P3'].includes(String(task.priority))) throw new Error(`Planner next_tasks[${index}].priority is invalid`);
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
     const timeoutMs = task.timeoutMs === undefined ? 300000 : task.timeoutMs;
@@ -69,7 +73,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       id, input: task.input, priority: task.priority as Priority | undefined,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
-      adapter: adapter as AdapterName, routing: routing(task.routing, `next_tasks[${index}].routing`),
+      adapter: adapter as AdapterName, output: output as TaskOutput, routing: routing(task.routing, `next_tasks[${index}].routing`),
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };
   });

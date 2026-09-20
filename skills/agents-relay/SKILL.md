@@ -1,79 +1,91 @@
 ---
 name: agents-relay
-description: Create and operate durable asynchronous agent jobs through GitHub PR state, worker adapters, continuations, retries, and live progress events. Use when an orchestrator needs work to survive the current thread/process or delegate recoverable child tasks.
+description: Create and operate durable asynchronous agent jobs through GitHub PR state, agent workers, retries, and authoritative lifecycle events.
 ---
 
 # Agents Relay
 
-## Runtime contract
+Use Agents Relay when an orchestrator needs durable delegated work that survives the current process.
 
-This skill is the installable instruction/agent bundle. Do not require a local source checkout to execute Agents Relay. Use `npx agents-relay ...` for the executable CLI/runtime. Supporting agent definitions live under this skill directory and ship with the npm package; the default autonomous planner uses `agents/planner.agent.md`.
+## Core task contract
 
+A managed child task is always a descriptive unit of work. It says what an agent must accomplish; it is never a shell command.
 
-Use Agents Relay for asynchronous work that must survive the current agent process. Create one durable top-level job per objective and submit child tasks with unique parentTaskId, dependencies, capabilities, adapter, timeout, and retry policy. A model-backed task must carry a recorded routing decision (provider, model, optional profile/reasoning/cwd/projectId) before it can launch. Use adapter codex for local Codex-compatible workers and adapter chatgpt for the installed `chatgpt-browser-worker` agent through a local model harness.
+Normal worker tasks use an agent runtime:
+- `codex` for a local Codex-compatible agent.
+- `chatgpt` for the one-shot Browser ChatGPT worker.
 
-GitHub PR comments are durable truth in operational mode. Reload the PR after every event or wake-up and reconcile desired durable state into worker executions; events and NATS are only low-latency notifications and must never be treated as completion.
+Shell commands, tests, Markad Vision, ffmpeg, build tools, and similar CLIs are tools used inside an agent or directly by the orchestrator. They are not Agents Relay worker tasks.
 
-Jobs are `fixed` by default. Autonomous jobs are explicitly created with
-`--mode autonomous`; reconciliation creates durable planner tasks only after
-the current parent/subtask work is settled. A planner must return typed
-`objective_status`, `assessment`, and `next_tasks`; the runtime owns leases,
-restart recovery, stable-ID deduplication, and completion gates. Planner
-satisfaction does not override failed or blocked work.
+Every model-backed task must declare:
+- its descriptive `input`;
+- its adapter (`codex` or `chatgpt`);
+- routing metadata;
+- exactly one durable output contract:
+  - `task_pr`: the managed task/PR is the authoritative result; or
+  - `file`: an exact file path is the authoritative result.
 
-## Managed GitHub bootstrap
+## Lifecycle contract
 
-For new GitHub-backed work, do not create the PR or job marker with raw gh commands. Use the first-class CLI:
+Events are authoritative for model-backed task state.
+
+Agents Relay may launch a Codex process or submit a one-shot ChatGPT browser task, but runtime/process completion is only delivery/runtime evidence. It never means the task completed.
+
+A running agent MUST publish exactly one correlated terminal event before stopping:
+- `task.completed` after the declared output is durable;
+- `task.failed` when the task cannot complete;
+- `task.blocked` when external or human action is required.
+
+The event must carry the exact durable `job_id` and `task_id`. Progress events are optional.
+
+Agents Relay maps those terminal events to durable state:
+- `task.completed` → `SUCCEEDED`
+- `task.failed` → `FAILED`
+- `task.blocked` → `BLOCKED`
+
+A model-backed task must not launch without an event bus. If no terminal event arrives before the task timeout, Relay records an explicit timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
+
+## Managed GitHub jobs
+
+For repository work, create/adopt/repair the PR-backed job through the Agents Relay CLI. Do not create the managed PR through a parallel raw GitHub path.
+
+Example:
 
 ~~~sh
-npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
-  --id JOB_ID --title "Objective" --body "PR description"
+npx agents-relay job create --repo OWNER/REPO --head feat/example --base main   --id JOB_ID --title "Objective"
+
+npx agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --adapter codex   --provider openai --model MODEL   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
+
+npx agents-relayd --repo OWNER/REPO --events nats
 ~~~
 
-job create resolves an existing open PR with the same head/base before creating one, then persists exactly one trusted agents-relay:job:v1 marker. Re-running the command is idempotent.
+Use `--output file --output-path PATH` when the authoritative result is a file.
 
-To bring an existing unmanaged PR under Agents Relay, even when it has zero comments:
+## Worker prompt
 
-~~~sh
-npx agents-relay job adopt --repo OWNER/REPO --pr 6 --id JOB_ID --title "Objective"
-~~~
+For Codex and ChatGPT workers, Agents Relay adds only durable execution identity and contracts around the stored descriptive task input:
+- PR URL
+- job ID
+- task ID
+- parent task ID
+- project name
+- declared output
+- mandatory terminal-event contract
 
-To repair duplicate markers for that same job:
+The job/task descriptions remain the durable source of intent. Adapters do not invent task meaning.
 
-~~~sh
-npx agents-relay job repair --repo OWNER/REPO --pr 6 --id JOB_ID
-~~~
+## ChatGPT worker
 
-A PR carrying a marker for a different job is rejected rather than silently reassigned. Managed task commands must not run until the durable job marker exists; submit/status/reconcile/retry/cancel/serve fail clearly when it is absent.
+The ChatGPT adapter uses the packaged `chatgpt-browser-worker` one-shot path. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, closes the owned tab, and returns a submission receipt.
 
-The legacy init flow remains supported for compatibility, but orchestrators should prefer job create/adopt/repair for GitHub-backed work.
+ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 
-Typical managed flow:
+## Autonomous planner
 
-~~~sh
-npx agents-relay job create --repo OWNER/REPO --head feat/example --id JOB_ID --title "Objective"
-npx agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID --task-id child --input "echo work" --adapter shell
-npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id JOB_ID
-npx agents-relay status --repo OWNER/REPO --pr 12 --id JOB_ID
-npx agents-relay serve --repo OWNER/REPO --pr 12 --id JOB_ID
-~~~
+Planner-created child tasks must also be descriptive agent work. They must select `codex` or `chatgpt` and include an explicit output contract. A planner must never generate shell-command worker tasks.
 
-Use --file PATH only for explicit local demo/test mode. Optional --events nats enables wake/progress events with --subject-prefix; the PR remains authoritative.
+## Durable truth
 
-Use task-level continuation when the sender needs to resume, otherwise the job continuation. Continuation delivery is deduplicated by the durable delivery timestamp. Treat BLOCKED as an approval/manual-release state until an explicit retry/release changes it. Cancellation, timeout, and lease expiry are durable state transitions; do not claim success from a worker process exit alone.
+GitHub PR/job/task markers remain durable workflow state. Events are the authoritative execution-state transition signal for model-backed tasks. Runtime events, process exits, browser submission receipts, and conversation text are evidence only.
 
-Use `npx agents-relay task update` to change safe durable fields of a `QUEUED`, `READY`, `WAITING`, `BLOCKED`, or `FAILED` task without changing its task ID or prior attempt/error history. This is the preferred way to reroute future execution to a different adapter/provider/model. The CLI rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` task updates so active execution semantics and terminal audit history are not rewritten.
-
-For a ChatGPT worker, use the chatgpt adapter with capabilities model,chatgpt,browser-harness. The runtime launches the installed `chatgpt-browser-worker` agent, stores its observed `thread_id` as the durable task threadId, and reuses that ID on retry. Pass --chatgpt-project when the worker must run inside one exact ChatGPT Project. Set `AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT` to an explicit agent definition path when needed; otherwise standard skill roots are searched. Never place credentials or private prompts in job/task markers.
-
-Managed Codex and ChatGPT worker prompts are enriched at launch with the PR URL and durable job/task/parent/project identity; do not duplicate that context manually in task input. Keep one ChatGPT conversation per logical task. Retries reuse the same task conversation, but sibling tasks use separate conversations even when their adapter is the same.
-
-When a job becomes COMPLETED or its GitHub PR is merged, ask the browser-worker agent to delete all ChatGPT task conversations. Preserve threadId in durable markers, record threadDeletedAt on success, and record/retry threadCleanupError on deletion failure without reopening the job.
-
-V1 runs with one active runner per job; do not start multiple reconcilers without adding an atomic distributed lease. Keep secrets, credentials, private prompts, and large private payloads out of PR markers—store summaries and artifact references only. Event transport failures are degraded observability, not durable task failures.
-
-Registered agents are result-owning roles with responsibility boundaries; skills are callable capabilities and adapters are execution runtimes. Register agents with `npx agents-relay agent-register`, discover them with hard filters using `npx agents-relay agent-discover`, and treat claimed capabilities separately from observed evaluations/outcomes. Discovery returns explainable evidence and permits exploration; it does not produce a universal trust score. The future constrained remote surface should authenticate `POST /jobs` and `GET /jobs/:id` only, with public/intention-only jobs separated from private-data or credential work.
-
-Treat GitHub PR state as authoritative at reconciliation boundaries. `MERGED` forces the job to `COMPLETED`; closed-unmerged forces `CANCELLED` and prevents launches. Use the repository-wide dashboard job list to compare GitHub and durable states; repair any mismatch rather than trusting a stale marker.
-
-If already-completed orchestrator work is missing from a managed job, backfill it with `npx agents-relay record` and the real commit SHA rather than inventing a worker execution. Treat this as a repair path only; new work should be submitted before it starts. Managed job description comes from the GitHub PR body and should remain visible with the job title in the dashboard.
+Keep secrets, credentials, private prompts, and large private payloads out of durable markers and events.

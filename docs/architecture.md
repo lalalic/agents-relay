@@ -10,14 +10,14 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Job marker comment** — durable job metadata and continuation state.
 - **Task marker comments** — append-friendly durable child-task records.
 - **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
-- **Agent adapters** — pluggable execution backends such as Codex and shell commands.
-- **Event adapter** — optional low-latency notification/wake channel; events never replace durable PR state.
+- **Agent adapters** — agent execution backends such as Codex and ChatGPT browser workers.
+- **Event adapter** — required lifecycle channel for model-backed workers. Correlated terminal events drive task-state transitions, while GitHub PR/task markers persist the resulting durable state.
 - **Periodic watchdog** — low-frequency recovery sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state (30 minutes with webhook mode by default; 5 minutes without webhooks for compatibility).
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice
 
-An agent is a registered, result-owning worker/social role with a responsibility boundary. It is not the same thing as a skill (a callable capability) or an execution adapter (shell, Codex, or ChatGPT). Registration is machine-driven through the CLI/core API and is stored as a trusted `agents-relay:agent:v1` marker comment on the same PR.
+An agent is a registered, result-owning worker/social role with a responsibility boundary. It is not the same thing as a skill (a callable capability) or an execution adapter (Codex or ChatGPT). Registration is machine-driven through the CLI/core API and is stored as a trusted `agents-relay:agent:v1` marker comment on the same PR.
 
 Registration records identity/name, role and responsibility, claimed capabilities, explicit boundaries/non-goals, endpoint/runtime, availability, and routing metadata. `agent-register` and `agent-discover` provide the smallest useful registry surface. Discovery applies hard filters first and returns observed evidence and reasons rather than a universal score. Evidence can include representative evaluations, outcomes, reliability, latency, and cost. `--explore` allows new/unobserved agents to be considered first; the orchestrator still owns the final choice.
 
@@ -94,7 +94,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 3. CLI to initialize a PR job, submit child tasks, inspect status, reconcile, retry/cancel tasks, and run the daemon.
 4. Dependency scheduling and nested parent/child lineage.
 5. Worker lease, expiry detection, recovery, retry, timeout, and cancellation semantics.
-6. At least Codex and shell worker adapters behind one adapter interface.
+6. Codex and ChatGPT agent adapters behind one adapter interface; shell commands remain tools used by orchestrators/agents, not managed worker tasks.
 7. Routing metadata is mandatory before a model-backed worker can launch.
 8. Optional event integration for wake-ups/progress with durable-state reconciliation.
 9. Parent continuation interface with Codex-thread continuation implemented.

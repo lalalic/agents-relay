@@ -82,7 +82,7 @@ function immutableTaskDefinition(task: Task): unknown {
   return {
     jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
     kind: task.kind ?? 'work', parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
-    input: task.input, routing, continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
+    input: task.input, output: task.output, routing, continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };
 }
 function sameTaskDefinition(left: Task, right: Task): boolean {
