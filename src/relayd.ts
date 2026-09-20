@@ -11,7 +11,7 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { chatGptTabClosePolicy, isEntrypoint, runtimePlanner, startService, SERVICE_DEFAULTS } from './cli.js';
+import { isEntrypoint, runtimePlanner, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -29,7 +29,6 @@ Options:
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
   --events nats            Enable event wakeups
-  --chatgpt-tab-close-policy MODE  after-start|never|after-terminal (default: after-start)
 
 Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 
@@ -55,8 +54,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
   const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','neo.events.job')) : undefined;
-  const policy = chatGptTabClosePolicy([...argv]);
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter({ tabClosePolicy: policy })], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus, chatgptTabClosePolicy: policy });
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus });
   const repositories = normalized.repository
     ? [normalized.repository]
     : (await discoverWorkspaceRepositories(normalized.workspaceRoot ?? defaultWorkspaceRoot())).map(item => item.repository);
@@ -99,18 +97,18 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const webhook = secret ? {
     secret,
     repositories: new Set(repositories),
-    wake: async (event: GitHubWebhookWake) => {
+    refresh: async (event: GitHubWebhookWake): Promise<readonly string[]> => {
+      if (!event.repository || !event.pullRequest) return [];
+      const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
+      return refreshed.map(item => item.job.id);
+    },
+    wake: async (event: GitHubWebhookWake): Promise<void> => {
       if (!event.repository || !event.pullRequest) return;
       try {
-        const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
-        for (const item of refreshed) {
-          void pool.webhookWake(bus, item.job, event.deliveryId, event.event, event.action).catch(error => {
-            process.stderr.write(`warning: webhook reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
-          });
-        }
-        return refreshed.map(item => ({ ...item.job, githubState: item.githubState, mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft }));
+        const refreshed = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
+        for (const item of refreshed) await pool.webhookWake(bus, item.job, event.deliveryId, event.event, event.action);
       } catch (error) {
-        process.stderr.write(`warning: webhook PR refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
   } : undefined;

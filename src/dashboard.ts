@@ -10,7 +10,6 @@ import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './gith
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
-type DashboardJob = Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean };
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
 
 function isPositiveInteger(candidate: unknown): candidate is number {
@@ -296,7 +295,7 @@ export function serveDashboard(
   jobId?: string,
   usageRegistry?: UsageRegistry,
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
-  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<DashboardJob[] | void> },
+  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
 ): Server {
@@ -304,11 +303,7 @@ export function serveDashboard(
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
-  let lastKnownJobs: DashboardJob[] | null = null;
-  const publishSnapshots = (jobs: DashboardJob[]): void => {
-    lastKnownJobs = [...(lastKnownJobs ?? []).filter(current => !jobs.some(job => job.id === current.id)), ...jobs];
-    for (const job of jobs) for (const client of clients) client.write(`data: ${JSON.stringify(job)}\n\n`);
-  };
+  let lastKnownJobs: Array<Job & { githubState?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean }> | null = null;
   const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
@@ -364,6 +359,11 @@ export function serveDashboard(
     return { id: jobId, json: JSON.stringify(await store.load(jobId)) };
   };
 
+  const broadcastSnapshots = async (jobIds: readonly string[] = []): Promise<void> => {
+    const snapshots = await Promise.all((jobIds.length > 0 ? jobIds : [undefined]).map(requestedJobId => snapshot(requestedJobId)));
+    for (const value of snapshots) for (const client of clients) client.write(`data: ${value.json}\n\n`);
+  };
+
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
     return JSON.stringify(await usageRegistry.snapshot());
@@ -387,7 +387,11 @@ export function serveDashboard(
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
       queueMicrotask(() => {
-        void Promise.resolve(webhook.wake(event)).then(refreshed => { if (refreshed) publishSnapshots(refreshed); }).catch(() => undefined);
+        void (webhook.refresh ? webhook.refresh(event) : Promise.resolve([]))
+          .then(jobIds => broadcastSnapshots(jobIds))
+          .catch(error => process.stderr.write(`warning: webhook dashboard snapshot unavailable: ${error instanceof Error ? error.message : String(error)}\n`))
+          .then(() => webhook.wake(event))
+          .catch(error => process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
       });
       return;
     }
@@ -461,7 +465,7 @@ export function serveDashboard(
   const interval = setInterval(() => {
     if (clients.size === 0) return;
     void snapshot().then(value => {
-      publishSnapshots([JSON.parse(value.json) as DashboardJob]);
+      for (const client of clients) client.write(`data: ${value.json}\n\n`);
     }).catch(() => undefined);
   }, Math.max(10000, refreshMs));
   interval.unref();
