@@ -10,6 +10,7 @@ import tempfile
 
 
 BH_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_temporary_bh.py")
+READINESS_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_submit_readiness.py")
 
 
 def main() -> int:
@@ -23,7 +24,9 @@ def main() -> int:
         json.dump(vars(args), handle, ensure_ascii=False)
         config_path = handle.name
     try:
-        code = open(BH_SCRIPT, encoding="utf-8").read().replace("__CFG_PATH__", config_path)
+        helper = open(READINESS_HELPER, encoding="utf-8").read()
+        code = helper + "\n" + open(BH_SCRIPT, encoding="utf-8").read()
+        code = code.replace("__CFG_PATH__", config_path)
         return subprocess.run(["browser-harness"], input=code, text=True, timeout=180).returncode
     finally:
         os.unlink(config_path)

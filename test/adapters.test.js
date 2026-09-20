@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, chmod, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
@@ -209,4 +209,13 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('packaged ChatGPT worker uses bounded readiness and chunked ProseMirror insertion', async () => {
+  const source=await readFile(join(process.cwd(),'skills','chatgpt-browser-worker','scripts','_temporary_bh.py'),'utf8');
+  assert.match(source,/wait_until_stable/);
+  assert.match(source,/contenteditable/);
+  assert.match(source,/range\(0, len\(prompt\), 256\)/);
+  assert.match(source,/execCommand\('insertText'/);
+  assert.doesNotMatch(source,/Temporary Chat prompt was not observed in the composer/);
 });

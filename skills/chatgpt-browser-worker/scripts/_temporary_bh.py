@@ -58,6 +58,21 @@ def _composer_text(selector):
     }})()""") or ""
 
 
+def _wait_for_composer(timeout=30):
+    def read_selector():
+        try:
+            return _composer()
+        except RuntimeError:
+            return None
+
+    return wait_until_stable(
+        lambda: {"selector": read_selector()},
+        lambda state: bool(state["selector"]),
+        timeout=timeout,
+        phase="composer readiness",
+    )["selector"]
+
+
 def _same_text(observed, expected):
     normalize = lambda value: re.sub(r"\\s+", " ", value or "").strip()
     return normalize(expected) in normalize(observed)
@@ -71,6 +86,38 @@ def _attachment_names():
     return js(r"""(() => [...document.querySelectorAll('button[aria-label^="Remove file"]')]
       .map(b => (b.getAttribute('aria-label') || '').replace(/^Remove file\s+\d+:\s*/, ''))
       .filter(Boolean))()""") or []
+
+
+def _attachment_state():
+    return js(r"""(() => {
+      const names = [...document.querySelectorAll('button[aria-label^="Remove file"]')]
+        .map(b => (b.getAttribute('aria-label') || '').replace(/^Remove file\s+\d+:\s*/, ''))
+        .filter(Boolean);
+      const pending = [...document.querySelectorAll(
+        '[role="progressbar"], [aria-busy="true"], [data-state="loading"]'
+      )].some(e => {
+        const r=e.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+      return {names, pending};
+    })()""") or {"names": [], "pending": True}
+
+
+def _send_state():
+    return js(r"""(() => {
+      const b=document.querySelector('button[data-testid="send-button"],button[aria-label="Send prompt"]');
+      return {present: !!b, enabled: !!b && !b.disabled && b.getAttribute('aria-disabled') !== 'true'};
+    })()""") or {"present": False, "enabled": False}
+
+
+def _wait_for_attachments(expected, timeout=45):
+    expected = set(expected)
+    wait_until_stable(
+        _attachment_state,
+        lambda state: expected.issubset(state["names"]) and not state["pending"],
+        timeout=timeout,
+        phase="attachment upload readiness",
+    )
 
 
 def _upload_files(paths):
@@ -87,13 +134,17 @@ def _upload_files(paths):
         if not os.path.isfile(path):
             raise RuntimeError(f"attachment does not exist: {path}")
         upload_file(selector, path)
-        expected = os.path.basename(path)
-        deadline = time.time() + 20
-        while time.time() < deadline and expected not in _attachment_names():
-            time.sleep(.25)
-        if expected not in _attachment_names():
-            raise RuntimeError(f"attachment was not observed ready: {expected}")
-    return [os.path.basename(path) for path in paths]
+    expected = [os.path.basename(path) for path in paths]
+    if expected:
+        # Presence is a selection signal; upload readiness is checked separately.
+        wait_until_stable(
+            _attachment_state,
+            lambda state: set(expected).issubset(state["names"]),
+            timeout=30,
+            phase="attachment presence",
+        )
+        _wait_for_attachments(expected)
+    return expected
 
 
 def _user_turns():
@@ -109,17 +160,41 @@ def _click_send():
       b.click(); return true;
     })()""")
     if not ok:
-        raise RuntimeError("Temporary Chat Send prompt button was not observed ready")
+        raise RuntimeError("Temporary Chat send readiness changed before click")
+
+
+def _wait_for_send_ready(selector, prompt, attachments):
+    expected = set(attachments)
+
+    def read_state():
+        return {
+            "text": _composer_text(selector),
+            "attachments": _attachment_state(),
+            "send": _send_state(),
+        }
+
+    wait_until_stable(
+        read_state,
+        lambda state: (
+            _normalized_text(prompt) in _normalized_text(state["text"])
+            and expected.issubset(state["attachments"]["names"])
+            and not state["attachments"]["pending"]
+            and state["send"]["enabled"]
+        ),
+        timeout=45 if expected else 15,
+        phase="send readiness",
+    )
 
 
 def _wait_user_turn(before_count, prompt, timeout=20):
     deadline = time.time() + timeout
     while time.time() < deadline:
         turns = _user_turns()
-        if len(turns) > before_count and _normalized_text(prompt) in _normalized_text(turns[-1]["text"]):
-            return turns[-1]
+        for turn in turns[before_count:]:
+            if _normalized_text(prompt) in _normalized_text(turn["text"]):
+                return turn
         time.sleep(.25)
-    raise RuntimeError("Temporary Chat prompt did not become an observed user turn")
+    raise RuntimeError("Temporary Chat submission verification did not observe a new user turn")
 
 
 def _diagnostic_thread_id():
@@ -145,30 +220,59 @@ deadline = time.time() + 20
 while time.time() < deadline:
     if "temporary-chat=true" in page_info().get("url", ""):
         try:
-            _composer()
             break
         except RuntimeError:
             pass
     time.sleep(.25)
 else:
-    raise RuntimeError("Temporary Chat mode did not become ready")
+    raise RuntimeError("Temporary Chat composer readiness was not observed")
 
 attachments = _upload_files(CFG.get("file", []))
-selector = _composer()
+selector = _wait_for_composer()
 before_count = len(_user_turns())
-fill_input(selector, CFG["prompt"], clear_first=True)
-if not _same_text(_composer_text(selector), CFG["prompt"]):
-    info = js(f"""(() => {{
+prompt = CFG["prompt"]
+is_contenteditable = bool(js(f"""(() => {{
+  const e=document.querySelector({json.dumps(selector)});
+  return !!e && e.getAttribute('contenteditable') === 'true';
+}})()"""))
+if is_contenteditable:
+    cleared = js(f"""(() => {{
       const e=document.querySelector({json.dumps(selector)});
-      const r=e.getBoundingClientRect();
-      return {{x:r.x+r.width/2,y:r.y+r.height/2}};
+      if (!e) return false;
+      e.focus();
+      const sel=window.getSelection();
+      const range=document.createRange();
+      range.selectNodeContents(e);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete', false, null);
+      return true;
     }})()""")
-    click_at_xy(info["x"], info["y"])
-    press_key("CTRL+A")
-    type_text(CFG["prompt"])
-if _normalized_text(CFG["prompt"]) not in _normalized_text(_composer_text(selector)):
-    raise RuntimeError("Temporary Chat prompt was not observed in the composer")
+    if not cleared:
+        raise RuntimeError("Temporary Chat contenteditable composer could not be cleared")
+    for offset in range(0, len(prompt), 256):
+        chunk = prompt[offset:offset + 256]
+        inserted = js(f"""(() => {{
+          const e=document.querySelector({json.dumps(selector)});
+          if (!e) return false;
+          e.focus();
+          const ok=document.execCommand('insertText', false, {json.dumps(chunk)});
+          e.dispatchEvent(new InputEvent('input', {{bubbles:true,inputType:'insertText',data:{json.dumps(chunk)}}}));
+          return ok;
+        }})()""")
+        if not inserted:
+            raise RuntimeError(f"Temporary Chat composer rejected prompt chunk at offset {offset}")
+else:
+    fill_input(selector, prompt, clear_first=True)
 
+wait_until_stable(
+    lambda: {"text": _composer_text(selector)},
+    lambda state: _normalized_text(CFG["prompt"]) in _normalized_text(state["text"]),
+    timeout=30,
+    phase="composer readiness",
+)
+
+_wait_for_send_ready(selector, CFG["prompt"], attachments)
 _click_send()
 user_turn = _wait_user_turn(before_count, CFG["prompt"])
 

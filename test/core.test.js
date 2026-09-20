@@ -105,9 +105,25 @@ test('CLI submit reopens a completed job before publishing new work', async () =
   const [code] = await once(result,'exit');
   assert.equal(code,0);
   const saved = JSON.parse(await readFile(file,'utf8'));
-  assert.equal(saved.state,'OPEN');
+  assert.equal(saved.state,'RUNNING');
   assert.equal(saved.tasks[0].id,'review');
   await rm(directory,{recursive:true,force:true});
+});
+
+test('CLI submit and retry reactivate failed jobs as RUNNING', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reactivate-')); const file=join(directory,'job.json');
+  const failedTask=task('failed','FAILED'); failedTask.error='old'; failedTask.attempt=1; failedTask.maxAttempts=3;
+  await writeFile(file, JSON.stringify({...job([failedTask]),state:'FAILED'}));
+  let child=spawn(process.execPath,[join('dist','cli.js'),'submit','--file',file,'--task-id','replacement','--provider','openai','--model','gpt-test','--output','task-pr','--input','replacement'],{cwd:process.cwd()});
+  let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING');
+  saved.state='FAILED'; await writeFile(file,JSON.stringify(saved));
+  child=spawn(process.execPath,[join('dist','cli.js'),'retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
+  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'READY');
+  await rm(directory,{recursive:true,force:true});
+});
+test('active replacement work keeps job RUNNING despite historical failed tasks', () => {
+  const old=task('old','FAILED'); const replacement=task('replacement','READY');
+  assert.equal(schedule({...job([old,replacement]),state:'FAILED'}).state,'RUNNING');
 });
 test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-'));
@@ -434,6 +450,16 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
   await stop();
 });
 
+
+test('async launch and delivery rejection emits exactly one task.failed', async () => {
+  const t=task('dedupe-launch'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+  const error=new LaunchFailure('same failure');
+  const adapter={name:'chatgpt',id:'dedupe-chatgpt',capabilities:['model','chatgpt'],launch:()=>({id:'x',launched:Promise.reject(error),promise:Promise.reject(error),cancel(){}})};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>{events.push(event);}});
+  await reconciler.reconcile('j'); await reconciler.idle(); await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+});
 test('correlated terminal completed event is authoritative', async () => {
   const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
