@@ -69,6 +69,7 @@ export class Reconciler {
   private readonly terminalTimers = new Map<string, NodeJS.Timeout>();
   private readonly terminalExitGraceTimers = new Map<string, NodeJS.Timeout>();
   private readonly continuationLive = new Set<string>();
+  private readonly launchFailureClaims = new Set<string>();
   private readonly terminalWaiters = new Map<string, TerminalWaiter>();
   private reconciling = false;
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
@@ -417,6 +418,11 @@ export class Reconciler {
   }
 
   private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
+    const claim = executionId ?? `${jobId}:${taskId}`;
+    if (this.launchFailureClaims.has(claim)) return;
+    this.launchFailureClaims.add(claim);
+    const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000);
+    cleanup.unref();
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;

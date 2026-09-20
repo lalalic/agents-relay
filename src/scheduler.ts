@@ -15,7 +15,7 @@ export function schedule(job: Job): Job {
   const map = new Map(job.tasks.map(t => [t.id, t]));
   for (const task of job.tasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'READY'); }
   const active = job.tasks.some(t => ['READY', 'RUNNING'].includes(t.state)); const blocked = job.tasks.some(t => t.state === 'BLOCKED'); const waiting = job.tasks.some(t => ['QUEUED', 'WAITING'].includes(t.state)); const failed = job.tasks.some(t => t.state === 'FAILED'); const cancelled = job.tasks.every(t => t.state === 'CANCELLED');
-  const next = failed ? 'FAILED' : active ? 'RUNNING' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
+  const next = active ? 'RUNNING' : failed ? 'FAILED' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
   if (job.state !== next) { assertJobTransition(job.state, next); job.state = next; job.updatedAt = new Date().toISOString(); }
   return job;
 }
