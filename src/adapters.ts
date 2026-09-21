@@ -265,7 +265,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
       const run = (this.runner ?? directBrowserWorkerRunner(runtime.root))(
         runtime.definition,
-        { prompt: task.input, tabClosePolicy: policy },
+        { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
         route,
         controller.signal,
       );

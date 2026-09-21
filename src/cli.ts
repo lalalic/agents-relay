@@ -315,6 +315,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
     adapter,
     chatgptTabClosePolicy: closePolicy,
     input: input || 'true',
+    attachments: arg(args, '--attachments').split(',').filter(Boolean),
     output: outputKind === 'file' ? { kind: 'file', path: outputPath } : { kind: 'task_pr' },
     routing,
     continuation: continuation(args),
