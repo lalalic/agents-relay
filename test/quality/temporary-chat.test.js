@@ -62,7 +62,6 @@ test('Temporary Chat submits a prompt with an attachment', { timeout: SUBMIT_TIM
   const limit = bounded(SUBMIT_TIMEOUT_MS, 'attachment prompt');
   try {
     const attachmentTask = task('quality-attachment', 'Read the attached file and reply with exactly TEMPORARY_CHAT_ATTACHMENT_OK.', [attachment]);
-    attachmentTask.chatgptTabClosePolicy = process.env.AGENTS_RELAY_CHATGPT_BROWSER_DEBUG === '1' ? 'never' : 'after-start';
     const execution = new ChatGptAdapter({ agentPath }).launch(
       attachmentTask,
       limit.controller.signal,

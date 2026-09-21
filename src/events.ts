@@ -3,7 +3,7 @@ import { EventRecord } from './types.js';
 import type { NatsConnection, Subscription } from 'nats';
 type NatsModule = typeof import('nats');
 
-export interface EventBus { publish(event: EventRecord): Promise<void>; subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>>; subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>>; close?(): Promise<void>; }
+export interface EventBus { publish(event: EventRecord): Promise<void>; subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>>; subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>>; }
 export function subjectToken(value: string): string { if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(`Unsafe event subject token: ${value}`); return value; }
 export class MemoryEventBus implements EventBus {
   private readonly handlers = new Map<string, Set<(event: EventRecord) => Promise<void>>>();
@@ -20,7 +20,6 @@ export class NatsEventBus implements EventBus {
   async publish(event: EventRecord): Promise<void> { const nats = await this.moduleLoaded(); const subject = `${this.subjectPrefix}.${subjectToken(event.job_id)}.${event.type}`; (await this.client()).publish(subject, nats.StringCodec().encode(JSON.stringify(event))); }
   async subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { return this.subscribeSubject(`${this.subjectPrefix}.${subjectToken(jobId)}.>`, wake); }
   async subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { return this.subscribeSubject(`${this.subjectPrefix}.>`, wake); }
-  async close(): Promise<void> { if (this.connection) { await this.connection.close(); this.connection = null; } }
   private async subscribeSubject(subject: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> {
     const nats = await this.moduleLoaded();
     const codec = nats.StringCodec();

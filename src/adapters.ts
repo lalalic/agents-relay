@@ -172,7 +172,6 @@ function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
     const releaseFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-release-${randomUUID()}`);
     const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt, '--release-file', releaseFile, '--close-policy', request.tabClosePolicy ?? 'after-start'];
     for (const file of request.files ?? []) args.push('--file', file);
-    const debugBrowser = process.env.AGENTS_RELAY_CHATGPT_BROWSER_DEBUG === '1';
     const child = spawn('python3', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
@@ -181,14 +180,12 @@ function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
     let submittedReject: ((error: Error) => void) | undefined;
     const submittedPromise = new Promise<string>((resolve, reject) => { submittedResolve = resolve; submittedReject = reject; });
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (debugBrowser) process.stdout.write(chunk);
       stdout += chunk.toString();
       if (!submitted) {
         try { const response = parseDriverJson(stdout); submitted = true; submittedResolve?.(JSON.stringify(response)); } catch { /* receipt may be split across chunks */ }
       }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (debugBrowser) process.stderr.write(chunk);
       stderr = appendTail(stderr, chunk.toString());
     });
     const promise = new Promise<string>((resolve, reject) => {

@@ -98,10 +98,9 @@ authenticated browser session and run:
 npm run test:chatgpt-temp-quality
 ~~~
 
-This small live suite covers three Temporary Chat quality gates: a normal text
-prompt, a prompt with an attachment, and a managed Relay task that must publish
-exactly one worker-owned `task.started` plus exactly one terminal task event. It
-does not exercise durable-thread, resume, or retry behavior.
+This small live suite covers two Temporary Chat submission gates: a normal text
+prompt and a prompt with an attachment. It does not exercise worker lifecycle
+events, durable-thread reuse, resume, or retry behavior.
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
 

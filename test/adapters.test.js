@@ -57,7 +57,6 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
 });
 
 
-
 test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-files-'));
   try {
