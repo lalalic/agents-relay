@@ -4,18 +4,12 @@ import { bucketStart, nextScheduleRun, parseRunBucketLabel, runBucketLabel, sche
 
 export const AUTONOMOUS_LABEL = 'agents-relay:autonomous';
 export type ScheduledJobRef = { prNumber: number; jobId: string; bucket: string };
-export type ScheduledRunStatus = 'completed' | 'skipped-idempotent' | 'skipped-active';
+export type ScheduledRunStatus = 'dispatched' | 'completed' | 'skipped-idempotent' | 'skipped-active';
 export type ScheduledRunResult = { job: Job; status: ScheduledRunStatus };
 export type SchedulerEngine = { reconcile(jobId: string): Promise<unknown>; idle(): Promise<void> };
 
-function repositoryParts(repository: string): { owner: string; name: string } {
-  const [owner, name] = repository.split('/', 2);
-  if (!owner || !name) throw new Error(`Invalid GitHub repository ${repository}`);
-  return { owner, name };
-}
-
-function searchPath(query: string): string {
-  return `search/issues?q=${encodeURIComponent(query)}&sort=created&order=asc&per_page=100`;
+function searchPath(query: string, page: number): string {
+  return `search/issues?q=${encodeURIComponent(query)}&sort=created&order=asc&per_page=100&page=${page}`;
 }
 
 export function dueBuckets(now: Date, lookbackBuckets: number): string[] {
@@ -88,24 +82,48 @@ export async function syncScheduleLabels(client: GitHubClient, repository: strin
   }
 }
 
+const SCHEDULE_WAKE_MARKER = '<!-- agents-relay:schedule-wake:v1 -->';
+async function pulseScheduleWake(client: GitHubClient, repository: string, job: Job): Promise<void> {
+  const body = `${SCHEDULE_WAKE_MARKER}
+Scheduled autonomous wake for \`${job.id}\` at \`${job.schedule?.lastScheduledSlot ?? 'unknown'}\`.`;
+  let page = 1;
+  for (;;) {
+    const response = await client.request(`repos/${repository}/issues/${job.prNumber}/comments?per_page=100&page=${page}`) as unknown;
+    const items = Array.isArray(response) ? response : [];
+    const existing = items.find(item => typeof (item as { body?: unknown }).body === 'string' && String((item as { body?: unknown }).body).includes(SCHEDULE_WAKE_MARKER)) as { id?: unknown } | undefined;
+    if (existing && Number.isInteger(Number(existing.id))) {
+      await client.request(`repos/${repository}/issues/comments/${Number(existing.id)}`, { method: 'PATCH', body: JSON.stringify({ body }) });
+      return;
+    }
+    if (items.length < 100) break;
+    page += 1;
+  }
+  await client.request(`repos/${repository}/issues/${job.prNumber}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+}
+
 export async function listIndexedScheduledJobs(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>, buckets: readonly string[]): Promise<ScheduledJobRef[]> {
   const found = new Map<string, ScheduledJobRef>();
+  const seenPrs = new Set<number>();
   for (const bucket of buckets) {
-    const response = await client.request(searchPath(indexedDueQuery(repository, bucket))) as { items?: unknown };
-    const items = Array.isArray(response?.items) ? response.items : [];
-    for (const item of items) {
-      const prNumber = Number((item as { number?: unknown }).number);
-      if (!Number.isInteger(prNumber) || prNumber <= 0) continue;
-      const overviews = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors).catch((error: unknown) => {
-        if (error instanceof Error && error.message.includes('has no durable')) return [];
-        throw error;
-      });
-      const job = overviews.find(overview => overview.githubState === 'OPEN' && overview.job.schedule !== undefined)?.job;
-      if (!job?.schedule) continue;
-      const slotBucket = scheduleBucket(new Date(job.schedule.nextRunAt));
-      if (!buckets.includes(slotBucket)) continue;
-      const key = `${prNumber}:${job.id}`;
-      if (!found.has(key)) found.set(key, { prNumber, jobId: job.id, bucket: slotBucket });
+    const query = indexedDueQuery(repository, bucket);
+    for (let page = 1; page <= 10; page += 1) {
+      const response = await client.request(searchPath(query, page)) as { items?: unknown };
+      const items = Array.isArray(response?.items) ? response.items : [];
+      for (const item of items) {
+        const prNumber = Number((item as { number?: unknown }).number);
+        if (!Number.isInteger(prNumber) || prNumber <= 0 || seenPrs.has(prNumber)) continue;
+        seenPrs.add(prNumber);
+        const overviews = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors).catch((error: unknown) => {
+          if (error instanceof Error && error.message.includes('has no durable')) return [];
+          throw error;
+        });
+        const job = overviews.find(overview => overview.githubState === 'OPEN' && overview.job.schedule !== undefined)?.job;
+        if (!job?.schedule) continue;
+        const slotBucket = scheduleBucket(new Date(job.schedule.nextRunAt));
+        if (!buckets.includes(slotBucket)) continue;
+        found.set(`${prNumber}:${job.id}`, { prNumber, jobId: job.id, bucket: slotBucket });
+      }
+      if (items.length < 100) break;
     }
   }
   return [...found.values()];
@@ -116,7 +134,14 @@ async function refresh(client: GitHubClient, repository: string, trustedAuthors:
   return await store.load(ref.jobId);
 }
 
-export async function runScheduledBucket(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>, ref: ScheduledJobRef, engine: SchedulerEngine, now: Date = new Date()): Promise<ScheduledRunResult> {
+export async function runScheduledBucket(
+  client: GitHubClient,
+  repository: string,
+  trustedAuthors: ReadonlySet<string>,
+  ref: ScheduledJobRef,
+  engine?: SchedulerEngine,
+  now: Date = new Date(),
+): Promise<ScheduledRunResult> {
   let job = await refresh(client, repository, trustedAuthors, ref);
   const schedule = job.schedule;
   if (!schedule) throw new Error(`Scheduled job ${job.id} has no schedule metadata`);
@@ -146,28 +171,28 @@ export async function runScheduledBucket(client: GitHubClient, repository: strin
 
   const missedRunPolicy = schedule.missedRunPolicy;
   schedule.lastScheduledSlot = slot.toISOString();
+  schedule.currentRunSlot = slot.toISOString();
   schedule.nextRunAt = nextScheduleRun(schedule, missedRunPolicy === 'run' ? slot : now).toISOString();
   job.updatedAt = now.toISOString();
   const schedulerStore = new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
+  job.state = 'RUNNING';
   await schedulerStore.saveJob(job);
-  if (job.state !== 'RUNNING') {
-    const saved = await schedulerStore.load(job.id);
-    saved.schedule = saved.schedule ? { ...saved.schedule, nextRunAt: schedule.nextRunAt, lastScheduledSlot: schedule.lastScheduledSlot } : schedule;
-    saved.state = 'RUNNING';
-    saved.updatedAt = now.toISOString();
-    await schedulerStore.saveJob(saved);
-  }
   job = await schedulerStore.load(job.id);
   await syncScheduleLabels(client, repository, job);
-  await engine.reconcile(job.id);
-  await engine.idle();
 
-  const finished = await schedulerStore.load(job.id);
-  if (!finished.schedule) throw new Error(`Scheduled job ${job.id} lost its schedule metadata`);
-  finished.schedule.lastRunAt = now.toISOString();
-  finished.updatedAt = now.toISOString();
-  await schedulerStore.saveJob(finished);
-  return { job: finished, status: 'completed' };
+  if (engine) {
+    await engine.reconcile(job.id);
+    await engine.idle();
+    const finished = await schedulerStore.load(job.id);
+    if (!finished.schedule) throw new Error(`Scheduled job ${job.id} lost its schedule metadata`);
+    finished.schedule.lastRunAt = now.toISOString();
+    finished.updatedAt = now.toISOString();
+    await schedulerStore.saveJob(finished);
+    return { job: finished, status: 'completed' };
+  }
+
+  await pulseScheduleWake(client, repository, job);
+  return { job, status: 'dispatched' };
 }
 
 export async function processDueScheduledJobs(options: {
@@ -176,12 +201,12 @@ export async function processDueScheduledJobs(options: {
   trustedAuthors: ReadonlySet<string>;
   buckets: readonly string[];
   now: Date;
-  engine: (job: Job) => SchedulerEngine;
+  engine?: (job: Job) => SchedulerEngine;
 }): Promise<ScheduledRunResult[]> {
   const due = await listIndexedScheduledJobs(options.client, options.repository, options.trustedAuthors, options.buckets);
   const results: ScheduledRunResult[] = [];
   for (const ref of due) {
-    const engine = options.engine(await refresh(options.client, options.repository, options.trustedAuthors, ref));
+    const engine = options.engine ? options.engine(await refresh(options.client, options.repository, options.trustedAuthors, ref)) : undefined;
     results.push(await runScheduledBucket(options.client, options.repository, options.trustedAuthors, ref, engine, options.now));
   }
   return results;

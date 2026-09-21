@@ -1,8 +1,8 @@
 # Scheduled autonomous jobs
 
 Scheduled autonomous jobs reuse the existing GitHub PR, trusted job/task
-markers, reconciler, planner, review gate, and event contracts. They do not add
-a Relay database or per-job daemon.
+markers, local Relay daemon, planner, and event contracts. They do not add a
+Relay database or per-job daemon.
 
 ## Durable and indexed state
 
@@ -16,6 +16,7 @@ The trusted `agents-relay:job:v1` marker contains the schedule:
   "missedRunPolicy": "run",
   "concurrencyPolicy": "skip",
   "lastScheduledSlot": null,
+  "currentRunSlot": null,
   "lastRunAt": null
 }
 ```
@@ -23,11 +24,12 @@ The trusted `agents-relay:job:v1` marker contains the schedule:
 The same PR also carries:
 
 - `agents-relay:autonomous`
-- `agents-relay:next-run:0` through `agents-relay:next-run:5`
+- one bounded `agents-relay:next-run:0` through `agents-relay:next-run:143`
+- one fixed `agents-relay:schedule-wake:v1` comment, updated only to wake the local Relay webhook
 
 The marker remains durable truth; labels are an index so the heartbeat does not
-enumerate every managed PR. Relay repairs the index from the marker when it
-observes a stale or duplicate scheduling label.
+enumerate every managed PR. Relay repairs stale or legacy scheduling labels from
+the marker.
 
 ## Creation
 
@@ -49,41 +51,43 @@ cron expression and timezone.
 One repository workflow, `.github/workflows/autonomous-scheduler.yml`, runs:
 
 ~~~sh
-npx agents-relay tick --repo OWNER/REPO --events nats --nats-url "$NATS_URL"
+npx agents-relay tick --repo OWNER/REPO
 ~~~
 
-The workflow runs every ten minutes, uses a non-cancelling concurrency group,
-and requires a repository `NATS_URL` secret because model-backed workers need
-authoritative lifecycle events. The checkout's CLI runs the tick, so a workflow
-does not depend on the package having been published yet.
+The workflow runs every ten minutes and uses a non-cancelling concurrency
+group. It does not run planners or model workers and does not need NATS, local
+project files, or local model credentials. It only discovers due jobs, claims
+their scheduled slot in GitHub, advances `nextRunAt`, and updates one fixed
+schedule-wake comment. The resulting GitHub `issue_comment` webhook wakes the local
+`agents-relayd`, which owns actual planner/worker execution and authoritative
+events.
 
-By default `tick` searches the current and two previous 10-minute buckets with
-the autonomous and bounded run-index labels per bucket. It never performs a
-repository-wide job scan. Use `--lookback-buckets` (maximum 36) to widen
-recovery for short outages.
-
-The six run-index labels map slots by modulo position within an hour. This
-keeps repository label definitions bounded while GitHub search narrows
-discovery to current/recent slots. The trusted marker's exact `nextRunAt` is
-the authority: a candidate is run only when its marker matches the target slot,
-and stale labels are repaired during processing.
+By default `tick` searches the current and two previous 10-minute buckets.
+The 144 run-index labels represent the 10-minute slots of a UTC day, so the
+candidate set is much smaller than all autonomous jobs while repository label
+cardinality stays bounded. GitHub search results are paginated. The trusted
+marker's exact `nextRunAt` is always checked before a candidate is claimed.
 
 ## Slot semantics
 
 For each oldest indexed slot, `tick` reloads the job marker and:
 
-1. ignores or repairs a stale label when the durable `nextRunAt` no longer
-   matches that slot;
+1. ignores or repairs a stale label when durable `nextRunAt` no longer matches
+   that slot;
 2. refuses to rerun a slot already represented by `lastScheduledSlot`;
 3. when work is active, either advances past the slot (`skip`) or leaves the
-   label for the next tick (`queue`);
-4. otherwise persists `lastScheduledSlot`, advances `nextRunAt`, replaces the
-   next-run label, reopens the job if needed, and invokes reconciliation;
-5. records `lastRunAt` only after reconciliation is idle.
+   slot for the next heartbeat (`queue`);
+4. otherwise persists `lastScheduledSlot`, advances `nextRunAt`, updates the
+   bounded next-run label, marks the job running, and updates the fixed schedule-wake comment;
+5. the local Relay webhook creates a fresh autonomous planner for that slot and
+   runs normal worker/event reconciliation;
+6. when that planner is satisfied, the job records `lastRunAt` and returns to
+   `WAITING`.
+
+`lastScheduledSlot` tracks claim/idempotency while `currentRunSlot` identifies the active cycle, so skipping a later slot cannot hide work still running from the prior cycle. Historical failures from older slots do not poison the next scheduled cycle.
+An active schedule also does not enter the one-shot final-review/auto-merge
+path; the PR remains open as the durable recurring job.
 
 `missedRunPolicy: run` advances from the missed slot, preserving later missed
 slots for subsequent ticks. `missedRunPolicy: skip` advances from the current
 time so an old slot cannot cause a backlog. The default is `skip`.
-
-The normal final-review and auto-merge gates still apply. A merged PR is no
-longer open and therefore no longer eligible for scheduled execution.

@@ -32,6 +32,7 @@ const schedule = (nextRunAt = '2026-09-21T16:20:00Z', overrides = {}) => ({
   missedRunPolicy: 'skip',
   concurrencyPolicy: 'skip',
   lastScheduledSlot: null,
+  currentRunSlot: null,
   lastRunAt: null,
   ...overrides,
 });
@@ -52,7 +53,7 @@ const scheduledJob = (overrides = {}) => ({
 });
 
 function fakeClient(initialLabels, comments, options = {}) {
-  const state = { labels: [...initialLabels], repositoryLabels: [...new Set(initialLabels)], searchQueries: [], searchPR: 1, deleted: [], added: [], createdRepositoryLabels: [] };
+  const state = { labels: [...initialLabels], wakeComments: [], repositoryLabels: [...new Set(initialLabels)], searchQueries: [], searchPR: 1, deleted: [], added: [], createdRepositoryLabels: [] };
   const comment = (body, id = 1) => ({ id, body, updated_at: now(), user: { login: 'bot' } });
   const trusted = comments ?? [comment(marker(JOB_MARKER, scheduledJob()))];
   const findComment = (query, variables = {}) => {
@@ -91,6 +92,16 @@ function fakeClient(initialLabels, comments, options = {}) {
         state.searchQueries.push(query);
         const selected = options.alwaysDue ? 1 : Number(new URL(path, 'https://github.com').searchParams.get('q').includes(runBucketLabel('20260921T1620Z')));
         return { items: selected ? [{ number: state.searchPR }] : [] };
+      }
+      if (path === `repos/owner/repo/issues/1/comments?per_page=100&page=1`) return state.wakeComments ?? [];
+      if (path === `repos/owner/repo/issues/1/comments` && init.method === 'POST') {
+        const created = { id: 9001, ...JSON.parse(init.body) };
+        state.wakeComments = [created];
+        return created;
+      }
+      if (path === `repos/owner/repo/issues/comments/9001` && init.method === 'PATCH') {
+        state.wakeComments = [{ id: 9001, ...JSON.parse(init.body) }];
+        return state.wakeComments[0];
       }
       if (path === `repos/owner/repo/issues/1/labels?per_page=100&page=1`) return state.labels.map(label => ({ name: label }));
       if (path.startsWith('repos/owner/repo/labels/') && !init.method) {
@@ -135,8 +146,8 @@ test('schedule parsing validates resolution, timezone-aware recurrence, and buck
   assert.equal(parsed.nextRunAt, '2026-09-21T13:20:00.000Z');
   assert.equal(nextCronRun('0 9 * * *', 'America/Toronto', at('2026-09-21T12:01:00Z')).toISOString(), '2026-09-21T13:00:00.000Z');
   assert.equal(scheduleBucket(at('2026-09-21T16:29:59.999Z')), '20260921T1620Z');
-  assert.equal(runBucketLabel('20260921T1620Z'), 'agents-relay:next-run:2');
-  assert.equal(parseRunBucketLabel('agents-relay:next-run:2'), '2');
+  assert.equal(runBucketLabel('20260921T1620Z'), 'agents-relay:next-run:98');
+  assert.equal(parseRunBucketLabel('agents-relay:next-run:98'), '98');
   assert.equal(nextCronRun('10/20 * * * *', 'UTC', at('2026-09-21T16:01:00Z')).toISOString(), '2026-09-21T16:10:00.000Z');
   assert.equal(nextCronRun('0 0 * * 0', 'UTC', at('2026-09-26T23:50:00Z')).toISOString(), '2026-09-27T00:00:00.000Z');
   assert.throws(() => parseJobSchedule({ cron: '*/5 * * * *', timezone: 'UTC' }), /10-minute/);
@@ -148,7 +159,7 @@ test('indexed discovery queries buckets without enumerating managed jobs', async
   const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
   const due = await listIndexedScheduledJobs(client, 'owner/repo', trusted, dueBuckets(at('2026-09-21T16:31:00Z'), 3));
   assert.deepEqual(due, [{ prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' }]);
-  assert.deepEqual(client.state.searchQueries.map(query => query.endsWith('label:"agents-relay:next-run:1"')), [true, false, false]);
+  assert.deepEqual(client.state.searchQueries.map(query => query.match(/agents-relay:next-run:(\d+)/)?.[1]), ["97", "98", "99"]);
   assert.match(indexedDueQuery('owner/repo', '20260921T1620Z'), /repo:owner\/repo is:open is:pr/);
 });
 
@@ -186,12 +197,32 @@ test('syncScheduleLabels removes legacy exact-slot PR labels', async () => {
   assert.deepEqual(client.state.labels, [AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
 });
 
-test('tick is repository scoped before job-store loading', () => {
+test('tick is repository scoped and does not require NATS or job-store arguments', () => {
   const result = spawnSync(process.execPath, [
-    'dist/cli.js', 'tick', '--repo', 'owner/repo', '--events', 'nats', '--nats-url', 'nats://127.0.0.1:4222',
+    'dist/cli.js', 'tick', '--repo', 'owner/repo',
   ], { encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.doesNotMatch(result.stderr, /Local mode is demo\/test only/);
+  assert.doesNotMatch(result.stderr, /requires --events nats/);
+});
+
+test('cloud heartbeat claims and wakes through GitHub without running a worker engine', async () => {
+  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
+  const result = await runScheduledBucket(
+    client,
+    'owner/repo',
+    trusted,
+    { prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' },
+    undefined,
+    at('2026-09-21T16:31:00Z'),
+  );
+  assert.equal(result.status, 'dispatched');
+  assert.equal(result.job.state, 'RUNNING');
+  assert.equal(result.job.schedule.lastScheduledSlot, '2026-09-21T16:20:00.000Z');
+  assert.equal(result.job.schedule.currentRunSlot, '2026-09-21T16:20:00.000Z');
+  assert.equal(result.job.schedule.nextRunAt, '2026-09-21T16:40:00.000Z');
+  assert.equal(client.state.wakeComments.length, 1);
+  assert.match(client.state.wakeComments[0].body, /agents-relay:schedule-wake:v1/);
 });
 
 test('a duplicate heartbeat cannot claim the same scheduled slot twice', async () => {

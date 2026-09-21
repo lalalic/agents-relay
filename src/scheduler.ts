@@ -1,21 +1,38 @@
 import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task, TaskState, assertJobTransition, assertTaskTransition } from './types.js';
 export function dependencyReady(task: Task, tasks: Map<string, Task>): boolean { return task.dependencies.every(id => tasks.get(id)?.state === 'SUCCEEDED'); }
 export function detectCycles(tasks: Task[]): void { const map = new Map(tasks.map(t => [t.id, t])); const visiting = new Set<string>(); const done = new Set<string>(); const visit = (id: string): void => { if (visiting.has(id)) throw new Error(`Dependency cycle at ${id}`); if (done.has(id)) return; visiting.add(id); for (const dep of map.get(id)?.dependencies ?? []) visit(dep); visiting.delete(id); done.add(id); }; for (const task of tasks) visit(task.id); }
+function scheduledCycleTasks(job: Job): Task[] {
+  const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
+  if (!Number.isFinite(slot)) return job.tasks;
+  return job.tasks.filter(task => Date.parse(task.createdAt) >= slot);
+}
 export function completionGateSatisfied(job: Job): boolean {
+  if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
   const planners = job.tasks.filter(task => task.kind === 'planner');
   return planners.some(task => task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied') && job.tasks.every(task => task.state === 'SUCCEEDED');
 }
 export function schedule(job: Job): Job {
   detectCycles(job.tasks);
-  if (job.tasks.length === 0) {
+  const scopedTasks = scheduledCycleTasks(job);
+  if (scopedTasks.length === 0) {
     if (job.executionMode === 'autonomous' && job.state !== 'WAITING') { assertJobTransition(job.state, 'WAITING'); job.state = 'WAITING'; job.updatedAt = new Date().toISOString(); }
     return job;
   }
   const map = new Map(job.tasks.map(t => [t.id, t]));
-  for (const task of job.tasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'READY'); }
-  const active = job.tasks.some(t => ['READY', 'RUNNING'].includes(t.state)); const blocked = job.tasks.some(t => t.state === 'BLOCKED'); const waiting = job.tasks.some(t => ['QUEUED', 'WAITING'].includes(t.state)); const failed = job.tasks.some(t => t.state === 'FAILED'); const cancelled = job.tasks.every(t => t.state === 'CANCELLED');
+  for (const task of scopedTasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'READY'); }
+  const active = scopedTasks.some(t => ['READY', 'RUNNING'].includes(t.state)); const blocked = scopedTasks.some(t => t.state === 'BLOCKED'); const waiting = scopedTasks.some(t => ['QUEUED', 'WAITING'].includes(t.state)); const failed = scopedTasks.some(t => t.state === 'FAILED'); const cancelled = scopedTasks.every(t => t.state === 'CANCELLED');
   const next = active ? 'RUNNING' : failed ? 'FAILED' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
+  if (job.schedule && next === 'WAITING') {
+    const planners = scopedTasks.filter(task => task.kind === 'planner');
+    const latest = planners.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
+    if (latest?.state === 'SUCCEEDED' && latest.plannerResult?.objective_status === 'satisfied') {
+      const slot = job.schedule.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
+      const lastRun = job.schedule.lastRunAt ? Date.parse(job.schedule.lastRunAt) : Number.NaN;
+      if (Number.isFinite(slot) && (!Number.isFinite(lastRun) || lastRun < slot)) job.schedule.lastRunAt = new Date().toISOString();
+      job.schedule.currentRunSlot = null;
+    }
+  }
   if (job.state !== next) { assertJobTransition(job.state, next); job.state = next; job.updatedAt = new Date().toISOString(); }
   return job;
 }
@@ -27,7 +44,7 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
 export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['READY', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;
-export const RUN_BUCKET_LABEL_COUNT = 6;
+export const RUN_BUCKET_LABEL_COUNT = 144;
 const CRON_PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/;
 
 function cronField(raw: string, name: string, minimum: number, maximum: number): Set<number> {
@@ -124,6 +141,7 @@ export function parseJobSchedule(options: { cron: string; timezone: string; next
     missedRunPolicy,
     concurrencyPolicy,
     lastScheduledSlot: null,
+    currentRunSlot: null,
     lastRunAt: null,
   };
 }
@@ -145,12 +163,15 @@ export function runBucketLabel(bucket: string): string {
   if (!/^\d{8}T\d{4}Z$/.test(bucket)) throw new Error(`Invalid schedule bucket: ${bucket}`);
   const hour = Number(bucket.slice(9, 11));
   const minute = Number(bucket.slice(11, 13));
-  const slot = (hour * 60 + minute) / 10;
-  return `agents-relay:next-run:${slot % RUN_BUCKET_LABEL_COUNT}`;
+  const slot = hour * 6 + minute / 10;
+  return `agents-relay:next-run:${slot}`;
 }
 
 export function parseRunBucketLabel(label: string): string | null {
   const prefix = 'agents-relay:next-run:';
-  const bucket = label.slice(prefix.length);
-  return label.startsWith(prefix) && /^[0-5]$/.test(bucket) ? bucket : null;
+  if (!label.startsWith(prefix)) return null;
+  const value = label.slice(prefix.length);
+  if (!/^\d{1,3}$/.test(value)) return null;
+  const slot = Number(value);
+  return Number.isInteger(slot) && slot >= 0 && slot < RUN_BUCKET_LABEL_COUNT ? value : null;
 }

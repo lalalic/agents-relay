@@ -17,7 +17,7 @@ permissions:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,10 +29,4 @@ jobs:
       - name: Process due autonomous buckets
         env:
           GH_TOKEN: ${{ github.token }}
-          NATS_URL: ${{ secrets.NATS_URL }}
-        run: |
-          if [ -z "${NATS_URL}" ]; then
-            echo "NATS_URL secret is required for authoritative worker events" >&2
-            exit 1
-          fi
-          node dist/cli.js tick --repo "$GITHUB_REPOSITORY" --events nats --nats-url "$NATS_URL"
+        run: node dist/cli.js tick --repo "$GITHUB_REPOSITORY"

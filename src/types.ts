@@ -13,6 +13,7 @@ export type JobSchedule = {
   missedRunPolicy: MissedRunPolicy;
   concurrencyPolicy: ScheduleConcurrencyPolicy;
   lastScheduledSlot?: string | null;
+  currentRunSlot?: string | null;
   lastRunAt?: string | null;
 };
 export type TaskKind = 'work' | 'planner';

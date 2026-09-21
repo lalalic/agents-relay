@@ -151,11 +151,11 @@ Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
   tick: `Process autonomous jobs indexed into current/recent GitHub next-run buckets.
 
-Required: --repo OWNER/REPO and --events nats.
-Common: --lookback-buckets N (default 3), plus normal reconcile runtime options.
+Required: --repo OWNER/REPO.
+Common: --lookback-buckets N (default 3).
 
 Example:
-  npx agents-relay tick --repo OWNER/REPO --events nats --nats-url nats://127.0.0.1:4222`,
+  npx agents-relay tick --repo OWNER/REPO`,
   init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
 
 Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
@@ -536,7 +536,6 @@ async function main(): Promise<void> {
   const bus = eventBus(args);
   if (command === 'tick') {
     const repo = repository(args);
-    if (!bus) throw new Error('tick requires --events nats because model-backed autonomous tasks need authoritative events');
     const auth = await githubAuthContext(args);
     const nowValue = arg(args, '--now');
     const now = nowValue ? new Date(nowValue) : new Date();
@@ -547,11 +546,8 @@ async function main(): Promise<void> {
       trustedAuthors: auth.trustedAuthors,
       buckets: dueBuckets(now, integerArg(args, '--lookback-buckets', 3)),
       now,
-      engine: job => runtime(new GitHubStore(auth.client, repo, job.prNumber, auth.trustedAuthors), args, bus),
     });
-    try {
-      console.log(JSON.stringify({ repository: repo, processed: results.length, results }, null, 2));
-    } finally { await bus.close?.(); }
+    console.log(JSON.stringify({ repository: repo, processed: results.length, results }, null, 2));
     return;
   }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded;

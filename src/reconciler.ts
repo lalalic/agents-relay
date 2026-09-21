@@ -170,7 +170,7 @@ export class Reconciler {
     await this.store.saveJob(job);
   }
   private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    if (job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
+    if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
     if (!this.preReviewGatesPass(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
@@ -277,21 +277,25 @@ export class Reconciler {
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     if (job.executionMode !== 'autonomous') return job;
     if (job.initialPlanning?.status === 'pending') return job;
-    const planners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const allPlanners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
+    const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
+    const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(task.state))) return job;
-    if (job.tasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (job.tasks.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
-    if (job.tasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
+    if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
+    if (scopedTasks.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
+    if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
     if (latest?.plannerResult?.objective_status === 'satisfied') return job;
-    if (latest && job.review && job.review.outcome !== 'approved') return job;
+    if (latest && !job.schedule && job.review && job.review.outcome !== 'approved') return job;
+    const previousPlanner = allPlanners.at(-1);
     const used = new Set(job.tasks.map(task => task.id));
-    let number = planners.length + 1;
+    let number = allPlanners.length + 1;
     let id = `planner-${number}`;
     while (used.has(id)) { number += 1; id = `planner-${number}`; }
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner', parentTaskId: latest?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: latest?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: planners.length + 1 };
+    const task: Task = { jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner', parentTaskId: previousPlanner?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: previousPlanner?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: allPlanners.length + 1 };
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
