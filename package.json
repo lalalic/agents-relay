@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js dist/relayd.js",
     "test": "npm run build && node --test test/*.test.js",
+    "test:chatgpt-temp-quality": "npm run build && node --test test/quality/temporary-chat.test.js",
     "dev": "tsx src/cli.ts"
   },
   "devDependencies": {

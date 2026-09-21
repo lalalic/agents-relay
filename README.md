@@ -88,6 +88,22 @@ node dist/cli.js reconcile --file .agents-relay.json
 npx agents-relay serve --file .agents-relay.json
 ~~~
 
+### Opt-in Temporary Chat quality checks
+
+The normal `npm test` suite does not open a browser or send ChatGPT messages.
+For an explicit live check of the one-shot Temporary Chat path, use an
+authenticated browser session and run:
+
+~~~sh
+AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY=1 \
+AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT=/path/to/chatgpt-browser-worker/agents/browser-worker.agent.md \
+npm run test:chatgpt-temp-quality
+~~~
+
+This small suite covers verified submission, owned-tab cleanup at the
+terminal-event barrier, and safe cleanup when acceptance fails. It does not
+exercise durable-thread, resume, or retry behavior.
+
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
 
 reconcile leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. agents-relayd (or the equivalent npx agents-relay serve) is the watchdog/dashboard mode. Model-backed workers require --events nats; the event transport carries authoritative terminal worker events as well as wake/progress traffic. See [docs/service.md](docs/service.md). --file PATH is explicit local demo/test mode only.
