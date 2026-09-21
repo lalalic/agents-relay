@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
 import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
 import { executionMode } from '../dist/cli.js';
@@ -107,4 +108,32 @@ test('planner satisfaction cannot bypass failed or blocked completion gates', ()
   const satisfied = { ...task('planner-1', 'SUCCEEDED'), kind: 'planner', plannerResult: { objective_status: 'satisfied', assessment: 'done', next_tasks: [] } };
   assert.equal(schedule({ ...job([satisfied, { ...task('failed', 'FAILED'), error: 'unresolved' }]), state: 'RUNNING' }).state, 'FAILED');
   assert.equal(schedule({ ...job([satisfied, { ...task('blocked', 'BLOCKED') }]), state: 'RUNNING' }).state, 'BLOCKED');
+});
+
+
+test('story sizes map only the overall execution timeout', () => {
+  assert.equal(storySizeTimeoutMs('S'),300000);
+  assert.equal(storySizeTimeoutMs('M'),900000);
+  assert.equal(storySizeTimeoutMs('L'),2700000);
+  assert.equal(taskOverallTimeoutMs('M','high'),1800000);
+  assert.equal(taskOverallTimeoutMs('L','high'),5400000);
+  assert.equal(taskOverallTimeoutMs('M','medium'),900000);
+  assert.equal(chatGptStartAckTimeoutMs(300000),120000);
+  assert.equal(chatGptStartAckTimeoutMs(900000),300000);
+  assert.equal(chatGptStartAckTimeoutMs(2700000),600000);
+  assert.equal(chatGptStartAckTimeoutMs(1800000),600000);
+  const sized=parsePlannerResult({objective_status:'in_progress',assessment:'size',next_tasks:[{id:'large',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'L'}]});
+  assert.equal(sized.next_tasks[0].storySize,'L');
+  assert.equal(sized.next_tasks[0].timeoutMs,2700000);
+  const defaulted=parsePlannerResult({objective_status:'in_progress',assessment:'default',next_tasks:[{id:'medium',input:'work',adapter:'codex',output:{kind:'task_pr'}}]});
+  assert.equal(defaulted.next_tasks[0].storySize,'M');
+  assert.equal(defaulted.next_tasks[0].timeoutMs,900000);
+});
+
+
+test('planner doubles story-size timeout only for high reasoning', () => {
+  const high=parsePlannerResult({objective_status:'in_progress',assessment:'high',next_tasks:[{id:'high',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'high',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
+  assert.equal(high.next_tasks[0].timeoutMs,1800000);
+  const normal=parsePlannerResult({objective_status:'in_progress',assessment:'normal',next_tasks:[{id:'normal',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'medium',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
+  assert.equal(normal.next_tasks[0].timeoutMs,900000);
 });

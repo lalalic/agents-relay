@@ -22,7 +22,6 @@ test('all service runtimes use the fixed ChatGPT final reviewer policy', async (
   assert.equal(reviewer.adapter, 'chatgpt');
   assert.equal(reviewer.routing.provider, 'chatgpt');
   assert.equal(reviewer.routing.model, 'account-defaults');
-  assert.equal(reviewer.startAckTimeoutMs, 120000);
   const cliSource = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const daemonSource = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(cliSource, /reviewer: runtimeReviewer\(\)/);
@@ -168,6 +167,7 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('skills/agents-relay/SKILL.md'), true);
   assert.equal(files.has('skills/agents-relay/agents/planner.agent.md'), true);
   assert.equal(files.has('skills/chatgpt-browser-worker/SKILL.md'), false);
+  assert.equal(files.has('skills/agents-relay/contracts/task-job-contract.md'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);

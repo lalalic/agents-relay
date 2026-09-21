@@ -42,7 +42,7 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -83,7 +83,7 @@ function immutableTaskDefinition(task: Task): unknown {
     reasoning: task.routing.reasoning, cwd: task.routing.cwd, projectId: task.routing.projectId
   } : undefined;
   return {
-    jobId: task.jobId, id: task.id, priority: task.priority, projectName: task.projectName, agentName: task.agentName,
+    jobId: task.jobId, id: task.id, priority: task.priority, storySize: task.storySize ?? 'M', projectName: task.projectName, agentName: task.agentName,
     kind: task.kind ?? 'work', parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter,
     input: task.input, output: task.output, routing, chatgptTabClosePolicy: task.chatgptTabClosePolicy ?? 'after-start', continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };
@@ -411,6 +411,15 @@ export class GitHubStore implements DurableStore {
     const pr = await this.prNode();
     if (pr.merged === true || typeof pr.mergedAt === 'string') return 'MERGED';
     return String(pr.state ?? '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN';
+  }
+  async mergePullRequest(expectedHeadSha?: string): Promise<void> {
+    const payload: Record<string, unknown> = { merge_method: 'squash' };
+    if (expectedHeadSha) payload.sha = expectedHeadSha;
+    const result = await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber + '/merge', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }) as Record<string, unknown>;
+    if (result.merged !== true) throw new Error(typeof result.message === 'string' ? result.message : 'Pull request #' + this.prNumber + ' was not merged');
   }
   async headSha(): Promise<string | null> {
     const { owner, name } = this.repoParts();

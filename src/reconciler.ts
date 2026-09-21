@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
-import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy } from './types.js';
+import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { schedule, transitionTask } from './scheduler.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
@@ -11,7 +11,7 @@ import { ExecutionContext, ExecutionContextRoots, ExecutionRole, executionContex
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number; startAckTimeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
@@ -75,7 +75,7 @@ export class Reconciler {
   constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
   async handleEvent(event: EventRecord): Promise<void> {
     if (event.type === 'task.started') {
-      this.markWorkerStarted(event);
+      await this.markWorkerStarted(event);
       return;
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
@@ -164,7 +164,7 @@ export class Reconciler {
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer').map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code and do not merge.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item)).map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
     job.state = 'RUNNING'; job.updatedAt = now;
@@ -175,8 +175,11 @@ export class Reconciler {
     const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'READY');
     if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
   }
+  private isSupersededTask(task: Task): boolean {
+    return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
+  }
   private preReviewGatesPass(job: Job): boolean {
-    return job.tasks.filter(task => task.agentName !== 'reviewer').every(task => task.state === 'SUCCEEDED');
+    return job.tasks.filter(task => task.agentName !== 'reviewer' && !this.isSupersededTask(task)).every(task => task.state === 'SUCCEEDED');
   }
   private async applyReviewEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);
@@ -189,8 +192,21 @@ export class Reconciler {
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
     const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
+    if (outcome !== 'started') {
+      task.state = 'SUCCEEDED';
+      task.result = evidence;
+      task.error = null;
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.updatedAt = job.review.updatedAt;
+      await this.store.saveTask(task);
+    }
     job.updatedAt = job.review.updatedAt;
     await this.store.saveJob(job);
+    if (outcome === 'approved' && job.autoMerge !== false && this.store.mergePullRequest) {
+      await this.store.mergePullRequest(headSha);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'review.merged', 'succeeded', 'Reviewer-approved PR #' + job.prNumber + ' merged', 'user', { headSha, autoMerge: true }, { agent: 'reviewer', component: 'agents-relay' }));
+    }
   }
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     for (const task of job.tasks.filter(item => item.state === 'RUNNING')) {
@@ -225,7 +241,7 @@ export class Reconciler {
     let id = `planner-${number}`;
     while (used.has(id)) { number += 1; id = `planner-${number}`; }
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'planner', agentName: 'planner', parentTaskId: latest?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: latest?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner', parentTaskId: latest?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: latest?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
@@ -277,7 +293,7 @@ export class Reconciler {
     const controller = new AbortController();
     let execution: Execution;
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };
-    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), task.agentName === 'reviewer' ? this.options.reviewer?.startAckTimeoutMs : undefined) : null;
+    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
       ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
@@ -394,7 +410,7 @@ export class Reconciler {
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? 300000, createdAt: now, updatedAt: now };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M', spec.routing?.reasoning), createdAt: now, updatedAt: now };
   }
   private clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
@@ -407,14 +423,41 @@ export class Reconciler {
     this.terminalExitGraceTimers.delete(taskId);
   }
 
-  private markWorkerStarted(event: EventRecord): void {
-    const live = this.live.get(event.task_id);
-    if (!live || event.job_id !== live.jobId) return;
+  private async markWorkerStarted(event: EventRecord): Promise<void> {
     const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
     const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
     if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
-    if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
-    live.workerStarted = true;
+    const live = this.live.get(event.task_id);
+    if (live && event.job_id === live.jobId) {
+      if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
+      live.workerStarted = true;
+      return;
+    }
+    const job = await this.store.load(event.job_id);
+    const task = job.tasks.find(item => item.id === event.task_id);
+    if (!task || task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
+    if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
+    transitionTask(task, 'RUNNING');
+    task.failureReason = undefined;
+    task.error = null;
+    task.updatedAt = event.timestamp || new Date().toISOString();
+    await this.store.saveTask(task);
+    this.detach(this.reconcile(job.id), job.id, task.id, 'late worker-start reconciliation');
+  }
+
+  private isRecoverableWatchdogFailure(task: Task): boolean {
+    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event'].includes(task.failureReason ?? '')) return true;
+    const error = task.error ?? '';
+    return error.includes('worker_start_timeout')
+      || error.includes('timed out waiting for the mandatory terminal worker event')
+      || error.includes('exited before publishing task.started')
+      || error.includes('exited after task.started without publishing a terminal task event');
+  }
+
+  private isWorkerOwnedEvent(event: EventRecord): boolean {
+    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
+    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
+    return sourceAgent !== 'relay' && sourceComponent !== 'agents-relay';
   }
 
   private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
@@ -492,7 +535,14 @@ export class Reconciler {
   private async applyTerminalEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !['codex', 'chatgpt'].includes(task.adapter) || task.state !== 'RUNNING') return;
+    if (!task || !['codex', 'chatgpt'].includes(task.adapter)) return;
+    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
+      if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
+      transitionTask(task, 'RUNNING');
+      task.failureReason = undefined;
+      task.error = null;
+    }
+    if (task.state !== 'RUNNING') return;
     const terminalWaiter = this.terminalWaiters.get(task.id);
     if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
     this.clearExecution(task.id, task.executionId);
@@ -504,11 +554,13 @@ export class Reconciler {
     if (event.type === 'task.completed') {
       task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
       task.error = null;
+      task.failureReason = undefined;
       transitionTask(task, 'SUCCEEDED');
       await this.store.saveTask(task);
       await this.deliverContinuation(job, task);
     } else if (event.type === 'task.failed') {
       task.error = event.message || `Task ${task.id} failed`;
+      task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
       transitionTask(task, 'FAILED');
       await this.store.saveTask(task);
     } else if (event.type === 'task.blocked') {
@@ -557,5 +609,5 @@ export class Reconciler {
 }
 
 function samePlannerChildDefinition(left: Task, right: Task): boolean {
-  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
+  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, storySize: left.storySize ?? 'M', projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, storySize: right.storySize ?? 'M', projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
 }

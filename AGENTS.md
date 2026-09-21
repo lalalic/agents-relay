@@ -8,6 +8,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - Reconcile desired durable state into ephemeral worker executions.
 - One top-level objective maps to one PR; child tasks live inside that PR.
 - Agents may submit child tasks; task lineage is explicit.
+- Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
 - Keep provider/model routing separate from roles and capabilities.
 - Prefer standard library and small dependencies; do not build a second database when GitHub already holds the durable state.

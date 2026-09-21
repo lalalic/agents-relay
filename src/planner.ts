@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, Task, AdapterName, RoutingDecision, TaskOutput } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, taskOverallTimeoutMs } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
@@ -10,6 +10,7 @@ export type PlannerTaskSpec = {
   id: string;
   input: string;
   priority?: Priority;
+  storySize?: StorySize;
   projectName?: string;
   agentName?: string;
   dependencies?: string[];
@@ -80,15 +81,19 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
     const priority = task.priority === undefined ? undefined : normalizePlannerPriority(task.priority, `next_tasks[${index}].priority`);
+    const sizeValue = task.storySize === undefined ? 'M' : String(task.storySize).toUpperCase();
+    if (!['S','M','L'].includes(sizeValue)) throw new Error('Planner next_tasks[' + index + '].storySize must be S, M, or L');
+    const storySize = sizeValue as StorySize;
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
-    const timeoutMs = task.timeoutMs === undefined ? 300000 : task.timeoutMs;
+    const route = routing(task.routing, 'next_tasks[' + index + '].routing');
+    const timeoutMs = task.timeoutMs === undefined ? taskOverallTimeoutMs(storySize, route?.reasoning) : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, input: task.input, priority,
+      id, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
-      adapter: adapter as AdapterName, output: output as TaskOutput, routing: routing(task.routing, `next_tasks[${index}].routing`),
+      adapter: adapter as AdapterName, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };
   });
@@ -123,6 +128,7 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
 
 
 const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
+const DEFAULT_TASK_JOB_CONTRACT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'contracts', 'task-job-contract.md');
 
 function parsePlannerAgentMessage(line: string): string | undefined {
   try {
@@ -140,8 +146,9 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
     const resolvedPlanner = context.executionContext?.agents.find(agent => agent.name === 'planner')?.path;
     const instructions = await readFile(resolvedPlanner ?? this.agentFile, 'utf8');
+    const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
-    const prompt = instructions.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
+    const prompt = instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
       const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdoutBuffer = '';

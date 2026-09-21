@@ -38,6 +38,8 @@ autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md
 snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.
+Task producers must follow `skills/agents-relay/contracts/task-job-contract.md`; that shared skill contract defines story size, lifecycle events, review, and auto-merge semantics.
+All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 minutes, and `L`≈45 minutes of normal-reasoning execution, with `M` as the default. `high` reasoning doubles that overall window. ChatGPT Browser Worker start-ack timeout is derived as one third of the effective overall timeout, clamped between 1 and 5 minutes. Orchestrators and planners should choose `storySize`, not raw timeout milliseconds; `--timeout` remains only as an explicit compatibility/debug override.
 
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
 Use `--start` to create/reuse the job and submit its initial task in one invocation. Start mode requires explicit `--adapter`, `--model`, `--output`, and non-empty `--input`; the task ID defaults to `initial`. Re-running with the same task definition reuses that task and never duplicates it. Omitting `--start` preserves create-only behavior, leaving an `OPEN` job with zero tasks until a caller submits work.

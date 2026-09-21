@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy } from './types.js';
+import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
 import { Reconciler } from './reconciler.js';
 import { CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
@@ -67,7 +67,7 @@ Example:
   'job create': `Create or reuse an open PR and persist one durable job marker.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
-Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous.
+Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous, --no-auto-merge.
 With --start, also require --adapter codex|chatgpt, --model MODEL, --output task-pr|file,
 and --input TEXT. The initial task ID defaults to 'initial'; use --task-id to override it.
 
@@ -76,7 +76,7 @@ Example:
   'job adopt': `Adopt an existing PR as a durable job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Common: --title TEXT, --objective TEXT, --mode fixed|autonomous.
+Common: --title TEXT, --objective TEXT, --mode fixed|autonomous, --no-auto-merge.
 
 Example:
   npx agents-relay job adopt --repo OWNER/REPO --pr 12 --id job-12 --title "Objective"`,
@@ -96,7 +96,7 @@ Actions:
   'task update': `Update mutable durable task fields in place.
 
 Required: --task-id ID and the normal job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
 Use --clear-routing to remove routing metadata. A model update requires --model; provider defaults to the existing provider or openai.
 
 Example:
@@ -119,7 +119,7 @@ Example:
   submit: `Queue a task for a managed job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
-Required for worker tasks: --adapter codex|chatgpt, --model MODEL, and --output task-pr|file. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --max-attempts N. Model-backed execution requires --events nats in the running reconciler/daemon.
+Required for worker tasks: --adapter codex|chatgpt, --model MODEL, and --output task-pr|file. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --max-attempts N. Story size defaults to M. Task producers follow the shared Task / Job Contract; prefer --story-size over raw --timeout. Model-backed execution requires --events nats in the running reconciler/daemon.
 
 Example:
   npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter codex --provider openai --model gpt-5-6 --output task-pr --input "Run the required tests and report the result through events."`,
@@ -221,6 +221,7 @@ async function saveLocal(file: string | null, job: Job): Promise<void> { if (fil
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
 async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
+function storySize(args: string[], fallback: StorySize = 'M'): StorySize { const value = arg(args, '--story-size', fallback).toUpperCase(); if (!['S','M','L'].includes(value)) throw new Error('--story-size must be S, M, or L'); return value as StorySize; }
 export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
 export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
   const value = arg(args, '--chatgpt-tab-close-policy', process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY || 'after-start');
@@ -234,7 +235,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; autoMerge?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -245,11 +246,12 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
   }
   if (!job.description && pr.body) job.description = pr.body;
   if (options.objective) job.objective = options.objective;
   if (options.executionMode) job.executionMode = options.executionMode;
+  if (options.autoMerge !== undefined) job.autoMerge = options.autoMerge;
   if (options.priority) job.priority = options.priority;
   else if (!job.priority) job.priority = 'P2';
   if (!job.title && pr.title) job.title = pr.title;
@@ -271,10 +273,13 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
   if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   const routing: RoutingDecision = { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
+  const size = storySize(args);
+  const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing.reasoning)) : taskOverallTimeoutMs(size, routing.reasoning);
   return {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
     priority: priority(args, job.priority ?? 'P2'),
+    storySize: size,
     projectName: arg(args, '--project') || undefined,
     agentName: arg(args, '--agent') || undefined,
     parentTaskId: arg(args, '--parent') || null,
@@ -296,7 +301,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
     threadId: null,
     result: null,
     error: null,
-    timeoutMs: Number(arg(args, '--timeout', '300000')),
+    timeoutMs,
     createdAt: now,
     updatedAt: now
   };
@@ -317,6 +322,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.adapter = adapter;
   }
   if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
+  if (hasArg(args, '--story-size')) { task.storySize = storySize(args, task.storySize ?? 'M'); if (!hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize, task.routing?.reasoning); }
   if (hasArg(args, '--input')) task.input = arg(args, '--input');
   if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
   if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
@@ -344,7 +350,8 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
       decidedBy: 'cli:update',
       decidedAt: new Date().toISOString()
     };
-  }
+
+    if (hasArg(args, '--reasoning') && !hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);  }
   task.updatedAt = new Date().toISOString();
   await store.saveTask(task);
   await saveLocal(localFile, job);
@@ -393,6 +400,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     objective: arg(args, '--objective') || undefined,
     priority: priority(args),
     executionMode: requestedExecutionMode(args),
+    autoMerge: !hasArg(args, '--no-auto-merge'),
     continuation: continuation(args),
     prNumber,
     head: arg(args, '--head') || undefined,
@@ -413,7 +421,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtimeReviewer() { return { adapter: 'chatgpt' as const, routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'fixed-chatgpt-reviewer', decidedAt: new Date().toISOString() }, startAckTimeoutMs: 120000 }; }
+export function runtimeReviewer() { return { adapter: 'chatgpt' as const, routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'fixed-chatgpt-reviewer', decidedAt: new Date().toISOString() } }; }
 export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: job => resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()) }); }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
@@ -475,7 +483,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), autoMerge: !hasArg(args, '--no-auto-merge'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
     const now = new Date().toISOString();

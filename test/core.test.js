@@ -68,6 +68,19 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[0].agentName, 'codex');
   assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
 });
+test('CLI submit defaults story size to M and derives overall timeout from size', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'agents-relay-story-size-'));
+  const file=join(dir,'job.json');
+  const root=job([]); root.executionMode='fixed'; await writeFile(file,JSON.stringify(root));
+  const child=spawn(process.execPath,[join('dist','cli.js'),'submit','--file',file,'--task-id','sized','--adapter','codex','--model','gpt-test','--output','task-pr','--story-size','L'],{cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  const created=saved.tasks.find(item=>item.id==='sized');
+  assert.equal(created.storySize,'L');
+  assert.equal(created.timeoutMs,2700000);
+  await rm(dir,{recursive:true,force:true});
+});
+
 test('CLI task update mutates safe durable fields in place and preserves execution history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-'));
   const file = join(directory, 'job.json');
@@ -278,11 +291,11 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
   const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
 
-test('ChatGPT reviewer can use a longer start acknowledgement window', async () => {
+test('ChatGPT reviewer uses the same start acknowledgement policy as normal ChatGPT tasks', async () => {
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
-  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()},startAckTimeoutMs:100};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer});
+  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'RUNNING');
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',{worker_owned:true},{agent:'mcp'}));
@@ -451,6 +464,19 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 });
 
 
+test('final review ignores explicitly superseded cancelled history', async () => {
+  const succeeded=task('done','SUCCEEDED');
+  const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
+  const store=new InMemoryStore({...job([succeeded,superseded]),state:'COMPLETED',headSha:'abc1234567890'});
+  const bus=new MemoryEventBus();
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(review);
+  assert.deepEqual(review.dependencies,['done']);
+});
+
 test('async launch and delivery rejection emits exactly one task.failed', async () => {
   const t=task('dedupe-launch'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const error=new LaunchFailure('same failure');
@@ -460,6 +486,31 @@ test('async launch and delivery rejection emits exactly one task.failed', async 
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
   assert.equal((await store.load('j')).tasks[0].state,'FAILED');
 });
+test('late worker events recover a watchdog timeout failure', async () => {
+  const t=task('late-worker','FAILED'); t.adapter='chatgpt'; t.error='Worker start-ack failed: worker_start_timeout'; t.failureReason='worker_start_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
+  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.started','running','worker really started','user',{worker_owned:true},{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:01.000Z'});
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.completed','succeeded','worker really completed','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:02.000Z'});
+  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'SUCCEEDED'); assert.equal(durable.error,null);
+});
+
+test('late completed event directly recovers terminal timeout failure', async () => {
+  const t=task('late-complete','FAILED'); t.adapter='chatgpt'; t.error='Task late-complete timed out waiting for the mandatory terminal worker event'; t.failureReason='terminal_event_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
+  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','late-complete',null,'task.completed','succeeded','done after timeout','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:03.000Z'});
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+});
+
+test('late events do not revive genuine failures or stale watchdog events', async () => {
+  const genuine=task('genuine','FAILED'); genuine.adapter='chatgpt'; genuine.error='worker reported failure'; genuine.updatedAt='2026-09-20T20:00:00.000Z';
+  const stale=task('stale','FAILED'); stale.adapter='chatgpt'; stale.error='Task stale timed out waiting for the mandatory terminal worker event'; stale.failureReason='terminal_event_timeout'; stale.updatedAt='2026-09-20T20:00:05.000Z';
+  const store=new InMemoryStore(job([genuine,stale])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j','genuine',null,'task.started','running','late','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:01.000Z'});
+  await reconciler.handleEvent({...eventFor('j','stale',null,'task.completed','succeeded','old completion','user',undefined,{agent:'chatgpt'}),timestamp:'2026-09-20T20:00:04.000Z'});
+  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'FAILED');
+});
+
 test('correlated terminal completed event is authoritative', async () => {
   const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
@@ -667,6 +718,21 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('approved review auto-merges by default and respects opt-out', async () => {
+  for (const [autoMerge, expected] of [[undefined,1],[false,0]]) {
+    const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-auto',autoMerge};
+    const store=new InMemoryStore(reviewJob); let merges=0; let mergedSha=null;
+    store.mergePullRequest=async sha=>{ merges+=1; mergedSha=sha; };
+    const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+    await reconciler.reconcile('j');
+    const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+    assert.ok(created);
+    await reconciler.handleEvent(eventFor('j',created.id,null,'review.approved','succeeded','approved','orchestrator',{review:{headSha:'sha-auto',summary:'approved',blockingFindings:[]}}));
+    assert.equal(merges,expected);
+    if (expected) assert.equal(mergedSha,'sha-auto');
+  }
+});
+
 test('review outcomes persist durably and old SHA evidence is ignored after head changes', async () => {
   const reviewJob = { ...job([task('work', 'SUCCEEDED')]), headSha: 'sha-review-1' };
   const store = new InMemoryStore(reviewJob);
@@ -680,6 +746,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'approved', blockingFindings: [], evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'approved');
   assert.equal((await store.load('j')).review?.evidence?.data?.review?.summary, 'approved');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'SUCCEEDED');
   const changed = await store.load('j');
   changed.headSha = 'sha-review-2';
   await store.saveJob(changed);
