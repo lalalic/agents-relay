@@ -95,14 +95,13 @@ For an explicit live check of the one-shot Temporary Chat path, use an
 authenticated browser session and run:
 
 ~~~sh
-AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY=1 \
-AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT=/path/to/chatgpt-browser-worker/agents/browser-worker.agent.md \
 npm run test:chatgpt-temp-quality
 ~~~
 
-This small suite covers verified submission, owned-tab cleanup at the
-terminal-event barrier, and safe cleanup when acceptance fails. It does not
-exercise durable-thread, resume, or retry behavior.
+This small live suite covers three Temporary Chat quality gates: a normal text
+prompt, a prompt with an attachment, and a managed Relay task that must publish
+exactly one worker-owned `task.started` plus exactly one terminal task event. It
+does not exercise durable-thread, resume, or retry behavior.
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
 

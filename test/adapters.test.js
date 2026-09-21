@@ -56,6 +56,24 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
   }
 });
 
+
+
+test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-files-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const requests = [];
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: 'u-files' }, requests),
+    });
+    await adapter.launch(task({ attachments: ['/tmp/a.txt', '/tmp/b.png'] }), new AbortController().signal).promise;
+    assert.deepEqual(requests[0].files, ['/tmp/a.txt', '/tmp/b.png']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('ChatGptAdapter loads chatgpt-browser-worker only from the resolved execution context', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-resolved-browser-worker-'));
   try {
