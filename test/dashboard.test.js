@@ -21,8 +21,8 @@ test('dashboard exposes the operations-console structure safely', () => {
 
 
 test('SSE connection health stays out of the durable job event feed', () => {
-  assert.match(dashboardHtml, /stream\.onopen=\(\)=>\{connection\.textContent='Live · event stream connected';connection\.className='status-pill ok';\}/);
-  assert.match(dashboardHtml, /stream\.onerror=\(\)=>\{connection\.textContent='Degraded · event stream reconnecting';connection\.className='status-pill warn';\}/);
+  assert.match(dashboardHtml, /stream\.onopen=\(\)=>\{connection\.textContent='';connection\.setAttribute\('aria-label','Event stream connected'\);connection\.className='status-pill ok';\}/);
+  assert.match(dashboardHtml, /stream\.onerror=\(\)=>\{connection\.textContent='';connection\.setAttribute\('aria-label','Event stream reconnecting'\);connection\.className='status-pill warn';\}/);
   assert.doesNotMatch(dashboardHtml, /addEvent\(\{type:'connection'/);
 });
 
