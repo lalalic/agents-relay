@@ -18,7 +18,7 @@ const route = { provider: 'openai', model: 'gpt-5', decidedBy: 'test', decidedAt
 const output = { kind: 'task_pr' };
 const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do the described work', output, routing: route, state, attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
 const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks });
-const spec = id => ({ id, input: 'do the described work', adapter: 'codex', output, routing: route });
+const spec = id => ({ id, input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
 function executionHarness(bus) {
   return {
     name: 'codex',
@@ -49,6 +49,14 @@ test('execution mode and planner result markers round-trip', () => {
 test('planner rejects command-like shell tasks and requires output', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',adapter:'codex'}] }), /output is required/);
+});
+
+test('planner preserves worker requirements for worker-router selection', () => {
+  const result = parsePlannerResult({ objective_status: 'in_progress', assessment: 'work', next_tasks: [{
+    id: 'resource-aware', input: 'do work', adapter: 'codex', output,
+    workerRequirements: { capabilities: ['model', 'browser-harness'], runtime: 'hosted', taskKind: 'research', labels: { region: 'ca' } },
+  }] });
+  assert.deepEqual(result.next_tasks[0].workerRequirements, { capabilities: ['model', 'browser-harness'], runtime: 'hosted', taskKind: 'research', trustDomain: undefined, region: undefined, labels: { region: 'ca' } });
 });
 
 test('planner priority normalization preserves canonical values and accepts safe aliases', () => {

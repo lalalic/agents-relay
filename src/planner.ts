@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, taskOverallTimeoutMs } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
@@ -15,6 +15,7 @@ export type PlannerTaskSpec = {
   agentName?: string;
   dependencies?: string[];
   capabilities?: string[];
+  workerRequirements?: WorkerRequirements;
   adapter?: AdapterName;
   output?: TaskOutput;
   routing?: RoutingDecision;
@@ -29,7 +30,7 @@ export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortS
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
-  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
+  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
 }
 
 export function orchestratorPlanningDecision(job: Job, tasks: readonly Task[], id: string, parentTaskId: string | null, round: number, source: PlanningDecisionSource = 'orchestrator'): Task {
@@ -50,6 +51,23 @@ function stringArray(value: unknown, field: string, fallback: string[] = []): st
   if (value === undefined) return fallback;
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.length === 0)) throw new Error(`Planner ${field} must be an array of non-empty strings`);
   return [...value];
+}
+function workerRequirements(value: unknown, field: string): WorkerRequirements | undefined {
+  if (value === undefined || value === null) return undefined;
+  const root = record(value);
+  const capabilities = stringArray(root.capabilities, `${field}.capabilities`);
+  const optional = (name: string): string | undefined => optionalString(root[name], `${field}.${name}`);
+  const labelsValue = root.labels;
+  let labels: Record<string, string> | undefined;
+  if (labelsValue !== undefined) {
+    if (!labelsValue || typeof labelsValue !== 'object' || Array.isArray(labelsValue)) throw new Error(`Planner ${field}.labels must be an object`);
+    labels = {};
+    for (const [key, item] of Object.entries(labelsValue)) {
+      if (typeof item !== 'string' || item.length === 0) throw new Error(`Planner ${field}.labels values must be non-empty strings`);
+      labels[key] = item;
+    }
+  }
+  return { capabilities, runtime: optional('runtime'), taskKind: optional('taskKind'), trustDomain: optional('trustDomain'), region: optional('region'), labels };
 }
 function rawValue(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
@@ -97,13 +115,14 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const storySize = sizeValue as StorySize;
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
     const route = routing(task.routing, 'next_tasks[' + index + '].routing');
+    const requirements = workerRequirements(task.workerRequirements ?? task.requirements, 'next_tasks[' + index + '].workerRequirements');
     const timeoutMs = task.timeoutMs === undefined ? taskOverallTimeoutMs(storySize, route?.reasoning) : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
       id, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'),
-      dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'),
+      dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       adapter: adapter as AdapterName, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };

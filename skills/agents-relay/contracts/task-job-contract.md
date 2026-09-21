@@ -5,7 +5,18 @@ This contract is the shared protocol for every component that creates, schedules
 ## Task producers
 
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
-Task producers choose semantic task properties such as objective, dependencies, adapter/routing, priority, and `storySize`. They do not normally choose raw timeout milliseconds.
+Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
+
+## Worker routing order
+
+Every new model-backed executable task follows this order:
+
+1. The planner declares `workerRequirements` (capabilities and optional runtime, task-kind, trust-domain, region, and label constraints).
+2. `worker-router` resolves those requirements against available workers and a fresh on-demand usage snapshot from the shared usage registry. It applies capability/availability hard gates before considering resource evidence.
+3. `model-router` chooses provider/model/reasoning details for the selected worker.
+4. Relay persists the selected worker and model routing on the durable task before launch.
+
+Planner output must not hard-code `codex`/`chatgpt`, provider preference, or usage probes. The worker-router and model-router are separate responsibilities; usage readers remain owned by `src/usage.ts` and are not duplicated in either router. Legacy task records that already contain adapter/routing metadata remain readable, but newly produced planner tasks must carry worker requirements.
 
 ## Story size
 
