@@ -72,9 +72,12 @@ test('task attempts display as cumulative count over three-attempt windows', () 
   assert.match(dashboardHtml, /field\('Attempt',attemptBudget\(task\)\)/);
 });
 
-test('selected job title appears in the panel heading', () => {
+test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /id="selected-job-title"/);
-  assert.match(dashboardHtml, /selectedJobTitle\.textContent='— '\+value\(job\.title\|\|job\.id\)/);
+  assert.doesNotMatch(dashboardHtml, />Selected job </);
+  assert.match(dashboardHtml, /selectedJobTitle\.textContent=value\(job\.title\|\|job\.id\)/);
+  assert.match(dashboardHtml, /#workspace-heading \{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
+  assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.doesNotMatch(dashboardHtml, /field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
   assert.match(dashboardHtml, /field\('GitHub state',job\.githubState/);
