@@ -48,6 +48,13 @@ retries and daemon restarts do not create duplicate work.
 Task producers must follow `skills/agents-relay/contracts/task-job-contract.md`; that shared skill contract defines story size, lifecycle events, review, and auto-merge semantics.
 All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 minutes, and `L`≈45 minutes of normal-reasoning execution, with `M` as the default. `high` reasoning doubles that overall window. ChatGPT Browser Worker start-ack timeout is derived as one third of the effective overall timeout, clamped between 1 and 5 minutes. Orchestrators and planners should choose `storySize`, not raw timeout milliseconds; `--timeout` remains only as an explicit compatibility/debug override.
 
+Autonomous jobs can also be scheduled without a Relay database. The job marker
+stores a five-field cron expression, IANA timezone, next run, and missed-run /
+concurrency policy; GitHub issue labels provide the indexed discovery surface.
+A repository heartbeat invokes `tick` at 10-minute resolution. See
+[Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
+operational contract.
+
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
 Use `--start` to create/reuse the job and submit its initial task in one invocation. Start mode requires explicit `--adapter`, `--model`, `--output`, and non-empty `--input`; the task ID defaults to `initial`. Re-running with the same task definition reuses that task and never duplicates it. Omitting `--start` preserves create-only behavior, leaving an `OPEN` job with zero tasks until a caller submits work.
 

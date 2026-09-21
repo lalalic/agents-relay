@@ -13,6 +13,7 @@ Provide a generic, shareable async agent job system where agents can submit dura
 - **Agent adapters** — agent execution backends such as Codex and ChatGPT browser workers.
 - **Event adapter** — required lifecycle channel for model-backed workers. Correlated terminal events drive task-state transitions, while GitHub PR/task markers persist the resulting durable state.
 - **Periodic watchdog** — low-frequency recovery sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state (30 minutes with webhook mode by default; 5 minutes without webhooks for compatibility).
+- **Indexed autonomous scheduler** — optional 10-minute GitHub Actions heartbeat that queries current/recent next-run labels and reconciles only scheduled autonomous PRs. Durable schedule state remains in the trusted job marker; see [scheduled autonomous jobs](scheduled-autonomous-jobs.md).
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice

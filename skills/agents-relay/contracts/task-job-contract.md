@@ -30,3 +30,5 @@ A normal task never merges a PR. After all non-superseded work gates pass, Relay
 ## Fixed and autonomous jobs
 
 `fixed` jobs execute the orchestrator-provided task set and then proceed to final review. `autonomous` jobs may ask the planner for additional task batches. Planner-produced tasks must obey this same contract, including explicit `storySize`.
+
+A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` and one `agents-relay:next-run:*` label index. The heartbeat must discover due PRs by those labels, claim a slot idempotently in the marker, advance the durable next-run and label, and then use the normal reconciliation, event, review, and merge contracts.

@@ -17,10 +17,11 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner, orchestratorPlanningDecision } from './planner.js';
-import { extendRetryBudget } from './scheduler.js';
+import { extendRetryBudget, parseJobSchedule } from './scheduler.js';
+import { dueBuckets, processDueScheduledJobs } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
-const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|status|reconcile|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|status|reconcile|tick|retry|cancel|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -38,6 +39,7 @@ Commands:
   agent-discover           Find registered agents matching hard filters
   status                   Show the durable job state
   reconcile                Run reconciliation once
+  tick                     Run the indexed autonomous scheduler heartbeat
   retry|cancel             Change a task state
   serve                    Run the dashboard and reconciliation service
 
@@ -60,6 +62,11 @@ Common options:
   --title TEXT             Job title
   --objective TEXT         Objective for autonomous mode
   --mode fixed|autonomous  Execution mode (default: fixed)
+  --schedule CRON          Autonomous schedule; minute resolution is 10 minutes
+  --schedule-timezone TZ   IANA timezone for --schedule (default: UTC)
+  --schedule-next-run ISO  Optional first run (must match the cron expression)
+  --missed-run-policy run|skip   Run each missed slot or skip to the next future slot
+  --schedule-concurrency skip|queue  Skip or retain the slot while work is active
   --start                   Create/reuse the job and submit its initial task
 
 Example:
@@ -142,6 +149,13 @@ Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id
 
 Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
+  tick: `Process autonomous jobs indexed into current/recent GitHub next-run buckets.
+
+Required: --repo OWNER/REPO and --events nats.
+Common: --lookback-buckets N (default 3), plus normal reconcile runtime options.
+
+Example:
+  npx agents-relay tick --repo OWNER/REPO --events nats --nats-url nats://127.0.0.1:4222`,
   init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
 
 Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
@@ -230,12 +244,24 @@ export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
 }
 function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
 function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
+function scheduleFromArgs(args: string[]): Job['schedule'] {
+  const cron = arg(args, '--schedule');
+  if (!cron) return undefined;
+  const nextRunAt = arg(args, '--schedule-next-run') || undefined;
+  return parseJobSchedule({
+    cron,
+    timezone: arg(args, '--schedule-timezone', 'UTC'),
+    nextRunAt,
+    missedRunPolicy: arg(args, '--missed-run-policy', 'skip') as 'run' | 'skip',
+    concurrencyPolicy: arg(args, '--schedule-concurrency', 'skip') as 'skip' | 'queue',
+  });
+}
 
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -251,6 +277,7 @@ export async function ensureManagedGitHubJob(
   if (!job.description && pr.body) job.description = pr.body;
   if (options.objective) job.objective = options.objective;
   if (options.executionMode) job.executionMode = options.executionMode;
+  if (options.schedule) job.schedule = options.schedule;
   if (options.autoMerge !== undefined) job.autoMerge = options.autoMerge;
   if (options.reviewEnabled !== undefined) job.reviewEnabled = options.reviewEnabled;
   if (options.priority) job.priority = options.priority;
@@ -427,6 +454,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     objective: arg(args, '--objective') || undefined,
     priority: priority(args),
     executionMode: requestedExecutionMode(args),
+    schedule: scheduleFromArgs(args),
     autoMerge: !hasArg(args, '--no-auto-merge'),
     reviewEnabled: !hasArg(args, '--no-review'),
     continuation: continuation(args),
@@ -503,7 +531,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
     const now = new Date().toISOString();
@@ -524,6 +552,26 @@ async function main(): Promise<void> {
   if (command === 'retry' || command === 'cancel') { const id = arg(args, '--task-id'); const task = job.tasks.find(item => item.id === id); if (!task) throw new Error(`Task ${id} not found`); if (command === 'retry') task.maxAttempts = extendRetryBudget(task); task.state = command === 'retry' ? 'READY' : 'CANCELLED'; task.error = command === 'retry' ? null : 'Cancelled by user'; task.updatedAt = new Date().toISOString(); await store.saveTask(task); if (command === 'retry' && job.state !== 'RUNNING') { job.state = 'RUNNING'; job.updatedAt = task.updatedAt; await store.saveJob(job); } await saveLocal(localFile, job); await publishWake(bus, job, task.id, `${task.id} ${command} requested`); console.log(`${id}: ${task.state}`); return; }
   const reconciler = runtime(store, args, bus);
   if (command === 'reconcile') { await reconciler.reconcile(job.id); await reconciler.idle(); const finalState = await store.load(job.id); await saveLocal(localFile, finalState); console.log(JSON.stringify(finalState, null, 2)); return; }
+  if (command === 'tick') {
+    const repo = repository(args);
+    if (!bus) throw new Error('tick requires --events nats because model-backed autonomous tasks need authoritative events');
+    const auth = await githubAuthContext(args);
+    const nowValue = arg(args, '--now');
+    const now = nowValue ? new Date(nowValue) : new Date();
+    if (Number.isNaN(now.getTime())) throw new Error('--now must be a valid ISO timestamp');
+    const results = await processDueScheduledJobs({
+      client: auth.client,
+      repository: repo,
+      trustedAuthors: auth.trustedAuthors,
+      buckets: dueBuckets(now, integerArg(args, '--lookback-buckets', 3)),
+      now,
+      engine: job => runtime(new GitHubStore(auth.client, repo, job.prNumber, auth.trustedAuthors), args, bus),
+    });
+    try {
+      console.log(JSON.stringify({ repository: repo, processed: results.length, results }, null, 2));
+    } finally { await bus.close?.(); }
+    return;
+  }
   if (command === 'serve') { await startService(args); return; }
   throw new Error(usage);
 }
