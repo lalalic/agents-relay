@@ -85,7 +85,7 @@ function immutableTaskDefinition(task: Task): unknown {
   return {
     jobId: task.jobId, id: task.id, priority: task.priority, storySize: task.storySize ?? 'M', projectName: task.projectName, agentName: task.agentName,
     kind: task.kind ?? 'work', planningDecisionId: task.planningDecisionId, planningSource: task.planningSource, planningRound: task.planningRound, parentTaskId: task.parentTaskId, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, workerSelection: task.workerSelection, adapter: task.adapter,
-    input: task.input, output: task.output, routing, chatgptTabClosePolicy: task.chatgptTabClosePolicy ?? 'after-start', continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
+    input: task.input, attachments: task.attachments, output: task.output, routing, chatgptTabClosePolicy: task.chatgptTabClosePolicy ?? 'after-start', continuation: task.continuation ?? null, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs
   };
 }
 function sameTaskDefinition(left: Task, right: Task): boolean {

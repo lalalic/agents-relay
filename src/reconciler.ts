@@ -9,11 +9,13 @@ import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } f
 import { ExecutionContext, ExecutionContextRoots, ExecutionRole, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
 import { WorkerRequirements, WorkerSelection } from './types.js';
+import { AccountUsageOverview } from './usage.js';
+import { selectWorker, usageForProvider, workerCandidates } from './worker-routing.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
@@ -121,6 +123,7 @@ export class Reconciler {
       }
       await this.recoverLostExecutions(job, now);
       await this.recoverPlannerChildren(job);
+      await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       let scheduled = schedule(await this.store.load(jobId));
       if (prState === 'OPEN') {
@@ -197,30 +200,8 @@ export class Reconciler {
   private async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: ReviewerCandidate; selection: WorkerSelection; reason: 'worker-diversity' | 'provider-model-diversity' | 'eligible-fallback' }> {
     const configured = this.options.reviewer;
     const registered = await this.store.listAgents();
-    const candidates: ReviewerCandidate[] = this.options.adapters
-      .filter(adapter => adapter.name !== 'orchestrator')
-      .flatMap(adapter => {
-        const defaults = adapter.name === 'chatgpt'
-          ? { provider: 'chatgpt', model: 'account-defaults' }
-          : { provider: 'openai', model: 'gpt-5.6-luna' };
-        const workers = registered.filter(worker => worker.runtime.adapter === adapter.name);
-        return (workers.length > 0 ? workers : [undefined]).map(worker => ({
-          workerId: worker?.id ?? adapter.id,
-          adapter: adapter.name as Exclude<Task['adapter'], 'orchestrator'>,
-          capabilities: worker?.capabilities ?? adapter.capabilities,
-          runtime: worker?.runtime.adapter ?? adapter.name,
-          trustDomains: worker?.routing.trustDomains,
-          region: worker?.routing.regions?.[0],
-          labels: worker?.routing.labels,
-          availability: worker?.availability,
-          routing: {
-            provider: worker?.runtime.provider ?? defaults.provider,
-            model: worker?.runtime.model ?? defaults.model,
-            decidedBy: 'model-router',
-            decidedAt: new Date().toISOString(),
-          },
-        }));
-      });
+    const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
+    const candidates: ReviewerCandidate[] = workerCandidates(this.options.adapters, registered, usage);
     let constrained = candidates.filter(candidate => {
       if (configured?.workerId && configured.workerId !== candidate.workerId) return false;
       if (configured?.adapter && configured.adapter !== candidate.adapter) return false;
@@ -233,7 +214,28 @@ export class Reconciler {
     if (constrained.length === 0 && configured?.adapter && configured.routing) {
       constrained = [{ workerId: configured.workerId ?? configured.adapter, adapter: configured.adapter, capabilities: ['model'], runtime: configured.adapter, routing: configured.routing }];
     }
-    return selectReviewer(constrained, implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
+    const result = selectReviewer(constrained, implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
+    const resource = usageForProvider(usage, result.candidate.routing.provider);
+    result.selection.resourceHealthy = resource.healthy;
+    result.selection.resourceProvider = resource.healthy === undefined ? undefined : result.candidate.routing.provider;
+    result.selection.resourceUsedPercent = resource.usedPercent;
+    return result;
+  }
+
+  private async routeExecutableTasks(job: Job): Promise<void> {
+    const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
+    const candidates = workerCandidates(this.options.adapters, await this.store.listAgents(), usage);
+    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && !['SUCCEEDED', 'CANCELLED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
+      const requirements = task.workerRequirements ?? { capabilities: task.capabilities.length > 0 ? task.capabilities : ['model'] };
+      const routed = selectWorker(candidates, requirements);
+      task.workerSelection = routed.selection;
+      task.adapter = routed.candidate.adapter;
+      task.routing = routed.candidate.routing;
+      task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
+      task.updatedAt = new Date().toISOString();
+      await this.store.saveTask(task);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'orchestrator', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+    }
   }
   private isSupersededTask(task: Task): boolean {
     return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
@@ -526,7 +528,7 @@ export class Reconciler {
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: spec.adapter as Task['adapter'], input: spec.input, output: spec.output, routing: spec.routing, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M', spec.routing?.reasoning), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
   private clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);

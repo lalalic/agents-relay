@@ -50,6 +50,9 @@ export type WorkerSelection = {
   capabilities: string[];
   selectedBy: string;
   selectedAt: string;
+  resourceHealthy?: boolean;
+  resourceProvider?: string;
+  resourceUsedPercent?: number;
 };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
@@ -58,7 +61,7 @@ export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: str
 export type Task = {
   jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number;
-  input: string; output?: TaskOutput; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
+  input: string; attachments?: string[]; output?: TaskOutput; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;

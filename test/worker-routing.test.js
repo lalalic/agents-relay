@@ -4,6 +4,7 @@ import { parsePlannerResult } from '../dist/planner.js';
 import { discoverAgents } from '../dist/registry.js';
 import { readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
 import { selectReviewer } from '../dist/reviewer-routing.js';
+import { selectWorker } from '../dist/worker-routing.js';
 
 const generatedAt = '2026-09-21T16:00:00.000Z';
 
@@ -139,4 +140,115 @@ test('reviewer diversity never bypasses hard availability and capability gates',
   ], [{ adapter: 'codex', workerSelection: { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, agentName: 'builder', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } }], { capabilities: ['model'] });
   assert.equal(decision.selection.workerId, 'same-but-eligible');
   assert.equal(decision.reason, 'eligible-fallback');
+});
+
+test('worker routing avoids an otherwise eligible worker under resource pressure', () => {
+  const candidates = [
+    { workerId: 'busy', adapter: 'codex', capabilities: ['model'], resourceHealthy: false, resourceProvider: 'openai', resourceUsedPercent: 100, routing: { provider: 'openai', model: 'busy-model', decidedBy: 'model-router', decidedAt: generatedAt } },
+    { workerId: 'healthy', adapter: 'chatgpt', capabilities: ['model'], resourceHealthy: true, resourceProvider: 'chatgpt', routing: { provider: 'chatgpt', model: 'healthy-model', decidedBy: 'model-router', decidedAt: generatedAt } },
+  ];
+  const decision = selectWorker(candidates, { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'healthy');
+  assert.equal(decision.selection.resourceHealthy, true);
+});
+
+test('planner accepts executable tasks without adapter or model routing', () => {
+  const result = parsePlannerResult({
+    objective_status: 'in_progress',
+    assessment: 'work',
+    next_tasks: [{ id: 'unrouted', input: 'do work', workerRequirements: { capabilities: ['model'] }, output: { kind: 'task_pr' }, storySize: 'S' }],
+  });
+  assert.equal(result.next_tasks[0].adapter, undefined);
+  assert.equal(result.next_tasks[0].routing, undefined);
+  assert.equal(result.next_tasks[0].workerRequirements?.capabilities[0], 'model');
+});
+
+test('reconciler materializes an unrouted planner child through worker-router before launch', async () => {
+  const { InMemoryStore } = await import('../dist/store.js');
+  const { Reconciler } = await import('../dist/reconciler.js');
+  const { MemoryEventBus } = await import('../dist/events.js');
+  const now = new Date().toISOString();
+  const planner = {
+    jobId: 'routing-job',
+    id: 'planner-1',
+    kind: 'planner',
+    parentTaskId: null,
+    dependencies: [],
+    capabilities: ['planner'],
+    adapter: 'orchestrator',
+    input: 'plan',
+    state: 'SUCCEEDED',
+    attempt: 1,
+    maxAttempts: 1,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    executionId: null,
+    threadId: null,
+    result: { summary: 'planned' },
+    plannerResult: {
+      objective_status: 'in_progress',
+      assessment: 'route next',
+      next_tasks: [{
+        id: 'planned-work',
+        input: 'do work',
+        workerRequirements: { capabilities: ['model'] },
+        output: { kind: 'task_pr' },
+        storySize: 'S',
+      }],
+    },
+    error: null,
+    timeoutMs: 0,
+    createdAt: now,
+    updatedAt: now,
+    planningDecisionId: 'planner-1',
+    planningSource: 'model-planner',
+    planningRound: 1,
+  };
+  const job = {
+    id: 'routing-job',
+    title: 'Routing',
+    objective: 'route work',
+    executionMode: 'fixed',
+    prNumber: 1,
+    repository: 'owner/repo',
+    state: 'RUNNING',
+    continuation: null,
+    createdAt: now,
+    updatedAt: now,
+    tasks: [planner],
+  };
+  const store = new InMemoryStore(job);
+  const bus = new MemoryEventBus();
+  const adapter = {
+    name: 'codex',
+    id: 'codex',
+    capabilities: ['model', 'codex'],
+    launch() { throw new Error('maxConcurrent=0 should prevent launch'); },
+  };
+  const usageSnapshotProvider = async () => ({
+    generatedAt: now,
+    providers: [{ id: 'openai', label: 'OpenAI', usage: usage(10) }],
+    credits: [],
+  });
+  const reconciler = new Reconciler(store, {
+    owner: 'test',
+    adapters: [adapter],
+    eventBus: bus,
+    maxConcurrent: 0,
+    usageSnapshotProvider,
+  });
+  await reconciler.reconcile('routing-job');
+  const routed = (await store.load('routing-job')).tasks.find(task => task.id === 'planned-work');
+  assert.equal(routed?.adapter, 'codex');
+  assert.equal(routed?.workerSelection?.workerId, 'codex');
+  assert.equal(routed?.routing?.provider, 'openai');
+  assert.equal(routed?.routing?.decidedBy, 'model-router');
+});
+
+test('known near-exhausted quota yields to an otherwise eligible worker with unknown quota', () => {
+  const decision = selectWorker([
+    { workerId: 'codex', adapter: 'codex', capabilities: ['model'], resourceHealthy: true, resourceProvider: 'openai', resourceUsedPercent: 95, routing: { provider: 'openai', model: 'gpt-5.6-luna', decidedBy: 'model-router', decidedAt: generatedAt } },
+    { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'], routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
+  ], { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'chatgpt');
 });
