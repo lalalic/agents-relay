@@ -119,7 +119,7 @@ Example:
   submit: `Queue a task for a managed job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, --id JOB_ID, and --input TEXT.
-Required for worker tasks: --adapter codex|chatgpt, --model MODEL, and --output task-pr|file. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --max-attempts N. Story size defaults to M. Task producers follow the shared Task / Job Contract; prefer --story-size over raw --timeout. Model-backed execution requires --events nats in the running reconciler/daemon.
+Required for worker tasks: --adapter codex|chatgpt|orchestrator and --output task-pr|file. Codex/ChatGPT also require --model MODEL. File output also requires --output-path PATH.\nCommon: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --max-attempts N. Story size defaults to M. Task producers follow the shared Task / Job Contract; prefer --story-size over raw --timeout. Model-backed execution requires --events nats in the running reconciler/daemon.
 
 Example:
   npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter codex --provider openai --model gpt-5-6 --output task-pr --input "Run the required tests and report the result through events."`,
@@ -292,15 +292,15 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
   const outputKind = arg(args, '--output');
   const outputPath = arg(args, '--output-path');
   const input = arg(args, '--input');
-  if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('submit adapter must be codex or chatgpt');
-  if (!model) throw new Error('submit requires --model for codex/chatgpt tasks');
+  if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('submit adapter must be codex, chatgpt, or orchestrator');
+  if (adapter !== 'orchestrator' && !model) throw new Error('submit requires --model for codex/chatgpt tasks');
   if (requireInput && !input) throw new Error('job create --start requires --input');
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('submit requires --output task-pr|file');
   if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
-  const routing: RoutingDecision = { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
+  const routing: RoutingDecision | undefined = adapter === 'orchestrator' ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
   const size = storySize(args);
-  const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing.reasoning)) : taskOverallTimeoutMs(size, routing.reasoning);
+  const timeoutMs = adapter === 'orchestrator' ? 0 : hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : taskOverallTimeoutMs(size, routing?.reasoning);
   return {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),

@@ -133,7 +133,14 @@ export class Reconciler {
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
         for (const task of scheduled.tasks.filter(t => t.state === 'READY').sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
           if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
-          else await this.launch(scheduled, task);
+          else if (task.adapter === 'orchestrator') {
+            transitionTask(task, 'RUNNING');
+            task.leaseOwner = null;
+            task.leaseExpiresAt = null;
+            task.executionId = null;
+            await this.store.saveTask(task);
+            await this.emit(eventFor(scheduled.id, task.id, task.parentTaskId, 'task.orchestrator_assigned', 'running', `Task ${task.id} assigned to orchestrator self`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }));
+          } else await this.launch(scheduled, task);
         }
       }
       const finalState = schedule(await this.store.load(jobId));
@@ -567,7 +574,7 @@ export class Reconciler {
   private async applyTerminalEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !['codex', 'chatgpt'].includes(task.adapter)) return;
+    if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;
     if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
       if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
       transitionTask(task, 'RUNNING');
