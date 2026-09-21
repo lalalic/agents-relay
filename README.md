@@ -93,6 +93,14 @@ V1 assumes one active runner/daemon per job. Use a distributed atomic lease befo
 
 Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
 
+XChat and other orchestrators can consume Relay's exact shared discovery implementation without duplicating filesystem search logic:
+
+~~~sh
+npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator
+~~~
+
+The command resolves concrete paths only for the current execution. Use `--skills` / `--agents` for explicit selections; no resolved absolute path is written into durable task state.
+
 The minimal agent-network surface is machine-driven registration and discovery. `agent-register` persists an agent identity, responsibility boundary, claimed capabilities, endpoint/runtime, availability, and routing metadata in a trusted PR marker; `agent-discover` applies hard filters and returns evidence-backed candidates. Adapters remain runtimes, not agent identities. See [docs/architecture.md](docs/architecture.md) for the constrained future remote submission contract.
 
 ### Agent worker lifecycle
@@ -103,7 +111,7 @@ Every model-backed task declares a durable output with `--output task-pr` or `--
 
 For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The ChatGPT worker-owned tab follows the configured close policy: `after-start` waits for the correlated start acknowledgement, `never` keeps it open for debug, and `after-terminal` waits for a new exact-task terminal event; start-ack failure closes only the owned tab after 60 seconds. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
-The ChatGPT adapter uses the packaged `chatgpt-browser-worker` as a one-shot submitter. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
+The ChatGPT adapter uses the `chatgpt-browser-worker` path selected by the shared execution-context resolver; Relay does not bundle its own copy. The resolver applies project-local > Neo shared > global `~/.agents` precedence at execution time, so durable tasks store names/intent rather than stale absolute skill paths. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 
 ~~~sh
 npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \

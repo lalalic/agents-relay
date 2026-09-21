@@ -56,6 +56,33 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
   }
 });
 
+test('ChatGptAdapter loads chatgpt-browser-worker only from the resolved execution context', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-resolved-browser-worker-'));
+  try {
+    const skillRoot = join(root, 'chatgpt-browser-worker');
+    const agents = join(skillRoot, 'agents');
+    await mkdir(agents, { recursive: true });
+    const skillPath = join(skillRoot, 'SKILL.md');
+    const agentPath = join(agents, 'browser-worker.agent.md');
+    await writeFile(skillPath, '---\nname: chatgpt-browser-worker\n---\n');
+    await writeFile(agentPath, '# resolved browser worker');
+    let definition = '';
+    const adapter = new ChatGptAdapter({
+      agentRunner: (value) => {
+        definition = value;
+        return { promise: Promise.resolve(JSON.stringify({ operation:'submit', status:'submitted', verified:true })), cancel() {} };
+      },
+    });
+    const executionContext = {
+      project:{name:'project',path:root,workspaceRoot:root,neoRoot:null,globalRoot:root}, role:'worker', instructions:[],
+      skills:[{name:'chatgpt-browser-worker',path:skillPath,source:'neo'}], agents:[], runtimes:[],
+      delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
+    };
+    await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;
+    assert.equal(definition, '# resolved browser worker');
+  } finally { await rm(root, { recursive:true, force:true }); }
+});
+
 test('ChatGptAdapter default runner invokes temporary one-shot driver', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-direct-browser-worker-'));
   try {
@@ -209,13 +236,4 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test('packaged ChatGPT worker uses bounded readiness and chunked ProseMirror insertion', async () => {
-  const source=await readFile(join(process.cwd(),'skills','chatgpt-browser-worker','scripts','_temporary_bh.py'),'utf8');
-  assert.match(source,/wait_until_stable/);
-  assert.match(source,/contenteditable/);
-  assert.match(source,/range\(0, len\(prompt\), 256\)/);
-  assert.match(source,/execCommand\('insertText'/);
-  assert.doesNotMatch(source,/Temporary Chat prompt was not observed in the composer/);
 });

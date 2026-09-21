@@ -87,6 +87,8 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'repair', '--help'], 'Repair duplicate durable markers'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task update'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable task fields'],
+    ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
+    ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
     ['dist/cli.js', ['submit', '--help'], 'Queue a task for a managed job'],
     ['dist/cli.js', ['record', '--help'], 'Backfill work completed outside the relay'],
@@ -164,6 +166,7 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.get('dist/relayd.js'), 0o755);
   assert.equal(files.has('skills/agents-relay/SKILL.md'), true);
   assert.equal(files.has('skills/agents-relay/agents/planner.agent.md'), true);
+  assert.equal(files.has('skills/chatgpt-browser-worker/SKILL.md'), false);
   assert.equal(files.has('skills/agents-relay/contracts/task-job-contract.md'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);

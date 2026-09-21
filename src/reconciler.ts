@@ -6,16 +6,17 @@ import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
 import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { ExecutionContext, ExecutionContextRoots, ExecutionRole, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
-export function managedWorkerInput(job: Job, task: Task): string {
+export function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): string {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
@@ -27,9 +28,9 @@ PR: ${prUrl}
 Job: ${job.id}
 Task: ${task.id}
 Parent task: ${task.parentTaskId ?? 'none'}
-Project: ${task.projectName ?? 'unspecified'}
+Project: ${task.projectName ?? context?.project.name ?? 'unspecified'}
 
-${task.input}
+${context ? executionContextPrompt(context) + '\n\n' : ''}${task.input}${task.parentTaskId ? '\n\n[Nested delegation contract]\nAny sub-work must be created as a durable Agents Relay child task with parentTaskId=' + task.id + '; do not directly spawn arbitrary child agents.' : ''}
 
 [Output contract]
 ${output}
@@ -245,6 +246,15 @@ export class Reconciler {
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
   }
+  private async resolvedContext(job: Job, task: Task, role: ExecutionRole): Promise<ExecutionContext> {
+    const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
+    return resolveExecutionContext(projectPath, role, {
+      ...(this.options.executionContextRoots ?? {}),
+      registeredAgents: await this.store.listAgents(),
+      runtimes: this.options.adapters.map(adapter => ({ name: adapter.name, id: adapter.id, capabilities: [...adapter.capabilities] })),
+    });
+  }
+
   private async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
@@ -260,8 +270,11 @@ export class Reconciler {
       return;
     }
     let workerInput: string;
+    let executionContext: ExecutionContext;
     try {
-      workerInput = managedWorkerInput(job, task);
+      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.parentTaskId ? 'nested-worker' : 'worker';
+      executionContext = await this.resolvedContext(job, task, role);
+      workerInput = managedWorkerInput(job, task, executionContext);
     } catch (error) {
       transitionTask(task, 'BLOCKED');
       task.error = error instanceof Error ? error.message : String(error);
@@ -279,7 +292,7 @@ export class Reconciler {
     await this.store.saveTask(task);
     const controller = new AbortController();
     let execution: Execution;
-    const workerTask = { ...task, input: workerInput };
+    const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
@@ -288,6 +301,7 @@ export class Reconciler {
     const launchContext: LaunchContext = {
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
+      executionContext,
     };
     try {
       execution = adapter.launch(workerTask, controller.signal, launchContext);
@@ -362,7 +376,10 @@ export class Reconciler {
     const timer = setTimeout(() => controller.abort(), task.timeoutMs);
     this.plannerLive.set(task.id, { executionId: executionId as string, controller, timer });
     let promise: Promise<import('./planner.js').PlannerResult>;
-    try { promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId }, controller.signal); }
+    try {
+      const executionContext = await this.resolvedContext(job, task, 'planner');
+      promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext }, controller.signal);
+    }
     catch (error) { await this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))); return; }
     this.detach(promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error)))), job.id, task.id, 'planner completion');
   }
