@@ -140,7 +140,12 @@ export class StartAckTimeout extends LaunchFailure {}
 type BrowserWorkerRuntime = { definition: string; root: string };
 async function loadBrowserWorkerRuntime(context: ExecutionContext | undefined, explicit?: string): Promise<BrowserWorkerRuntime> {
   const resolvedSkill = context?.skills.find(skill => skill.name === 'chatgpt-browser-worker');
-  const candidate = explicit ?? (resolvedSkill ? join(dirname(resolvedSkill.path), 'agents', 'browser-worker.agent.md') : undefined);
+  // Once a worker receives a resolved execution context, that context owns
+  // skill discovery. The explicit path remains the fallback for direct
+  // adapter use, where no shared context has been resolved yet.
+  const candidate = resolvedSkill
+    ? join(dirname(resolvedSkill.path), 'agents', 'browser-worker.agent.md')
+    : explicit;
   if (!candidate) throw new Error('chatgpt-browser-worker is not visible in the resolved execution context');
   try {
     await access(candidate);
