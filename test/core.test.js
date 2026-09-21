@@ -765,6 +765,17 @@ test('merged zero-task PR becomes COMPLETED even when scheduler would leave it O
   assert.equal(result.state,'COMPLETED');
 });
 
+test('merged PR authoritatively completes jobs stuck in failed, blocked, or cancelled states', async () => {
+  for (const state of ['FAILED','BLOCKED','CANCELLED']) {
+    const root={...job([]),state};
+    const store=new InMemoryStore(root);
+    store.pullRequestState=async()=> 'MERGED';
+    const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+    const result=await reconciler.reconcile('j');
+    assert.equal(result.state,'COMPLETED', state);
+  }
+});
+
 test('completed jobs create one SHA-bound reviewer task and suppress duplicates', async () => {
   const work = task('work', 'SUCCEEDED');
   const reviewJob = { ...job([work]), headSha: 'sha-review-1' };
