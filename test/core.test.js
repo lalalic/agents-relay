@@ -500,6 +500,35 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 });
 
 
+test('scheduled autonomous cycle ignores failures from older slots and creates a fresh planner', async () => {
+  const oldFailed=task('old-failed','FAILED'); oldFailed.createdAt='2026-09-21T16:00:00.000Z'; oldFailed.updatedAt=oldFailed.createdAt;
+  const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
+  const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'RUNNING',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
+  const store=new InMemoryStore(root);
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  const fresh=saved.tasks.find(item=>item.id==='planner-2');
+  assert.ok(fresh);
+  assert.equal(fresh.kind,'planner');
+  assert.equal(fresh.parentTaskId,'planner-1');
+  assert.equal(fresh.state,'QUEUED');
+  assert.notEqual(saved.state,'FAILED');
+});
+
+test('scheduled autonomous cycle returns to WAITING without final review or auto-merge', async () => {
+  const current=task('planner-1','SUCCEEDED'); current.kind='planner'; current.adapter='orchestrator'; current.routing=undefined; current.agentName='planner'; current.createdAt='2026-09-21T16:21:00.000Z'; current.updatedAt=current.createdAt; current.plannerResult={objective_status:'satisfied',assessment:'this slot done',next_tasks:[]};
+  const root={...job([current]),executionMode:'autonomous',state:'RUNNING',headSha:'scheduled-sha',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:null}};
+  const store=new InMemoryStore(root); let merges=0; store.mergePullRequest=async()=>{merges+=1;};
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.state,'WAITING');
+  assert.ok(saved.schedule.lastRunAt);
+  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal(merges,0);
+});
+
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';

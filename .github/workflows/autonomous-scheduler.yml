@@ -1,0 +1,32 @@
+name: Autonomous scheduler
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: agents-relay-autonomous-scheduler
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Process due autonomous buckets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node dist/cli.js tick --repo "$GITHUB_REPOSITORY"
