@@ -10,7 +10,7 @@ import { NatsEventBus } from '../../dist/events.js';
 
 const agentPath = process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT;
 const route = { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'quality-suite', decidedAt: new Date().toISOString() };
-const SUBMIT_TIMEOUT_MS = 45_000;
+const SUBMIT_TIMEOUT_MS = 120_000;
 const EVENT_TIMEOUT_MS = 90_000;
 
 function bounded(timeoutMs, label) {
@@ -115,5 +115,6 @@ test('managed Temporary Chat follows the worker event contract', { timeout: EVEN
   } finally {
     await stopWatch();
     await stopSeen();
+    await bus.close();
   }
 });

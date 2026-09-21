@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 
 const live = process.env.AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY === '1';
-const timeoutMs = live ? 210_000 : 15_000;
-const child = spawn(process.execPath, ['--test', 'test/quality/temporary-chat.test.js'], {
+const timeoutMs = live ? 390_000 : 15_000;
+const child = spawn(process.execPath, ['--test', '--test-force-exit', 'test/quality/temporary-chat.test.js'], {
   stdio: 'inherit',
   env: process.env,
   detached: process.platform !== 'win32',
