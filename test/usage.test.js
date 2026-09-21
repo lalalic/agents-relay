@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, UsageRegistry } from '../dist/usage.js';
+import { CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
 
 function jsonl(value) { return JSON.stringify(value) + '\n'; }
 
@@ -85,4 +85,13 @@ test('usage registry includes credit providers only when readers are configured'
   assert.deepEqual(withoutCredits.credits, []);
   const withCredits = await new UsageRegistry(usage, usage, credit, credit).snapshot();
   assert.deepEqual(withCredits.credits.map(item => item.id), ['deepseek', 'openrouter']);
+});
+
+test('shared usage snapshot API reads on demand without caching the registry result', async () => {
+  let reads = 0;
+  const source = {
+    snapshot: async () => ({ generatedAt: String(++reads), providers: [], credits: [] }),
+  };
+  assert.equal((await readUsageSnapshot(source)).generatedAt, '1');
+  assert.equal((await readUsageSnapshot(source)).generatedAt, '2');
 });

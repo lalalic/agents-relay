@@ -42,6 +42,12 @@ export type AccountUsageOverview = {
   credits: CreditProvider[];
 };
 
+export type UsageSnapshot = AccountUsageOverview;
+
+export interface UsageSnapshotProvider {
+  snapshot(): Promise<UsageSnapshot>;
+}
+
 export interface UsageReader {
   read(): Promise<AccountUsageSnapshot>;
 }
@@ -332,7 +338,7 @@ export class OpenRouterCreditReader implements CreditReader {
   }
 }
 
-export class UsageRegistry {
+export class UsageRegistry implements UsageSnapshotProvider {
   constructor(
     private readonly openaiReader: UsageReader,
     private readonly zaiReader: UsageReader = new ZaiUsageReader(),
@@ -359,6 +365,11 @@ export class UsageRegistry {
       credits,
     };
   }
+}
+
+/** Read one fresh, on-demand snapshot from the shared usage source. */
+export function readUsageSnapshot(source: UsageSnapshotProvider): Promise<UsageSnapshot> {
+  return source.snapshot();
 }
 
 export class UnavailableUsageReader implements UsageReader {
