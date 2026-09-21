@@ -20,17 +20,20 @@ export function managedWorkerInput(job: Job, task: Task, context?: ExecutionCont
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
+  const taskUrl = task.taskUrl ?? `${prUrl}#issuecomment-${task.id}`;
   const output = task.output.kind === 'file'
     ? `file\nPath: ${task.output.path}`
     : `task/PR\nPR: ${prUrl}\nTask: ${task.id}`;
   return `[Agents Relay managed task]
-PR: ${prUrl}
-Job: ${job.id}
-Task: ${task.id}
-Parent task: ${task.parentTaskId ?? 'none'}
+Job URL: ${prUrl}
+Job ID: ${job.id}
+Task URL: ${taskUrl}
+Task ID: ${task.id}
 Project: ${task.projectName ?? context?.project.name ?? 'unspecified'}
 
-${context ? executionContextPrompt(context) + '\n\n' : ''}${task.input}${task.parentTaskId ? '\n\n[Nested delegation contract]\nAny sub-work must be created as a durable Agents Relay child task with parentTaskId=' + task.id + '; do not directly spawn arbitrary child agents.' : ''}
+Retrieve the durable job and task from GitHub before doing the work. Use whatever GitHub access this environment provides: the URLs, a GitHub integration/tool, or GitHub CLI/API. GitHub is the source of truth for task intent and declared output.
+
+${context ? executionContextPrompt(context) + '\n\n' : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
 
 [Output contract]
 ${output}
@@ -167,7 +170,7 @@ export class Reconciler {
     await this.store.saveJob(job);
   }
   private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    if (prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
+    if (job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
     if (!this.preReviewGatesPass(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;

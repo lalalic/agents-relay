@@ -707,17 +707,17 @@ test('dashboard usage failure returns 503 without double-sending headers', async
 });
 
 
-test('managed model worker input includes durable PR context without changing stored task input', async () => {
+test('managed model worker input contains durable links without duplicating stored task input', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
-  const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.input='implement the change'; t.output={kind:'task_pr'};
+  const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.taskUrl='https://github.com/lalalic/agents-relay/pull/7#issuecomment-5754690474'; t.input='implement the change'; t.output={kind:'task_pr'};
   const root=job([t]); root.prNumber=7; root.repository='lalalic/agents-relay';
   const input=managedWorkerInput(root,t);
-  assert.match(input,/PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
-  assert.match(input,/Job: j/);
-  assert.match(input,/Task: prompt-context/);
-  assert.match(input,/Parent task: parent/);
+  assert.match(input,/Job URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
+  assert.match(input,/Job ID: j/);
+  assert.match(input,/Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7#issuecomment-5754690474/);
+  assert.match(input,/Task ID: prompt-context/);
   assert.match(input,/Project: agents-relay/);
-  assert.match(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract — mandatory\]/); assert.match(input,/FIRST execution action/); assert.match(input,/task\.started/); assert.match(input,/MUST publish exactly one canonical terminal event/); assert.match(input,/publish task\.failed with the concrete reason BEFORE exiting/); assert.match(input,/Never exit after task\.started without publishing exactly one terminal task event/); assert.match(input,/\[Final event gate\]/);
+  assert.doesNotMatch(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract — mandatory\]/); assert.match(input,/FIRST execution action/); assert.match(input,/task\.started/); assert.match(input,/MUST publish exactly one canonical terminal event/); assert.match(input,/publish task\.failed with the concrete reason BEFORE exiting/); assert.match(input,/Never exit after task\.started without publishing exactly one terminal task event/); assert.match(input,/\[Final event gate\]/);
   assert.equal(t.input,'implement the change');
 });
 
@@ -752,6 +752,28 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+});
+
+test('no-review jobs complete without creating a reviewer task', async () => {
+  const work=task('work','SUCCEEDED');
+  const root={...job([work]),executionMode:'fixed',state:'RUNNING',headSha:'sha-no-review',reviewEnabled:false};
+  const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-no-review';
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[]});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.state,'COMPLETED');
+  assert.equal(saved.review,undefined);
+  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+});
+
+test('CLI init persists no-review independently from auto-merge', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'agents-relay-no-review-')); const file=join(directory,'job.json');
+  const result=spawn(process.execPath,[join('dist','cli.js'),'init','--file',file,'--id','no-review','--no-review'],{cwd:process.cwd()});
+  const [code]=await once(result,'exit'); assert.equal(code,0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  assert.equal(saved.reviewEnabled,false);
+  assert.equal(saved.autoMerge,true);
+  await rm(directory,{recursive:true,force:true});
 });
 
 test('approved review auto-merges by default and respects opt-out', async () => {

@@ -67,7 +67,7 @@ Example:
   'job create': `Create or reuse an open PR and persist one durable job marker.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
-Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous, --no-auto-merge.
+Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous, --no-auto-merge, --no-review.
 With --start, also require --adapter codex|chatgpt, --model MODEL, --output task-pr|file,
 and --input TEXT. The initial task ID defaults to 'initial'; use --task-id to override it.
 
@@ -235,7 +235,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; autoMerge?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -246,12 +246,13 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, initialPlanning: options.initialTasks?.length ? { status: 'pending', decisionId: 'planner-0' } : undefined, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, reviewEnabled: options.reviewEnabled ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, initialPlanning: options.initialTasks?.length ? { status: 'pending', decisionId: 'planner-0' } : undefined, createdAt: now, updatedAt: now, tasks: [] };
   }
   if (!job.description && pr.body) job.description = pr.body;
   if (options.objective) job.objective = options.objective;
   if (options.executionMode) job.executionMode = options.executionMode;
   if (options.autoMerge !== undefined) job.autoMerge = options.autoMerge;
+  if (options.reviewEnabled !== undefined) job.reviewEnabled = options.reviewEnabled;
   if (options.priority) job.priority = options.priority;
   else if (!job.priority) job.priority = 'P2';
   if (!job.title && pr.title) job.title = pr.title;
@@ -427,6 +428,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     priority: priority(args),
     executionMode: requestedExecutionMode(args),
     autoMerge: !hasArg(args, '--no-auto-merge'),
+    reviewEnabled: !hasArg(args, '--no-review'),
     continuation: continuation(args),
     prNumber,
     head: arg(args, '--head') || undefined,
@@ -501,7 +503,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), autoMerge: !hasArg(args, '--no-auto-merge'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded; const bus = eventBus(args);
   if (command === 'agent-register') {
     const now = new Date().toISOString();

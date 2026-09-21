@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { createSign } from 'node:crypto';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
-export type Comment = { id: number; nodeId?: string; body: string; updatedAt: string; authorLogin: string | null };
+export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
 export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
@@ -384,7 +384,7 @@ export class GitHubStore implements DurableStore {
     let cursor: string | null = null;
     do {
       const data = await this.graphql(
-        'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(first:100,after:$cursor){nodes{id databaseId body updatedAt author{login}} pageInfo{hasNextPage endCursor}}}}}',
+        'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(first:100,after:$cursor){nodes{id databaseId url body updatedAt author{login}} pageInfo{hasNextPage endCursor}}}}}',
         { owner, name, number: this.prNumber, cursor }
       );
       const repository = data.repository as Record<string, unknown> | undefined;
@@ -396,6 +396,7 @@ export class GitHubStore implements DurableStore {
         all.push({
           id: Number(value.databaseId ?? 0),
           nodeId: typeof value.id === 'string' ? value.id : undefined,
+          url: typeof value.url === 'string' ? value.url : undefined,
           body: String(value.body ?? ''),
           updatedAt: String(value.updatedAt ?? ''),
           authorLogin: typeof author?.login === 'string' ? author.login : null
@@ -434,7 +435,12 @@ export class GitHubStore implements DurableStore {
     const job = jobs.find(x => x.id === jobId);
     if (!job) throw new Error(`Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}; run agents-relay job adopt --repo ${this.repository} --pr ${this.prNumber} --id ${jobId}`);
     const soleTrustedJob = jobs.length === 1;
-    job.tasks = comments.map(x => parseTask(x.body)).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
+    job.tasks = comments.map(comment => {
+      const task = parseTask(comment.body);
+      if (!task) return null;
+      const taskUrl = comment.url ?? (comment.id > 0 ? `https://github.com/${this.repository}/pull/${this.prNumber}#issuecomment-${comment.id}` : undefined);
+      return taskUrl ? { ...task, taskUrl } : task;
+    }).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
     return job;
   }
   async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }

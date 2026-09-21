@@ -83,6 +83,12 @@ Task submission is append-only at creation time, which avoids a single giant mut
 9. Worker reports progress and exactly one terminal task event over the canonical event channel.
 10. Relay persists terminal task state/result back into the task comment.
 
+Managed Codex and ChatGPT bootstrap prompts carry only the durable PR URL and
+task-comment URL, plus the Job/Task IDs and project name. The worker retrieves
+the job and task from GitHub using the access available in its environment, so
+the stored task input is not duplicated into the launch prompt. GitHub comment
+URLs are hydrated onto tasks when the durable graph is reloaded.
+
 The ownership boundary is strict: workers own `task.started` and the exact
 terminal task event; Relay owns `task.process.launched` and
 `task.process.exited`/`task.process.async_exited`. If a Codex process exits
