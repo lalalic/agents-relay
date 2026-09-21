@@ -163,7 +163,7 @@ export class Reconciler {
     await this.store.saveJob(job);
   }
   private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    if (prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
+    if (job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
     if (!this.preReviewGatesPass(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
