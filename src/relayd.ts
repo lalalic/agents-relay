@@ -59,7 +59,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const repositories = normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);
   const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
   const explicitProjectPath = value(argv,'--project-path');
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot) });
+  const usageRegistry = codexAndZaiUsageRegistry();
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler);
   const cacheDirectory = join(homedir(), '.agents-relay');
@@ -126,7 +127,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return null;
     }
   };
-  const usageRegistry = codexAndZaiUsageRegistry();
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob);
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {

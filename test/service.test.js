@@ -17,11 +17,9 @@ test('daemon arguments require and normalize durable identifiers', () => {
   assert.deepEqual(normalized.serviceArguments, argv);
 });
 
-test('all service runtimes use the fixed ChatGPT final reviewer policy', async () => {
+test('all service runtimes use the resource-aware reviewer policy', async () => {
   const reviewer = runtimeReviewer();
-  assert.equal(reviewer.adapter, 'chatgpt');
-  assert.equal(reviewer.routing.provider, 'chatgpt');
-  assert.equal(reviewer.routing.model, 'account-defaults');
+  assert.deepEqual(reviewer.requirements, { capabilities: ['model'] });
   const cliSource = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const daemonSource = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(cliSource, /reviewer: runtimeReviewer\(\)/);

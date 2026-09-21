@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
-import { UsageRegistry } from './usage.js';
+import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
 import { Job } from './types.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 
@@ -293,7 +293,7 @@ export function serveDashboard(
   bus?: EventBus,
   refreshMs = 300000,
   jobId?: string,
-  usageRegistry?: UsageRegistry,
+  usageRegistry?: UsageSnapshotProvider,
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
@@ -366,7 +366,7 @@ export function serveDashboard(
 
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
-    return JSON.stringify(await usageRegistry.snapshot());
+    return JSON.stringify(await readUsageSnapshot(usageRegistry));
   };
 
   const server = createServer(async (req, res) => {
