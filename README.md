@@ -31,9 +31,16 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
   --capabilities model,chatgpt,browser-harness
 ~~~
 
-Jobs default to `fixed`, preserving the original submit-and-run behavior. Use
-`--mode autonomous` with `init` or `job create` to make reconciliation own
-planner progress. The durable status JSON and dashboard show the mode. An
+Jobs default to `fixed`, preserving the original submit-and-run behavior. Every
+executable task is now created by a completed durable planning decision. `job
+create --start` records `planner-0` (supplied by the orchestrator) and the
+initial task atomically from the caller's perspective; retrying the command is
+idempotent. Use `--mode autonomous` with `init` or `job create` to make
+reconciliation own planner progress. Autonomous creation with only an objective
+may create a model planner first, but it cannot materialize work until that
+planner succeeds. Fixed jobs never grow another planning round.
+
+The durable status JSON and dashboard show the mode and planning provenance. An
 autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
 snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so

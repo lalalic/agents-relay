@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, taskOverallTimeoutMs } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, taskOverallTimeoutMs } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
@@ -25,6 +25,17 @@ export type PlannerTaskSpec = {
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
 export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
+
+export function planningSpec(task: Task): PlannerTaskSpec {
+  if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
+  if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
+  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, dependencies: task.dependencies, capabilities: task.capabilities, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
+}
+
+export function orchestratorPlanningDecision(job: Job, tasks: readonly Task[], id: string, parentTaskId: string | null, round: number, source: PlanningDecisionSource = 'orchestrator'): Task {
+  const now = new Date().toISOString();
+  return { jobId: job.id, id, kind: 'planner', priority: job.priority, storySize: 'S', agentName: source === 'orchestrator' ? 'orchestrator' : 'planner', parentTaskId, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: `Planning decision supplied by ${source} for ${tasks.length} task(s)`, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: { summary: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planning decision completed' }, plannerResult: { objective_status: 'in_progress', assessment: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planning decision completed', next_tasks: tasks.map(planningSpec) }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: source, planningRound: round };
+}
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Planner result must be an object');
