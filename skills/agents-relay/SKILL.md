@@ -96,6 +96,16 @@ ChatGPT thread identity is diagnostic only. It is not persisted as a resumable t
 
 ## Autonomous planner
 
+No executable task may be materialized without a completed durable planning
+decision. Job creation with caller-supplied initial work records an
+orchestrator-owned `planner-0` decision before its initial tasks; autonomous
+mode must not start a model planner in that case. Objective-only autonomous
+jobs may start a real model planner, and planner children are created only
+after that planner succeeds. Fixed jobs do not automatically create another
+planning round. Each task exposes `planningDecisionId`, `planningSource`, and
+`planningRound` for dashboard lineage. Nested worker delegation must create its
+durable planning decision and children through Relay as well.
+
 Planner-created child tasks must also be descriptive agent work. They must select `codex` or `chatgpt` and include an explicit output contract. A planner must never generate shell-command worker tasks.
 
 ## Durable truth
