@@ -78,12 +78,13 @@ Task submission is append-only at creation time, which avoids a single giant mut
 3. The relay wakes and reloads the PR.
 4. Scheduler marks dependency-satisfied tasks ready.
 5. Worker-router resolves declared worker requirements using the fresh shared usage snapshot, then model-router resolves provider/model details; Relay persists both before launch.
-6. Dispatcher validates the selected worker's routing/capabilities and claims a lease.
-7. Adapter launches/submits the worker; Relay emits `task.process.launched` only after that succeeds.
-8. The worker emits its own correlated `task.started` after real work begins. Relay never synthesizes this event.
-9. Codex emits `task.process.exited` on synchronous runtime exit; ChatGPT emits `task.process.async_exited` after its submit runtime exits while the remote worker may continue.
-10. Worker reports progress and exactly one terminal task event over the canonical event channel.
-11. Relay persists terminal task state/result back into the task comment.
+6. Final review uses the same worker-router boundary: hard constraints are applied first, then worker and provider/model diversity are preferences. The durable review task records the selected worker and reason.
+7. Dispatcher validates the selected worker's routing/capabilities and claims a lease.
+8. Adapter launches/submits the worker; Relay emits `task.process.launched` only after that succeeds.
+9. The worker emits its own correlated `task.started` after real work begins. Relay never synthesizes this event.
+10. Codex emits `task.process.exited` on synchronous runtime exit; ChatGPT emits `task.process.async_exited` after its submit runtime exits while the remote worker may continue.
+11. Worker reports progress and exactly one terminal task event over the canonical event channel.
+12. Relay persists terminal task state/result back into the task comment.
 
 Managed Codex and ChatGPT bootstrap prompts carry only the durable PR URL and
 task-comment URL, plus the Job/Task IDs and project name. The worker retrieves

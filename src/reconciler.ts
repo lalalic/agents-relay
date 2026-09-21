@@ -7,11 +7,13 @@ import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
 import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
 import { ExecutionContext, ExecutionContextRoots, ExecutionRole, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
+import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
+import { WorkerRequirements, WorkerSelection } from './types.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
@@ -179,16 +181,59 @@ export class Reconciler {
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item)).map(item => item.id), capabilities: ['review'], adapter: this.options.reviewer?.adapter ?? 'codex', input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: this.options.reviewer?.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
+    const implementationTasks = job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item));
+    const reviewerRouting = await this.selectReviewer(implementationTasks);
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
     job.state = 'RUNNING'; job.updatedAt = now;
     await this.store.saveJob(job);
-    await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha}`, 'orchestrator', { headSha, agentName: 'reviewer' }));
+    await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha} using ${reviewerRouting.reason}`, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     const ready = schedule(await this.store.load(job.id));
     await this.store.saveJob(ready);
     const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'READY');
     if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
+  }
+  private async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: ReviewerCandidate; selection: WorkerSelection; reason: 'worker-diversity' | 'provider-model-diversity' | 'eligible-fallback' }> {
+    const configured = this.options.reviewer;
+    const registered = await this.store.listAgents();
+    const candidates: ReviewerCandidate[] = this.options.adapters
+      .filter(adapter => adapter.name !== 'orchestrator')
+      .flatMap(adapter => {
+        const defaults = adapter.name === 'chatgpt'
+          ? { provider: 'chatgpt', model: 'account-defaults' }
+          : { provider: 'openai', model: 'gpt-5.6-luna' };
+        const workers = registered.filter(worker => worker.runtime.adapter === adapter.name);
+        return (workers.length > 0 ? workers : [undefined]).map(worker => ({
+          workerId: worker?.id ?? adapter.id,
+          adapter: adapter.name as Exclude<Task['adapter'], 'orchestrator'>,
+          capabilities: worker?.capabilities ?? adapter.capabilities,
+          runtime: worker?.runtime.adapter ?? adapter.name,
+          trustDomains: worker?.routing.trustDomains,
+          region: worker?.routing.regions?.[0],
+          labels: worker?.routing.labels,
+          availability: worker?.availability,
+          routing: {
+            provider: worker?.runtime.provider ?? defaults.provider,
+            model: worker?.runtime.model ?? defaults.model,
+            decidedBy: 'model-router',
+            decidedAt: new Date().toISOString(),
+          },
+        }));
+      });
+    let constrained = candidates.filter(candidate => {
+      if (configured?.workerId && configured.workerId !== candidate.workerId) return false;
+      if (configured?.adapter && configured.adapter !== candidate.adapter) return false;
+      if (configured?.routing?.provider && configured.routing.provider !== candidate.routing.provider) return false;
+      if (configured?.routing?.model && configured.routing.model !== candidate.routing.model) return false;
+      return true;
+    }).map(candidate => ({ ...candidate, routing: configured?.routing ? { ...candidate.routing, ...configured.routing } : candidate.routing }));
+    // Explicit reviewer routing is a caller-owned hard constraint and remains
+    // readable in isolated/test runtimes that do not instantiate that adapter.
+    if (constrained.length === 0 && configured?.adapter && configured.routing) {
+      constrained = [{ workerId: configured.workerId ?? configured.adapter, adapter: configured.adapter, capabilities: ['model'], runtime: configured.adapter, routing: configured.routing }];
+    }
+    return selectReviewer(constrained, implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
   }
   private isSupersededTask(task: Task): boolean {
     return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');

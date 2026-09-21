@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parsePlannerResult } from '../dist/planner.js';
 import { discoverAgents } from '../dist/registry.js';
 import { readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
+import { selectReviewer } from '../dist/reviewer-routing.js';
 
 const generatedAt = '2026-09-21T16:00:00.000Z';
 
@@ -118,4 +119,24 @@ test('fresh usage snapshots are not cached by the shared usage surface', async (
   assert.equal((await readUsageSnapshot(source)).generatedAt, '1');
   assert.equal((await readUsageSnapshot(source)).generatedAt, '2');
   assert.equal(snapshots, 2);
+});
+
+test('reviewer routing prefers an eligible worker not used by implementation', () => {
+  const implementation = [{ adapter: 'codex', workerSelection: { workerId: 'codex', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt }, agentName: 'builder' }];
+  const decision = selectReviewer([
+    { workerId: 'codex', adapter: 'codex', capabilities: ['model'], routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } },
+    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', capabilities: ['model', 'browser-harness'], routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
+  ], implementation, { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'chatgpt/browser-worker');
+  assert.equal(decision.reason, 'worker-diversity');
+  assert.match(decision.selection.selectedBy, /reviewer-diversity/);
+});
+
+test('reviewer diversity never bypasses hard availability and capability gates', () => {
+  const decision = selectReviewer([
+    { workerId: 'different-but-degraded', adapter: 'chatgpt', capabilities: ['model', 'review'], availability: 'degraded', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
+    { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], availability: 'available', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } },
+  ], [{ adapter: 'codex', workerSelection: { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, agentName: 'builder', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } }], { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'same-but-eligible');
+  assert.equal(decision.reason, 'eligible-fallback');
 });

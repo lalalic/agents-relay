@@ -38,6 +38,8 @@ Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must
 
 A normal task never merges a PR. After all non-superseded work gates pass, Relay creates a SHA-bound final review task. The reviewer emits exactly one of `review.approved`, `review.changes_required`, or `review.blocked`. When `autoMerge` is enabled (default), Relay merges only after `review.approved`, pinned to the exact reviewed head SHA. A new task or new PR head makes earlier final-review evidence stale and requires a fresh review.
 
+Final-review routing follows the same worker-selection boundary as executable work. Capability, availability, explicit reviewer constraints, and resource health are hard gates. Among eligible workers, Relay prefers a reviewer with a different worker identity from the implementation tasks; when that is unavailable it prefers a different provider/model, then falls back to the first eligible worker. The selected worker, `selectedBy` reason, and `reviewerRouting` event data are durable evidence. No provider is a universal reviewer default.
+
 ## Fixed and autonomous jobs
 
 `fixed` jobs execute the orchestrator-provided task set and then proceed to final review. `autonomous` jobs may ask the planner for additional task batches. Planner-produced tasks must obey this same contract, including explicit `storySize`.
