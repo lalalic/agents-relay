@@ -776,6 +776,45 @@ test('CLI init persists no-review independently from auto-merge', async () => {
   await rm(directory,{recursive:true,force:true});
 });
 
+test('review changes-required creates exactly one Codex Luna fix task containing all findings', async () => {
+  const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-fix-12345678'};
+  const store=new InMemoryStore(reviewJob); const events=[];
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0,emit:event=>events.push(event)});
+  await reconciler.reconcile('j');
+  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(reviewer);
+  const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug',{summary:'third bug'}]}};
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
+  let saved=await store.load('j');
+  const fixes=saved.tasks.filter(item=>item.agentName==='review-fix');
+  assert.equal(fixes.length,1);
+  assert.equal(fixes[0].id,'review-fix-sha-fix-');
+  assert.equal(fixes[0].adapter,'codex');
+  assert.equal(fixes[0].routing?.model,'gpt-5.6-luna');
+  assert.equal(fixes[0].routing?.reasoning,'medium');
+  assert.deepEqual(fixes[0].dependencies,[reviewer.id]);
+  assert.match(fixes[0].input,/1\. first bug/);
+  assert.match(fixes[0].input,/2\. second bug/);
+  assert.match(fixes[0].input,/3\. third bug/);
+  assert.equal(saved.state,'RUNNING');
+  assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
+  saved=await store.load('j');
+  assert.equal(saved.tasks.filter(item=>item.agentName==='review-fix').length,1);
+});
+
+test('review changes-required falls back to one fix task from the review message', async () => {
+  const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
+  const store=new InMemoryStore(reviewJob);
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.ok(reviewer);
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
+  const fixes=(await store.load('j')).tasks.filter(item=>item.agentName==='review-fix');
+  assert.equal(fixes.length,1);
+  assert.match(fixes[0].input,/fix the race and add coverage/);
+});
+
 test('approved review auto-merges by default and respects opt-out', async () => {
   for (const [autoMerge, expected] of [[undefined,1],[false,0]]) {
     const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-auto',autoMerge};
