@@ -52,6 +52,21 @@ test('objective-only autonomous jobs create a real planner before executable wor
   await stop();
 });
 
+test('reconcile preserves an existing durable task when a planner repeats its id with a changed definition', async () => {
+  const existing = { ...work('planned'), input: 'original durable work' };
+  const plannerTask = { ...work('planner-1'), kind: 'planner', state: 'SUCCEEDED', plannerResult: { objective_status: 'in_progress', assessment: 'repeat', next_tasks: [{ id: 'planned', input: 'changed planner wording', adapter: 'codex', output: { kind: 'task_pr' } }] }, result: { summary: 'repeat' } };
+  const store = new InMemoryStore(job([plannerTask, existing]));
+  const bus = new MemoryEventBus();
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'done', next_tasks: [] }) }, eventBus: bus });
+  const stop = await reconciler.watch('planning');
+  await reconciler.reconcile('planning');
+  await reconciler.idle();
+  const result = await store.load('planning');
+  assert.equal(result.tasks.filter(task => task.id === 'planned').length, 1);
+  assert.equal(result.tasks.find(task => task.id === 'planned')?.input, 'original durable work');
+  await stop();
+});
+
 test('fixed jobs stop after the orchestrator planning batch', async () => {
   const { job: initial } = plannedJob('fixed');
   const store = new InMemoryStore(initial);

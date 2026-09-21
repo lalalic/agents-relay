@@ -302,7 +302,6 @@ export class Reconciler {
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing) {
-          if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner task ${child.id} already exists with a different definition`);
           continue;
         }
         await this.store.appendTask(child);
@@ -463,7 +462,6 @@ export class Reconciler {
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (!existing) continue;
-        else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner task ${child.id} already exists with a different definition`);
       }
       // Persist the completed decision before exposing executable children.
       task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task);
