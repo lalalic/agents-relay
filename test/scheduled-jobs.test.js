@@ -53,6 +53,9 @@ function fakeClient(initialLabels, comments, options = {}) {
   const comment = (body, id = 1) => ({ id, body, updated_at: now(), user: { login: 'bot' } });
   const trusted = comments ?? [comment(marker(JOB_MARKER, scheduledJob()))];
   const findComment = (query, variables = {}) => {
+    if (query.includes('headRefName baseRefName')) {
+      return { repository: { pullRequest: { number: 1, title: 'Scheduled objective', body: '', state: 'OPEN', headRefName: 'feat/scheduled', baseRefName: 'main' } } };
+    }
     if (query.includes('comments(last:100)') || query.includes('comments(first:100')) {
       return { repository: { pullRequest: { comments: { nodes: trusted.map(item => ({ id: `IC_${item.id}`, databaseId: item.id, url: `https://github.com/owner/repo/pull/1#issuecomment-${item.id}`, body: item.body, updatedAt: item.updated_at, author: { login: item.user.login } })), pageInfo: { hasNextPage: false, endCursor: null } } } } };
     }
@@ -87,9 +90,20 @@ function fakeClient(initialLabels, comments, options = {}) {
         return { items: selected ? [{ number: state.searchPR }] : [] };
       }
       if (path === `repos/owner/repo/issues/1/labels?per_page=100&page=1`) return state.labels.map(label => ({ name: label }));
+      if (path.startsWith('repos/owner/repo/labels/') && !init.method) {
+        const label = decodeURIComponent(path.split('/').at(-1));
+        if (!state.labels.includes(label)) throw new Error('404 Not Found');
+        return { name: label };
+      }
+      if (path === 'repos/owner/repo/labels' && init.method === 'POST') {
+        const label = JSON.parse(init.body);
+        state.labels.push(label.name);
+        state.added.push(label.name);
+        return label;
+      }
       if (path === `repos/owner/repo/issues/1/labels` && init.method === 'POST') {
         const { labels } = JSON.parse(init.body);
-        state.labels.push(...labels);
+        for (const label of labels) if (!state.labels.includes(label)) state.labels.push(label);
         state.added.push(...labels);
         return labels;
       }
@@ -204,6 +218,19 @@ test('schedule metadata round-trips through the trusted job marker', async () =>
   const parsed = parseJob(marker(JOB_MARKER, job));
   assert.deepEqual(parsed.schedule, job.schedule);
   assert.equal(bucketStart(at('2026-09-21T16:20:00Z')).getTime(), Date.parse('2026-09-21T16:20:00Z'));
+});
+
+test('managed scheduled creation persists metadata and initializes the label index', async () => {
+  const client = fakeClient([]);
+  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
+  const result = await ensureManagedGitHubJob(client, 'owner/repo', trusted, {
+    id: 'scheduled',
+    prNumber: 1,
+    executionMode: 'autonomous',
+    schedule: schedule(),
+  });
+  assert.equal(result.job.schedule.nextRunAt, '2026-09-21T16:20:00Z');
+  assert.deepEqual(client.state.labels, [AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
 });
 
 function comment(body, id = 1) {

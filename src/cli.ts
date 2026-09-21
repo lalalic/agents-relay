@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner, orchestratorPlanningDecision } from './planner.js';
 import { extendRetryBudget, parseJobSchedule } from './scheduler.js';
-import { dueBuckets, processDueScheduledJobs } from './scheduled-jobs.js';
+import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
 const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|status|reconcile|tick|retry|cancel|serve> [options]';
@@ -298,6 +298,7 @@ export async function ensureManagedGitHubJob(
     job.updatedAt = new Date().toISOString();
     await store.saveJob(job);
   } else await store.saveJob(job);
+  if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
 }
 

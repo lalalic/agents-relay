@@ -59,10 +59,25 @@ async function removeLabel(client: GitHubClient, repository: string, prNumber: n
   await client.request(`repos/${repository}/issues/${prNumber}/labels/${encodeURIComponent(label)}`, { method: 'DELETE' });
 }
 
+async function ensureRepositoryLabel(client: GitHubClient, repository: string, label: string, color: string): Promise<void> {
+  try {
+    await client.request(`repos/${repository}/labels/${encodeURIComponent(label)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/404|Not Found/i.test(message)) throw error;
+    await client.request(`repos/${repository}/labels`, {
+      method: 'POST',
+      body: JSON.stringify({ name: label, color }),
+    });
+  }
+}
+
 export async function syncScheduleLabels(client: GitHubClient, repository: string, job: Job): Promise<void> {
   const current = await issueLabels(client, repository, job.prNumber);
   const target = job.schedule ? runBucketLabel(scheduleBucket(new Date(job.schedule.nextRunAt))) : null;
   const expected = new Set(job.schedule ? [AUTONOMOUS_LABEL, target] : []);
+  if (job.schedule || current.includes(AUTONOMOUS_LABEL)) await ensureRepositoryLabel(client, repository, AUTONOMOUS_LABEL, '0E8A16');
+  if (target !== null) await ensureRepositoryLabel(client, repository, target, 'D4C5F9');
   for (const label of current) {
     const isSchedulerLabel = label === AUTONOMOUS_LABEL || parseRunBucketLabel(label) !== null;
     if (isSchedulerLabel && !expected.has(label)) await removeLabel(client, repository, job.prNumber, label);
