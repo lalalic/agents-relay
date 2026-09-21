@@ -74,6 +74,36 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   assert.equal(saved.tasks[1].parentTaskId, 'orchestrator');
   assert.equal(saved.tasks[1].state, 'SUCCEEDED');
 });
+test('CLI submit accepts orchestrator self work without a model', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-submit-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const result = spawn(process.execPath, [join('dist','cli.js'),'submit','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
+  const [code] = await once(result, 'exit');
+  assert.equal(code, 0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  const created = saved.tasks.find(item => item.id === 'self');
+  assert.equal(created.adapter, 'orchestrator');
+  assert.equal(created.routing, undefined);
+  assert.equal(created.timeoutMs, 0);
+  await rm(directory,{recursive:true,force:true});
+});
+
+test('reconciler assigns orchestrator work to self without launching an adapter and accepts terminal events', async () => {
+  const self = task('self'); self.adapter='orchestrator'; self.routing=undefined; self.timeoutMs=0;
+  const root = {...job([self]), executionMode:'fixed'};
+  const store = new InMemoryStore(root); const events=[];
+  const reconciler = new Reconciler(store,{owner:'test',adapters:[],emit:event=>events.push(event)});
+  await reconciler.reconcile('j');
+  let durable=(await store.load('j')).tasks.find(item=>item.id==='self');
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.leaseOwner,null); assert.equal(durable.executionId,null);
+  assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),true);
+  await reconciler.handleEvent(eventFor('j','self',null,'task.completed','succeeded','orchestrator finished','orchestrator'));
+  durable=(await store.load('j')).tasks.find(item=>item.id==='self');
+  assert.equal(durable.state,'SUCCEEDED'); assert.equal(durable.result.summary,'orchestrator finished');
+});
+
 test('CLI submit defaults story size to M and derives overall timeout from size', async () => {
   const dir=await mkdtemp(join(tmpdir(),'agents-relay-story-size-'));
   const file=join(dir,'job.json');
