@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { GitHubStore } from '../dist/store.js';
 import { JOB_MARKER, marker, parseJob } from '../dist/markers.js';
 import {
   bucketStart,
+  RUN_BUCKET_LABEL_COUNT,
   nextCronRun,
   nextScheduleRun,
   parseJobSchedule,
@@ -18,6 +20,7 @@ import {
   listIndexedScheduledJobs,
   processDueScheduledJobs,
   runScheduledBucket,
+  syncScheduleLabels,
 } from '../dist/scheduled-jobs.js';
 
 const now = () => new Date().toISOString();
@@ -49,7 +52,7 @@ const scheduledJob = (overrides = {}) => ({
 });
 
 function fakeClient(initialLabels, comments, options = {}) {
-  const state = { labels: [...initialLabels], searchQueries: [], searchPR: 1, deleted: [], added: [] };
+  const state = { labels: [...initialLabels], repositoryLabels: [...new Set(initialLabels)], searchQueries: [], searchPR: 1, deleted: [], added: [], createdRepositoryLabels: [] };
   const comment = (body, id = 1) => ({ id, body, updated_at: now(), user: { login: 'bot' } });
   const trusted = comments ?? [comment(marker(JOB_MARKER, scheduledJob()))];
   const findComment = (query, variables = {}) => {
@@ -92,12 +95,13 @@ function fakeClient(initialLabels, comments, options = {}) {
       if (path === `repos/owner/repo/issues/1/labels?per_page=100&page=1`) return state.labels.map(label => ({ name: label }));
       if (path.startsWith('repos/owner/repo/labels/') && !init.method) {
         const label = decodeURIComponent(path.split('/').at(-1));
-        if (!state.labels.includes(label)) throw new Error('404 Not Found');
+        if (!state.repositoryLabels.includes(label)) throw new Error('404 Not Found');
         return { name: label };
       }
       if (path === 'repos/owner/repo/labels' && init.method === 'POST') {
         const label = JSON.parse(init.body);
-        state.labels.push(label.name);
+        state.createdRepositoryLabels.push(label.name);
+        state.repositoryLabels.push(label.name);
         state.added.push(label.name);
         return label;
       }
@@ -131,9 +135,12 @@ test('schedule parsing validates resolution, timezone-aware recurrence, and buck
   assert.equal(parsed.nextRunAt, '2026-09-21T13:20:00.000Z');
   assert.equal(nextCronRun('0 9 * * *', 'America/Toronto', at('2026-09-21T12:01:00Z')).toISOString(), '2026-09-21T13:00:00.000Z');
   assert.equal(scheduleBucket(at('2026-09-21T16:29:59.999Z')), '20260921T1620Z');
-  assert.equal(runBucketLabel('20260921T1620Z'), 'agents-relay:next-run:20260921T1620Z');
-  assert.equal(parseRunBucketLabel('agents-relay:next-run:20260921T1620Z'), '20260921T1620Z');
+  assert.equal(runBucketLabel('20260921T1620Z'), 'agents-relay:next-run:2');
+  assert.equal(parseRunBucketLabel('agents-relay:next-run:2'), '2');
+  assert.equal(nextCronRun('10/20 * * * *', 'UTC', at('2026-09-21T16:01:00Z')).toISOString(), '2026-09-21T16:10:00.000Z');
+  assert.equal(nextCronRun('0 0 * * 0', 'UTC', at('2026-09-26T23:50:00Z')).toISOString(), '2026-09-27T00:00:00.000Z');
   assert.throws(() => parseJobSchedule({ cron: '*/5 * * * *', timezone: 'UTC' }), /10-minute/);
+  assert.throws(() => parseJobSchedule({ cron: '5/10 * * * *', timezone: 'UTC' }), /10-minute/);
   assert.throws(() => parseJobSchedule({ cron: '*/10 * * * *', timezone: 'Not/AZone' }), /timezone/);
 });
 
@@ -141,8 +148,50 @@ test('indexed discovery queries buckets without enumerating managed jobs', async
   const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
   const due = await listIndexedScheduledJobs(client, 'owner/repo', trusted, dueBuckets(at('2026-09-21T16:31:00Z'), 3));
   assert.deepEqual(due, [{ prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' }]);
-  assert.deepEqual(client.state.searchQueries.map(query => query.endsWith('label:"agents-relay:next-run:20260921T1610Z"')), [true, false, false]);
+  assert.deepEqual(client.state.searchQueries.map(query => query.endsWith('label:"agents-relay:next-run:1"')), [true, false, false]);
   assert.match(indexedDueQuery('owner/repo', '20260921T1620Z'), /repo:owner\/repo is:open is:pr/);
+});
+
+test('indexed discovery filters cyclic label matches by the durable next-run slot', async () => {
+  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1610Z')], undefined, { alwaysDue: true });
+  const due = await listIndexedScheduledJobs(client, 'owner/repo', trusted, ['20260921T1620Z']);
+  assert.deepEqual(due, [{ prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' }]);
+});
+
+test('schedule labels remain bounded across many scheduled advances', async () => {
+  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
+  let clock = at('2026-09-21T16:21:00Z');
+  let ref = { prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' };
+  for (let index = 0; index < RUN_BUCKET_LABEL_COUNT * 4; index += 1) {
+    const result = await runScheduledBucket(client, 'owner/repo', trusted, ref, engine({ reconciles: 0 }), clock);
+    ref = { ...ref, bucket: scheduleBucket(new Date(result.job.schedule.nextRunAt)) };
+    clock = new Date(clock.getTime() + 600_000);
+  }
+  assert.ok(client.state.labels.length <= 1 + RUN_BUCKET_LABEL_COUNT);
+  assert.ok(client.state.repositoryLabels.length <= 1 + RUN_BUCKET_LABEL_COUNT);
+  assert.equal(client.state.createdRepositoryLabels.length, new Set(client.state.createdRepositoryLabels).size);
+  assert.ok(parseRunBucketLabel(client.state.labels.at(-1)));
+});
+
+test('scheduled bucket run repairs a stale cyclic index from the trusted marker', async () => {
+  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1630Z')]);
+  const result = await runScheduledBucket(client, 'owner/repo', trusted, { prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' }, engine({ reconciles: 0 }), at('2026-09-21T16:19:00Z'));
+  assert.equal(result.status, 'skipped-idempotent');
+  assert.deepEqual(client.state.labels, [AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
+});
+
+test('syncScheduleLabels removes legacy exact-slot PR labels', async () => {
+  const client = fakeClient([AUTONOMOUS_LABEL, 'agents-relay:next-run:20260921T1620Z']);
+  await syncScheduleLabels(client, 'owner/repo', scheduledJob());
+  assert.deepEqual(client.state.labels, [AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')]);
+});
+
+test('tick is repository scoped before job-store loading', () => {
+  const result = spawnSync(process.execPath, [
+    'dist/cli.js', 'tick', '--repo', 'owner/repo', '--events', 'nats', '--nats-url', 'nats://127.0.0.1:4222',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stderr, /Local mode is demo\/test only/);
 });
 
 test('a duplicate heartbeat cannot claim the same scheduled slot twice', async () => {
@@ -180,7 +229,7 @@ test('processDueScheduledJobs is idempotent when GitHub search still returns the
     engine: () => engine(counts),
   });
   assert.deepEqual(first.map(result => result.status), ['completed']);
-  assert.deepEqual(second.map(result => result.status), ['skipped-idempotent']);
+  assert.deepEqual(second.map(result => result.status), []);
   assert.equal(counts.reconciles, 1);
 });
 

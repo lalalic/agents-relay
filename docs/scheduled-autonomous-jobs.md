@@ -23,7 +23,7 @@ The trusted `agents-relay:job:v1` marker contains the schedule:
 The same PR also carries:
 
 - `agents-relay:autonomous`
-- `agents-relay:next-run:YYYYMMDDTHHMMZ`
+- `agents-relay:next-run:0` through `agents-relay:next-run:5`
 
 The marker remains durable truth; labels are an index so the heartbeat does not
 enumerate every managed PR. Relay repairs the index from the marker when it
@@ -39,9 +39,10 @@ npx agents-relay job create --repo OWNER/REPO --head feat/scheduled \
   --missed-run-policy run --schedule-concurrency skip
 ~~~
 
-Cron supports the five standard fields. The scheduler resolution is 10 minutes,
-so selected minutes must be divisible by ten. `nextRunAt` can be supplied for
-recovery or tests and must match the cron expression and timezone.
+Cron supports the five standard fields, including ranges and steps. The
+scheduler resolution is 10 minutes, so every selected minute must be divisible
+by ten. `nextRunAt` can be supplied for recovery or tests and must match the
+cron expression and timezone.
 
 ## Heartbeat
 
@@ -57,8 +58,15 @@ authoritative lifecycle events. The checkout's CLI runs the tick, so a workflow
 does not depend on the package having been published yet.
 
 By default `tick` searches the current and two previous 10-minute buckets with
-two label predicates per bucket. It never performs a repository-wide job scan.
-Use `--lookback-buckets` (maximum 36) to widen recovery for short outages.
+the autonomous and bounded run-index labels per bucket. It never performs a
+repository-wide job scan. Use `--lookback-buckets` (maximum 36) to widen
+recovery for short outages.
+
+The six run-index labels map slots by modulo position within an hour. This
+keeps repository label definitions bounded while GitHub search narrows
+discovery to current/recent slots. The trusted marker's exact `nextRunAt` is
+the authority: a candidate is run only when its marker matches the target slot,
+and stale labels are repaired during processing.
 
 ## Slot semantics
 

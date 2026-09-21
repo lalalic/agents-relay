@@ -27,6 +27,7 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
 export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['READY', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;
+export const RUN_BUCKET_LABEL_COUNT = 6;
 const CRON_PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/;
 
 function cronField(raw: string, name: string, minimum: number, maximum: number): Set<number> {
@@ -35,17 +36,20 @@ function cronField(raw: string, name: string, minimum: number, maximum: number):
     const match = CRON_PART.exec(part);
     if (!match) throw new Error(`Invalid schedule ${name}: ${part}`);
     const [whole, firstText, lastText, stepText] = match;
-    if (!whole) continue;
+        if (whole === undefined) continue;
     const step = stepText === undefined ? 1 : Number(stepText);
     if (!Number.isInteger(step) || step < 1) throw new Error(`Invalid schedule ${name} step: ${part}`);
     let start = minimum;
     let end = maximum;
     if (firstText !== undefined) {
       start = Number(firstText);
-      end = lastText === undefined ? start : Number(lastText);
+      end = lastText === undefined ? (stepText === undefined ? start : maximum) : Number(lastText);
       if (start < minimum || end > maximum || start > end) throw new Error(`Invalid schedule ${name} range: ${part}`);
     }
-    for (let value = start; value <= end; value += step) values.add(name === 'weekday' && value === 7 ? 0 : value);
+    for (let value = start; value <= end; value += step) {
+      if (value > maximum) break;
+      values.add(name === 'weekday' && value === 7 ? 0 : value);
+    }
   }
   if (values.size === 0) throw new Error(`Invalid schedule ${name}: ${raw}`);
   return values;
@@ -71,7 +75,7 @@ function timezoneParts(time: Date, timeZone: string): { year: number; month: num
   const value = (type: string): string => parts.find(part => part.type === type)?.value ?? '';
   const weekdays = new Map([['Sun', 0], ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6]]);
   const weekday = weekdays.get(value('weekday'));
-  if (!weekday) throw new Error(`Unable to resolve timezone weekday ${timeZone}`);
+  if (weekday === undefined) throw new Error(`Unable to resolve timezone weekday ${timeZone}`);
   return { year: Number(value('year')), month: Number(value('month')), day: Number(value('day')), hour: Number(value('hour')), minute: Number(value('minute')), weekday };
 }
 
@@ -139,11 +143,14 @@ export function scheduleBucket(time: Date): string {
 
 export function runBucketLabel(bucket: string): string {
   if (!/^\d{8}T\d{4}Z$/.test(bucket)) throw new Error(`Invalid schedule bucket: ${bucket}`);
-  return `agents-relay:next-run:${bucket}`;
+  const hour = Number(bucket.slice(9, 11));
+  const minute = Number(bucket.slice(11, 13));
+  const slot = (hour * 60 + minute) / 10;
+  return `agents-relay:next-run:${slot % RUN_BUCKET_LABEL_COUNT}`;
 }
 
 export function parseRunBucketLabel(label: string): string | null {
   const prefix = 'agents-relay:next-run:';
   const bucket = label.slice(prefix.length);
-  return label.startsWith(prefix) && /^\d{8}T\d{4}Z$/.test(bucket) ? bucket : null;
+  return label.startsWith(prefix) && /^[0-5]$/.test(bucket) ? bucket : null;
 }

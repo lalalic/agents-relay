@@ -79,7 +79,7 @@ export async function syncScheduleLabels(client: GitHubClient, repository: strin
   if (job.schedule || current.includes(AUTONOMOUS_LABEL)) await ensureRepositoryLabel(client, repository, AUTONOMOUS_LABEL, '0E8A16');
   if (target !== null) await ensureRepositoryLabel(client, repository, target, 'D4C5F9');
   for (const label of current) {
-    const isSchedulerLabel = label === AUTONOMOUS_LABEL || parseRunBucketLabel(label) !== null;
+    const isSchedulerLabel = label === AUTONOMOUS_LABEL || parseRunBucketLabel(label) !== null || /^agents-relay:next-run:\d{8}T\d{4}Z$/.test(label);
     if (isSchedulerLabel && !expected.has(label)) await removeLabel(client, repository, job.prNumber, label);
   }
   if (job.schedule) {
@@ -102,8 +102,10 @@ export async function listIndexedScheduledJobs(client: GitHubClient, repository:
       });
       const job = overviews.find(overview => overview.githubState === 'OPEN' && overview.job.schedule !== undefined)?.job;
       if (!job?.schedule) continue;
+      const slotBucket = scheduleBucket(new Date(job.schedule.nextRunAt));
+      if (!buckets.includes(slotBucket)) continue;
       const key = `${prNumber}:${job.id}`;
-      if (!found.has(key)) found.set(key, { prNumber, jobId: job.id, bucket });
+      if (!found.has(key)) found.set(key, { prNumber, jobId: job.id, bucket: slotBucket });
     }
   }
   return [...found.values()];
