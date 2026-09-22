@@ -23,3 +23,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - Precedence is project-local > Neo shared > global `~/.agents`; concrete paths are resolved at execution time, not persisted in task records.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
+
+## Operational workflows
+
+Hotfix and P0/self-job behavior is defined by `skills/agents-relay/contracts/task-job-contract.md`. These workflows are Relay job/task policy, not global agent policy.
