@@ -325,6 +325,7 @@ export class Reconciler {
     if (job.executionMode !== 'autonomous') return job;
     if (job.initialPlanning?.status === 'pending') return job;
     const allPlanners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    if (allPlanners.length === 0) return job;
     const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));

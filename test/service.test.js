@@ -105,54 +105,20 @@ test('CLI and daemon help are successful and do not require job storage', () => 
   }
 });
 
-test('job create help documents explicit create-only and create-and-start modes', () => {
-  const result = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
-  assert.match(result.stdout, /--start/);
-  assert.match(result.stdout, /initial task ID defaults to 'initial'/);
-});
+test('job create help is create-only and rejects task execution flags', () => {
+  const help = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.doesNotMatch(help.stdout, /--start/);
+  assert.match(help.stdout, /never creates executable tasks/);
+  assert.match(help.stdout, /orchestrator decides the initial task batch/);
 
-test('job create --start is idempotent for the same initial task definition', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-cli-'));
-  const bin = join(directory, 'bin');
-  const state = join(directory, 'github.json');
-  const gh = join(bin, 'gh');
-  await mkdir(bin);
-  await writeFile(state, JSON.stringify({ comments: [] }));
-  await writeFile(gh, `#!/usr/bin/env node
-const fs = await import('node:fs/promises');
-const statePath = process.env.AGENTS_RELAY_TEST_STATE;
-const state = JSON.parse(await fs.readFile(statePath, 'utf8'));
-const args = process.argv.slice(2);
-if (args[0] === 'auth') { process.stdout.write(JSON.stringify({hosts:{'github.com':[{login:'bot',active:true}]}})); process.exit(0); }
-if (!args.includes('graphql')) process.exit(1);
-const request = JSON.parse(await new Promise(resolve => { let body=''; process.stdin.on('data', chunk => body += chunk); process.stdin.on('end', () => resolve(body)); }));
-const query = request.query;
-const variables = request.variables || {};
-const comments = state.comments;
-const nodes = comments.map((body, index) => ({id:'IC_'+(index+1), databaseId:index+1, body, updatedAt:new Date().toISOString(), author:{login:'bot'}}));
-let data;
-if (query.includes('pullRequest(number:$number)')) data = {repository:{pullRequest:{number:1,title:'Demo',body:'',state:'OPEN',headRefName:'feat/demo',baseRefName:'main',id:'PR_1',merged:false,mergedAt:null,closedAt:null,comments:{nodes}}}};
-else if (query.includes('addComment')) { comments.push(variables.body); data = {addComment:{commentEdge:{node:{id:'IC_'+comments.length}}}}; }
-else if (query.includes('updateIssueComment')) { const index=Number(String(variables.id).replace('IC_',''))-1; comments[index]=variables.body; data={updateIssueComment:{issueComment:{id:variables.id}}}; }
-else if (query.includes('deleteIssueComment')) { const index=Number(String(variables.id).replace('IC_',''))-1; comments.splice(index,1); data={deleteIssueComment:{clientMutationId:null}}; }
-else if (query.includes('comments(first:100')) data={repository:{pullRequest:{comments:{nodes}}}};
-else data={repository:{pullRequest:{number:1,title:'Demo',body:'',state:'OPEN',headRefName:'feat/demo',baseRefName:'main'}}};
-await fs.writeFile(statePath, JSON.stringify(state));
-process.stdout.write(JSON.stringify(data));
-`, { mode: 0o755 });
-  await chmod(gh, 0o755);
-  const command = ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--pr', '1', '--id', 'job-cli', '--start', '--adapter', 'codex', '--provider', 'openai', '--model', 'gpt-test', '--output', 'task-pr', '--task-id', 'initial', '--input', 'Do the work'];
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, AGENTS_RELAY_TEST_STATE: state };
-  const first = spawnSync(process.execPath, command, { encoding: 'utf8', env });
-  const second = spawnSync(process.execPath, command, { encoding: 'utf8', env });
-  assert.equal(first.status, 0, first.stderr);
-  assert.equal(second.status, 0, second.stderr);
-  const persisted = JSON.parse(await readFile(state, 'utf8'));
-  const taskMarkers = persisted.comments.filter(comment => comment.includes('agents-relay:task:v1'));
-  assert.equal(taskMarkers.length, 2);
-  assert.equal(taskMarkers.filter(comment => comment.includes('"id":"planner-0"')).length, 1);
-  assert.equal(persisted.comments.filter(comment => comment.includes('agents-relay:job:v1')).length, 1);
-  await rm(directory, { recursive: true, force: true });
+  const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--start'], { encoding: 'utf8' });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /does not accept task execution option --start/);
+
+  const taskFlag = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--model', 'gpt-test'], { encoding: 'utf8' });
+  assert.notEqual(taskFlag.status, 0);
+  assert.match(taskFlag.stderr, /does not accept task execution option --model/);
 });
 
 test('published bin files are executable after build and npm pack', async () => {

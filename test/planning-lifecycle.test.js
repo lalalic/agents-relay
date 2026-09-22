@@ -34,24 +34,20 @@ test('orchestrator-supplied autonomous initial work runs before any model planne
   await stop();
 });
 
-test('objective-only autonomous jobs create a real planner before executable work', async () => {
+test('zero-task autonomous jobs remain idle until the orchestrator submits the first batch', async () => {
   const store = new InMemoryStore(job([]));
   const bus = new MemoryEventBus();
-  let calls = 0; let firstPlannerTaskCount = -1; let secondPlannerSawCompletedBatch = false;
-  const planner = { plan: async context => { calls += 1; if (calls === 1) firstPlannerTaskCount = context.tasks.filter(task => task.kind !== 'planner').length; if (calls === 2) secondPlannerSawCompletedBatch = context.tasks.some(task => task.id === 'planned' && task.state === 'SUCCEEDED'); return calls === 1 ? { objective_status: 'in_progress', assessment: 'work', next_tasks: [{ id: 'planned', input: 'do work', adapter: 'codex', output: { kind: 'task_pr' } }] } : { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } };
+  let plannerCalls = 0;
+  const planner = { plan: async () => { plannerCalls += 1; return { objective_status: 'in_progress', assessment: 'unexpected', next_tasks: [] }; } };
   const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');
-  assert.equal(firstPlannerTaskCount, 0);
-  assert.equal(calls, 2);
-  assert.equal(secondPlannerSawCompletedBatch, true);
-  assert.equal(result.tasks.find(task => task.id === 'planned')?.planningDecisionId, 'planner-1');
-  assert.equal(result.tasks.find(task => task.id === 'planned')?.planningSource, 'model-planner');
-  assert.equal(result.tasks.find(task => task.id === 'planned')?.planningRound, 1);
+  assert.equal(plannerCalls, 0);
+  assert.equal(result.tasks.length, 0);
+  assert.equal(result.state, 'WAITING');
   await stop();
 });
-
 test('reconcile preserves an existing durable task when a planner repeats its id with a changed definition', async () => {
   const existing = { ...work('planned'), input: 'original durable work' };
   const plannerTask = { ...work('planner-1'), kind: 'planner', state: 'SUCCEEDED', plannerResult: { objective_status: 'in_progress', assessment: 'repeat', next_tasks: [{ id: 'planned', input: 'changed planner wording', adapter: 'codex', output: { kind: 'task_pr' } }] }, result: { summary: 'repeat' } };
@@ -80,14 +76,15 @@ test('fixed jobs stop after the orchestrator planning batch', async () => {
   await stop();
 });
 
-test('planner failure does not invent executable tasks', async () => {
-  const store = new InMemoryStore(job([]));
+test('planner failure after an orchestrator-started batch does not invent executable tasks', async () => {
+  const { job: initial } = plannedJob();
+  const store = new InMemoryStore(initial);
   const bus = new MemoryEventBus();
   const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { throw new Error('planner unavailable'); } }, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');
-  assert.equal(result.tasks.filter(task => task.kind !== 'planner').length, 0);
-  assert.equal(result.tasks.find(task => task.id === 'planner-1')?.state, 'FAILED');
+  assert.equal(result.tasks.filter(task => task.kind !== 'planner').length, 1);
+  assert.equal(result.tasks.find(task => task.id === 'planner-2')?.state, 'FAILED');
   await stop();
 });

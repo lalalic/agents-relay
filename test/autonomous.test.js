@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { AgentObjectivePlanner, normalizePlannerPriority, orchestratorPlanningDecision, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -19,6 +19,13 @@ const output = { kind: 'task_pr' };
 const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do the described work', output, routing: route, state, attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
 const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 const spec = id => ({ id, input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
+function startedAutonomousJob() {
+  const base = job();
+  const seed = { ...task('seed', 'SUCCEEDED'), result: { summary: 'seed complete' } };
+  const decision = orchestratorPlanningDecision(base, [seed], 'planner-0', null, 0);
+  const child = { ...seed, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator', planningRound: 0 };
+  return job([decision, child]);
+}
 function executionHarness(bus) {
   return {
     name: 'codex',
@@ -71,7 +78,7 @@ test('planner priority normalization preserves canonical values and accepts safe
 
 test('planner result with a formatting-only priority variation creates a child task', async () => {
   const bus = new MemoryEventBus();
-  const store = new InMemoryStore(job());
+  const store = new InMemoryStore(startedAutonomousJob());
   let calls = 0;
   const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{ ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
   const reconciler = new Reconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
@@ -98,7 +105,7 @@ test('default planner agent loads markdown instructions and returns typed planni
 test('fixed and autonomous jobs complete from terminal events, not adapter exit', async () => {
   for (const mode of ['fixed','autonomous']) {
     const bus = new MemoryEventBus();
-    const store = new InMemoryStore(job(mode === 'fixed' ? [task('fixed-work')] : [], mode));
+    const store = new InMemoryStore(mode === 'fixed' ? job([task('fixed-work')], mode) : startedAutonomousJob());
     let calls = 0;
     const planner = { plan: async () => { calls += 1; return calls === 1 ? { objective_status:'in_progress', assessment:'work', next_tasks:[spec('work-1')] } : { objective_status:'satisfied', assessment:'done', next_tasks:[] }; } };
     const reconciler = new Reconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });

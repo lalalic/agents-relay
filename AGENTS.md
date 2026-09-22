@@ -7,6 +7,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - GitHub PR state is durable truth. Events are wake-up/observability signals, never durable truth.
 - Reconcile desired durable state into ephemeral worker executions.
 - One top-level objective maps to one PR; child tasks live inside that PR.
+- `job create` creates durable job state only. The top-level orchestrator decides whether to start work and, if so, submits the initial task batch separately. A zero-task autonomous job must remain idle; Relay must not invent its first planner/task batch.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.

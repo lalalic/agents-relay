@@ -51,7 +51,7 @@ Usage:
   npx agents-relay job <create|adopt|repair> [options]
 
 Actions:
-  create  Find or create an open PR, then persist its job marker; use --start to submit the initial task
+  create  Find or create an open PR, then persist its job marker
   adopt   Attach a job marker to an existing PR
   repair  Repair duplicate markers for the same job
 
@@ -67,7 +67,6 @@ Common options:
   --schedule-next-run ISO  Optional first run (must match the cron expression)
   --missed-run-policy run|skip   Run each missed slot or skip to the next future slot
   --schedule-concurrency skip|queue  Skip or retain the slot while work is active
-  --start                   Create/reuse the job and submit its initial task
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1`,
@@ -75,8 +74,7 @@ Example:
 
 Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
 Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous, --no-auto-merge, --no-review.
-With --start, also require --adapter codex|chatgpt, --model MODEL, --output task-pr|file,
-and --input TEXT. The initial task ID defaults to 'initial'; use --task-id to override it.
+Job creation never creates executable tasks. The orchestrator decides the initial task batch separately with submit.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective"`,
@@ -261,7 +259,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; initialTasks?: Task[] }
+  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -272,7 +270,7 @@ export async function ensureManagedGitHubJob(
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
     const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, reviewEnabled: options.reviewEnabled ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, initialPlanning: options.initialTasks?.length ? { status: 'pending', decisionId: 'planner-0' } : undefined, createdAt: now, updatedAt: now, tasks: [] };
+    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, reviewEnabled: options.reviewEnabled ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
   }
   if (!job.description && pr.body) job.description = pr.body;
   if (options.objective) job.objective = options.objective;
@@ -283,21 +281,7 @@ export async function ensureManagedGitHubJob(
   if (options.priority) job.priority = options.priority;
   else if (!job.priority) job.priority = 'P2';
   if (!job.title && pr.title) job.title = pr.title;
-  if (options.initialTasks?.length) {
-    const decisionId = job.initialPlanning?.decisionId ?? 'planner-0';
-    job.initialPlanning = { status: 'pending', decisionId };
-    job.updatedAt = new Date().toISOString();
-    await store.saveJob(job);
-    const decision = orchestratorPlanningDecision(job, options.initialTasks, decisionId, null, 0);
-    if (!(await store.load(options.id)).tasks.some(task => task.id === decision.id)) await store.appendTask(decision);
-    for (const original of options.initialTasks) {
-      const task = { ...original, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator' as const, planningRound: 0 };
-      if (!(await store.load(options.id)).tasks.some(item => item.id === task.id)) await store.appendTask(task);
-    }
-    job.initialPlanning = { status: 'complete', decisionId };
-    job.updatedAt = new Date().toISOString();
-    await store.saveJob(job);
-  } else await store.saveJob(job);
+  await store.saveJob(job);
   if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
 }
@@ -314,7 +298,7 @@ async function appendPlannedTask(store: DurableStore, job: Job, task: Task): Pro
   return planned;
 }
 
-function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput = false): Task {
+function workerTaskFromArgs(job: Job, args: string[], now: string): Task {
   const model = arg(args, '--model');
   const adapterValue = arg(args, '--adapter');
   const adapter = (adapterValue || 'codex') as AdapterName;
@@ -323,7 +307,6 @@ function workerTaskFromArgs(job: Job, args: string[], now: string, requireInput 
   const input = arg(args, '--input');
   if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('submit adapter must be codex, chatgpt, or orchestrator');
   if (adapter !== 'orchestrator' && !model) throw new Error('submit requires --model for codex/chatgpt tasks');
-  if (requireInput && !input) throw new Error('job create --start requires --input');
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('submit requires --output task-pr|file');
   if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   const routing: RoutingDecision | undefined = adapter === 'orchestrator' ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
@@ -437,11 +420,10 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const repo = repository(args);
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed GitHub jobs');
-  const start = hasArg(args, '--start');
-  const initialTask = start ? workerTaskFromArgs({ id, title: '', executionMode: 'fixed', prNumber: 0, repository: repo, state: 'OPEN', continuation: null, createdAt: '', updatedAt: '', tasks: [] }, args, new Date().toISOString(), true) : undefined;
-  if (start && action !== 'create') throw new Error('--start is only supported by job create');
-  if (start) {
-    if (!hasArg(args, '--adapter')) throw new Error('job create --start requires --adapter codex|chatgpt');
+  if (action === 'create') {
+    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
+    const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
+    if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator submit the initial task batch`);
   }
   const auth = await githubAuthContext(args);
   const client = auth.client;
@@ -463,11 +445,9 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     prNumber,
     head: arg(args, '--head') || undefined,
     base: arg(args, '--base', 'main'),
-    body: arg(args, '--body') || undefined,
-    initialTasks: initialTask ? [initialTask] : undefined
+    body: arg(args, '--body') || undefined
   });
-  if (start) await publishWake(eventBus(args), result.job, initialTask?.id ?? 'initial', `Initial planning decision and task ${initialTask?.id ?? 'initial'} recorded`);
-  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state, task: start ? arg(args, '--task-id', 'initial') : undefined }, null, 2));
+  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }

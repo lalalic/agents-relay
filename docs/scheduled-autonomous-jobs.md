@@ -79,8 +79,7 @@ For each oldest indexed slot, `tick` reloads the job marker and:
    slot for the next heartbeat (`queue`);
 4. otherwise persists `lastScheduledSlot`, advances `nextRunAt`, updates the
    bounded next-run label, marks the job running, and updates the fixed schedule-wake comment;
-5. the local Relay webhook creates a fresh autonomous planner for that slot and
-   runs normal worker/event reconciliation;
+5. for a job that has already been explicitly seeded by an orchestrator task batch, the local Relay webhook may create the next autonomous planner for that slot and run normal worker/event reconciliation; a never-started zero-task job remains idle;
 6. when that planner is satisfied, the job records `lastRunAt` and returns to
    `WAITING`.
 

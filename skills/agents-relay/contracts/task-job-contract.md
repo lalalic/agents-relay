@@ -42,6 +42,8 @@ Final-review routing follows the same worker-selection boundary as executable wo
 
 ## Fixed and autonomous jobs
 
-`fixed` jobs execute the orchestrator-provided task set and then proceed to final review. `autonomous` jobs may ask the planner for additional task batches. Planner-produced tasks must obey this same contract, including explicit `storySize`.
+`job create` persists only the durable job. It never creates executable work. The top-level orchestrator owns the initial execution decision and, when the user intends the job to start, submits the first task batch separately. A zero-task autonomous job stays idle and reconciliation must not bootstrap its first planner.
+
+`fixed` jobs execute the orchestrator-provided task set and then proceed to final review. Once an autonomous job has been explicitly started by an orchestrator-provided planning batch, it may ask the planner for additional task batches. Planner-produced tasks must obey this same contract, including explicit `storySize`.
 
 A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` label and one bounded time-of-day `agents-relay:next-run:*` index label. The GitHub heartbeat discovers only indexed due candidates, validates the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and pulses `agents-relay:schedule-wake`. GitHub webhook delivery then wakes local Relay for planner/worker execution. While the schedule is active, each satisfied run returns the job to `WAITING` instead of entering final-review/auto-merge; older-cycle failures are historical evidence and do not block a later slot.

@@ -10,10 +10,10 @@ For GitHub-backed work, create or adopt the PR through Agents Relay itself. This
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id job-1 --title "Objective" --body "PR description" --mode fixed
 
-# Create/reuse the managed job and submit its initial task atomically
-npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
-  --id job-1 --start --task-id initial --adapter codex --provider openai \
-  --model MODEL --output task-pr --input "Implement the objective and publish a terminal event."
+# The orchestrator decides the initial batch separately
+npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
+  --task-id initial --adapter codex --provider openai --model MODEL --output task-pr \
+  --input "Implement the objective and publish a terminal event."
 
 npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
@@ -31,14 +31,14 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
   --capabilities model,chatgpt,browser-harness
 ~~~
 
-Jobs default to `fixed`, preserving the original submit-and-run behavior. Every
-executable task is now created by a completed durable planning decision. `job
-create --start` records `planner-0` (supplied by the orchestrator) and the
-initial task atomically from the caller's perspective; retrying the command is
-idempotent. Use `--mode autonomous` with `init` or `job create` to make
-reconciliation own planner progress. Autonomous creation with only an objective
-may create a model planner first, but it cannot materialize work until that
-planner succeeds. Fixed jobs never grow another planning round.
+Jobs default to `fixed`. `job create` persists only the durable job and never
+creates executable tasks. The top-level orchestrator decides whether the user's
+request should start immediately and, if so, submits the first task batch
+separately. That submit path records the orchestrator planning decision used as
+the provenance root for those tasks. A zero-task autonomous job remains idle;
+reconciliation does not invent its first planner. After an autonomous job has
+been explicitly started, later planning rounds may extend the work. Fixed jobs
+never grow another planning round.
 
 The durable status JSON and dashboard show the mode and planning provenance. An
 autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
@@ -55,8 +55,7 @@ A repository heartbeat invokes `tick` at 10-minute resolution. See
 [Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
 operational contract.
 
-job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker.
-Use `--start` to create/reuse the job and submit its initial task in one invocation. Start mode requires explicit `--adapter`, `--model`, `--output`, and non-empty `--input`; the task ID defaults to `initial`. Re-running with the same task definition reuses that task and never duplicates it. Omitting `--start` preserves create-only behavior, leaving an `OPEN` job with zero tasks until a caller submits work.
+job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only. Task execution options belong to `submit`, and the orchestrator may submit zero, one, or multiple initial tasks according to user intent.
 
 To adopt an existing unmanaged PR, including a PR with no comments:
 
