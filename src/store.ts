@@ -433,7 +433,7 @@ export class GitHubStore implements DurableStore {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
     const job = jobs.find(x => x.id === jobId);
-    if (!job) throw new Error(`Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}; run agents-relay job adopt --repo ${this.repository} --pr ${this.prNumber} --id ${jobId}`);
+    if (!job) throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
     const soleTrustedJob = jobs.length === 1;
     job.tasks = comments.map(comment => {
       const task = parseTask(comment.body);
@@ -442,6 +442,21 @@ export class GitHubStore implements DurableStore {
       return taskUrl ? { ...task, taskUrl } : task;
     }).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, soleTrustedJob));
     return job;
+  }
+  async validateJobBinding(jobId: string): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const markerComments = comments.filter(comment => comment.body.includes(JOB_MARKER));
+    const parsed = markerComments.map(comment => parseJob(comment.body));
+    const malformed = parsed.filter(job => job === null).length;
+    if (malformed > 0) throw new Error(`JOB_MARKER_MALFORMED: PR #${this.prNumber} contains ${malformed} trusted ${JOB_MARKER} marker(s) that cannot be parsed`);
+    const jobs = parsed.filter((job): job is Job => job !== null);
+    const matches = jobs.filter(job => job.id === jobId);
+    if (matches.length === 0) {
+      if (jobs.length > 0) throw new Error(`JOB_ID_MISMATCH: PR #${this.prNumber} is bound to ${jobs.map(job => job.id).join(', ')}, not ${jobId}`);
+      throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
+    }
+    if (matches.length > 1) throw new Error(`JOB_MARKER_DUPLICATED: PR #${this.prNumber} contains ${matches.length} trusted ${JOB_MARKER} markers for job ${jobId}`);
+    if (jobs.length > 1) throw new Error(`JOB_BINDING_CONFLICT: PR #${this.prNumber} contains trusted ${JOB_MARKER} markers for multiple job ids`);
   }
   async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
   private async comment(body: string): Promise<void> {

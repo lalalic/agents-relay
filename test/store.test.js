@@ -254,7 +254,7 @@ test('dashboard terminal history uses latest durable activity for discovery orde
   assert.deepEqual(dashboardManagedJobs(items).slice(0, 1).map(item => item.job.id), ['job-44']);
 });
 
-test('managed job adoption initializes an existing PR with zero comments', async () => {
+test('managed job create binds an existing PR with zero comments', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
   const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), { id: 'adopted', prNumber: 6 });
@@ -264,16 +264,14 @@ test('managed job adoption initializes an existing PR with zero comments', async
   assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'adopted').length, 1);
 });
 
-test('managed job repair removes duplicate markers without creating another', async () => {
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
+test('job update validation rejects duplicate markers instead of repairing them', async () => {
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
   const duplicate = marker(JOB_MARKER, job('repair'));
   client.comments.set(6, [githubComment(duplicate, 'bot', 1), githubComment(duplicate, 'bot', 2)]);
-  client.nextComment = 3;
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
 
-  await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), { id: 'repair', prNumber: 6 });
-
-  assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'repair').length, 1);
+  await assert.rejects(() => store.validateJobBinding('repair'), /JOB_MARKER_DUPLICATED/);
+  assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'repair').length, 2);
 });
 
 test('managed GitHub task submission is gated on a durable job marker', async () => {
