@@ -21,7 +21,7 @@ import { extendRetryBudget, parseJobSchedule } from './scheduler.js';
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
-const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|status|reconcile|tick|retry|cancel|serve> [options]';
+const usage = 'agents-relay <job|task|context|init|submit|record|agent-register|agent-discover|reconcile|tick|retry|cancel|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -29,7 +29,7 @@ Usage:
   npx agents-relay <command> [options]
 
 Commands:
-  job create|adopt|repair  Create or repair a durable GitHub-backed job
+  job create|update|show|list  Manage durable GitHub-backed jobs
   task update              Update mutable durable task fields in place
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
@@ -37,7 +37,6 @@ Commands:
   record                   Backfill a completed task into durable history
   agent-register           Register an agent role and its capabilities
   agent-discover           Find registered agents matching hard filters
-  status                   Show the durable job state
   reconcile                Run reconciliation once
   tick                     Run the indexed autonomous scheduler heartbeat
   retry|cancel             Change a task state
@@ -45,52 +44,53 @@ Commands:
 
 Run 'npx agents-relay <command> --help' for command options and examples.
 Use 'node dist/cli.js' only for explicit local development/demo mode.`,
-  job: `Manage a GitHub-backed durable job.
+  job: `Manage GitHub-backed durable jobs.
 
 Usage:
-  npx agents-relay job <create|adopt|repair> [options]
+  npx agents-relay job <create|update|show|list> [options]
 
 Actions:
-  create  Find or create an open PR, then persist its job marker
-  adopt   Attach a job marker to an existing PR
-  repair  Repair duplicate markers for the same job
+  create  Create a durable Job, optionally binding an existing unmanaged PR
+  update  Partially update mutable metadata on a healthy existing Job
+  show    Show one durable Job
+  list    List managed Jobs in a repository
 
 Common options:
-  --repo OWNER/REPO       GitHub repository (required)
-  --id JOB_ID              Durable job identifier (required)
-  --pr NUMBER              Existing PR number (required for adopt/repair)
-  --title TEXT             Job title
-  --objective TEXT         Objective for autonomous mode
-  --mode fixed|autonomous  Execution mode (default: fixed)
-  --schedule CRON          Autonomous schedule; minute resolution is 10 minutes
-  --schedule-timezone TZ   IANA timezone for --schedule (default: UTC)
-  --schedule-next-run ISO  Optional first run (must match the cron expression)
-  --missed-run-policy run|skip   Run each missed slot or skip to the next future slot
-  --schedule-concurrency skip|queue  Skip or retain the slot while work is active
+  --repo OWNER/REPO       GitHub repository
+  --id JOB_ID             Durable job identifier
+  --pr NUMBER             Existing PR number
 
 Example:
-  npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1`,
-  'job create': `Create or reuse an open PR and persist one durable job marker.
+  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
+  'job create': `Create a durable Job and its trusted marker.
 
-Required: --repo OWNER/REPO, --id JOB_ID, and --head BRANCH.
-Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --mode fixed|autonomous, --no-auto-merge, --no-review.
-Job creation never creates executable tasks. The orchestrator decides the initial task batch separately with submit.
+Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
+With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
+Common: --base BRANCH (default: main), --title TEXT, --body TEXT, --objective TEXT, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-auto-merge, --no-review.
+Job creation never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective"`,
-  'job adopt': `Adopt an existing PR as a durable job.
+  'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Common: --title TEXT, --objective TEXT, --mode fixed|autonomous, --no-auto-merge.
+Mutable: --title, --objective, --priority, --mode fixed|autonomous, --schedule, --auto-merge|--no-auto-merge, --review|--no-review, and continuation options.
+Unspecified fields are preserved. Marker/binding corruption is never repaired implicitly; update fails with a precise diagnostic instead.
 
 Example:
-  npx agents-relay job adopt --repo OWNER/REPO --pr 12 --id job-12 --title "Objective"`,
-  'job repair': `Repair duplicate durable markers for an existing job.
+  npx agents-relay job update --repo OWNER/REPO --pr 12 --id job-1 --priority P0 --no-auto-merge`,
+  'job show': `Show one durable Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
 
 Example:
-  npx agents-relay job repair --repo OWNER/REPO --pr 12 --id job-12`,
+  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
+  'job list': `List managed Jobs in a repository.
+
+Required: --repo OWNER/REPO.
+
+Example:
+  npx agents-relay job list --repo OWNER/REPO`,
   task: `Manage a durable task.
 
 Usage:
@@ -135,12 +135,6 @@ Common: --task-id ID, --commit SHA, --project NAME.
 
 Example:
   npx agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123`,
-  status: `Show the durable state for a job.
-
-Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
-
-Example:
-  npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1`,
   reconcile: `Reconcile a job once, launching ready tasks and persisting results.
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
@@ -264,23 +258,32 @@ export async function ensureManagedGitHubJob(
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
   const store = new GitHubStore(client, repositoryName, pr.number, trustedAuthors);
-  let job: Job;
   try {
-    job = await store.load(options.id);
+    const existing = await store.load(options.id);
+    if (existing.schedule) await syncScheduleLabels(client, repositoryName, existing);
+    return { job: existing, pr };
   } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('has no durable')) throw error;
-    const now = new Date().toISOString();
-    job = { id: options.id, title: options.title || pr.title || 'Agents Relay job', objective: options.objective || pr.body || undefined, description: pr.body || undefined, priority: options.priority ?? 'P2', executionMode: options.executionMode ?? 'fixed', autoMerge: options.autoMerge ?? true, reviewEnabled: options.reviewEnabled ?? true, prNumber: pr.number, repository: repositoryName, state: 'OPEN', continuation: options.continuation ?? null, createdAt: now, updatedAt: now, tasks: [] };
+    if (!(error instanceof Error) || !error.message.startsWith('JOB_MARKER_MISSING:')) throw error;
   }
-  if (!job.description && pr.body) job.description = pr.body;
-  if (options.objective) job.objective = options.objective;
-  if (options.executionMode) job.executionMode = options.executionMode;
+  const now = new Date().toISOString();
+  const job: Job = {
+    id: options.id,
+    title: options.title || pr.title || 'Agents Relay job',
+    objective: options.objective || pr.body || undefined,
+    description: pr.body || undefined,
+    priority: options.priority ?? 'P2',
+    executionMode: options.executionMode ?? 'fixed',
+    autoMerge: options.autoMerge ?? true,
+    reviewEnabled: options.reviewEnabled ?? true,
+    prNumber: pr.number,
+    repository: repositoryName,
+    state: 'OPEN',
+    continuation: options.continuation ?? null,
+    createdAt: now,
+    updatedAt: now,
+    tasks: []
+  };
   if (options.schedule) job.schedule = options.schedule;
-  if (options.autoMerge !== undefined) job.autoMerge = options.autoMerge;
-  if (options.reviewEnabled !== undefined) job.reviewEnabled = options.reviewEnabled;
-  if (options.priority) job.priority = options.priority;
-  else if (!job.priority) job.priority = 'P2';
-  if (!job.title && pr.title) job.title = pr.title;
   await store.saveJob(job);
   if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
@@ -416,38 +419,67 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
 }
 
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'adopt', 'repair'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list'].includes(action)) throw new Error(usage);
   const repo = repository(args);
+  const auth = await githubAuthContext(args);
+  if (action === 'list') {
+    console.log(JSON.stringify(await listManagedGitHubJobs(auth.client, repo, auth.trustedAuthors), null, 2));
+    return;
+  }
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed GitHub jobs');
-  if (action === 'create') {
-    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
-    const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
-    if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator submit the initial task batch`);
-  }
-  const auth = await githubAuthContext(args);
-  const client = auth.client;
-  const trustedAuthors = auth.trustedAuthors;
   const prValue = arg(args, '--pr');
   const prNumber = prValue ? Number(prValue) : undefined;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
-  if ((action === 'adopt' || action === 'repair') && !prNumber) throw new Error(`job ${action} requires --pr`);
-  const result = await ensureManagedGitHubJob(client, repo, trustedAuthors, {
-    id,
-    title: arg(args, '--title') || undefined,
-    objective: arg(args, '--objective') || undefined,
-    priority: priority(args),
-    executionMode: requestedExecutionMode(args),
-    schedule: scheduleFromArgs(args),
-    autoMerge: !hasArg(args, '--no-auto-merge'),
-    reviewEnabled: !hasArg(args, '--no-review'),
-    continuation: continuation(args),
-    prNumber,
-    head: arg(args, '--head') || undefined,
-    base: arg(args, '--base', 'main'),
-    body: arg(args, '--body') || undefined
-  });
-  console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
+  if (action === 'create') {
+    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
+    const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
+    if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
+    if (!prNumber && !arg(args, '--head')) throw new Error('job create requires either --head or --pr');
+    const result = await ensureManagedGitHubJob(auth.client, repo, auth.trustedAuthors, {
+      id,
+      title: arg(args, '--title') || undefined,
+      objective: arg(args, '--objective') || undefined,
+      priority: priority(args),
+      executionMode: requestedExecutionMode(args),
+      schedule: scheduleFromArgs(args),
+      autoMerge: !hasArg(args, '--no-auto-merge'),
+      reviewEnabled: !hasArg(args, '--no-review'),
+      continuation: continuation(args),
+      prNumber,
+      head: arg(args, '--head') || undefined,
+      base: arg(args, '--base', 'main'),
+      body: arg(args, '--body') || undefined
+    });
+    console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
+    return;
+  }
+  if (!prNumber) throw new Error(`job ${action} requires --pr`);
+  const store = new GitHubStore(auth.client, repo, prNumber, auth.trustedAuthors);
+  const job = await store.load(id);
+  if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
+  await store.validateJobBinding(id);
+
+  if (hasArg(args, '--title')) job.title = arg(args, '--title');
+  if (hasArg(args, '--objective')) job.objective = arg(args, '--objective');
+  if (hasArg(args, '--priority')) job.priority = priority(args, job.priority ?? 'P2');
+  if (hasArg(args, '--mode') || hasArg(args, '--execution-mode')) job.executionMode = executionMode(args, job.executionMode ?? 'fixed');
+  if (hasArg(args, '--schedule')) job.schedule = scheduleFromArgs(args);
+  if (hasArg(args, '--auto-merge') && hasArg(args, '--no-auto-merge')) throw new Error('choose only one of --auto-merge or --no-auto-merge');
+  if (hasArg(args, '--auto-merge')) job.autoMerge = true;
+  if (hasArg(args, '--no-auto-merge')) job.autoMerge = false;
+  if (hasArg(args, '--review') && hasArg(args, '--no-review')) throw new Error('choose only one of --review or --no-review');
+  if (hasArg(args, '--review')) job.reviewEnabled = true;
+  if (hasArg(args, '--no-review')) job.reviewEnabled = false;
+  if (hasArg(args, '--continue-kind') || hasArg(args, '--continue-target')) {
+    const next = continuation(args);
+    if (!next) throw new Error('--continue-kind and --continue-target must be supplied together');
+    job.continuation = next;
+  }
+  job.updatedAt = new Date().toISOString();
+  await store.saveJob(job);
+  if (hasArg(args, '--schedule') && job.schedule) await syncScheduleLabels(auth.client, repo, job);
+  console.log(JSON.stringify(await store.load(id), null, 2));
 }
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }

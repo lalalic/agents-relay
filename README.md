@@ -20,7 +20,7 @@ npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
   --input "Implement the described child task and publish a terminal event."
 
 npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
-npx agents-relay status --repo OWNER/REPO --pr 12 --id job-1
+npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1
 ~~~
 
 Mutable queued/retryable task fields can be changed in place without replacing the durable task identity. `task update` rejects `RUNNING`, `SUCCEEDED`, and `CANCELLED` tasks so active execution and terminal history cannot be rewritten. For example:
@@ -57,19 +57,21 @@ operational contract.
 
 job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only. Task execution options belong to `submit`, and the orchestrator may submit zero, one, or multiple initial tasks according to user intent.
 
-To adopt an existing unmanaged PR, including a PR with no comments:
+To create a Job on an existing unmanaged PR, use the same `job create` action with `--pr` instead of `--head`:
 
 ~~~sh
-npx agents-relay job adopt --repo OWNER/REPO --pr 6 --id job-6 --title "Existing objective"
+npx agents-relay job create --repo OWNER/REPO --pr 6 --id job-6 --title "Existing objective"
 ~~~
 
-Use job repair with the same arguments to repair duplicate same-job markers. A conflicting marker for another job is rejected rather than overwritten.
+Use `job update` for partial mutable metadata changes on an already healthy Job marker/binding:
 
 ~~~sh
-npx agents-relay job repair --repo OWNER/REPO --pr 6 --id job-6
+npx agents-relay job update --repo OWNER/REPO --pr 6 --id job-6 --priority P0 --no-auto-merge
 ~~~
 
-Managed GitHub submit/status/reconcile/retry/cancel/serve commands require the durable job marker. If it is missing, the CLI fails with a message directing the caller to job adopt. Orchestrators do not need raw gh PR/comment commands: Agents Relay uses GhApiClient and GitHubStore internally.
+`job update` validates the trusted Job marker first. Missing, malformed, duplicated, mismatched, or conflicting bindings fail with a precise diagnostic and are not repaired implicitly. The orchestrator handles exceptional repair explicitly according to the Job contract, then retries the update. `job show` reads one Job and `job list` lists managed Jobs in a repository.
+
+Managed GitHub submit/reconcile/retry/cancel/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.
 
 The original init command remains supported for backward compatibility:
 
