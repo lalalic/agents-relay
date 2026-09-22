@@ -40,10 +40,19 @@ A normal task never merges a PR. After all non-superseded work gates pass, Relay
 
 Final-review routing follows the same worker-selection boundary as executable work. Capability, availability, explicit reviewer constraints, and resource health are hard gates. Among eligible workers, Relay prefers a reviewer with a different worker identity from the implementation tasks; when that is unavailable it prefers a different provider/model, then falls back to the first eligible worker. The selected worker, `selectedBy` reason, and `reviewerRouting` event data are durable evidence. No provider is a universal reviewer default.
 
-## Fixed and autonomous jobs
+## Job, Task, and planner ownership
 
-`job create` persists only the durable job. It never creates executable work. The top-level orchestrator owns the initial execution decision and, when the user intends the job to start, submits the first task batch separately. A zero-task autonomous job stays idle and reconciliation must not bootstrap its first planner.
+The public CLI resource surface is:
 
-`fixed` jobs execute the orchestrator-provided task set and then proceed to final review. Once an autonomous job has been explicitly started by an orchestrator-provided planning batch, it may ask the planner for additional task batches. Planner-produced tasks must obey this same contract, including explicit `storySize`.
+- `job create|update|show|list`
+- `task create|update|show|list|retry|cancel`
+
+`job create` persists only durable Job state. It never creates executable work. `task create` creates a real executable Task directly under the Job; direct orchestrator-created Tasks are not wrapped in synthetic planner Tasks and have no planner-round provenance.
+
+Planner rounds are internal planner output, not a general public CLI resource. Relay invokes the planner agent, validates its structured result, persists that invocation as one planner round, then materializes `next_tasks` under that planner round. The planner agent itself does not call Relay CLI or persist Tasks. Only an actual planner invocation creates a planner round.
+
+A zero-task autonomous Job stays idle. An autonomous Job may begin with one or more direct orchestrator-created Tasks and no Plan. After that direct batch completes, Relay may create the first real planner round. Later planner rounds continue until the objective is satisfied. Fixed Jobs never create autonomous planner rounds.
+
+Planner-produced Tasks obey this same contract, including explicit `storySize`.
 
 A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` label and one bounded time-of-day `agents-relay:next-run:*` index label. The GitHub heartbeat discovers only indexed due candidates, validates the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and pulses `agents-relay:schedule-wake`. GitHub webhook delivery then wakes local Relay for planner/worker execution. While the schedule is active, each satisfied run returns the job to `WAITING` instead of entering final-review/auto-merge; older-cycle failures are historical evidence and do not block a later slot.

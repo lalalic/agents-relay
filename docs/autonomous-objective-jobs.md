@@ -19,27 +19,18 @@ Existing jobs remain `fixed` by default. An `autonomous` job may grow its own du
 
 ## Initial planning contract
 
-No executable task may exist without a completed planning decision that created
-it. An orchestrator that knows the initial task set records a completed
-`planner-0` decision with `planningSource: orchestrator`; every initial task
-stores that decision ID, source, and round `0`. Job creation keeps an
-`initialPlanning: pending` barrier while the decision and task comments are
-being appended, so an autonomous watchdog cannot race ahead and create
-`planner-1`. A job created with only an objective may instead create a real
-model planner task first; its children are materialized only after the planner
-is successful.
+An orchestrator may create the initial executable batch directly with `task create`. Those Tasks are real top-level work and do not require a synthetic planning decision, `planner-0`, or planner provenance. A zero-task autonomous Job remains idle.
+
+After the direct initial batch settles successfully, Relay may create the first real planner round. Relay invokes the planner agent with durable Job/Task state and prior planner rounds. The planner returns structured `objective_status`, `assessment`, and `next_tasks`; it does not call the Relay CLI or persist anything itself. Relay persists the planner result and then materializes its returned Tasks under that planner round.
 
 The lifecycle is therefore:
 
 ```text
-fixed:      orchestrator decision -> initial batch -> review/completion
-autonomous: orchestrator decision -> batch -> review gate -> model planner -> batch -> ...
+fixed:      direct orchestrator Tasks -> review/completion
+autonomous: direct orchestrator Tasks -> planner-1 -> planner Tasks -> planner-2 -> ...
 ```
 
-Planning provenance is retained on every task (`planningDecisionId`,
-`planningSource`, and `planningRound`). Nested delegation uses the same Relay
-path: the worker's durable delegation decision is recorded before child tasks,
-and the child retains its worker parent lineage.
+Only Tasks created from an actual planner invocation carry planner provenance (`planningDecisionId`, `planningSource`, `planningRound`). Direct orchestrator Tasks do not.
 
 ## Autonomous lifecycle
 
@@ -67,11 +58,12 @@ flowchart TD
 
 ## Durable hierarchy
 
-Planning causality is visible directly in the existing task tree. No wave/generation abstraction is introduced.
+Planning causality is visible directly in the existing task tree. Direct orchestrator Tasks can remain at the Job root; real planner rounds group only the Tasks they produced.
 
 ```mermaid
 graph TD
-    J[Autonomous Job] --> P1[planner-1]
+    J[Autonomous Job] --> T0[direct initial task]
+    J --> P1[planner-1]
     P1 --> T1[implementation task]
     P1 --> T2[test task]
     P1 --> P2[planner-2]
@@ -117,7 +109,7 @@ Planner satisfaction is evidence about the objective, not authority to close the
 
 ## Compatibility and surfaces
 
-Fixed jobs retain their previous scheduling behavior. Execution mode and planner state are serialized in durable markers, exposed through CLI/status data, and surfaced in the dashboard. Legacy markers without an execution mode are interpreted as `fixed`.
+Fixed jobs retain their scheduling behavior. Execution mode and real planner-round state are serialized in durable markers and surfaced through Job/Task CLI data and the dashboard. Legacy markers without an execution mode are interpreted as `fixed`.
 
 ## Implementation sequence
 

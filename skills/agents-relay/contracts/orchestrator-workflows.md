@@ -20,7 +20,7 @@ A **P0 job** (alias: **self job**) is executed directly by the current active or
 1. The orchestrator creates the durable job.
 2. The orchestrator immediately creates the required orchestrator-owned task(s); do not leave the P0 job idle.
 3. The current orchestrator thread starts executing those tasks immediately rather than delegating them to another worker.
-4. After implementation, the orchestrator performs/reconciles review against the current head.
-5. If review passes and merge requirements are satisfied, the orchestrator merges the job itself and completes normal post-merge reconciliation.
+4. P0/self jobs do not require the normal reviewer gate unless the user explicitly asks for review.
+5. After implementation and local verification, the orchestrator merges the job itself and completes normal post-merge reconciliation.
 
 `job create` still only creates durable job state; the P0 workflow requires the orchestrator to follow it immediately with task creation and execution.

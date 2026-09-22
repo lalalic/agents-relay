@@ -2,7 +2,7 @@
 
 ## Goal
 
-Provide a generic, shareable async agent job system where agents can submit durable child tasks, specialized workers execute them asynchronously, results are persisted, and the parent agent can continue when dependencies become ready.
+Provide a generic, shareable async agent job system where agents can create durable child tasks, specialized workers execute them asynchronously, results are persisted, and the parent agent can continue when dependencies become ready.
 
 ## Core model
 
@@ -27,8 +27,7 @@ The registry does not yet execute remote agents or expose a public marketplace. 
 ## Execution modes
 
 Jobs persist `executionMode` as `fixed` or `autonomous`; missing mode in legacy
-markers is read as `fixed`. Fixed is the default and keeps the v1 submit flow
-unchanged. Autonomous jobs use the existing task records and parent hierarchy:
+markers is read as `fixed`. Fixed remains the default. Direct orchestrator work is created with `task create`; autonomous continuation uses planner rounds only when Relay actually invokes the planner. Autonomous jobs use the existing task records and parent hierarchy:
 when all currently runnable work is settled and no planner task is active,
 reconciliation appends one durable `kind: "planner"` task. The planner returns
 typed `objective_status`, `assessment`, and `next_tasks` values. Each
@@ -74,7 +73,7 @@ Task submission is append-only at creation time, which avoids a single giant mut
 
 ## Execution
 
-1. An agent submits a task to the PR.
+1. An agent creates a durable task under the Job.
 2. A task comment is created durably.
 3. The relay wakes and reloads the PR.
 4. Scheduler marks dependency-satisfied tasks ready.
@@ -116,7 +115,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 
 1. A reusable TypeScript package/CLI named `agents-relay`.
 2. GitHub PR/comment durable store with job/task marker parsing and updates.
-3. CLI to initialize a PR job, submit child tasks, inspect status, reconcile, retry/cancel tasks, and run the daemon.
+3. CLI to manage Jobs, create/update/show/list/retry/cancel Tasks, reconcile, and run the daemon.
 4. Dependency scheduling and nested parent/child lineage.
 5. Worker lease, expiry detection, recovery, retry, timeout, and cancellation semantics.
 6. Codex and ChatGPT agent adapters behind one adapter interface; shell commands remain tools used by orchestrators/agents, not managed worker tasks.
@@ -126,7 +125,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 10. Dashboard web page showing jobs, task tree/state, worker/model, dependencies, results, leases, and live events/status.
 11. SSE or equivalent local live dashboard updates.
 12. Tests for marker parsing, state transitions, scheduling, reconciliation/recovery, and API/dashboard data.
-13. `skills/agents-relay/SKILL.md` plus supporting agent files describing how an agent submits async work, propagates lineage, consumes results, and treats events vs durable state.
+13. `skills/agents-relay/SKILL.md` plus supporting agent files describing how an agent creates async work, propagates lineage, consumes results, and treats events vs durable state.
 14. Documentation and a runnable local dogfood example.
 15. Browser-level verification of the dashboard before merge.
 

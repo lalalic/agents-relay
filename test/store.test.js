@@ -274,7 +274,7 @@ test('job update validation rejects duplicate markers instead of repairing them'
   assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'repair').length, 2);
 });
 
-test('managed GitHub task submission is gated on a durable job marker', async () => {
+test('managed GitHub task creation is gated on a durable job marker', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
   const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));

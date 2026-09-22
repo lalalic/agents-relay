@@ -33,10 +33,6 @@ export function planningSpec(task: Task): PlannerTaskSpec {
   return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
 }
 
-export function orchestratorPlanningDecision(job: Job, tasks: readonly Task[], id: string, parentTaskId: string | null, round: number, source: PlanningDecisionSource = 'orchestrator'): Task {
-  const now = new Date().toISOString();
-  return { jobId: job.id, id, kind: 'planner', priority: job.priority, storySize: 'S', agentName: source === 'orchestrator' ? 'orchestrator' : 'planner', parentTaskId, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: `Planning decision supplied by ${source} for ${tasks.length} task(s)`, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: { summary: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planning decision completed' }, plannerResult: { objective_status: 'in_progress', assessment: source === 'orchestrator' ? 'Initial task set supplied by orchestrator' : 'Planning decision completed', next_tasks: tasks.map(planningSpec) }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: source, planningRound: round };
-}
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Planner result must be an object');

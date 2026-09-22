@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InMemoryStore } from '../dist/store.js';
-import { orchestratorPlanningDecision } from '../dist/planner.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 
@@ -13,12 +12,10 @@ const harness = bus => ({ name: 'codex', id: 'test-codex', capabilities: ['model
 async function settle(reconciler) { for (let i = 0; i < 8; i += 1) { await reconciler.reconcile('planning'); await reconciler.idle(); await new Promise(resolve => setTimeout(resolve, 0)); } }
 
 function plannedJob(mode = 'autonomous') {
-  const task = work('initial');
-  const base = job([], mode);
-  const decision = orchestratorPlanningDecision(base, [task], 'planner-0', null, 0);
-  const child = { ...task, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator', planningRound: 0 };
-  return { job: job([decision, child], mode), decision, child };
+  const initial = work('initial');
+  return { job: job([initial], mode), child: initial };
 }
+
 
 test('orchestrator-supplied autonomous initial work runs before any model planner', async () => {
   const { job: initial } = plannedJob();
@@ -30,11 +27,13 @@ test('orchestrator-supplied autonomous initial work runs before any model planne
   const stop = await reconciler.watch('planning');
   await reconciler.reconcile('planning');
   assert.equal(plannerCalls, 0);
-  assert.equal((await store.load('planning')).tasks.find(task => task.id === 'initial')?.planningSource, 'orchestrator');
+  const initialTask = (await store.load('planning')).tasks.find(task => task.id === 'initial');
+  assert.equal(initialTask?.planningSource, undefined);
+  assert.equal(initialTask?.parentTaskId, null);
   await stop();
 });
 
-test('zero-task autonomous jobs remain idle until the orchestrator submits the first batch', async () => {
+test('zero-task autonomous jobs remain idle until the orchestrator creates the first batch', async () => {
   const store = new InMemoryStore(job([]));
   const bus = new MemoryEventBus();
   let plannerCalls = 0;
@@ -63,7 +62,7 @@ test('reconcile preserves an existing durable task when a planner repeats its id
   await stop();
 });
 
-test('fixed jobs stop after the orchestrator planning batch', async () => {
+test('fixed jobs stop after the orchestrator-created task batch', async () => {
   const { job: initial } = plannedJob('fixed');
   const store = new InMemoryStore(initial);
   const bus = new MemoryEventBus();
@@ -72,7 +71,7 @@ test('fixed jobs stop after the orchestrator planning batch', async () => {
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   assert.equal(plannerCalls, 0);
-  assert.equal((await store.load('planning')).tasks.filter(task => task.kind === 'planner').length, 1);
+  assert.equal((await store.load('planning')).tasks.filter(task => task.kind === 'planner').length, 0);
   await stop();
 });
 
@@ -85,6 +84,6 @@ test('planner failure after an orchestrator-started batch does not invent execut
   await settle(reconciler);
   const result = await store.load('planning');
   assert.equal(result.tasks.filter(task => task.kind !== 'planner').length, 1);
-  assert.equal(result.tasks.find(task => task.id === 'planner-2')?.state, 'FAILED');
+  assert.equal(result.tasks.find(task => task.id === 'planner-1')?.state, 'FAILED');
   await stop();
 });

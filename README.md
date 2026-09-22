@@ -11,11 +11,11 @@ npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
   --id job-1 --title "Objective" --body "PR description" --mode fixed
 
 # The orchestrator decides the initial batch separately
-npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id initial --adapter codex --provider openai --model MODEL --output task-pr \
   --input "Implement the objective and publish a terminal event."
 
-npx agents-relay submit --repo OWNER/REPO --pr 12 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
   --input "Implement the described child task and publish a terminal event."
 
@@ -33,9 +33,8 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 
 Jobs default to `fixed`. `job create` persists only the durable job and never
 creates executable tasks. The top-level orchestrator decides whether the user's
-request should start immediately and, if so, submits the first task batch
-separately. That submit path records the orchestrator planning decision used as
-the provenance root for those tasks. A zero-task autonomous job remains idle;
+request should start immediately and, if so, creates the first task batch
+separately. Direct orchestrator-created tasks are persisted directly and are not wrapped in a synthetic Plan. A zero-task autonomous job remains idle;
 reconciliation does not invent its first planner. After an autonomous job has
 been explicitly started, later planning rounds may extend the work. Fixed jobs
 never grow another planning round.
@@ -55,7 +54,7 @@ A repository heartbeat invokes `tick` at 10-minute resolution. See
 [Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
 operational contract.
 
-job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only. Task execution options belong to `submit`, and the orchestrator may submit zero, one, or multiple initial tasks according to user intent.
+job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
 To create a Job on an existing unmanaged PR, use the same `job create` action with `--pr` instead of `--head`:
 
@@ -71,7 +70,7 @@ npx agents-relay job update --repo OWNER/REPO --pr 6 --id job-6 --priority P0 --
 
 `job update` validates the trusted Job marker first. Missing, malformed, duplicated, mismatched, or conflicting bindings fail with a precise diagnostic and are not repaired implicitly. The orchestrator handles exceptional repair explicitly according to the Job contract, then retries the update. `job show` reads one Job and `job list` lists managed Jobs in a repository.
 
-Managed GitHub submit/reconcile/retry/cancel/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.
+Managed GitHub task create/update/show/list/retry/cancel and reconcile/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.
 
 The original init command remains supported for backward compatibility:
 
@@ -91,7 +90,7 @@ For explicit local demo/test mode:
 npm install
 npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
-node dist/cli.js submit --file .agents-relay.json --task-id hello --adapter codex --provider openai --model MODEL --output task-pr --input "Complete the described task"
+node dist/cli.js task create --file .agents-relay.json --task-id hello --adapter codex --provider openai --model MODEL --output task-pr --input "Complete the described task"
 node dist/cli.js reconcile --file .agents-relay.json
 npx agents-relay serve --file .agents-relay.json
 ~~~
@@ -143,7 +142,7 @@ For Codex and ChatGPT, **events are authoritative task state**. Event publicatio
 The ChatGPT adapter uses the `chatgpt-browser-worker` path selected by the shared execution-context resolver; Relay does not bundle its own copy. The resolver applies project-local > Neo shared > global `~/.agents` precedence at execution time, so durable tasks store names/intent rather than stale absolute skill paths. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 
 ~~~sh
-npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
   --task-id research-ui --adapter chatgpt \
   --capabilities model,chatgpt,browser-harness \
   --provider openai --model MODEL \
@@ -153,4 +152,4 @@ npx agents-relay submit --repo OWNER/REPO --pr 5 --id job-1 \
 
 GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.
 
-For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be submitted before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.
+For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.

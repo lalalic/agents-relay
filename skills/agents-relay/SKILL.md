@@ -62,7 +62,7 @@ Example:
 ~~~sh
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main   --id JOB_ID --title "Objective"
 
-npx agents-relay submit --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --adapter codex   --provider openai --model MODEL   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
+npx agents-relay task create --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --adapter codex   --provider openai --model MODEL   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
 
 npx agents-relayd --repo OWNER/REPO --events nats
 ~~~
@@ -96,17 +96,15 @@ ChatGPT thread identity is diagnostic only. It is not persisted as a resumable t
 
 ## Autonomous planner
 
-No executable task may be materialized without a completed durable planning
-decision. Job creation with caller-supplied initial work records an
-orchestrator-owned `planner-0` decision before its initial tasks; autonomous
-mode must not start a model planner in that case. Objective-only autonomous
-jobs may start a real model planner, and planner children are created only
-after that planner succeeds. Fixed jobs do not automatically create another
-planning round. Each task exposes `planningDecisionId`, `planningSource`, and
-`planningRound` for dashboard lineage. Nested worker delegation must create its
-durable planning decision and children through Relay as well.
+Direct orchestrator-created Tasks do not require a Plan. The orchestrator may create the initial batch with `task create`; those Tasks remain top-level unless the orchestrator explicitly gives them normal task parentage.
 
-Planner-created child tasks must also be descriptive agent work. They must select `codex` or `chatgpt` and include an explicit output contract. A planner must never generate shell-command worker tasks.
+For autonomous continuation, Relay invokes the planner agent as a pure decision function. The planner receives durable Job/Task state, previous planner rounds, and resolved execution context, then returns structured `{ objective_status, assessment, next_tasks }` output. The planner does not call Relay CLI and does not persist Tasks itself.
+
+Each successful planner invocation is one real planner round. Relay persists that planner result, then creates the returned Tasks with lineage back to that planner round. Only planner execution creates planner rounds; Relay never manufactures synthetic `plan-*` records for direct Task creation. In the dashboard, planner rounds are organizational/grouping nodes for the Tasks they produced.
+
+A zero-task autonomous Job remains idle. After a direct orchestrator-created initial batch completes, Relay may start the first real planner round. Fixed Jobs do not automatically create planner rounds.
+
+Planner-created child Tasks remain descriptive agent work and must include worker requirements, output contract, and `storySize`; worker-router/model-router choose execution routing afterward.
 
 ## Durable truth
 

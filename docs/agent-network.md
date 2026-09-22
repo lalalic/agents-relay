@@ -23,7 +23,7 @@ This PR does not build a public marketplace, broad multi-owner control plane, un
 - Agents can be registered and discovered from the same durable PR-backed store.
 - Discovery rejects unmet capabilities/runtime/trust/availability requirements and exposes evidence rather than an opaque score.
 - Registration and discovery work without a human web form.
-- The future remote surface is explicitly limited to authenticated create/submit and status operations, with intention-only/public jobs separated from private-data jobs.
+- The future remote surface is explicitly limited to authenticated create and status operations, with intention-only/public jobs separated from private-data jobs.
 
 ## Validation
 

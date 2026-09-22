@@ -56,29 +56,26 @@ test('task marker metadata round-trips while legacy markers remain compatible', 
   assert.equal(parsed.agentName, 'codex');
   assert.equal(parsed.parentTaskId, 'orchestrator');
 });
-test('CLI submit stores optional project and agent metadata with parent', async () => {
+test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'submit', '--file', file, '--task-id', 'child', '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--provider','openai','--model','gpt-test','--output','task-pr','--input', 'build metadata'], { cwd: process.cwd() });
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'task','create', '--file', file, '--task-id', 'child', '--parent', 'orchestrator', '--project', 'Agents Relay', '--agent', 'codex', '--provider','openai','--model','gpt-test','--output','task-pr','--input', 'build metadata'], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.tasks[0].projectName, 'Agents Relay');
   assert.equal(saved.tasks[0].agentName, 'codex');
-  assert.equal(saved.tasks[0].parentTaskId, 'plan-child');
-  assert.equal(saved.tasks[0].planningDecisionId, 'plan-child');
-  assert.equal(saved.tasks[0].planningSource, 'orchestrator');
-  assert.equal(saved.tasks[1].id, 'plan-child');
-  assert.equal(saved.tasks[1].kind, 'planner');
-  assert.equal(saved.tasks[1].parentTaskId, 'orchestrator');
-  assert.equal(saved.tasks[1].state, 'SUCCEEDED');
+  assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
+  assert.equal(saved.tasks[0].planningDecisionId, undefined);
+  assert.equal(saved.tasks[0].planningSource, undefined);
+  assert.equal(saved.tasks.length, 1);
 });
-test('CLI submit accepts orchestrator self work without a model', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-submit-'));
+test('CLI task create accepts orchestrator self work without a model', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'submit','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
   const [code] = await once(result, 'exit');
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
@@ -104,11 +101,11 @@ test('reconciler assigns orchestrator work to self without launching an adapter 
   assert.equal(durable.state,'SUCCEEDED'); assert.equal(durable.result.summary,'orchestrator finished');
 });
 
-test('CLI submit defaults story size to M and derives overall timeout from size', async () => {
+test('CLI task create defaults story size to M and derives overall timeout from size', async () => {
   const dir=await mkdtemp(join(tmpdir(),'agents-relay-story-size-'));
   const file=join(dir,'job.json');
   const root=job([]); root.executionMode='fixed'; await writeFile(file,JSON.stringify(root));
-  const child=spawn(process.execPath,[join('dist','cli.js'),'submit','--file',file,'--task-id','sized','--adapter','codex','--model','gpt-test','--output','task-pr','--story-size','L'],{cwd:process.cwd()});
+  const child=spawn(process.execPath,[join('dist','cli.js'),'task','create','--file',file,'--task-id','sized','--adapter','codex','--model','gpt-test','--output','task-pr','--story-size','L','--input','sized work'],{cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
   const saved=JSON.parse(await readFile(file,'utf8'));
   const created=saved.tasks.find(item=>item.id==='sized');
@@ -146,11 +143,11 @@ test('CLI task update rejects active and terminal execution records', async () =
   }
 });
 
-test('CLI submit reopens a completed job before publishing new work', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-submit-'));
+test('CLI task create reopens a completed job before publishing new work', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify({...job([]),state:'COMPLETED'}));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'submit','--file',file,'--task-id','review','--provider','openai','--model','gpt-test','--output','task-pr','--input','review completed job'], {cwd:process.cwd()});
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','review','--provider','openai','--model','gpt-test','--output','task-pr','--input','review completed job'], {cwd:process.cwd()});
   const [code] = await once(result,'exit');
   assert.equal(code,0);
   const saved = JSON.parse(await readFile(file,'utf8'));
@@ -159,14 +156,14 @@ test('CLI submit reopens a completed job before publishing new work', async () =
   await rm(directory,{recursive:true,force:true});
 });
 
-test('CLI submit and retry reactivate failed jobs as RUNNING', async () => {
+test('CLI task create and retry reactivate failed jobs as RUNNING', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reactivate-')); const file=join(directory,'job.json');
   const failedTask=task('failed','FAILED'); failedTask.error='old'; failedTask.attempt=1; failedTask.maxAttempts=3;
   await writeFile(file, JSON.stringify({...job([failedTask]),state:'FAILED'}));
-  let child=spawn(process.execPath,[join('dist','cli.js'),'submit','--file',file,'--task-id','replacement','--provider','openai','--model','gpt-test','--output','task-pr','--input','replacement'],{cwd:process.cwd()});
+  let child=spawn(process.execPath,[join('dist','cli.js'),'task','create','--file',file,'--task-id','replacement','--provider','openai','--model','gpt-test','--output','task-pr','--input','replacement'],{cwd:process.cwd()});
   let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING');
   saved.state='FAILED'; await writeFile(file,JSON.stringify(saved));
-  child=spawn(process.execPath,[join('dist','cli.js'),'retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
+  child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
   [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'READY');
   await rm(directory,{recursive:true,force:true});
 });

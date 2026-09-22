@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, normalizePlannerPriority, orchestratorPlanningDecision, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -20,11 +20,8 @@ const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', paren
 const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 const spec = id => ({ id, input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
 function startedAutonomousJob() {
-  const base = job();
   const seed = { ...task('seed', 'SUCCEEDED'), result: { summary: 'seed complete' } };
-  const decision = orchestratorPlanningDecision(base, [seed], 'planner-0', null, 0);
-  const child = { ...seed, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator', planningRound: 0 };
-  return job([decision, child]);
+  return job([seed]);
 }
 function executionHarness(bus) {
   return {
