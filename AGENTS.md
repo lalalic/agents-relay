@@ -26,4 +26,4 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 
 ## Operational workflows
 
-Hotfix and P0/self-job behavior is defined by `skills/agents-relay/contracts/task-job-contract.md`. These workflows are Relay job/task policy, not global agent policy.
+P0/self-job behavior is defined by `skills/agents-relay/contracts/task-job-contract.md`. Hotfix behavior is defined by `skills/agents-relay/contracts/orchestrator-workflows.md`. These are Agents Relay orchestration contracts, not global agent policy.
