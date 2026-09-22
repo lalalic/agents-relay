@@ -40,18 +40,6 @@ A normal task never merges a PR. After all non-superseded work gates pass, Relay
 
 Final-review routing follows the same worker-selection boundary as executable work. Capability, availability, explicit reviewer constraints, and resource health are hard gates. Among eligible workers, Relay prefers a reviewer with a different worker identity from the implementation tasks; when that is unavailable it prefers a different provider/model, then falls back to the first eligible worker. The selected worker, `selectedBy` reason, and `reviewerRouting` event data are durable evidence. No provider is a universal reviewer default.
 
-## P0 / self job workflow
-
-A **P0 job** (alias: **self job**) is executed directly by the current active orchestrator thread:
-
-1. The orchestrator creates the durable job.
-2. The orchestrator immediately creates the required orchestrator-owned task(s); do not leave the P0 job idle.
-3. The current orchestrator thread starts executing those tasks immediately rather than delegating them to another worker.
-4. After implementation, the orchestrator performs/reconciles review against the current head.
-5. If review passes and merge requirements are satisfied, the orchestrator merges the job itself and completes normal post-merge reconciliation.
-
-`job create` still only creates durable job state; the P0 workflow requires the orchestrator to follow it immediately with task creation and execution.
-
 ## Fixed and autonomous jobs
 
 `job create` persists only the durable job. It never creates executable work. The top-level orchestrator owns the initial execution decision and, when the user intends the job to start, submits the first task batch separately. A zero-task autonomous job stays idle and reconciliation must not bootstrap its first planner.
