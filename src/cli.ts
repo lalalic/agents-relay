@@ -292,7 +292,7 @@ async function appendPlannedTask(store: DurableStore, job: Job, task: Task): Pro
   const decisionId = `plan-${task.id}`;
   const decision = orchestratorPlanningDecision(job, [task], decisionId, task.parentTaskId, job.tasks.filter(item => item.kind === 'planner').length, 'orchestrator');
   if (!job.tasks.some(item => item.id === decision.id)) await store.appendTask(decision);
-  const planned = { ...task, parentTaskId: task.parentTaskId ?? null, planningDecisionId: decision.id, planningSource: 'orchestrator' as const, planningRound: decision.planningRound };
+  const planned = { ...task, parentTaskId: decision.id, planningDecisionId: decision.id, planningSource: 'orchestrator' as const, planningRound: decision.planningRound };
   await store.appendTask(planned);
   job.tasks.push(planned, decision);
   return planned;

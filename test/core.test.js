@@ -66,7 +66,7 @@ test('CLI submit stores optional project and agent metadata with parent', async 
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.tasks[0].projectName, 'Agents Relay');
   assert.equal(saved.tasks[0].agentName, 'codex');
-  assert.equal(saved.tasks[0].parentTaskId, 'orchestrator');
+  assert.equal(saved.tasks[0].parentTaskId, 'plan-child');
   assert.equal(saved.tasks[0].planningDecisionId, 'plan-child');
   assert.equal(saved.tasks[0].planningSource, 'orchestrator');
   assert.equal(saved.tasks[1].id, 'plan-child');
