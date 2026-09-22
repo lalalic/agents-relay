@@ -421,6 +421,11 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
 async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list'].includes(action)) throw new Error(usage);
   const repo = repository(args);
+  if (action === 'create') {
+    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
+    const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
+    if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
+  }
   const auth = await githubAuthContext(args);
   if (action === 'list') {
     console.log(JSON.stringify(await listManagedGitHubJobs(auth.client, repo, auth.trustedAuthors), null, 2));
@@ -432,9 +437,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const prNumber = prValue ? Number(prValue) : undefined;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
   if (action === 'create') {
-    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
-    const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
-    if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
     if (!prNumber && !arg(args, '--head')) throw new Error('job create requires either --head or --pr');
     const result = await ensureManagedGitHubJob(auth.client, repo, auth.trustedAuthors, {
       id,
