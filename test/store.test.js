@@ -40,7 +40,7 @@ const job = id => ({
   title: id,
   prNumber: 1,
   repository: 'owner/repo',
-  state: 'OPEN',
+  state: 'ACTIVE',
   continuation: null,
   createdAt: now(),
   updatedAt: now(),
@@ -395,4 +395,14 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
   assert.equal(calls.filter(call => String(call).endsWith('/git/refs')).length, 1);
   assert.equal(calls.filter(call => String(call).endsWith('/git/commits')).length, 1);
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
+});
+
+test('GitHubStore closes its backing pull request explicitly', async () => {
+  let seenPath = null; let seenInit = null;
+  const client = { request: async (path, init) => { seenPath = path; seenInit = init; return {}; } };
+  const store = new GitHubStore(client, 'owner/repo', 7, new Set(['bot']));
+  await store.closePullRequest();
+  assert.equal(seenPath, 'repos/owner/repo/pulls/7');
+  assert.equal(seenInit.method, 'PATCH');
+  assert.deepEqual(JSON.parse(seenInit.body), { state: 'closed' });
 });

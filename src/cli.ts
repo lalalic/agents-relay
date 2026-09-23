@@ -29,7 +29,7 @@ Usage:
   npx agents-relay <command> [options]
 
 Commands:
-  job create|update|show|list  Manage durable GitHub-backed jobs
+  job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
   task create|update|show|list|retry|cancel  Manage durable tasks
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
@@ -45,13 +45,15 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage GitHub-backed durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list> [options]
+  npx agents-relay job <create|update|show|list|merge|cancel> [options]
 
 Actions:
   create  Create a durable Job, optionally binding an existing unmanaged PR
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
   list    List managed Jobs in a repository
+  merge   Merge the backing PR and complete the Job
+  cancel  Close the backing PR and cancel the Job
 
 Common options:
   --repo OWNER/REPO       GitHub repository
@@ -89,6 +91,12 @@ Required: --repo OWNER/REPO.
 
 Example:
   npx agents-relay job list --repo OWNER/REPO`,
+  'job merge': `Merge the backing pull request and complete the durable Job.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
+  'job cancel': `Cancel the durable Job and close its backing pull request.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
   task: `Manage durable tasks.
 
 Usage:
@@ -282,7 +290,7 @@ export async function ensureManagedGitHubJob(
     reviewEnabled: options.reviewEnabled ?? true,
     prNumber: pr.number,
     repository: repositoryName,
-    state: 'OPEN',
+    state: options.schedule ? 'ACTIVE' : 'DRAFT',
     continuation: options.continuation ?? null,
     createdAt: now,
     updatedAt: now,
@@ -351,17 +359,13 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
   if (!id) throw new Error(`task ${action} requires --task-id`);
   if (action === 'create') {
+    if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const now = new Date().toISOString();
     const task = workerTaskFromArgs(job, args, now);
     task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
-    const hasActive = refreshed.tasks.some(item => ['QUEUED', 'RUNNING'].includes(item.state));
-    const hasBlocked = refreshed.tasks.some(item => item.state === 'BLOCKED');
-    const hasDraft = refreshed.tasks.some(item => item.state === 'DRAFT');
-    const hasFailed = refreshed.tasks.some(item => item.state === 'FAILED');
-    const nextState = hasActive ? 'RUNNING' : hasBlocked ? 'BLOCKED' : hasDraft ? 'WAITING' : hasFailed ? 'FAILED' : refreshed.state;
-    if (refreshed.state !== nextState) { refreshed.state = nextState; refreshed.updatedAt = now; await store.saveJob(refreshed); }
+    if (refreshed.state === 'DRAFT') { refreshed.state = 'ACTIVE'; refreshed.updatedAt = now; await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
     await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
@@ -377,7 +381,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.error = action === 'retry' ? null : 'Cancelled by user';
     task.updatedAt = new Date().toISOString();
     await store.saveTask(task);
-    if (action === 'retry' && job.state !== 'RUNNING') { job.state = 'RUNNING'; job.updatedAt = task.updatedAt; await store.saveJob(job); }
+    if (action === 'retry' && job.state === 'DRAFT') { job.state = 'ACTIVE'; job.updatedAt = task.updatedAt; await store.saveJob(job); }
     await saveLocal(localFile, job);
     await publishWake(eventBus(args), job, task.id, `${task.id} ${action} requested`);
     console.log(JSON.stringify(task, null, 2));
@@ -450,7 +454,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
 }
 
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'merge', 'cancel'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   if (action === 'create') {
     const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path','--draft','--queue'];
@@ -492,6 +496,20 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const job = await store.load(id);
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
   await store.validateJobBinding(id);
+  if (action === 'merge') {
+    if (job.state === 'CANCELLED') throw new Error(`Cannot merge cancelled job ${job.id}`);
+    const headSha = await store.headSha();
+    await store.mergePullRequest(headSha ?? undefined);
+    job.state = 'COMPLETED'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+    console.log(JSON.stringify(await store.load(id), null, 2)); return;
+  }
+  if (action === 'cancel') {
+    if (job.state === 'COMPLETED') throw new Error(`Cannot cancel completed job ${job.id}`);
+    for (const task of job.tasks.filter(item => !['SUCCEEDED','CANCELLED'].includes(item.state))) { transitionTask(task, 'CANCELLED'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; await store.saveTask(task); }
+    await store.closePullRequest();
+    job.state = 'CANCELLED'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+    console.log(JSON.stringify(await store.load(id), null, 2)); return;
+  }
 
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
   if (hasArg(args, '--objective')) job.objective = arg(args, '--objective');
@@ -579,7 +597,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: 'OPEN', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: scheduleFromArgs(args) ? 'ACTIVE' : 'DRAFT', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const bus = eventBus(args);
   if (command === 'tick') {
     const repo = repository(args);

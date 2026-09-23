@@ -43,7 +43,7 @@ flowchart TD
     E -->|yes| F[Run durable tasks]
     F --> D
     E -->|no| G{Failed or blocked work?}
-    G -->|yes| H[Remain open for recovery]
+    G -->|yes| H[Remain ACTIVE; runtime BLOCKED/FAILED]
     G -->|no| I{Active planner?}
     I -->|yes| J[Wait for planner outcome]
     I -->|no| K[Create durable planner task]
@@ -105,7 +105,7 @@ A restarted daemon can reclaim a durable planner lease owned by the previous run
 
 ## Completion semantics
 
-Planner satisfaction is evidence about the objective, not authority to close the job. The existing job lifecycle remains authoritative. An autonomous job can stop growing only after a planner reports `satisfied`; it can complete only when the normal completion conditions also allow it. Failed or blocked tasks remain visible and prevent accidental success.
+Planner satisfaction is evidence about the objective, not authority to complete the Job. The durable lifecycle remains `ACTIVE` while work, review, or merge is pending; `FAILED`, `BLOCKED`, `WAITING`, and `RUNNING` are derived runtime statuses. An autonomous job can stop growing only after a planner reports `satisfied`; for PR-backed work, merge is the authoritative transition to lifecycle `COMPLETED`. Failed or blocked tasks remain visible and prevent accidental success.
 
 ## Compatibility and surfaces
 

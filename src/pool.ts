@@ -5,9 +5,9 @@ import { Job, Priority } from './types.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
-export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && !item.draft && !['COMPLETED','CANCELLED'].includes(item.job.state)).map(item => item.job).sort(compareJobPriority); }
+export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && item.job.state === 'ACTIVE').map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
-  // Create-only Jobs stay OPEN until a caller explicitly creates work.
+  // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
   if (job.tasks.some(task => task.state === 'QUEUED' || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
   return job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { dependencyReady, schedule, transitionTask } from './scheduler.js';
+import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
@@ -120,12 +121,19 @@ export class Reconciler {
           this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort();
           transitionTask(task, 'CANCELLED'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
         }
+        const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
+        if (job.state !== terminalState) { job.state = terminalState; job.updatedAt = new Date().toISOString(); await this.store.saveJob(job); }
+        return this.store.load(jobId);
       }
+      if (job.state !== 'ACTIVE') return job;
       await this.recoverLostExecutions(job, now);
       await this.recoverPlannerChildren(job);
       await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
-      let scheduled = schedule(await this.store.load(jobId));
+      const beforeSchedule = await this.store.load(jobId);
+      const scheduleBefore = JSON.stringify(beforeSchedule.schedule ?? null);
+      let scheduled = schedule(beforeSchedule);
+      if (scheduled.state !== previousState || JSON.stringify(scheduled.schedule ?? null) !== scheduleBefore) await this.store.saveJob(scheduled);
       if (prState === 'OPEN') {
         await this.ensureFinalReview(scheduled, prState, headSha);
         scheduled = schedule(await this.store.load(jobId));
@@ -133,9 +141,7 @@ export class Reconciler {
       if (prState === 'OPEN' && scheduled.executionMode === 'autonomous') {
         scheduled = schedule(await this.maybeCreatePlanner(scheduled));
       }
-      if (prState === 'MERGED') { scheduled.state = 'COMPLETED'; scheduled.updatedAt = new Date().toISOString(); }
-      if (prState === 'CLOSED') { scheduled.state = 'CANCELLED'; scheduled.updatedAt = new Date().toISOString(); }
-      if (scheduled.state !== previousState) await this.store.saveJob(scheduled);
+      if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       if (prState === 'OPEN') {
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
@@ -152,10 +158,12 @@ export class Reconciler {
         }
       }
       const finalState = schedule(await this.store.load(jobId));
-      if (prState === 'MERGED') { finalState.state = 'COMPLETED'; finalState.updatedAt = new Date().toISOString(); }
-      if (prState === 'CLOSED') { finalState.state = 'CANCELLED'; finalState.updatedAt = new Date().toISOString(); }
-      if (finalState.state !== scheduled.state || finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
+      if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, prState, headSha);
+      if (prState === 'OPEN' && finalState.reviewEnabled === false && implementationComplete(finalState) && finalState.autoMerge !== false && this.store.mergePullRequest && headSha) {
+        await this.store.mergePullRequest(headSha);
+        await this.emit(eventFor(finalState.id, 'job', null, 'job.merged', 'succeeded', 'Completed work merged PR #' + finalState.prNumber, 'user', { headSha, autoMerge: true }, { agent: 'relay', component: 'agents-relay' }));
+      }
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
@@ -175,7 +183,7 @@ export class Reconciler {
     await this.store.saveJob(job);
   }
   private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'COMPLETED' || !headSha) return;
+    if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'ACTIVE' || !implementationComplete(job) || !headSha) return;
     if (!this.preReviewGatesPass(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
@@ -189,7 +197,7 @@ export class Reconciler {
     const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
-    job.state = 'RUNNING'; job.updatedAt = now;
+    job.updatedAt = now;
     await this.store.saveJob(job);
     await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha} using ${reviewerRouting.reason}`, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     const ready = schedule(await this.store.load(job.id));
@@ -291,7 +299,6 @@ export class Reconciler {
         await this.store.appendTask(fixTask);
         await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', `Created one fix task ${id} for ${issues.length} reviewer finding(s)`, 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
       }
-      job.state = 'RUNNING';
     }
     job.updatedAt = job.review.updatedAt;
     await this.store.saveJob(job);

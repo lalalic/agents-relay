@@ -155,7 +155,8 @@ export async function runScheduledBucket(
     return { job, status: 'skipped-idempotent' };
   }
 
-  const active = job.state === 'RUNNING' || job.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state));
+  if (job.state !== 'ACTIVE') return { job, status: 'skipped-idempotent' };
+  const active = job.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state));
   if (active && schedule.concurrencyPolicy === 'skip') {
     schedule.lastScheduledSlot = slot.toISOString();
     schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
@@ -175,7 +176,6 @@ export async function runScheduledBucket(
   schedule.nextRunAt = nextScheduleRun(schedule, missedRunPolicy === 'run' ? slot : now).toISOString();
   job.updatedAt = now.toISOString();
   const schedulerStore = new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
-  job.state = 'RUNNING';
   await schedulerStore.saveJob(job);
   job = await schedulerStore.load(job.id);
   await syncScheduleLabels(client, repository, job);

@@ -80,8 +80,9 @@ test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.doesNotMatch(dashboardHtml, /field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
-  assert.match(dashboardHtml, /field\('GitHub state',job\.githubState/);
-  assert.match(dashboardHtml, /field\('Durable state',job\.state\)/);
+  assert.match(dashboardHtml, /field\('PR state',job\.githubState/);
+  assert.match(dashboardHtml, /field\('Lifecycle state',job\.state\)/);
+  assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
 });
 
 test('account usage is limited to two real rate-limit percentage bars', () => {
@@ -195,7 +196,7 @@ test('dashboard SSE sends short keepalive comments independent of durable snapsh
 });
 
 test('webhook refresh broadcasts the targeted snapshot before wake errors', async () => {
-  const job = { id: 'webhook-job', title: 'Fresh webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'webhook-job', title: 'Fresh webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
     secret: 'test-secret',
     repositories: new Set(['owner/repo']),
@@ -238,7 +239,7 @@ test('completed but unmerged jobs are pinned and highlighted for merge follow-up
   assert.match(dashboardHtml, /MERGE PENDING/);
   assert.match(dashboardHtml, /complete-unmerged/);
   assert.match(dashboardHtml, /mergePendingDelta/);
-  assert.match(dashboardHtml, /job\.state==='COMPLETED'&&job\.githubState==='OPEN'/);
+  assert.match(dashboardHtml, /job\.runtimeStatus==='MERGE_PENDING'/);
 });
 test('dashboard exposes reviewer approval, changes-required, stale, and merge-ready states', () => {
   assert.match(dashboardHtml, /MERGE READY · approved/);

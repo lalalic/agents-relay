@@ -211,7 +211,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
     executionMode: 'fixed',
     prNumber: 1,
     repository: 'owner/repo',
-    state: 'RUNNING',
+    state: 'ACTIVE',
     continuation: null,
     createdAt: now,
     updatedAt: now,

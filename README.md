@@ -36,6 +36,8 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id child --queue
 ~~~
 
+Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
+
 Jobs default to `fixed`. `job create` persists only the durable job and never
 creates executable tasks. The top-level orchestrator decides whether the user's
 request should start immediately and, if so, creates the first task batch
@@ -155,6 +157,6 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
   --input "Research the dashboard UX and write the final report to the declared output file."
 ~~~
 
-GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows repository-wide managed PR state beside each durable Agents Relay job state so stale markers are visible instead of being mistaken for current truth.
+GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows PR state, durable Job lifecycle, and derived runtime status separately. A merged PR reconciles lifecycle to `COMPLETED`; a closed, unmerged PR reconciles lifecycle to `CANCELLED`.
 
 For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.

@@ -1,4 +1,5 @@
-export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+export type JobLifecycleState = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'FAILED' | 'REVIEWING' | 'MERGE_PENDING' | 'MERGED' | 'CANCELLED';
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
@@ -80,11 +81,11 @@ export type Task = {
   failureReason?: string;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
-export type Job = { id: string; title: string; objective?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobState; continuation: Continuation | null; review?: ReviewState; headSha?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { id: string; title: string; objective?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
-const jobTransitions: Record<JobState, JobState[]> = { OPEN: ['RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], RUNNING: ['OPEN', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELLED'], WAITING: ['RUNNING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], BLOCKED: ['RUNNING', 'COMPLETED', 'CANCELLED'], COMPLETED: ['RUNNING', 'CANCELLED'], FAILED: ['RUNNING', 'COMPLETED', 'CANCELLED'], CANCELLED: ['RUNNING', 'COMPLETED'] };
+const jobLifecycleTransitions: Record<JobLifecycleState, JobLifecycleState[]> = { DRAFT: ['ACTIVE', 'COMPLETED', 'CANCELLED'], ACTIVE: ['COMPLETED', 'CANCELLED'], COMPLETED: [], CANCELLED: ['COMPLETED'] };
 const taskTransitions: Record<TaskState, TaskState[]> = { DRAFT: ['QUEUED', 'BLOCKED', 'CANCELLED'], QUEUED: ['DRAFT', 'RUNNING', 'BLOCKED', 'FAILED', 'CANCELLED'], RUNNING: ['BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'QUEUED'], BLOCKED: ['QUEUED', 'CANCELLED'], SUCCEEDED: [], FAILED: ['QUEUED', 'RUNNING', 'CANCELLED'], CANCELLED: [] };
-export function assertJobTransition(from: JobState, to: JobState): void { if (from !== to && !jobTransitions[from].includes(to)) throw new Error(`Invalid job transition ${from} -> ${to}`); }
+export function assertJobLifecycleTransition(from: JobLifecycleState, to: JobLifecycleState): void { if (from !== to && !jobLifecycleTransitions[from].includes(to)) throw new Error(`Invalid job transition ${from} -> ${to}`); }
 export function assertTaskTransition(from: TaskState, to: TaskState): void { if (from !== to && !taskTransitions[from].includes(to)) throw new Error(`Invalid task transition ${from} -> ${to}`); }

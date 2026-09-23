@@ -79,11 +79,13 @@ test('release version selection starts at 1.0.0 and increments only the patch', 
 test('CLI and daemon help are successful and do not require job storage', () => {
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
-    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|merge|cancel>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a durable Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
+    ['dist/cli.js', ['job', 'merge', '--help'], 'Merge the backing pull request'],
+    ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|list|retry|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
@@ -156,7 +158,7 @@ test('service stop clears watchdog and closes dashboard before resolving', async
 test('startup reconciliation failure does not take down dashboard', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-degraded-'));
   const file = join(directory, 'job.json');
-  await writeFile(file, JSON.stringify({ id: 'degraded-job', title: 'Degraded', prNumber: 0, state: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }));
+  await writeFile(file, JSON.stringify({ id: 'degraded-job', title: 'Degraded', prNumber: 0, state: 'ACTIVE', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }));
   const service = await createService(['--file', file, '--port', '0']);
   service.reconciler.reconcile = async () => { throw new Error('GitHub rate limited'); };
   // startService owns construction, so assert the equivalent startup policy directly:

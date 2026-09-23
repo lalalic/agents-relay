@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { GitHubStore } from '../dist/store.js';
-import { JOB_MARKER, marker, parseJob } from '../dist/markers.js';
+import { JOB_MARKER, TASK_MARKER, marker, parseJob } from '../dist/markers.js';
 import {
   bucketStart,
   RUN_BUCKET_LABEL_COUNT,
@@ -44,7 +44,7 @@ const scheduledJob = (overrides = {}) => ({
   schedule: schedule(),
   prNumber: 1,
   repository: 'owner/repo',
-  state: 'OPEN',
+  state: 'ACTIVE',
   continuation: null,
   createdAt: now(),
   updatedAt: now(),
@@ -217,7 +217,7 @@ test('cloud heartbeat claims and wakes through GitHub without running a worker e
     at('2026-09-21T16:31:00Z'),
   );
   assert.equal(result.status, 'dispatched');
-  assert.equal(result.job.state, 'RUNNING');
+  assert.equal(result.job.state, 'ACTIVE');
   assert.equal(result.job.schedule.lastScheduledSlot, '2026-09-21T16:20:00.000Z');
   assert.equal(result.job.schedule.currentRunSlot, '2026-09-21T16:20:00.000Z');
   assert.equal(result.job.schedule.nextRunAt, '2026-09-21T16:40:00.000Z');
@@ -283,8 +283,9 @@ test('missed-run policy controls whether skipped slots are advanced or replayed'
 });
 
 test('active scheduled work can skip a slot while retaining durable concurrency metadata', async () => {
-  const activeJob = scheduledJob({ state: 'RUNNING' });
-  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')], [comment(marker(JOB_MARKER, activeJob))]);
+  const activeTask = { jobId:'scheduled', id:'active', kind:'work', parentTaskId:null, dependencies:[], capabilities:[], adapter:'orchestrator', input:'active', state:'RUNNING', attempt:1, maxAttempts:3, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null, result:null, error:null, timeoutMs:0, createdAt:now(), updatedAt:now(), continuation:null, continuationDeliveredAt:null };
+  const activeJob = scheduledJob({ state: 'ACTIVE' });
+  const client = fakeClient([AUTONOMOUS_LABEL, runBucketLabel('20260921T1620Z')], [comment(marker(JOB_MARKER, activeJob)), comment(marker(TASK_MARKER, activeTask), 2)]);
   const counts = { reconciles: 0 };
   const result = await runScheduledBucket(client, 'owner/repo', trusted, { prNumber: 1, jobId: 'scheduled', bucket: '20260921T1620Z' }, engine(counts), at('2026-09-21T16:31:00Z'));
   assert.equal(result.status, 'skipped-active');

@@ -15,10 +15,11 @@ import { MemoryEventBus, eventFor, subjectToken } from '../dist/events.js';
 import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
+import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
-const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'OPEN',continuation:null,createdAt:now(),updatedAt:now(),tasks});
+const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'ACTIVE',continuation:null,createdAt:now(),updatedAt:now(),tasks});
 const graphCommentClient = (comments, prNumber=1, prState='OPEN') => ({
   request: async path => {
     if (path.includes('/pulls?')) return [{number:prNumber,state:prState.toLowerCase(),merged_at:prState==='MERGED'?now():null,closed_at:prState!=='OPEN'?now():null,body:'',head:{ref:'fix'},base:{ref:'main'}}];
@@ -143,33 +144,32 @@ test('CLI task update rejects active and terminal execution records', async () =
   }
 });
 
-test('CLI task create reopens a completed job before publishing new work', async () => {
+test('CLI task create rejects terminal completed jobs', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify({...job([]),state:'COMPLETED'}));
   const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','review','--provider','openai','--model','gpt-test','--output','task-pr','--input','review completed job'], {cwd:process.cwd()});
   const [code] = await once(result,'exit');
-  assert.equal(code,0);
+  assert.notEqual(code,0);
   const saved = JSON.parse(await readFile(file,'utf8'));
-  assert.equal(saved.state,'RUNNING');
-  assert.equal(saved.tasks[0].id,'review');
+  assert.equal(saved.state,'COMPLETED');
+  assert.equal(saved.tasks.length,0);
   await rm(directory,{recursive:true,force:true});
 });
 
-test('CLI task create and retry reactivate failed jobs as RUNNING', async () => {
+test('CLI task create and retry keep ACTIVE lifecycle while runtime changes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reactivate-')); const file=join(directory,'job.json');
   const failedTask=task('failed','FAILED'); failedTask.error='old'; failedTask.attempt=1; failedTask.maxAttempts=3;
-  await writeFile(file, JSON.stringify({...job([failedTask]),state:'FAILED'}));
+  await writeFile(file, JSON.stringify(job([failedTask])));
   let child=spawn(process.execPath,[join('dist','cli.js'),'task','create','--file',file,'--task-id','replacement','--provider','openai','--model','gpt-test','--output','task-pr','--input','replacement'],{cwd:process.cwd()});
-  let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING');
-  saved.state='FAILED'; await writeFile(file,JSON.stringify(saved));
+  let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE');
   child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
-  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
+  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
-test('active replacement work keeps job RUNNING despite historical failed tasks', () => {
+test('active replacement work derives QUEUED despite historical failed tasks', () => {
   const old=task('old','FAILED'); const replacement=task('replacement','QUEUED');
-  assert.equal(schedule({...job([old,replacement]),state:'FAILED'}).state,'RUNNING');
+  const value=schedule(job([old,replacement])); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED');
 });
 test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-'));
@@ -204,7 +204,7 @@ test('manual retry budget advances in three-attempt windows without resetting hi
   assert.equal(extendRetryBudget({attempt:6,maxAttempts:6}),9);
   assert.equal(extendRetryBudget({attempt:8,maxAttempts:9}),12);
 });
-test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'RUNNING'); });
+test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
 test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=schedule(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
 test('RUNNING tasks cannot return to DRAFT', () => { const current=task('running','RUNNING'); assert.throws(()=>transitionTask(current,'DRAFT'),/Invalid task transition RUNNING -> DRAFT/); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
@@ -216,10 +216,10 @@ test('startup reconciliation selects expired durable RUNNING leases after daemon
   assert.equal(needsLifecycleReconciliation(job([live]),Date.parse('2026-09-19T16:59:20.000Z')),false);
 });
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
-test('failed jobs remain runnable so durable failed tasks can be recovered', () => { const failed={...job([]),id:'failed',state:'FAILED'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
-test('draft managed PRs stay discoverable but are not runnable', () => { const held={...job([]),id:'held'}; const item={job:held,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
+test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
+test('GitHub draft PR does not override ACTIVE job execution lifecycle', () => { const held={...job([]),id:'held'}; const item={job:held,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['held']); });
 test('repository pool selects stale terminal jobs for lifecycle reconciliation', () => {
-  const open={...job([]),id:'open'}; const merged={...job([]),id:'merged',state:'RUNNING'}; const completed={...job([]),id:'done',state:'COMPLETED'}; const closed={...job([]),id:'closed',state:'OPEN'};
+  const open={...job([]),id:'open'}; const merged={...job([]),id:'merged',state:'ACTIVE'}; const completed={...job([]),id:'done',state:'COMPLETED'}; const closed={...job([]),id:'closed',state:'ACTIVE'};
   const items=[{job:open,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:merged,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:completed,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:closed,githubState:'CLOSED',draft:false,mergedAt:null,closedAt:now()}];
   assert.deepEqual(new Set(terminalManagedJobs(items).map(x=>x.id)),new Set(['merged','closed']));
 });
@@ -267,7 +267,7 @@ test('repository pool routes correlated terminal events to the target reconciler
 });
 
 test('repository pool reconciles merged PRs even though they are not runnable', async () => {
-  const root={...job([]),id:'merged-pool',state:'OPEN',prNumber:14};
+  const root={...job([]),id:'merged-pool',state:'ACTIVE',prNumber:14};
   const comments=[{id:1,body:marker('agents-relay:job:v1',{...root,tasks:undefined}),updated_at:now(),user:{login:'bot'}}];
   const client=graphCommentClient(comments,14,'MERGED');
   const pool=new RepositoryWorkerPool(client,'owner/repo',new Set(['bot']),2,store=>new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]}));
@@ -502,7 +502,7 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 test('scheduled autonomous cycle ignores failures from older slots and creates a fresh planner', async () => {
   const oldFailed=task('old-failed','FAILED'); oldFailed.createdAt='2026-09-21T16:00:00.000Z'; oldFailed.updatedAt=oldFailed.createdAt;
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
-  const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'RUNNING',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
+  const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
   const store=new InMemoryStore(root);
   const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
@@ -515,14 +515,15 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   assert.notEqual(saved.state,'FAILED');
 });
 
-test('scheduled autonomous cycle returns to WAITING without final review or auto-merge', async () => {
+test('scheduled autonomous cycle keeps ACTIVE lifecycle and derives WAITING between runs', async () => {
   const current=task('planner-1','SUCCEEDED'); current.kind='planner'; current.adapter='orchestrator'; current.routing=undefined; current.agentName='planner'; current.createdAt='2026-09-21T16:21:00.000Z'; current.updatedAt=current.createdAt; current.plannerResult={objective_status:'satisfied',assessment:'this slot done',next_tasks:[]};
-  const root={...job([current]),executionMode:'autonomous',state:'RUNNING',headSha:'scheduled-sha',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:null}};
+  const root={...job([current]),executionMode:'autonomous',state:'ACTIVE',headSha:'scheduled-sha',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:null}};
   const store=new InMemoryStore(root); let merges=0; store.mergePullRequest=async()=>{merges+=1;};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.state,'WAITING');
+  assert.equal(saved.state,'ACTIVE');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'WAITING');
   assert.ok(saved.schedule.lastRunAt);
   assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
   assert.equal(merges,0);
@@ -531,7 +532,7 @@ test('scheduled autonomous cycle returns to WAITING without final review or auto
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
-  const store=new InMemoryStore({...job([succeeded,superseded]),state:'COMPLETED',headSha:'abc1234567890'});
+  const store=new InMemoryStore({...job([succeeded,superseded]),state:'ACTIVE',headSha:'abc1234567890'});
   const bus=new MemoryEventBus();
   const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
   await reconciler.reconcile('j');
@@ -795,14 +796,15 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
-test('no-review jobs complete without creating a reviewer task', async () => {
+test('no-review jobs stay ACTIVE and become merge-pending without creating a reviewer task', async () => {
   const work=task('work','SUCCEEDED');
-  const root={...job([work]),executionMode:'fixed',state:'RUNNING',headSha:'sha-no-review',reviewEnabled:false};
+  const root={...job([work]),executionMode:'fixed',state:'ACTIVE',headSha:'sha-no-review',reviewEnabled:false};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-no-review';
   const reconciler=new Reconciler(store,{owner:'test',adapters:[]});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  assert.equal(saved.state,'COMPLETED');
+  assert.equal(saved.state,'ACTIVE');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'MERGE_PENDING');
   assert.equal(saved.review,undefined);
   assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
 });
@@ -837,7 +839,8 @@ test('review changes-required creates exactly one Codex Luna fix task containing
   assert.match(fixes[0].input,/1\. first bug/);
   assert.match(fixes[0].input,/2\. second bug/);
   assert.match(fixes[0].input,/3\. third bug/);
-  assert.equal(saved.state,'RUNNING');
+  assert.equal(saved.state,'ACTIVE');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
@@ -897,11 +900,12 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
 });
 
 test('open zero-task jobs remain create-only and do not consume reconciliation capacity', () => {
-  const root = job([]);
-  assert.equal(root.state, 'OPEN');
+  const root = {...job([]),state:'DRAFT'};
+  assert.equal(root.state, 'DRAFT');
   assert.equal(needsLifecycleReconciliation(root), false);
   assert.deepEqual(root.tasks, []);
-  assert.match(dashboardHtml, /Awaiting initial task/);
+  assert.match(dashboardHtml, /Lifecycle state/);
+  assert.match(dashboardHtml, /Runtime status/);
 });
 
 test('closed unmerged PR cancels queued work and job without launching', async () => {

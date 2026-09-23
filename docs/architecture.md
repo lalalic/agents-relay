@@ -43,15 +43,30 @@ Every wake-up means only: "the durable state may have changed." The daemon reloa
 
 ## State
 
-Job states:
+Job state is split into durable lifecycle and derived runtime status.
 
-OPEN -> RUNNING -> WAITING|BLOCKED -> COMPLETED|FAILED|CANCELLED
+Durable Job lifecycle:
+
+```text
+DRAFT -> ACTIVE -> COMPLETED
+   \       \----> CANCELLED
+    \-----------> CANCELLED
+```
+
+- `DRAFT`: the Job exists but Relay must not execute it yet.
+- `ACTIVE`: Relay may reconcile it, evaluate triggers/schedules, release dependencies, and launch executable Tasks.
+- `COMPLETED`: terminal business lifecycle. For a PR-backed Job, PR merge is authoritative completion evidence.
+- `CANCELLED`: terminal cancellation. A closed, unmerged managed PR reconciles to this lifecycle state.
+
+`RUNNING`, `WAITING`, `BLOCKED`, and `FAILED` are not durable Job lifecycle states. They are runtime projections derived from Task, Review, PR, and schedule facts. The current runtime statuses are `IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, and `CANCELLED`. Runtime status is recomputed; it is never persisted as Job lifecycle truth.
 
 Task states:
 
+```text
 DRAFT -> QUEUED -> RUNNING -> BLOCKED|SUCCEEDED|FAILED|CANCELLED
+```
 
-A task is DRAFT when it exists durably but is not executable yet. Dependency-backed DRAFT tasks move to QUEUED when their dependencies succeed; a DRAFT task with no dependencies requires an explicit release to QUEUED. QUEUED means executable now. Once RUNNING, a task must not return to DRAFT; an external condition discovered during execution is BLOCKED. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
+A task is DRAFT when it exists durably but is not executable yet. Dependency-backed DRAFT tasks move to QUEUED when their dependencies succeed; a DRAFT task with no dependencies requires an explicit release to QUEUED. QUEUED means executable now. Once RUNNING, a task must not return to DRAFT; an external condition discovered during execution is BLOCKED. Autonomous objective satisfaction and review/merge readiness are runtime/reconcile facts and do not rewrite an ACTIVE Job into intermediate lifecycle states.
 
 ## Task record
 

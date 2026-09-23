@@ -78,10 +78,9 @@ For each oldest indexed slot, `tick` reloads the job marker and:
 3. when work is active, either advances past the slot (`skip`) or leaves the
    slot for the next heartbeat (`queue`);
 4. otherwise persists `lastScheduledSlot`, advances `nextRunAt`, updates the
-   bounded next-run label, marks the job running, and updates the fixed schedule-wake comment;
+   bounded next-run label and updates the fixed schedule-wake comment; the durable Job lifecycle remains `ACTIVE`;
 5. for a job that has already been explicitly seeded by an orchestrator task batch, the local Relay webhook may create the next autonomous planner for that slot and run normal worker/event reconciliation; a never-started zero-task job remains idle;
-6. when that planner is satisfied, the job records `lastRunAt` and returns to
-   `WAITING`.
+6. when that planner is satisfied, the job records `lastRunAt`; the durable lifecycle remains `ACTIVE` and its derived runtime status returns to `WAITING` until the next slot.
 
 `lastScheduledSlot` tracks claim/idempotency while `currentRunSlot` identifies the active cycle, so skipping a later slot cannot hide work still running from the prior cycle. Historical failures from older slots do not poison the next scheduled cycle.
 An active schedule also does not enter the one-shot final-review/auto-merge

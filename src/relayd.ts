@@ -15,6 +15,7 @@ import { isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DE
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
+import { deriveJobRuntimeStatus } from './runtime-status.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export const daemonHelp = `Agents Relay daemon runs the dashboard and worker pool.
@@ -121,7 +122,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     try {
       const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber)).find(item => item.job.id === jobId);
       if (!refreshed) return null;
-      return { ...refreshed.job, githubState: refreshed.githubState, mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
+      return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
     } catch (error) {
       process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       return null;

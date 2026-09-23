@@ -7,7 +7,7 @@ import { MemoryEventBus, eventFor } from '../dist/events.js';
 const now = () => new Date().toISOString();
 const route = { provider: 'openai', model: 'gpt-test', decidedBy: 'test', decidedAt: now() };
 const work = (id, parentTaskId = null) => ({ jobId: 'planning', id, kind: 'work', parentTaskId, dependencies: [], capabilities: [], adapter: 'codex', input: 'do work', output: { kind: 'task_pr' }, routing: route, state: 'QUEUED', attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
-const job = (tasks, executionMode = 'autonomous') => ({ id: 'planning', title: 'Planning', objective: 'finish', executionMode, prNumber: 1, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks });
+const job = (tasks, executionMode = 'autonomous') => ({ id: 'planning', title: 'Planning', objective: 'finish', executionMode, prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 const harness = bus => ({ name: 'codex', id: 'test-codex', capabilities: ['model', 'codex'], launch(task) { queueMicrotask(() => bus.publish(eventFor('planning', task.id, task.parentTaskId, 'task.completed', 'succeeded', 'done', 'orchestrator'))); return { id: task.id, promise: Promise.resolve({ summary: 'runtime ended' }), cancel() {} }; } });
 async function settle(reconciler) { for (let i = 0; i < 8; i += 1) { await reconciler.reconcile('planning'); await reconciler.idle(); await new Promise(resolve => setTimeout(resolve, 0)); } }
 
@@ -44,7 +44,7 @@ test('zero-task autonomous jobs remain idle until the orchestrator creates the f
   const result = await store.load('planning');
   assert.equal(plannerCalls, 0);
   assert.equal(result.tasks.length, 0);
-  assert.equal(result.state, 'WAITING');
+  assert.equal(result.state, 'ACTIVE');
   await stop();
 });
 test('reconcile preserves an existing durable task when a planner repeats its id with a changed definition', async () => {

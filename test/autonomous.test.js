@@ -9,6 +9,7 @@ import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, pa
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
+import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { executionMode } from '../dist/cli.js';
 import { dashboardHtml } from '../dist/dashboard.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
@@ -17,7 +18,7 @@ const now = () => new Date().toISOString();
 const route = { provider: 'openai', model: 'gpt-5', decidedBy: 'test', decidedAt: now() };
 const output = { kind: 'task_pr' };
 const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do the described work', output, routing: route, state, attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
-const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks });
+const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 const spec = id => ({ id, input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
 function startedAutonomousJob() {
   const seed = { ...task('seed', 'SUCCEEDED'), result: { summary: 'seed complete' } };
@@ -99,7 +100,7 @@ test('default planner agent loads markdown instructions and returns typed planni
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('fixed and autonomous jobs complete from terminal events, not adapter exit', async () => {
+test('fixed and autonomous work reaches runtime review after terminal events, not adapter exit', async () => {
   for (const mode of ['fixed','autonomous']) {
     const bus = new MemoryEventBus();
     const store = new InMemoryStore(mode === 'fixed' ? job([task('fixed-work')], mode) : startedAutonomousJob());
@@ -109,7 +110,8 @@ test('fixed and autonomous jobs complete from terminal events, not adapter exit'
     const stop = await reconciler.watch('auto');
     await settle(reconciler);
     const result = await store.load('auto');
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.state, 'ACTIVE');
+    assert.equal(deriveJobRuntimeStatus(result, 'OPEN'), 'REVIEWING');
     if (mode === 'fixed') assert.equal(calls, 0);
     else assert.equal(result.tasks.find(t=>t.id==='work-1')?.state, 'SUCCEEDED');
     await stop();
@@ -118,8 +120,12 @@ test('fixed and autonomous jobs complete from terminal events, not adapter exit'
 
 test('planner satisfaction cannot bypass failed or blocked completion gates', () => {
   const satisfied = { ...task('planner-1', 'SUCCEEDED'), kind: 'planner', plannerResult: { objective_status: 'satisfied', assessment: 'done', next_tasks: [] } };
-  assert.equal(schedule({ ...job([satisfied, { ...task('failed', 'FAILED'), error: 'unresolved' }]), state: 'RUNNING' }).state, 'FAILED');
-  assert.equal(schedule({ ...job([satisfied, { ...task('blocked', 'BLOCKED') }]), state: 'RUNNING' }).state, 'BLOCKED');
+  const failed = schedule(job([satisfied, { ...task('failed', 'FAILED'), error: 'unresolved' }]));
+  const blocked = schedule(job([satisfied, { ...task('blocked', 'BLOCKED') }]));
+  assert.equal(failed.state, 'ACTIVE');
+  assert.equal(deriveJobRuntimeStatus(failed, 'OPEN'), 'FAILED');
+  assert.equal(blocked.state, 'ACTIVE');
+  assert.equal(deriveJobRuntimeStatus(blocked, 'OPEN'), 'BLOCKED');
 });
 
 

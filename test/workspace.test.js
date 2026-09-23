@@ -11,7 +11,7 @@ import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositor
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
-const job = (id, repository, prNumber) => ({ id, title: id, prNumber, repository, state: 'OPEN', continuation: null, createdAt: now(), updatedAt: now(), tasks: undefined });
+const job = (id, repository, prNumber) => ({ id, title: id, prNumber, repository, state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks: undefined });
 
 test('workspace discovery finds nested git checkouts and GitHub origins', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-workspace-'));
