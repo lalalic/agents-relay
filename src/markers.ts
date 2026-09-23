@@ -28,7 +28,11 @@ export function renderJobComment(job: Job): string {
 ${objective}`;
 }
 export function renderTaskComment(task: Task): string {
-  const body = task.result?.summary ?? task.input;
+  const result = task.result?.summary?.trim() ? `
+
+### Result
+
+${task.result.summary.trim()}` : '';
   return `${marker(TASK_MARKER, task)}
 ## Task: ${task.id}
 
@@ -37,7 +41,7 @@ export function renderTaskComment(task: Task): string {
 
 ### Work
 
-${body}`;
+${task.input}${result}`;
 }
 export function parseJob(body: string): Job | null {
   const job = parseMarker<Job>(body, JOB_MARKER);

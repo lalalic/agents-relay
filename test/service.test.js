@@ -203,3 +203,13 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
   assert.match(conflictingInput.stderr, /--input and --input-file are mutually exclusive/);
   await rm(directory, { recursive:true, force:true });
 });
+
+test('completed Task comments preserve Markdown Work and render Result separately', async () => {
+  const { renderTaskComment } = await import('../dist/markers.js');
+  const now = new Date().toISOString();
+  const task = { jobId:'j', id:'phase-1', priority:'P0', storySize:'M', parentTaskId:null, dependencies:[], capabilities:[], adapter:'orchestrator', input:'# Phase 1\n\n## Scope\n\n```mermaid\nflowchart TD\n  A --> B\n```\n', continuation:null, continuationDeliveredAt:null, state:'SUCCEEDED', attempt:1, maxAttempts:3, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null, result:{summary:'Completed successfully.'}, error:null, timeoutMs:0, createdAt:now, updatedAt:now };
+  const rendered = renderTaskComment(task);
+  assert.match(rendered, /### Work\n\n# Phase 1/);
+  assert.match(rendered, /```mermaid/);
+  assert.match(rendered, /### Result\n\nCompleted successfully\./);
+});
