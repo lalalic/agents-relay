@@ -112,7 +112,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive. Codex/ChatGPT tasks also require --model MODEL.
-Common: --task-id ID, --adapter codex|chatgpt|orchestrator, --priority P0|P1|P2|P3, --story-size S|M|L, --deps a,b, --parent ID, --draft.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID, --adapter codex|chatgpt|orchestrator, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
@@ -120,7 +120,7 @@ Example:
   'task update': `Update mutable durable Task fields in place.
 
 Required: --task-id ID and the normal Job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Use --clear-routing to remove routing metadata.
 
 Example:
@@ -323,6 +323,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   const outputKind = arg(args, '--output');
   const outputPath = arg(args, '--output-path');
   const input = await textOption(args, '--input', '--input-file');
+  const agentGraph = hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file') ? await textOption(args, '--agent-graph', '--agent-graph-file') : undefined;
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
   if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('task create --adapter must be codex, chatgpt, or orchestrator');
   if (adapter !== 'orchestrator' && !model) throw new Error('task create requires --model for codex/chatgpt tasks');
@@ -340,6 +341,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     storySize: size,
     projectName: arg(args, '--project') || undefined,
     agentName: arg(args, '--agent') || undefined,
+    agentGraph,
     parentTaskId: arg(args, '--parent') || null,
     dependencies,
     capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
@@ -412,6 +414,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--input') || hasArg(args, '--input-file')) task.input = await textOption(args, '--input', '--input-file');
   if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
   if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
+  if (hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file')) task.agentGraph = await textOption(args, '--agent-graph', '--agent-graph-file');
   if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null;
   if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean);
   if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);
