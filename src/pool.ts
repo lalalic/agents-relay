@@ -23,6 +23,7 @@ export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
+  private readonly jobQueues = new Map<string, Promise<void>>();
   constructor(
     private readonly client: GitHubClient,
     repository: string | readonly string[],
@@ -31,24 +32,36 @@ export class RepositoryWorkerPool {
     private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
   ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
+  private async withJobQueue<T>(jobId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.jobQueues.get(jobId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(work);
+    const settled = run.then(() => undefined, () => undefined);
+    this.jobQueues.set(jobId, settled);
+    try { return await run; }
+    finally { if (this.jobQueues.get(jobId) === settled) this.jobQueues.delete(jobId); }
+  }
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
     for (const item of discovered) this.jobTargets.set(item.job.id, { repository: item.job.repository, prNumber: item.job.prNumber });
     // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
     // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
     for (const job of terminalManagedJobs(discovered)) {
-      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-      await this.makeReconciler(store, 0).reconcile(job.id);
+      await this.withJobQueue(job.id, async () => {
+        const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+        await this.makeReconciler(store, 0).reconcile(job.id);
+      });
     }
     const jobs = runnableManagedJobs(discovered);
     let capacity = Math.max(1, this.concurrency);
     for (const job of jobs) {
       if (capacity <= 0) break;
-      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
       const ready = job.tasks.filter(task => task.state === 'QUEUED' || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
       const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
-      await this.makeReconciler(store, allowance).reconcile(job.id);
+      await this.withJobQueue(job.id, async () => {
+        const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+        await this.makeReconciler(store, allowance).reconcile(job.id);
+      });
       capacity -= allowance;
     }
   }
@@ -66,8 +79,10 @@ export class RepositoryWorkerPool {
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (!this.repositories.includes(repository)) return;
     this.jobTargets.set(jobId, { repository, prNumber });
-    const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
-    await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
+    await this.withJobQueue(jobId, async () => {
+      const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
+      await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
+    });
   }
   private async handleTerminalEvent(event: import('./types.js').EventRecord): Promise<void> {
     const target = this.jobTargets.get(event.job_id);
@@ -75,8 +90,10 @@ export class RepositoryWorkerPool {
       process.stderr.write(`warning: terminal event target unknown for job ${event.job_id}\n`);
       return;
     }
-    const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
-    await this.makeReconciler(store, Math.max(1, this.concurrency)).handleEvent(event);
+    await this.withJobQueue(event.job_id, async () => {
+      const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
+      await this.makeReconciler(store, Math.max(1, this.concurrency)).handleEvent(event);
+    });
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
