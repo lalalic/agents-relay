@@ -1,7 +1,7 @@
 import { Job, Task } from './types.js';
 import { spawn } from 'node:child_process';
 import { createSign } from 'node:crypto';
-import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
+import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
@@ -19,7 +19,9 @@ export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, 
     const row = item as Record<string, unknown>; const author = row.author as Record<string, unknown> | undefined;
     return typeof author?.login === 'string' && trustedAuthors.has(author.login);
   });
-  const jobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+  const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
+  const commentJobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+  const jobs = bodyJob ? [bodyJob] : commentJobs;
   const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
   const state = String(pr.state ?? '').toUpperCase();
   const githubState: PullRequestState = pr.merged === true ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
@@ -372,13 +374,17 @@ export class GitHubStore implements DurableStore {
   private async prNode(): Promise<Record<string, unknown>> {
     const { owner, name } = this.repoParts();
     const data = await this.graphql(
-      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt}}}',
+      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt body}}}',
       { owner, name, number: this.prNumber }
     );
     const repository = data.repository as Record<string, unknown> | undefined;
     const pr = repository?.pullRequest as Record<string, unknown> | undefined;
     if (!pr) throw new Error(`Pull request #${this.prNumber} not found in ${this.repository}`);
     return pr;
+  }
+  private async pullRequestBody(): Promise<string> {
+    const pr = await this.prNode();
+    return typeof pr.body === 'string' ? pr.body : '';
   }
   private async list(): Promise<Comment[]> {
     const { owner, name } = this.repoParts();
@@ -439,9 +445,15 @@ export class GitHubStore implements DurableStore {
   }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
-    const jobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
+    const bodyJob = parseJob(await this.pullRequestBody());
+    const commentJobs = comments.map(x => parseJob(x.body)).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
+    const jobs = bodyJob ? [bodyJob] : commentJobs;
     const job = jobs.find(x => x.id === jobId);
-    if (!job) throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
+    if (!job) {
+      const conflicting = bodyJob ?? commentJobs[0];
+      if (conflicting) throw new Error(`JOB_ID_MISMATCH: PR #${this.prNumber} is bound to ${conflicting.id}, not ${jobId}`);
+      throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
+    }
     const soleTrustedJob = jobs.length === 1;
     job.tasks = comments.map(comment => {
       const task = parseTask(comment.body);
@@ -452,6 +464,14 @@ export class GitHubStore implements DurableStore {
     return job;
   }
   async validateJobBinding(jobId: string): Promise<void> {
+    const body = await this.pullRequestBody();
+    const bodyHasMarker = body.includes(`<!-- ${JOB_MARKER} `);
+    const bodyJob = parseJob(body);
+    if (bodyHasMarker && !bodyJob) throw new Error(`JOB_MARKER_MALFORMED: PR #${this.prNumber} body contains a ${JOB_MARKER} marker that cannot be parsed`);
+    if (bodyJob) {
+      if (bodyJob.id !== jobId) throw new Error(`JOB_ID_MISMATCH: PR #${this.prNumber} is bound to ${bodyJob.id}, not ${jobId}`);
+      return;
+    }
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const markerComments = comments.filter(comment => comment.body.includes(JOB_MARKER));
     const parsed = markerComments.map(comment => parseJob(comment.body));
@@ -489,18 +509,21 @@ export class GitHubStore implements DurableStore {
     );
   }
   async saveJob(job: Job): Promise<void> {
+    const currentBody = await this.pullRequestBody();
+    const bodyJob = parseJob(currentBody);
+    if (bodyJob && bodyJob.id !== job.id) throw new Error(`PR #${this.prNumber} body already has a different ${JOB_MARKER} marker`);
+
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const jobComments = comments.filter(comment => parseJob(comment.body) !== null);
     const conflicts = jobComments.filter(comment => parseJob(comment.body)?.id !== job.id);
     if (conflicts.length > 0) throw new Error(`PR #${this.prNumber} already has a different ${JOB_MARKER} marker`);
-    const matches = jobComments.filter(comment => parseJob(comment.body)?.id === job.id);
-    if (matches.length === 0) await this.comment(renderJobComment(job));
-    else {
-      await this.updateComment(matches[0], renderJobComment(job));
-      for (const duplicate of matches.slice(1)) await this.deleteComment(duplicate);
-    }
-    const durable = (await this.list()).filter(comment => this.isTrusted(comment)).filter(comment => parseJob(comment.body)?.id === job.id);
-    if (durable.length !== 1) throw new Error(`Failed to persist exactly one ${JOB_MARKER} marker for job ${job.id}`);
+
+    await this.updatePullRequestBody(renderJobBody(job));
+
+    const persisted = parseJob(await this.pullRequestBody());
+    if (!persisted || persisted.id !== job.id) throw new Error(`Failed to persist ${JOB_MARKER} marker in PR #${this.prNumber} body for job ${job.id}`);
+
+    for (const legacy of jobComments.filter(comment => parseJob(comment.body)?.id === job.id)) await this.deleteComment(legacy);
   }
   async appendTask(task: Task): Promise<void> {
     if (!task.jobId) throw new Error('GitHub task requires jobId');
@@ -548,7 +571,9 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
         const author = item.author as Record<string, unknown> | undefined;
         return typeof author?.login === 'string' && trustedAuthors.has(author.login);
       });
-      const jobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
+      const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
+      const commentJobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
+      const jobs = bodyJob ? [bodyJob] : commentJobs;
       const tasks = trusted.map(item => parseTask(String(item.body ?? ''))).filter((item): item is Task => item !== null);
       const state = String(pr.state ?? '').toUpperCase();
       const githubState: PullRequestState = pr.merged === true || state === 'MERGED' ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';

@@ -104,7 +104,7 @@ test('managed worker prompt exposes resolved context and durable retrieval guida
     await mkdir(project, { recursive: true });
     const context = await resolveExecutionContext(project, 'nested-worker', { workspaceRoot: root, globalRoot: join(root, 'global'), neoRoot: join(root, 'missing-neo') });
     const job = { id:'j', title:'job', executionMode:'fixed', prNumber:54, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
-    const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
+    const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:'nested-exec', threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
     assert.match(prompt, /Role: nested-worker/);
     assert.match(prompt, /Retrieve the durable job and task from GitHub before doing the work/);
@@ -126,7 +126,7 @@ test('managed worker input loads the selected agent Markdown contract by agentNa
     await writeFile(reviewerPath, `---\nname: reviewer\ntype: reviewer\ncapabilities: [review]\n---\n\nCANONICAL REVIEW CONTRACT: emit review.started then one decision.`);
     const context = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, neoRoot: neo, globalRoot: join(root, 'global') });
     const job = { id:'j', title:'job', objective:'ship safely', executionMode:'fixed', prNumber:75, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
-    const task = { id:'review', agentName:'reviewer', parentTaskId:null, dependencies:[], capabilities:['review'], adapter:'codex', input:'review exact head abc', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
+    const task = { id:'review', agentName:'reviewer', executionId:'review-exec', parentTaskId:null, dependencies:[], capabilities:['review'], adapter:'codex', input:'review exact head abc', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
     assert.match(prompt, /\[Selected task agent contract\]/);
     assert.match(prompt, /Agent: reviewer/);

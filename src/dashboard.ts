@@ -79,6 +79,8 @@ export const dashboardHtml = `<!doctype html>
     .panel-actions { display:flex; align-items:center; gap:.45rem; }
     .job-filters { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
     .job-filter { max-width:145px; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .4rem; font:inherit; font-size:.72rem; }
+    .quick-filter { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.27rem .42rem; font:inherit; font-size:.7rem; font-weight:750; cursor:pointer; }
+    .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
     .refresh-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.28rem .55rem; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; }
     .refresh-button:disabled { cursor:default; opacity:.55; }
     .panel-body { padding:.75rem; overflow:auto; max-height:calc(100vh - 11.5rem); }
@@ -87,14 +89,13 @@ export const dashboardHtml = `<!doctype html>
     .workspace { display:grid; gap:1rem; }
     .job-list,.tree,.event-list { list-style:none; margin:0; padding:0; }
     .job-list { display:grid; gap:.35rem; }
-    .job-row { display:grid; gap:.2rem; padding:.35rem .45rem; border:1px solid transparent; border-radius:.4rem; }
+    .job-row { display:grid; gap:.2rem; padding:.35rem .45rem; border:1px solid transparent; border-radius:.4rem; cursor:pointer; }
     .job-row[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
     .job-row.complete-unmerged { border-color:#d69a1b; background:#fff8df; }
     .job-row.complete-unmerged[aria-current="true"] { border-color:#b77900; background:#fff0bd; }
-    .job-button { min-width:0; display:grid; gap:.2rem; padding:.12rem 0; border:0; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
+    .job-content { min-width:0; display:grid; gap:.2rem; }
+    .job-button { min-width:0; display:block; padding:.12rem 0; border:0; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
     .job-title { font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .job-meta { display:flex; gap:.4rem; flex-wrap:wrap; color:var(--muted); font-size:.7rem; }
-    .job-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .job-last-line { display:flex; align-items:center; justify-content:space-between; gap:.5rem; min-width:0; }
     .job-last-line .subtle:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .job-last-line .subtle:last-child { flex:none; white-space:nowrap; }
@@ -156,7 +157,7 @@ export const dashboardHtml = `<!doctype html>
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><button id="quick-jobs" class="quick-filter" type="button" aria-pressed="true">JOBS</button><select id="quick-status" class="job-filter" aria-label="Filter jobs by derived status"><option value="">STATUS</option></select><button id="quick-autonomous" class="quick-filter" type="button" aria-pressed="false">AUTONOMOUS</button><button id="quick-draft" class="quick-filter" type="button" aria-pressed="false">DRAFT</button><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -205,6 +206,10 @@ const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
 const repoFilter=document.querySelector('#repo-filter');
+const quickJobs=document.querySelector('#quick-jobs');
+const quickStatus=document.querySelector('#quick-status');
+const quickAutonomous=document.querySelector('#quick-autonomous');
+const quickDraft=document.querySelector('#quick-draft');
 const selectedJobRefresh=document.querySelector('#selected-job-refresh');
 const jobDetail=document.querySelector('#job-detail');
 const taskTree=document.querySelector('#task-tree');
@@ -221,6 +226,8 @@ let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
 let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
+let quickMode=sessionStorage.getItem('agents-relay:quick-filter')||'jobs';
+let selectedRuntimeStatus=sessionStorage.getItem('agents-relay:runtime-status-filter')||'';
 let eventTaskId=selectedTaskId;
 const displayedEventIds=new Set();
 
@@ -240,20 +247,31 @@ function chatField(task){const box=element('div','detail-group');box.append(elem
 function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
 async function loadEventHistory(){if(!selectedJob){clearEvents();return;}const params=new URLSearchParams({job:selectedJob,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON('/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
 function selectJob(id){selectedJob=id;selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();void loadEventHistory();}
-function filteredJobs(){return jobs.filter(job=>!selectedRepo||job.repository===selectedRepo);}
+function matchesQuickFilter(job){if(quickMode==='autonomous')return job.executionMode==='autonomous';if(quickMode==='draft')return job.draft||job.state==='DRAFT';if(quickMode==='status')return !!selectedRuntimeStatus&&(job.runtimeStatus||'IDLE')===selectedRuntimeStatus;return true;}
+function filteredJobs(){return jobs.filter(job=>(!selectedRepo||job.repository===selectedRepo)&&matchesQuickFilter(job));}
+function setQuickMode(mode,status=''){quickMode=mode;selectedRuntimeStatus=mode==='status'?status:'';sessionStorage.setItem('agents-relay:quick-filter',quickMode);if(selectedRuntimeStatus)sessionStorage.setItem('agents-relay:runtime-status-filter',selectedRuntimeStatus);else sessionStorage.removeItem('agents-relay:runtime-status-filter');syncFilters();renderJobList();}
 function syncFilters(){
   const repos=[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
   const previousRepo=selectedRepo;
   repoFilter.replaceChildren(new Option('All repos',''),...repos.map(repo=>new Option(repo,repo)));
   selectedRepo=repos.includes(previousRepo)?previousRepo:'';
   repoFilter.value=selectedRepo;
+  const statuses=[...new Set(jobs.map(job=>job.runtimeStatus||'IDLE'))].sort();
+  const previousStatus=selectedRuntimeStatus;
+  quickStatus.replaceChildren(new Option('STATUS',''),...statuses.map(status=>new Option(status,status)));
+  selectedRuntimeStatus=statuses.includes(previousStatus)?previousStatus:'';
+  if(quickMode==='status'&&!selectedRuntimeStatus)quickMode='jobs';
+  quickStatus.value=quickMode==='status'?selectedRuntimeStatus:'';
+  quickJobs.setAttribute('aria-pressed',String(quickMode==='jobs'));
+  quickAutonomous.setAttribute('aria-pressed',String(quickMode==='autonomous'));
+  quickDraft.setAttribute('aria-pressed',String(quickMode==='draft'));
 }
 function actionEnabled(job,action){if(action==='start')return job.state==='DRAFT'&&job.githubState!=='CLOSED'&&job.githubState!=='MERGED';if(action==='reconcile')return job.state==='ACTIVE'&&job.githubState==='OPEN';if(action==='cancel')return job.state!=='COMPLETED'&&job.state!=='CANCELLED'&&job.githubState==='OPEN';return false;}
 function actionButton(job,action,label,icon){const button=document.createElement('button');button.type='button';button.className='job-action';button.textContent=icon;button.title=label;button.setAttribute('aria-label',label);button.disabled=!actionEnabled(job,action);button.addEventListener('click',event=>{event.stopPropagation();void runJobAction(job,action,button);});return button;}
 async function runJobAction(job,action,button){button.disabled=true;try{const response=await fetch('/api/job-action?id='+encodeURIComponent(job.id)+'&action='+encodeURIComponent(action),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);await refresh(true);}catch(error){button.title=labelForAction(action)+': '+error.message;}finally{renderAll();}}
 function labelForAction(action){return action==='start'?'Start':action==='reconcile'?'Reconcile':'Cancel';}
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',()=>selectJob(job.id));select.append(element('span','job-title',text(repoName(job.repository)+'/PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))),element('span','badge '+value(job.githubState||'UNKNOWN'),text(value(job.githubState||'UNKNOWN'))));const actions=element('span','job-actions');actions.append(actionButton(job,'start','Start','▶'),actionButton(job,'reconcile','Reconcile','↻'),actionButton(job,'cancel','Cancel','×'));const primary=element('div','job-primary');primary.append(states,actions);const meta=element('span','job-meta');meta.append(element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,meta,lastLine);row.append(content);jobList.append(element('li','',row));}}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));row.addEventListener('click',()=>selectJob(job.id));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job.id);});select.append(element('span','job-title',text(repoName(job.repository)+'/PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))),element('span','badge '+value(job.githubState||'UNKNOWN'),text(value(job.githubState||'UNKNOWN'))));if(job.executionMode==='autonomous')states.append(element('span','badge flag-autonomous',text('AUTONOMOUS')));if(job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const actions=element('span','job-actions');actions.append(actionButton(job,'start','Start','▶'),actionButton(job,'reconcile','Reconcile','↻'),actionButton(job,'cancel','Cancel','×'));const primary=element('div','job-primary');primary.append(states,actions);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;eventTaskId=task.id;rememberSelection();clearEvents();renderAll();void loadEventHistory();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function attemptBudget(task){const attempt=Number(task?.attempt)||0;const max=Number(task?.maxAttempts)||0;if(max>=3&&max%3===0){const effectiveMax=Math.max(max,Math.ceil(attempt/3)*3);return attempt+' / 3×'+(effectiveMax/3);}return attempt+' / '+max;}
@@ -263,7 +281,8 @@ function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if
 function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
-function compareJobs(a,b){const mergePendingDelta=Number(isCompleteUnmerged(b))-Number(isCompleteUnmerged(a));if(mergePendingDelta)return mergePendingDelta;const terminalDelta=Number(isTerminalJob(a))-Number(isTerminalJob(b));return terminalDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
+function jobGroup(job){if(isTerminalJob(job))return 3;if(job.executionMode==='autonomous')return 1;if(job.draft||job.state==='DRAFT')return 2;return 0;}
+function compareJobs(a,b){const groupDelta=jobGroup(a)-jobGroup(b);if(groupDelta)return groupDelta;const mergePendingDelta=Number(isCompleteUnmerged(b))-Number(isCompleteUnmerged(a));return mergePendingDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
 function renderRateLimitStatus(status){
   if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
@@ -287,6 +306,10 @@ jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encode
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
+quickJobs.addEventListener('click',()=>setQuickMode('jobs'));
+quickAutonomous.addEventListener('click',()=>setQuickMode('autonomous'));
+quickDraft.addEventListener('click',()=>setQuickMode('draft'));
+quickStatus.addEventListener('change',()=>setQuickMode(quickStatus.value?'status':'jobs',quickStatus.value));
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
