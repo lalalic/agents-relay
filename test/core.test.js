@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
@@ -355,15 +355,16 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
 });
 
 test('ChatGPT reviewer uses the same start acknowledgement policy as normal ChatGPT tasks', async () => {
+  const contextRoot=await mkdtemp(join(tmpdir(),'agents-relay-reviewer-context-')); await mkdir(join(contextRoot,'agents')); await writeFile(join(contextRoot,'agents','reviewer.agent.md'),'---\nname: reviewer\n---\nReview the managed task.\n');
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer});
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,await activeEventSource(store,created.id)));
   await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,await activeEventSource(store,created.id)));
-  await new Promise(resolve=>setTimeout(resolve,10)); await stop();
+  await new Promise(resolve=>setTimeout(resolve,10)); await stop(); await rm(contextRoot,{recursive:true,force:true});
 });
 
 test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal events', async () => {
