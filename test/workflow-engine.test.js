@@ -34,3 +34,34 @@ test('minimal executable Mermaid profile fails fast on unsupported syntax', () =
   assert.throws(() => parseExecutableMermaid('flowchart TD\nA-->B'), /stateDiagram-v2/);
   assert.throws(() => parseExecutableMermaid('stateDiagram-v2\n[*] --> A\nA --> B'), /requires an event label/);
 });
+
+test('engine validates named guard/action bindings when registry is bound', () => {
+  const guarded=parseExecutableMermaid(`stateDiagram-v2\n[*] --> A\nA --> B: go [allowed] / audit\nB --> [*]\n`);
+  assert.throws(() => new WorkflowEngine(guarded), /Unknown workflow guard allowed referenced at line 3/);
+  assert.throws(() => new WorkflowEngine(guarded,{allowed:()=>true}), /Unknown workflow action audit referenced at line 3/);
+  assert.doesNotThrow(() => new WorkflowEngine(guarded,{allowed:()=>true},{audit:()=>{}}));
+});
+
+test('profile rejects duplicate source/event/guard branches as ambiguous', () => {
+  assert.throws(() => parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: go
+A --> C: go
+`), /Ambiguous executable transition/);
+  assert.doesNotThrow(() => parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: go [left]
+A --> C: go [right]
+`));
+});
+
+test('engine exposes graph introspection without duplicating workflow policy', () => {
+  const graph=parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: go
+A --> C: stop
+`);
+  const engine=new WorkflowEngine(graph);
+  assert.deepEqual(engine.transitionsFrom('A').map(t=>[t.event,t.to]),[['go','B'],['stop','C']]);
+  assert.throws(() => engine.transitionsFrom('MISSING'), /Unknown workflow state MISSING/);
+});

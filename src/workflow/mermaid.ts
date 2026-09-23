@@ -83,10 +83,14 @@ export function parseExecutableMermaid(source: string): WorkflowGraph {
   if (initials.length !== 1) throw new Error(`Executable Mermaid requires exactly one [*] initial transition; found ${initials.length}`);
   if (transitions.length === 0) throw new Error('Executable Mermaid requires at least one executable transition');
   const seen = new Set<string>();
+  const deterministicKeys = new Set<string>();
   for (const transition of transitions) {
     const key = `${transition.from}\u0000${transition.event}\u0000${transition.guard ?? ''}\u0000${transition.to}`;
     if (seen.has(key)) throw new Error(`Duplicate executable transition at line ${transition.line}: ${transition.from} --${transition.event}--> ${transition.to}`);
     seen.add(key);
+    const deterministicKey = `${transition.from}\u0000${transition.event}\u0000${transition.guard ?? ''}`;
+    if (deterministicKeys.has(deterministicKey)) throw new Error(`Ambiguous executable transition at line ${transition.line}: duplicate source/event/guard ${transition.from} --${transition.event} [${transition.guard ?? 'unguarded'}]`);
+    deterministicKeys.add(deterministicKey);
   }
   return { source, states, initial: initials[0], finals, transitions };
 }
@@ -96,7 +100,21 @@ export class WorkflowEngine {
     readonly graph: WorkflowGraph,
     private readonly guards: Readonly<Record<string, WorkflowGuard>> = {},
     private readonly actions: Readonly<Record<string, WorkflowAction>> = {},
-  ) {}
+  ) {
+    this.validateRegistryBindings();
+  }
+
+  private validateRegistryBindings(): void {
+    for (const transition of this.graph.transitions) {
+      if (transition.guard && !this.guards[transition.guard]) throw new Error(`Unknown workflow guard ${transition.guard} referenced at line ${transition.line}`);
+      for (const action of transition.actions) if (!this.actions[action]) throw new Error(`Unknown workflow action ${action} referenced at line ${transition.line}`);
+    }
+  }
+
+  transitionsFrom(state: string): readonly WorkflowTransition[] {
+    if (!this.graph.states.has(state)) throw new Error(`Unknown workflow state ${state}`);
+    return this.graph.transitions.filter(transition => transition.from === state);
+  }
 
   assertStateTransition(from: string, to: string, kind = 'workflow'): void {
     if (from === to) return;
@@ -105,12 +123,11 @@ export class WorkflowEngine {
   }
 
   async enabled(state: string, event: string, context: WorkflowContext = {}): Promise<WorkflowTransition[]> {
-    const candidates = this.graph.transitions.filter(transition => transition.from === state && transition.event === event);
+    const candidates = this.transitionsFrom(state).filter(transition => transition.event === event);
     const enabled: WorkflowTransition[] = [];
     for (const transition of candidates) {
       if (!transition.guard) { enabled.push(transition); continue; }
       const guard = this.guards[transition.guard];
-      if (!guard) throw new Error(`Unknown workflow guard ${transition.guard}`);
       if (await guard(context)) enabled.push(transition);
     }
     return enabled;
@@ -123,7 +140,6 @@ export class WorkflowEngine {
     const transition = enabled[0];
     for (const actionName of transition.actions) {
       const action = this.actions[actionName];
-      if (!action) throw new Error(`Unknown workflow action ${actionName}`);
       await action(context, transition);
     }
     return transition.to;
