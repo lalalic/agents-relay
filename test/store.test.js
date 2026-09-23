@@ -319,6 +319,17 @@ test('saveJob migrates a legacy Job comment into the PR body without touching Ta
   assert.equal(comments.filter(item => parseTask(item.body)?.id === 'child').length, 1);
 });
 
+test('plain objective text mentioning the Job marker name is not treated as a malformed marker', async () => {
+  const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: 'Discuss agents-relay:job:v1 storage without embedding a marker.', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
+  const legacy = { ...job('mention-marker'), objective: client.pulls[0].body };
+  client.comments.set(6, [githubComment(marker(JOB_MARKER, legacy), 'bot', 1)]);
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
+
+  await store.validateJobBinding('mention-marker');
+  await store.saveJob(await store.load('mention-marker'));
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'mention-marker');
+});
+
 test('job update validation rejects duplicate markers instead of repairing them', async () => {
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: '', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
   const duplicate = marker(JOB_MARKER, job('repair'));

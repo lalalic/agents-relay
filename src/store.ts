@@ -465,7 +465,7 @@ export class GitHubStore implements DurableStore {
   }
   async validateJobBinding(jobId: string): Promise<void> {
     const body = await this.pullRequestBody();
-    const bodyHasMarker = body.includes(JOB_MARKER);
+    const bodyHasMarker = body.includes(`<!-- ${JOB_MARKER} `);
     const bodyJob = parseJob(body);
     if (bodyHasMarker && !bodyJob) throw new Error(`JOB_MARKER_MALFORMED: PR #${this.prNumber} body contains a ${JOB_MARKER} marker that cannot be parsed`);
     if (bodyJob) {
