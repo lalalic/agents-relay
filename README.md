@@ -51,6 +51,8 @@ Jobs separate durable lifecycle from derived runtime status. Durable lifecycle i
 
 Lifecycle transition authority lives in the directly renderable canonical sources [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd); see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
 
+Graph-engine rollout is confidence-gated with `AGENTS_RELAY_WORKFLOW_MODE=legacy|shadow|graph` (default `legacy`). `shadow` keeps legacy authoritative while comparing the Mermaid decision and exposing `{mode,matches,mismatches}` at `/api/workflow-rollout`; `graph` is explicit opt-in until the shadow cutover gate is approved.
+
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat; its objective becomes the default PR body and objective updates keep the PR body synchronized.
 
 Jobs default to `fixed`. `job create` persists only the durable job and never

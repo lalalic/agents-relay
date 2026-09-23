@@ -8,6 +8,7 @@ import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
 import { Job } from './types.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
+import { workflowRolloutSnapshot } from './workflow/rollout.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
@@ -456,6 +457,11 @@ export function serveDashboard(
       return;
     }
 
+    if (req.url === '/api/workflow-rollout') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(workflowRolloutSnapshot()));
+      return;
+    }
     if (req.url === '/api/status') {
       const status = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
       res.writeHead(200, { 'content-type': 'application/json' });
