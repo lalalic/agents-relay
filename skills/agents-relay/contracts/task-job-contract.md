@@ -6,7 +6,7 @@ This contract is the shared protocol for every component that creates, schedules
 
 Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. Use Mermaid where a diagram materially explains a workflow, state model, architecture, dependency graph, relationship, or other visual structure. **Mermaid-first applies to that explanation/section, not to the entire Job objective or Task input.** Put the diagram before the prose that explains that visual model, but keep normal document structure: start with the goal/context when that is what the reader needs first. Do not force a Mermaid block at the top of every objective/input, and do not add decorative or redundant diagrams when Markdown is clearer.
 
-The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside the JSON marker; those long-form Markdown bodies remain the human-readable durable content rendered by the Job/Task comment (and, for a Job objective, the PR body). Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded them.
+The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside marker JSON. The Job marker lives in the PR body immediately before the human-readable Job objective; Task markers live in their Task comments immediately before the human-readable Task input/result. Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded long-form content or stored the Job marker in a separate comment.
 
 For long-form content, use files instead of shell-quoted arguments:
 
@@ -15,7 +15,7 @@ For long-form content, use files instead of shell-quoted arguments:
 
 When creating a new Job from an active discussion, the orchestrator must consolidate **all context needed to finish the Job without the originating thread** into the Job objective before creation. Include, as applicable: goal, relevant background, decisions already made, requirements, constraints, lifecycle/workflow semantics, non-goals, implementation boundaries, acceptance criteria, delivery/review instructions, and any important known issues. Do not create a Job whose objective is only a one-line summary when the discussion contains material implementation context.
 
-For a newly created PR (`job create --head`), standalone objective Markdown is required and becomes the default PR body. Updating the Job objective also updates the PR body. The trusted Job marker remains the machine-readable durable state, while the PR body and rendered Job comment expose the same objective to humans and agents.
+For a newly created PR (`job create --head`), standalone objective Markdown is required. The PR body is the single durable Job surface: one hidden `agents-relay:job:v1` marker followed by the objective Markdown. Updating Job metadata or objective updates that same body. New Jobs must not create a separate Job comment that repeats the objective. Readers must remain backward-compatible with legacy Job-comment markers, and a successful Job save may migrate such a legacy marker into the PR body only after validating the replacement before deleting the redundant legacy Job comment.
 
 ## Task producers
 
