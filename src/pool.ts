@@ -69,7 +69,7 @@ export class RepositoryWorkerPool {
     const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
     await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
   }
-  private async handleTerminalEvent(event: import('./types.js').EventRecord): Promise<void> {
+  private async handleLifecycleEvent(event: import('./types.js').EventRecord): Promise<void> {
     const target = this.jobTargets.get(event.job_id);
     if (!target || !this.repositories.includes(target.repository)) {
       process.stderr.write(`warning: terminal event target unknown for job ${event.job_id}\n`);
@@ -80,8 +80,8 @@ export class RepositoryWorkerPool {
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
-      if (['task.completed', 'task.failed', 'task.blocked', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) {
-        await this.handleTerminalEvent(event);
+      if (['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) {
+        await this.handleLifecycleEvent(event);
         return;
       }
       if (event.type === 'job.wake' || event.type === 'github.webhook') {
