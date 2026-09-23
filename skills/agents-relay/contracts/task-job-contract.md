@@ -47,6 +47,8 @@ Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-pr
 
 ## Task readiness states
 
+Canonical Job/Task lifecycle legality is defined by the directly renderable runtime sources `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. Producers, runtime code, docs, and agents must treat those files as the transition source of truth; the prose below explains semantics and must not become a second transition table.
+
 Task readiness is explicit and must use these semantics:
 
 - `DRAFT`: durable Task exists but is not executable now. A DRAFT Task with dependencies is promoted to `QUEUED` when all dependencies succeed. A DRAFT Task with no dependencies remains held until an explicit release to `QUEUED`.
@@ -62,6 +64,8 @@ Do not use `WAITING` as a Task state or durable Job lifecycle state. `WAITING` i
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.
 
 ## Job lifecycle and runtime status
+
+The canonical durable lifecycle transition graphs are `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. They use Relay's minimal executable Mermaid `stateDiagram-v2` profile and are the single source of truth for transition legality; do not maintain a parallel JSON/YAML transition table. Runtime status is not part of those lifecycle graphs.
 
 Durable Job lifecycle is intentionally small: `DRAFT | ACTIVE | COMPLETED | CANCELLED`.
 

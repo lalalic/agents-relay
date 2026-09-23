@@ -29,7 +29,7 @@ function contentBeforeDelimiter(body: string, heading: string, end: string): str
 
 export function renderJobComment(job: Job): string {
   const objective = job.objective?.trim() || '_No objective recorded._';
-  const { objective: _objective, tasks: _tasks, ...metadata } = job;
+  const { objective: _objective, description: _description, tasks: _tasks, ...metadata } = job;
   return `${marker(JOB_MARKER, metadata)}
 # Agents Relay job: ${job.title}
 
@@ -63,7 +63,7 @@ function markdownSection(body: string, heading: string): string | undefined {
 export function parseJob(body: string): Job | null {
   const job = parseMarker<Job>(body, JOB_MARKER);
   if (!job) return null;
-  const objective = job.objective ?? contentBeforeDelimiter(body, '\n## Objective\n\n', JOB_OBJECTIVE_END) ?? markdownSection(body, '\n## Objective\n');
+  const objective = job.objective ?? job.description ?? contentBeforeDelimiter(body, '\n## Objective\n\n', JOB_OBJECTIVE_END) ?? markdownSection(body, '\n## Objective\n');
   const parsed = { ...job, objective };
   if (parsed.executionMode === undefined) return { ...parsed, executionMode: 'fixed' };
   if (parsed.executionMode !== 'fixed' && parsed.executionMode !== 'autonomous') return null;

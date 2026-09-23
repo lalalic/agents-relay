@@ -1,3 +1,4 @@
+import { jobLifecycleWorkflow, taskLifecycleWorkflow } from './workflow/definitions.js';
 export type JobLifecycleState = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'FAILED' | 'REVIEWING' | 'MERGE_PENDING' | 'MERGED' | 'CANCELLED';
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
@@ -85,7 +86,5 @@ export type Job = { id: string; title: string; objective?: string; priority?: Pr
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
-const jobLifecycleTransitions: Record<JobLifecycleState, JobLifecycleState[]> = { DRAFT: ['ACTIVE', 'COMPLETED', 'CANCELLED'], ACTIVE: ['COMPLETED', 'CANCELLED'], COMPLETED: [], CANCELLED: ['COMPLETED'] };
-const taskTransitions: Record<TaskState, TaskState[]> = { DRAFT: ['QUEUED', 'BLOCKED', 'CANCELLED'], QUEUED: ['DRAFT', 'RUNNING', 'BLOCKED', 'FAILED', 'CANCELLED'], RUNNING: ['BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'QUEUED'], BLOCKED: ['QUEUED', 'CANCELLED'], SUCCEEDED: [], FAILED: ['QUEUED', 'RUNNING', 'CANCELLED'], CANCELLED: [] };
-export function assertJobLifecycleTransition(from: JobLifecycleState, to: JobLifecycleState): void { if (from !== to && !jobLifecycleTransitions[from].includes(to)) throw new Error(`Invalid job transition ${from} -> ${to}`); }
-export function assertTaskTransition(from: TaskState, to: TaskState): void { if (from !== to && !taskTransitions[from].includes(to)) throw new Error(`Invalid task transition ${from} -> ${to}`); }
+export function assertJobLifecycleTransition(from: JobLifecycleState, to: JobLifecycleState): void { jobLifecycleWorkflow.assertStateTransition(from, to, 'job'); }
+export function assertTaskTransition(from: TaskState, to: TaskState): void { taskLifecycleWorkflow.assertStateTransition(from, to, 'task'); }

@@ -24,6 +24,7 @@
   "files": [
     "dist",
     "skills",
+    "workflow",
     "README.md",
     "LICENSE"
   ]

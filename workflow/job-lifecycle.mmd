@@ -1,0 +1,15 @@
+stateDiagram-v2
+    [*] --> DRAFT
+
+    DRAFT --> ACTIVE: activate
+    DRAFT --> COMPLETED: pr.merged
+    DRAFT --> CANCELLED: cancel
+    DRAFT --> CANCELLED: pr.closed [notMerged] / cancelJob
+
+    ACTIVE --> COMPLETED: pr.merged
+    ACTIVE --> CANCELLED: cancel
+    ACTIVE --> CANCELLED: pr.closed [notMerged] / cancelJob
+
+    CANCELLED --> COMPLETED: pr.merged
+
+    COMPLETED --> [*]

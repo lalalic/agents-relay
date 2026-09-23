@@ -17,7 +17,7 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { extendRetryBudget, parseJobSchedule, transitionTask } from './scheduler.js';
+import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
@@ -379,7 +379,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
-    if (refreshed.state === 'DRAFT') { refreshed.state = 'ACTIVE'; refreshed.updatedAt = now; await store.saveJob(refreshed); }
+    if (refreshed.state === 'DRAFT') { await transitionJobEvent(refreshed, 'activate'); await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
     await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
@@ -391,11 +391,11 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
-    task.state = action === 'retry' ? 'QUEUED' : 'CANCELLED';
+    await transitionTaskEvent(task, action === 'retry' ? 'retry' : 'cancel');
     task.error = action === 'retry' ? null : 'Cancelled by user';
-    task.updatedAt = new Date().toISOString();
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
     await store.saveTask(task);
-    if (action === 'retry' && job.state === 'DRAFT') { job.state = 'ACTIVE'; job.updatedAt = task.updatedAt; await store.saveJob(job); }
+    if (action === 'retry' && job.state === 'DRAFT') { await transitionJobEvent(job, 'activate'); await store.saveJob(job); }
     await saveLocal(localFile, job);
     await publishWake(eventBus(args), job, task.id, `${task.id} ${action} requested`);
     console.log(JSON.stringify(task, null, 2));
@@ -419,11 +419,12 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs);
   task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
   if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive');
-  if (hasArg(args, '--draft')) transitionTask(task, 'DRAFT');
+  if (hasArg(args, '--draft') && task.state === 'QUEUED') await transitionTaskEvent(task, 'hold');
   if (hasArg(args, '--queue')) {
     const taskMap = new Map(job.tasks.map(item => [item.id, item]));
     if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
-    transitionTask(task, 'QUEUED');
+    if (task.state === 'DRAFT') await transitionTaskEvent(task, 'release');
+    else if (task.state === 'FAILED' || task.state === 'BLOCKED') await transitionTaskEvent(task, 'retry');
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
@@ -518,14 +519,14 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     if (job.state === 'CANCELLED') throw new Error(`Cannot merge cancelled job ${job.id}`);
     const headSha = await store.headSha();
     await store.mergePullRequest(headSha ?? undefined);
-    job.state = 'COMPLETED'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+    await transitionJobEvent(job, 'pr.merged'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
     if (job.state === 'COMPLETED') throw new Error(`Cannot cancel completed job ${job.id}`);
-    for (const task of job.tasks.filter(item => !['SUCCEEDED','CANCELLED'].includes(item.state))) { transitionTask(task, 'CANCELLED'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; await store.saveTask(task); }
+    for (const task of job.tasks.filter(item => !['SUCCEEDED','CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
     await store.closePullRequest();
-    job.state = 'CANCELLED'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+    await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
 
@@ -559,12 +560,12 @@ export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, 
     const job = await store.load(jobId);
     if (action === 'start') {
       if (job.state !== 'DRAFT') throw new Error(`Job ${job.id} is not startable (${job.state})`);
-      job.state = 'ACTIVE'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+      await transitionJobEvent(job, 'activate'); await store.saveJob(job);
     } else if (action === 'cancel') {
       if (job.state === 'COMPLETED' || job.state === 'CANCELLED') throw new Error(`Job ${job.id} is not cancellable (${job.state})`);
-      for (const task of job.tasks.filter(item => !['SUCCEEDED', 'CANCELLED'].includes(item.state))) { transitionTask(task, 'CANCELLED'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; await store.saveTask(task); }
+      for (const task of job.tasks.filter(item => !['SUCCEEDED', 'CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
       await store.closePullRequest?.();
-      job.state = 'CANCELLED'; job.updatedAt = new Date().toISOString(); await store.saveJob(job);
+      await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
       return await store.load(job.id);
     }
     return await reconciler.wake(job.id);
