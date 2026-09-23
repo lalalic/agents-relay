@@ -160,14 +160,16 @@ test('credit providers render one balance value per provider row', () => {
   assert.doesNotMatch(dashboardHtml, /balance\.used!==null/);
 });
 
-test('job list uses PR-number title and concise state metadata', () => {
-  assert.match(dashboardHtml, /text\('PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
+test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
+  assert.match(dashboardHtml, /function repoName\(repository\)/);
+  assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /job\.draft\?'badge DRAFT':'/);
   assert.match(dashboardHtml, /job\.draft\?'DRAFT':value\(job\.githubState\|\|'UNKNOWN'\)/);
   assert.match(dashboardHtml, /\.badge\.DRAFT/);
-  assert.match(dashboardHtml, /text\(relativeTime\(job\.updatedAt\)\)/);
-  assert.doesNotMatch(dashboardHtml, /text\(job\.id\).*'PR #'/);
+  assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
+  assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
+  assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
 });
 
 
@@ -197,12 +199,13 @@ test('selected job body does not scroll and omits task count field', () => {
 });
 
 
-test('job list exposes repository and repository quick filter without job count or status filter', () => {
+test('job list keeps repository quick filter without a separate repository metadata line', () => {
   assert.match(dashboardHtml, /id="repo-filter"/);
   assert.doesNotMatch(dashboardHtml, /id="status-filter"/);
   assert.match(dashboardHtml, /All repos/);
   assert.doesNotMatch(dashboardHtml, /All statuses/);
-  assert.match(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
+  assert.match(dashboardHtml, /repoName\(job\.repository\)/);
+  assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
   assert.match(dashboardHtml, /function filteredJobs\(\)/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:repo-filter'/);
   assert.doesNotMatch(dashboardHtml, /agents-relay:status-filter/);
