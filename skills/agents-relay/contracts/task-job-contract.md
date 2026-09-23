@@ -48,6 +48,8 @@ Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must
 
 ## Job lifecycle and runtime status
 
+The canonical durable lifecycle transition graphs are `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. They use Relay's minimal executable Mermaid `stateDiagram-v2` profile and are the single source of truth for transition legality; do not maintain a parallel JSON/YAML transition table. Runtime status is not part of those lifecycle graphs.
+
 Durable Job lifecycle is intentionally small: `DRAFT | ACTIVE | COMPLETED | CANCELLED`.
 
 - `DRAFT`: durable objective exists, but the execution engine must not run it.

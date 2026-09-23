@@ -43,6 +43,8 @@ Every wake-up means only: "the durable state may have changed." The daemon reloa
 
 ## State
 
+Durable Job/Task lifecycle legality is defined by directly renderable Mermaid graphs in `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. Relay parses those files using the minimal executable profile documented in [workflow-engine.md](workflow-engine.md); there is no JSON/YAML mirror. Runtime status remains a separate derived projection.
+
 Job state is split into durable lifecycle and derived runtime status.
 
 Durable Job lifecycle:

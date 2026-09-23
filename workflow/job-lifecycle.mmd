@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> DRAFT
+
+    DRAFT --> ACTIVE: activate
+    DRAFT --> COMPLETED: complete
+    DRAFT --> CANCELLED: cancel
+
+    ACTIVE --> COMPLETED: pr.merged
+    ACTIVE --> CANCELLED: cancel
+
+    CANCELLED --> COMPLETED: pr.merged
+
+    COMPLETED --> [*]

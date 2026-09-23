@@ -1,0 +1,28 @@
+stateDiagram-v2
+    [*] --> DRAFT
+
+    DRAFT --> QUEUED: release
+    DRAFT --> BLOCKED: block
+    DRAFT --> CANCELLED: cancel
+
+    QUEUED --> DRAFT: hold
+    QUEUED --> RUNNING: claim
+    QUEUED --> BLOCKED: block
+    QUEUED --> FAILED: fail
+    QUEUED --> CANCELLED: cancel
+
+    RUNNING --> BLOCKED: task.blocked
+    RUNNING --> SUCCEEDED: task.completed
+    RUNNING --> FAILED: task.failed
+    RUNNING --> CANCELLED: task.cancelled
+    RUNNING --> QUEUED: retry
+
+    BLOCKED --> QUEUED: retry
+    BLOCKED --> CANCELLED: cancel
+
+    FAILED --> QUEUED: retry
+    FAILED --> RUNNING: reconcile.started
+    FAILED --> CANCELLED: cancel
+
+    SUCCEEDED --> [*]
+    CANCELLED --> [*]
