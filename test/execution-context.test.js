@@ -104,7 +104,7 @@ test('managed worker prompt exposes resolved context and durable retrieval guida
     await mkdir(project, { recursive: true });
     const context = await resolveExecutionContext(project, 'nested-worker', { workspaceRoot: root, globalRoot: join(root, 'global'), neoRoot: join(root, 'missing-neo') });
     const job = { id:'j', title:'job', executionMode:'fixed', prNumber:54, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
-    const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
+    const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:'nested-exec', threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = managedWorkerInput(job, task, context);
     assert.match(prompt, /Role: nested-worker/);
     assert.match(prompt, /Retrieve the durable job and task from GitHub before doing the work/);

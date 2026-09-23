@@ -63,6 +63,8 @@ Do not use `WAITING` as a Task state or durable Job lifecycle state. `WAITING` i
 
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.
 
+Relay allocates the durable `executionId` before launching model-backed work and gives that worker one exact event source identity: `job/<job-id>/task/<task-id>/execution/<execution-id>`. Every semantic lifecycle event from that execution must copy the identity verbatim in `source.id`. Relay correlates model-worker lifecycle only by this execution identity; `source.agent`, `source.component`, provider/adapter names, and `data.worker_owned` are diagnostic/legacy metadata and MUST NOT authorize or correlate lifecycle state. A retry receives a new execution identity, so events from an older execution are ignored.
+
 ## Job lifecycle and runtime status
 
 The canonical durable lifecycle transition graphs are `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. They use Relay's minimal executable Mermaid `stateDiagram-v2` profile and are the single source of truth for transition legality; do not maintain a parallel JSON/YAML transition table. Runtime status is not part of those lifecycle graphs.

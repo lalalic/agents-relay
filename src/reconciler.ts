@@ -21,9 +21,14 @@ type LiveExecution = { jobId: string; taskId: string; executionId: string; execu
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
+export function executionEventSource(jobId: string, taskId: string, executionId: string): string { return `job/${jobId}/task/${taskId}/execution/${executionId}`; }
+function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
+
 export function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): string {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
+  if (!task.executionId) throw new Error(`Task ${task.id} requires an executionId before worker input is built`);
+  const sourceId = executionEventSource(job.id, task.id, task.executionId);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
   const taskUrl = task.taskUrl ?? `${prUrl}#issuecomment-${task.id}`;
   const output = task.output.kind === 'file'
@@ -45,6 +50,8 @@ ${output}
 
 [Execution event contract — mandatory]
 Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
+Your exact event source identity is: ${sourceId}
+Every lifecycle event for this execution MUST set source.id to that exact string. Do not derive, rename, or replace it.
 Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
 publish through the federated MCP tool events__publish; do not open NATS directly.
 For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
@@ -205,7 +212,7 @@ export class Reconciler {
     const now = new Date().toISOString();
     const implementationTasks = job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item));
     const reviewerRouting = await this.selectReviewer(implementationTasks);
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started using the caller-provided execution source identity, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
     job.updatedAt = now;
@@ -396,12 +403,10 @@ export class Reconciler {
       await this.store.saveTask(task);
       return;
     }
-    let workerInput: string;
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.parentTaskId ? 'nested-worker' : 'worker';
       executionContext = await this.resolvedContext(job, task, role);
-      workerInput = managedWorkerInput(job, task, executionContext);
     } catch (error) {
       await transitionTaskEvent(task, 'block');
       task.error = error instanceof Error ? error.message : String(error);
@@ -434,8 +439,10 @@ export class Reconciler {
     const durableExecutionId = task.executionId!;
     const controller = new AbortController();
     let execution: Execution;
+    const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
+    const workerInput = managedWorkerInput(job, task, executionContext);
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };
-    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
+    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
       ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
@@ -478,7 +485,7 @@ export class Reconciler {
     );
   }
 
-  private async startAck(jobId: string, taskId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
+  private async startAck(jobId: string, taskId: string, sourceId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
     if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
     let resolveAck!: () => void;
     let rejectAck!: (error: Error) => void;
@@ -487,10 +494,7 @@ export class Reconciler {
     const ack = new Promise<void>((resolve, reject) => { resolveAck = resolve; rejectAck = reject; });
     const unsubscribe = await this.options.eventBus.subscribe(jobId, async event => {
       if (settled || event.type !== 'task.started' || event.job_id !== jobId || event.task_id !== taskId) return;
-      const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-      const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-      const workerOwned = event.data?.worker_owned === true || ['codex', 'chatgpt'].includes(sourceAgent);
-      if (!workerOwned || sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
+      if (eventSourceId(event) !== sourceId) return;
       if (!event.timestamp || new Date(event.timestamp).getTime() < launchBarrier) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -577,14 +581,11 @@ export class Reconciler {
   }
 
   private async markWorkerStarted(event: EventRecord): Promise<void> {
-    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-    if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
     const live = this.live.get(event.task_id);
     if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task) return;
+    if (!task || !task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return;
     const claimedExecution = task.state === 'QUEUED' && task.executionId !== null && task.leaseOwner !== null;
     const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
     if ((exactLiveExecution || claimedExecution) && task.state === 'QUEUED') {
@@ -615,10 +616,8 @@ export class Reconciler {
       || error.includes('exited after task.started without publishing a terminal task event');
   }
 
-  private isWorkerOwnedEvent(event: EventRecord): boolean {
-    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-    return sourceAgent !== 'relay' && sourceComponent !== 'agents-relay';
+  private isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
+    return task.executionId !== null && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId);
   }
 
   private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
@@ -639,7 +638,7 @@ export class Reconciler {
       await transitionTaskEvent(task, 'fail');
       await this.store.saveTask(task);
     } else {
-      await this.applyTerminalEvent(event);
+      await this.applyTerminalEvent(event, true);
     }
     await this.emit(event);
   }
@@ -691,7 +690,7 @@ export class Reconciler {
       await transitionTaskEvent(task, 'fail');
       await this.store.saveTask(task);
     } else {
-      await this.applyTerminalEvent(event);
+      await this.applyTerminalEvent(event, true);
     }
     await this.emit(event);
   }
@@ -717,16 +716,18 @@ export class Reconciler {
       await this.store.saveTask(task);
       this.clearExecution(task.id, executionId);
     } else {
-      await this.applyTerminalEvent(event);
+      await this.applyTerminalEvent(event, true);
     }
     await this.emit(event);
   }
 
-  private async applyTerminalEvent(event: EventRecord): Promise<void> {
+  private async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<void> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
     if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;
-    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
+    const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
+    if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return;
+    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && (trustedInternal || !modelBacked || this.isCorrelatedWorkerEvent(task, event))) {
       if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
       await transitionTaskEvent(task, 'reconcile.started');
       task.failureReason = undefined;
