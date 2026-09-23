@@ -210,8 +210,8 @@ test('RUNNING tasks cannot return to DRAFT', () => { const current=task('running
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('repository pool orders open jobs globally by durable priority', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','low']); });
 test('startup reconciliation selects expired durable RUNNING leases after daemon restart', () => {
-  const expired=task('expired','RUNNING'); expired.leaseExpiresAt='2026-09-19T16:46:23.718Z';
-  const live=task('live','RUNNING'); live.leaseExpiresAt='2026-09-19T17:10:00.000Z';
+  const expired=task('expired','RUNNING'); expired.executionId='expired-exec'; expired.leaseExpiresAt='2026-09-19T16:46:23.718Z';
+  const live=task('live','RUNNING'); live.executionId='live-exec'; live.leaseExpiresAt='2026-09-19T17:10:00.000Z';
   assert.equal(needsLifecycleReconciliation(job([expired]),Date.parse('2026-09-19T16:59:20.000Z')),true);
   assert.equal(needsLifecycleReconciliation(job([live]),Date.parse('2026-09-19T16:59:20.000Z')),false);
 });
@@ -296,8 +296,9 @@ test('Relay publishes process launched and accepts only a worker-owned post-laun
   assert.equal(events.some(event=>event.type==='task.started'),false);
   assert.equal(events.some(event=>event.type==='task.process.launched'),true);
   await bus.publish(eventFor('j','chat-start',null,'task.started','running','relay fake','user',{worker_owned:true},{agent:'relay',component:'agents-relay'}));
-  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  assert.equal((await store.load('j')).tasks[0].state,'QUEUED');
   await bus.publish(eventFor('j','chat-start',null,'task.started','running','worker began','user',{worker_owned:true},{agent:'chatgpt'}));
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
   await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal(events.some(event=>event.type==='task.process.async_exited'),true);
   await bus.publish(eventFor('j','chat-start',null,'task.completed','succeeded','durable output','user',undefined,{agent:'chatgpt'}));
@@ -332,7 +333,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
-  const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'RUNNING');
+  const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',{worker_owned:true},{agent:'mcp'}));
   await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,{agent:'chatgpt'}));
   await new Promise(resolve=>setTimeout(resolve,10)); await stop();
@@ -345,7 +346,7 @@ test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal eve
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
   await bus.publish(eventFor('j','other',null,'task.completed','succeeded','wrong task','user'));
   await bus.publish({...eventFor('j','chat-terminal',null,'task.completed','succeeded','stale','user'),timestamp:new Date(0).toISOString()});
-  assert.equal(released,false); assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  assert.equal(released,false); assert.equal((await store.load('j')).tasks[0].state,'QUEUED');
   await bus.publish(eventFor('j','chat-terminal',null,'task.started','running','worker began','user',{worker_owned:true},{agent:'chatgpt'}));
   await bus.publish(eventFor('j','other',null,'task.failed','failed','wrong task','user'));
   assert.equal(released,false);
@@ -380,7 +381,7 @@ test('ChatGPT after-terminal close waits for a fresh exact terminal event', asyn
     await bus.publish(eventFor('j', 'other-task', null, 'task.completed', 'succeeded', 'wrong task', 'user'));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(released, false);
-    assert.equal((await store.load('j')).tasks[0].state, 'RUNNING');
+    assert.equal((await store.load('j')).tasks[0].state, 'QUEUED');
     await bus.publish(eventFor('j', 'chat-terminal', null, 'task.started', 'running', 'worker began', 'user', { worker_owned: true }, { agent: 'chatgpt' }));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(released, false);
@@ -419,6 +420,7 @@ test('adapter runtime exit is not task completion', async () => {
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','runtime-exit',null,'task.started','running','worker began','user',undefined,{agent:'codex'}));
   adapter.resolvers[0].resolve({summary:'process exited zero'});
   await reconciler.idle();
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
@@ -581,6 +583,7 @@ test('correlated terminal completed event is authoritative', async () => {
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','event-complete',null,'task.started','running','worker began','user',undefined,{agent:'codex'}));
   adapter.resolvers[0].resolve({summary:'runtime exited'});
   await bus.publish(eventFor('j','event-complete',null,'task.completed','succeeded','durable output written','orchestrator',{artifact:'PR'}));
   await new Promise(resolve=>setTimeout(resolve,20));
@@ -596,7 +599,7 @@ test('terminal event published during launch cannot be overwritten back to runni
   const adapter={
     name:'codex', id:'instant-codex', capabilities:['model','codex'],
     launch(current) {
-      void bus.publish(eventFor('j',current.id,current.parentTaskId,'task.completed','succeeded','instant complete','orchestrator'));
+      void bus.publish(eventFor('j',current.id,current.parentTaskId,'task.started','running','worker began','user',undefined,{agent:'codex'})).then(()=>bus.publish(eventFor('j',current.id,current.parentTaskId,'task.completed','succeeded','instant complete','orchestrator')));
       return {id:'runtime-id',promise:Promise.resolve({summary:'runtime exited'}),cancel(){}};
     }
   };
@@ -616,6 +619,7 @@ test('correlated failed and blocked events set terminal durable states', async (
     const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
     const stop=await reconciler.watch('j');
     await reconciler.reconcile('j');
+    await bus.publish(eventFor('j',type,null,'task.started','running','worker began','user',undefined,{agent:'codex'}));
     await bus.publish(eventFor('j',type,null,type,type==='task.failed'?'failed':'blocked','terminal','user'));
     await new Promise(resolve=>setTimeout(resolve,10));
     assert.equal((await store.load('j')).tasks[0].state,state);
@@ -628,6 +632,7 @@ test('terminal event for another task cannot complete running work', async () =>
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','target',null,'task.started','running','worker began','user',undefined,{agent:'codex'}));
   await bus.publish(eventFor('j','other',null,'task.completed','succeeded','wrong task','orchestrator'));
   await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
@@ -654,6 +659,7 @@ test('continuation runs only after completed terminal event', async () => {
   const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,continuations:[{kind:'command',continue:async input=>calls.push(input)}]});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
+  await bus.publish(eventFor('j','child',null,'task.started','running','worker began','user',undefined,{agent:'codex'}));
   adapter.resolvers[0].resolve({summary:'runtime only'});
   await reconciler.idle();
   assert.equal(calls.length,0);
@@ -840,7 +846,7 @@ test('review changes-required creates exactly one Codex Luna fix task containing
   assert.match(fixes[0].input,/2\. second bug/);
   assert.match(fixes[0].input,/3\. third bug/);
   assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'REVIEWING');
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
@@ -887,7 +893,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'approved', blockingFindings: [], evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'approved');
   assert.equal((await store.load('j')).review?.evidence?.data?.review?.summary, 'approved');
-  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'SUCCEEDED');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'QUEUED');
   const changed = await store.load('j');
   changed.headSha = 'sha-review-2';
   await store.saveJob(changed);
@@ -924,7 +930,7 @@ test('concurrent reconciler instances atomically claim one queued task only once
   await Promise.all([a.reconcile('j'),b.reconcile('j')]);
   const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-launch');
   assert.equal(adapter.launches,1);
-  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.state,'QUEUED');
   assert.equal(durable.attempt,1);
   assert.ok(durable.executionId);
 });

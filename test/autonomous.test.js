@@ -30,7 +30,10 @@ function executionHarness(bus) {
     id: 'test-codex',
     capabilities: ['model','codex'],
     launch(current) {
-      queueMicrotask(() => bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.completed', 'succeeded', `completed ${current.id}`, 'orchestrator')));
+      queueMicrotask(async () => {
+        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.started', 'running', `started ${current.id}`, 'user', undefined, { agent: 'codex' }));
+        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.completed', 'succeeded', `completed ${current.id}`, 'orchestrator'));
+      });
       return { id: `exec-${current.id}`, promise: Promise.resolve({ summary: 'runtime exited' }), cancel() {} };
     },
   };

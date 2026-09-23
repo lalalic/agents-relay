@@ -9,8 +9,8 @@ export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
-  if (job.tasks.some(task => task.state === 'QUEUED' || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
-  return job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);
+  if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
+  return job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);
 }
 export function terminalManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState !== 'OPEN' && ((item.githubState === 'MERGED' && item.job.state !== 'COMPLETED') || (item.githubState === 'CLOSED' && item.job.state !== 'CANCELLED'))).map(item => item.job).sort(compareJobPriority); }
 export async function aggregateManagedGitHubJobs(client: GitHubClient, repositories: readonly string[], trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
@@ -44,8 +44,8 @@ export class RepositoryWorkerPool {
     for (const job of jobs) {
       if (capacity <= 0) break;
       const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-      const ready = job.tasks.filter(task => task.state === 'QUEUED' || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
-      const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
+      const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
+      const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
       await this.makeReconciler(store, allowance).reconcile(job.id);

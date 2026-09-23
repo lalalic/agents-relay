@@ -4,11 +4,11 @@ stateDiagram-v2
     DRAFT --> ACTIVE: activate
     DRAFT --> COMPLETED: pr.merged
     DRAFT --> CANCELLED: cancel
-    DRAFT --> CANCELLED: pr.closed
+    DRAFT --> CANCELLED: pr.closed [notMerged] / cancelJob
 
     ACTIVE --> COMPLETED: pr.merged
     ACTIVE --> CANCELLED: cancel
-    ACTIVE --> CANCELLED: pr.closed
+    ACTIVE --> CANCELLED: pr.closed [notMerged] / cancelJob
 
     CANCELLED --> COMPLETED: pr.merged
 

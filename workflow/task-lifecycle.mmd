@@ -9,7 +9,7 @@ stateDiagram-v2
     QUEUED --> DRAFT: hold
     QUEUED --> DRAFT: reconcile [dependenciesUnsatisfied] / hold
     QUEUED --> QUEUED: reconcile [runnable] / release
-    QUEUED --> RUNNING: claim
+    QUEUED --> RUNNING: task.started
     QUEUED --> BLOCKED: block
     QUEUED --> FAILED: fail
     QUEUED --> CANCELLED: cancel
@@ -18,7 +18,6 @@ stateDiagram-v2
     RUNNING --> SUCCEEDED: task.completed
     RUNNING --> FAILED: task.failed
     RUNNING --> CANCELLED: task.cancelled
-    RUNNING --> QUEUED: retry
 
     BLOCKED --> QUEUED: retry
     BLOCKED --> CANCELLED: cancel

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
-import { dependencyReady, schedule, transitionJobEvent, transitionTask, transitionTaskEvent } from './scheduler.js';
+import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
@@ -121,7 +121,7 @@ export class Reconciler {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
         for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
           this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort();
-          transitionTask(task, 'CANCELLED'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+          await transitionTaskEvent(task, 'cancel'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await this.store.saveTask(task);
         }
         const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
         if (job.state !== terminalState) {
@@ -130,7 +130,7 @@ export class Reconciler {
             job.state = terminalState;
             job.updatedAt = new Date().toISOString();
           } else {
-            await transitionJobEvent(job, prState === 'MERGED' ? 'pr.merged' : 'pr.closed');
+            await transitionJobEvent(job, prState === 'MERGED' ? 'pr.merged' : 'pr.closed', prState === 'CLOSED' ? { notMerged: true } : {});
           }
           await this.store.saveJob(job);
         }
@@ -156,10 +156,10 @@ export class Reconciler {
       if (prState === 'OPEN') {
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-        for (const task of scheduled.tasks.filter(t => t.state === 'QUEUED' && dependencyReady(t, new Map(scheduled.tasks.map(item => [item.id, item])))).sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
+        for (const task of scheduled.tasks.filter(t => t.state === 'QUEUED' && t.executionId === null && dependencyReady(t, new Map(scheduled.tasks.map(item => [item.id, item])))).sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
           if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
           else if (task.adapter === 'orchestrator') {
-            transitionTask(task, 'RUNNING');
+            await transitionTaskEvent(task, 'task.started');
             task.leaseOwner = null;
             task.leaseExpiresAt = null;
             task.executionId = null;
@@ -185,7 +185,7 @@ export class Reconciler {
     const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     if (staleTask && ['DRAFT', 'QUEUED', 'RUNNING'].includes(staleTask.state)) {
       this.live.get(staleTask.id)?.execution.cancel();
-      transitionTask(staleTask, 'CANCELLED');
+      await transitionTaskEvent(staleTask, 'cancel');
       staleTask.error = 'Review evidence became stale after the PR head changed';
       staleTask.leaseOwner = null;
       staleTask.leaseExpiresAt = null;
@@ -273,15 +273,7 @@ export class Reconciler {
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
     const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
-    if (outcome !== 'started') {
-      task.state = 'SUCCEEDED';
-      task.result = evidence;
-      task.error = null;
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.updatedAt = job.review.updatedAt;
-      await this.store.saveTask(task);
-    }
+
     if (outcome === 'changes_required') {
       const rawIssues = Array.isArray(reviewData?.issues) ? reviewData.issues : [];
       const issues = rawIssues.map(item => {
@@ -303,7 +295,7 @@ export class Reconciler {
           agentName: 'review-fix', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'],
           adapter: 'codex', input, output: { kind: 'task_pr' },
           routing: { provider: 'openai', model: 'gpt-5.6-luna', reasoning: 'medium', decidedBy: 'review-fix', decidedAt: now },
-          continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3,
+          continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3,
           leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
           error: null, timeoutMs: storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
         };
@@ -320,20 +312,22 @@ export class Reconciler {
     }
   }
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
-    for (const task of job.tasks.filter(item => item.state === 'RUNNING')) {
+    for (const task of job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null))) {
       const expired = task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now;
       const ownerLost = task.leaseOwner !== null && task.leaseOwner !== this.options.owner;
       if (!expired && !ownerLost) continue;
       this.live.get(task.id)?.execution.cancel();
       const planner = this.plannerLive.get(task.id);
       if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
+      const failedEvent = task.state === 'RUNNING' ? 'task.failed' : 'fail';
+      await transitionTaskEvent(task, failedEvent);
+      task.error = expired ? 'Lease expired' : 'Execution owner restarted';
+      task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
       if (task.attempt < task.maxAttempts) {
-        transitionTask(task, 'QUEUED'); task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+        await transitionTaskEvent(task, 'retry');
+        await this.store.saveTask(task);
       } else {
-        task.error = expired ? 'Lease expired after maximum attempts' : 'Execution owner restarted after maximum attempts';
-        task.leaseOwner = null;
-        task.leaseExpiresAt = null;
-        transitionTask(task, 'FAILED');
+        task.error += ' after maximum attempts';
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: expired ? 'lease_expired' : 'execution_owner_lost' }));
       }
@@ -391,13 +385,13 @@ export class Reconciler {
   private async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
-      transitionTask(task, 'FAILED');
+      await transitionTaskEvent(task, 'fail');
       task.error = `No adapter ${task.adapter}`;
       await this.store.saveTask(task);
       return;
     }
     if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
-      transitionTask(task, 'BLOCKED');
+      await transitionTaskEvent(task, 'block');
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
       await this.store.saveTask(task);
       return;
@@ -409,7 +403,7 @@ export class Reconciler {
       executionContext = await this.resolvedContext(job, task, role);
       workerInput = managedWorkerInput(job, task, executionContext);
     } catch (error) {
-      transitionTask(task, 'BLOCKED');
+      await transitionTaskEvent(task, 'block');
       task.error = error instanceof Error ? error.message : String(error);
       await this.store.saveTask(task);
       return;
@@ -424,7 +418,7 @@ export class Reconciler {
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
       const startedAt = (this.options.now ?? new Date()).getTime();
-      transitionTask(freshTask, 'RUNNING');
+      if (freshTask.executionId !== null) return;
       freshTask.attempt += 1;
       freshTask.leaseOwner = this.options.owner;
       freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
@@ -515,9 +509,9 @@ export class Reconciler {
 
   private async launchPlanner(job: Job, task: Task): Promise<void> {
     const planner = this.options.planner;
-    if (!planner) { task.attempt = task.maxAttempts; task.error = 'No objective planner configured'; transitionTask(task, 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user')); return; }
+    if (!planner) { task.attempt = task.maxAttempts; task.error = 'No objective planner configured'; await transitionTaskEvent(task, 'fail'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user')); return; }
     const startedAt = (this.options.now ?? new Date()).getTime();
-    transitionTask(task, 'RUNNING'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + Math.max(this.options.leaseMs ?? 300000, task.timeoutMs)).toISOString(); task.executionId = randomUUID();
+    await transitionTaskEvent(task, 'task.started'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + Math.max(this.options.leaseMs ?? 300000, task.timeoutMs)).toISOString(); task.executionId = randomUUID();
     await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.started', 'running', `Planner task ${task.id} started`, 'orchestrator'));
     const controller = new AbortController(); const executionId = task.executionId;
@@ -538,7 +532,10 @@ export class Reconciler {
     if (!task || (executionId !== null && task.executionId !== executionId)) return;
     if (task.state === 'CANCELLED') return;
     if (error) {
-      task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'QUEUED' : 'FAILED'); await this.store.saveTask(task);
+      task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+      await transitionTaskEvent(task, 'task.failed');
+      if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry');
+      await this.store.saveTask(task);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${error.message}`, 'user')); this.detach(this.reconcile(jobId), jobId, task.id, 'planner retry reconciliation'); return;
     }
     try {
@@ -549,7 +546,7 @@ export class Reconciler {
         if (!existing) continue;
       }
       // Persist the completed decision before exposing executable children.
-      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, 'SUCCEEDED'); await this.store.saveTask(task);
+      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await this.store.appendTask(child);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.completed', 'succeeded', `Planner ${task.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
     } catch (caught) {
@@ -559,7 +556,7 @@ export class Reconciler {
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
       } else {
-        task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'QUEUED' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
+        task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
       }
     }
     this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
@@ -584,16 +581,24 @@ export class Reconciler {
     const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
     if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
     const live = this.live.get(event.task_id);
-    if (live && event.job_id === live.jobId) {
-      if (event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
-      live.workerStarted = true;
-      return;
-    }
+    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
+    if (!task) return;
+    const claimedExecution = task.state === 'QUEUED' && task.executionId !== null && task.leaseOwner !== null;
+    const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
+    if ((exactLiveExecution || claimedExecution) && task.state === 'QUEUED') {
+      await transitionTaskEvent(task, 'task.started');
+      task.failureReason = undefined;
+      task.error = null;
+      task.updatedAt = event.timestamp || new Date().toISOString();
+      await this.store.saveTask(task);
+      if (live) live.workerStarted = true;
+      return;
+    }
+    if (task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
     if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-    transitionTask(task, 'RUNNING');
+    await transitionTaskEvent(task, 'reconcile.started');
     task.failureReason = undefined;
     task.error = null;
     task.updatedAt = event.timestamp || new Date().toISOString();
@@ -624,18 +629,28 @@ export class Reconciler {
     cleanup.unref();
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
     const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    await this.applyTerminalEvent(event);
+    if (task.state === 'QUEUED') {
+      this.clearExecution(task.id, executionId);
+      task.error = event.message;
+      task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
+      task.leaseOwner = null; task.leaseExpiresAt = null;
+      await transitionTaskEvent(task, 'fail');
+      await this.store.saveTask(task);
+    } else {
+      await this.applyTerminalEvent(event);
+    }
     await this.emit(event);
   }
 
   private async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
-    const workerStarted = live?.executionId === executionId && live.workerStarted;
+    const liveWorkerStarted = live?.executionId === executionId && live.workerStarted;
     if (live?.executionId === executionId) this.live.delete(taskId);
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
+    const workerStarted = liveWorkerStarted || task?.state === 'RUNNING';
     if (!task || task.executionId !== executionId) return;
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
@@ -646,7 +661,7 @@ export class Reconciler {
       { authoritative: false, waitingForTerminalEvent: true, processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
-    if (task.state === 'RUNNING' && task.adapter === 'codex') this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
+    if (['QUEUED', 'RUNNING'].includes(task.state) && task.adapter === 'codex') this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
   }
 
   private scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
@@ -661,13 +676,23 @@ export class Reconciler {
   private async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') return;
+    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
     const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
     const message = workerStarted
       ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
       : `Worker ${taskId} exited before publishing task.started`;
     const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', message, 'user', { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000 }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    await this.applyTerminalEvent(event);
+    if (task.state === 'QUEUED') {
+      this.clearExecution(task.id, executionId);
+      task.error = message;
+      task.failureReason = reason;
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      await transitionTaskEvent(task, 'fail');
+      await this.store.saveTask(task);
+    } else {
+      await this.applyTerminalEvent(event);
+    }
     await this.emit(event);
   }
 
@@ -679,12 +704,21 @@ export class Reconciler {
     }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || task.state !== 'RUNNING') {
+    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) {
       this.clearExecution(taskId, executionId);
       return;
     }
     const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Task ${taskId} timed out waiting for the mandatory terminal worker event`, 'user', { reason: 'terminal_event_timeout', timeoutMs: task.timeoutMs });
-    await this.applyTerminalEvent(event);
+    if (task.state === 'QUEUED') {
+      task.error = event.message;
+      task.failureReason = 'terminal_event_timeout';
+      task.leaseOwner = null; task.leaseExpiresAt = null;
+      await transitionTaskEvent(task, 'fail');
+      await this.store.saveTask(task);
+      this.clearExecution(task.id, executionId);
+    } else {
+      await this.applyTerminalEvent(event);
+    }
     await this.emit(event);
   }
 

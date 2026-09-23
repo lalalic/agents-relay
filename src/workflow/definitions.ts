@@ -9,7 +9,11 @@ function load(name: string, guards: Readonly<Record<string, WorkflowGuard>> = {}
 const booleanGuard = (name: string): WorkflowGuard => context => context[name] === true;
 const lifecycleAction: WorkflowAction = () => {};
 
-export const jobLifecycleWorkflow = load('job-lifecycle');
+export const jobLifecycleWorkflow = load(
+  'job-lifecycle',
+  { notMerged: booleanGuard('notMerged') },
+  { cancelJob: lifecycleAction },
+);
 export const taskLifecycleWorkflow = load(
   'task-lifecycle',
   {
