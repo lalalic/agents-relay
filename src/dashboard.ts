@@ -71,7 +71,7 @@ export const dashboardHtml = `<!doctype html>
     nav button { border:0; border-radius:.35rem; background:transparent; color:var(--muted); padding:.38rem .68rem; font:inherit; font-weight:700; cursor:pointer; }
     nav button[aria-selected="true"] { background:var(--accent); color:#fff; }
     button:focus-visible,a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    main { max-width:1500px; margin:auto; padding:1rem; display:grid; grid-template-columns:minmax(280px,340px) minmax(0,1fr); gap:1rem; align-items:start; }
+    main { max-width:1500px; margin:auto; padding:1rem; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; align-items:start; }
     .panel { min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:.55rem; box-shadow:var(--shadow); }
     .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.65rem .75rem; border-bottom:1px solid var(--border); }
     .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; min-width:0; }\n    #workspace-heading { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n    #selected-job-title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -86,13 +86,21 @@ export const dashboardHtml = `<!doctype html>
     .workspace { display:grid; gap:1rem; }
     .job-list,.tree,.event-list { list-style:none; margin:0; padding:0; }
     .job-list { display:grid; gap:.35rem; }
-    .job-button { width:100%; display:grid; gap:.2rem; padding:.5rem; border:1px solid transparent; border-radius:.4rem; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
-    .job-button[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
-    .job-button.complete-unmerged { border-color:#d69a1b; background:#fff8df; }
-    .job-button.complete-unmerged[aria-current="true"] { border-color:#b77900; background:#fff0bd; }
+    .job-row { display:grid; gap:.2rem; padding:.35rem .45rem; border:1px solid transparent; border-radius:.4rem; }
+    .job-row[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
+    .job-row.complete-unmerged { border-color:#d69a1b; background:#fff8df; }
+    .job-row.complete-unmerged[aria-current="true"] { border-color:#b77900; background:#fff0bd; }
+    .job-button { min-width:0; display:grid; gap:.2rem; padding:.12rem 0; border:0; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
     .job-title { font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .job-meta { display:flex; gap:.4rem; flex-wrap:wrap; color:var(--muted); font-size:.7rem; }
     .job-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .job-primary { display:flex; align-items:center; justify-content:space-between; gap:.45rem; min-width:0; }
+    .job-status-line { display:flex; align-items:center; gap:.3rem; min-width:0; white-space:nowrap; }
+    .job-status-line .badge { flex:0 0 auto; }
+    .job-actions { display:flex; align-items:center; gap:.2rem; }
+    .job-action { width:1.8rem; height:1.8rem; display:inline-grid; place-items:center; padding:0; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); font:inherit; font-size:.95rem; line-height:1; cursor:pointer; }
+    .job-action:hover:not(:disabled) { color:var(--accent); border-color:var(--accent); }
+    .job-action:disabled { cursor:default; opacity:.4; }
     .status-pill,.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
     .status-pill.ok,.badge.ACTIVE,.badge.RUNNING,.badge.SUCCEEDED,.badge.COMPLETED,.badge.MERGED { background:#e5f3e9; color:var(--ok); }
     .status-pill.warn,.badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.OPEN { background:#fff1d2; color:var(--warn); }
@@ -236,7 +244,11 @@ function syncFilters(){
   selectedRepo=repos.includes(previousRepo)?previousRepo:'';
   repoFilter.value=selectedRepo;
 }
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const button=document.createElement('button');button.type='button';button.className='job-button'+(isCompleteUnmerged(job)?' complete-unmerged':'');button.setAttribute('aria-current',String(job.id===selectedJob));button.title=job.title||job.id;button.addEventListener('click',()=>selectJob(job.id));const meta=element('span','job-meta');meta.append(element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))),element('span','badge '+value(job.state),text(job.state)),element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));meta.append(element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));button.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))),meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));jobList.append(element('li','',button));}}
+function actionEnabled(job,action){if(action==='start')return job.state==='DRAFT'&&job.githubState!=='CLOSED'&&job.githubState!=='MERGED';if(action==='reconcile')return job.state==='ACTIVE'&&job.githubState==='OPEN';if(action==='cancel')return job.state!=='COMPLETED'&&job.state!=='CANCELLED'&&job.githubState==='OPEN';return false;}
+function actionButton(job,action,label,icon){const button=document.createElement('button');button.type='button';button.className='job-action';button.textContent=icon;button.title=label;button.setAttribute('aria-label',label);button.disabled=!actionEnabled(job,action);button.addEventListener('click',event=>{event.stopPropagation();void runJobAction(job,action,button);});return button;}
+async function runJobAction(job,action,button){button.disabled=true;try{const response=await fetch('/api/job-action?id='+encodeURIComponent(job.id)+'&action='+encodeURIComponent(action),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);await refresh(true);}catch(error){button.title=labelForAction(action)+': '+error.message;}finally{renderAll();}}
+function labelForAction(action){return action==='start'?'Start':action==='reconcile'?'Reconcile':'Cancel';}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',()=>selectJob(job.id));select.append(element('span','job-title',text('PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))),element('span','badge '+value(job.githubState||'UNKNOWN'),text(value(job.githubState||'UNKNOWN'))));const actions=element('span','job-actions');actions.append(actionButton(job,'start','Start','▶'),actionButton(job,'reconcile','Reconcile','↻'),actionButton(job,'cancel','Cancel','×'));const primary=element('div','job-primary');primary.append(states,actions);const meta=element('span','job-meta');meta.append(element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));meta.append(element('span','',text(job.repository||'unknown repo')),element('span','',text(relativeTime(job.updatedAt))));content.append(select,primary,meta,element('span','subtle',text(compactCounts(counts(job.tasks)))));row.append(content);jobList.append(element('li','',row));}}
 function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;eventTaskId=task.id;rememberSelection();clearEvents();renderAll();void loadEventHistory();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
 function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
 function attemptBudget(task){const attempt=Number(task?.attempt)||0;const max=Number(task?.maxAttempts)||0;if(max>=3&&max%3===0){const effectiveMax=Math.max(max,Math.ceil(attempt/3)*3);return attempt+' / 3×'+(effectiveMax/3);}return attempt+' / '+max;}
@@ -298,6 +310,7 @@ export function serveDashboard(
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
+  actions?: { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job> },
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -406,6 +419,16 @@ export function serveDashboard(
         if (!res.headersSent) res.writeHead(502);
         if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job-action') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const requestedJobId = url.searchParams.get('id') ?? '';
+      const action = url.searchParams.get('action') ?? '';
+      const handler = action === 'start' ? actions?.start : action === 'reconcile' ? actions?.reconcile : action === 'cancel' ? actions?.cancel : undefined;
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
+      try { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(await handler(requestedJobId))); }
+      catch (error) { res.writeHead(409); res.end(error instanceof Error ? error.message : String(error)); }
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {

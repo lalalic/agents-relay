@@ -7,13 +7,24 @@ Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs
 For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
 
 ~~~sh
+cat > job.md <<'EOF'
+# Goal
+
+Standalone Job context. Put a Mermaid block first when a workflow/state/architecture diagram helps.
+EOF
+
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
-  --id job-1 --title "Objective" --body "PR description" --mode fixed
+  --id job-1 --title "Objective" --objective-file job.md --mode fixed
 
 # The orchestrator decides the initial batch separately
+cat > task.md <<'EOF'
+# Work
+
+Implement this phase using the Job objective as context.
+EOF
 npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id initial --adapter codex --provider openai --model MODEL --output task-pr \
-  --input "Implement the objective and publish a terminal event."
+  --input-file task.md
 
 npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
   --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
@@ -39,6 +50,8 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
 
 Lifecycle transition authority lives in the directly renderable canonical sources [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd); see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
+
+Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat; its objective becomes the default PR body and objective updates keep the PR body synchronized.
 
 Jobs default to `fixed`. `job create` persists only the durable job and never
 creates executable tasks. The top-level orchestrator decides whether the user's

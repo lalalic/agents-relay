@@ -2,6 +2,21 @@
 
 This contract is the shared protocol for every component that creates, schedules, reviews, or executes Agents Relay jobs and tasks.
 
+## Job and Task authoring format
+
+Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. Use Mermaid where a diagram materially explains a workflow, state model, architecture, dependency graph, relationship, or other visual structure. **Mermaid-first applies to that explanation/section, not to the entire Job objective or Task input.** Put the diagram before the prose that explains that visual model, but keep normal document structure: start with the goal/context when that is what the reader needs first. Do not force a Mermaid block at the top of every objective/input, and do not add decorative or redundant diagrams when Markdown is clearer.
+
+The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside the JSON marker; those long-form Markdown bodies remain the human-readable durable content rendered by the Job/Task comment (and, for a Job objective, the PR body). Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded them.
+
+For long-form content, use files instead of shell-quoted arguments:
+
+- Job create/update: `--objective-file PATH` (or `--objective-file -` for stdin) is preferred. `--objective` is for short/simple content only. They are mutually exclusive.
+- Task create/update: `--input-file PATH` (or `--input-file -` for stdin) is preferred. `--input` is for short/simple content only. They are mutually exclusive.
+
+When creating a new Job from an active discussion, the orchestrator must consolidate **all context needed to finish the Job without the originating thread** into the Job objective before creation. Include, as applicable: goal, relevant background, decisions already made, requirements, constraints, lifecycle/workflow semantics, non-goals, implementation boundaries, acceptance criteria, delivery/review instructions, and any important known issues. Do not create a Job whose objective is only a one-line summary when the discussion contains material implementation context.
+
+For a newly created PR (`job create --head`), standalone objective Markdown is required and becomes the default PR body. Updating the Job objective also updates the PR body. The trusted Job marker remains the machine-readable durable state, while the PR body and rendered Job comment expose the same objective to humans and agents.
+
 ## Task producers
 
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.

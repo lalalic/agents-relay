@@ -42,7 +42,7 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
@@ -65,6 +65,7 @@ export class InMemoryStore implements DurableStore {
   }
   async saveTask(task: Task): Promise<void> { this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task)); }
   async closePullRequest(): Promise<void> {}
+  async updatePullRequestBody(_body: string): Promise<void> {}
   async headSha(): Promise<string | null> { const jobs = [...this.values.values()].map(parseJob).filter((x): x is Job => x !== null); return jobs[0]?.headSha ?? jobs[0]?.review?.headSha ?? null; }
   async listAgents(): Promise<AgentRegistration[]> { return [...this.values.values()].map(parseAgent).filter((x): x is AgentRegistration => x !== null); }
   async saveAgent(agent: AgentRegistration): Promise<void> { this.values.set(`${AGENT_MARKER}:${agent.id}`, renderAgentComment(agent)); }
@@ -425,6 +426,9 @@ export class GitHubStore implements DurableStore {
   }
   async closePullRequest(): Promise<void> {
     await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber, { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) });
+  }
+  async updatePullRequestBody(body: string): Promise<void> {
+    await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber, { method: 'PATCH', body: JSON.stringify({ body }) });
   }
   async headSha(): Promise<string | null> {
     const { owner, name } = this.repoParts();
