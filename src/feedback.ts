@@ -3,7 +3,12 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promise
 import { basename, join, resolve } from 'node:path';
 
 export const FEEDBACK_MARKER = 'agents-relay:feedback:v1';
+export const FEEDBACK_SCHEMA = 'agents-relay.feedback';
 export const FEEDBACK_SCHEMA_VERSION = 1;
+export const FEEDBACK_MAX_TEXT_LENGTH = 20_000;
+export const FEEDBACK_MAX_ATTACHMENTS = 10;
+export const FEEDBACK_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const FEEDBACK_IMAGE_TYPES = ['image/gif', 'image/jpeg', 'image/png', 'image/webp'] as const;
 export const DEFAULT_FEEDBACK_LIMITS = {
   maxTextLength: 20_000,
   maxAttachments: 5,
@@ -13,6 +18,7 @@ export const DEFAULT_FEEDBACK_LIMITS = {
 
 export type FeedbackSource = 'public-site' | 'extension' | 'app' | 'other';
 export type FeedbackActorClass = 'external-user' | 'pilot-user' | 'internal-test';
+export type FeedbackVisibility = 'private' | 'internal' | 'public';
 export type FeedbackTriageStatus = 'new' | 'triaged' | 'accepted' | 'rejected' | 'duplicate';
 
 export type FeedbackProvenance = {
@@ -31,6 +37,37 @@ export type FeedbackAttachmentInput = {
   filename: string;
   mediaType: string;
   data: Uint8Array;
+};
+
+export type LegacyFeedbackAttachmentInput = {
+  reference: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256?: string;
+  width?: number;
+  height?: number;
+};
+
+export type LegacyFeedbackSubmission = {
+  text: string;
+  attachments?: LegacyFeedbackAttachmentInput[];
+  provenance: FeedbackProvenance;
+  contact?: string;
+  visibility?: FeedbackVisibility;
+  sanitized?: boolean;
+};
+
+export type LegacyFeedbackRecord = {
+  schema: typeof FEEDBACK_SCHEMA;
+  schemaVersion: typeof FEEDBACK_SCHEMA_VERSION;
+  id: string;
+  userContent: { text: string };
+  attachments: Array<LegacyFeedbackAttachmentInput & { id: string }>;
+  provenance: FeedbackProvenance;
+  systemMetadata: { receivedAt: string; visibility: FeedbackVisibility; sanitized: boolean };
+  contact?: string;
+  triage: { status: 'new' | 'in-review' | 'accepted' | 'rejected' | 'duplicate' | 'resolved'; duplicateOf?: string; notes?: string };
+  downstream: { work: Array<{ kind: 'job' | 'task' | 'pr' | 'issue' | 'change'; id: string; url?: string }> };
 };
 
 export type FeedbackAttachment = {
@@ -219,8 +256,61 @@ export class FileFeedbackStore {
   }
 }
 
-export async function materializeFeedback(root: string, submission: FeedbackSubmission, limits?: FeedbackLimits): Promise<FeedbackMaterialization> {
+export async function materializeFeedbackRecord(root: string, submission: FeedbackSubmission, limits?: FeedbackLimits): Promise<FeedbackMaterialization> {
   return new FileFeedbackStore(root, limits).submit(submission);
+}
+
+/** Redacts common bearer/API-key shapes before a product stores user text. */
+export function redactSensitiveText(text: string): string {
+  return text
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|pk)_[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_KEY]')
+    .replace(/\b(?:api[_-]?key|token|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]');
+}
+
+export function createFeedbackRecord(submission: LegacyFeedbackSubmission, options: { id?: string; receivedAt?: string; sanitize?: boolean } = {}): LegacyFeedbackRecord {
+  if (typeof submission.text !== 'string' || submission.text.length === 0 || submission.text.length > FEEDBACK_MAX_TEXT_LENGTH) fail(`text must contain 1-${FEEDBACK_MAX_TEXT_LENGTH} characters`);
+  const attachments = (submission.attachments ?? []).map((input, index) => {
+    if (!FEEDBACK_IMAGE_TYPES.includes(input.mimeType as typeof FEEDBACK_IMAGE_TYPES[number])) fail(`attachments[${index}] has an unsupported image format`);
+    if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes <= 0 || input.sizeBytes > FEEDBACK_MAX_ATTACHMENT_BYTES) fail(`attachments[${index}] exceeds the ${FEEDBACK_MAX_ATTACHMENT_BYTES} byte limit`);
+    if (!input.reference || input.reference.length > 2_000 || /[?#]/.test(input.reference) || /:\/\/[^/]*:[^@]+@/.test(input.reference)) fail('attachment reference must be a stable, credential-free reference');
+    return { ...input, id: `attachment-${index + 1}` };
+  });
+  if (attachments.length > FEEDBACK_MAX_ATTACHMENTS) fail(`at most ${FEEDBACK_MAX_ATTACHMENTS} attachments are supported`);
+  const visibility = submission.visibility ?? 'private';
+  const sanitized = options.sanitize === true || submission.sanitized === true;
+  if (visibility === 'public' && !sanitized) fail('public feedback must be explicitly sanitized');
+  const provenance = validateProvenance(submission.provenance);
+  return {
+    schema: FEEDBACK_SCHEMA, schemaVersion: FEEDBACK_SCHEMA_VERSION, id: options.id ?? `feedback-${randomUUID()}`,
+    userContent: { text: sanitized ? redactSensitiveText(submission.text) : submission.text }, attachments, provenance,
+    systemMetadata: { receivedAt: options.receivedAt ?? new Date().toISOString(), visibility, sanitized },
+    ...(submission.contact ? { contact: submission.contact } : {}), triage: { status: 'new' }, downstream: { work: [] },
+  };
+}
+
+export function feedbackWorkProvenance(record: LegacyFeedbackRecord): Record<string, unknown> {
+  return { feedbackId: record.id, feedbackSchema: `${record.schema}/v${record.schemaVersion}`, feedbackReference: `feedback://${record.id}`, feedbackSubmittedAt: record.provenance.submittedAt };
+}
+
+export function feedbackFingerprint(record: LegacyFeedbackRecord): string {
+  return createHash('sha256').update(JSON.stringify({ text: record.userContent.text, attachments: record.attachments.map(item => item.sha256 ?? item.reference), provenance: record.provenance })).digest('hex');
+}
+
+export function renderFeedbackMarkdown(record: LegacyFeedbackRecord): string {
+  const markerBody = { schema: record.schema, schemaVersion: record.schemaVersion, id: record.id, provenance: record.provenance, attachmentIds: record.attachments.map(item => item.id), triage: record.triage, downstream: record.downstream };
+  const attachments = record.attachments.length === 0 ? '_None._' : record.attachments.map(item => `- ${item.id}: ${item.mimeType}, ${item.sizeBytes} bytes, ref \`${item.reference}\``).join('\n');
+  return `${marker(FEEDBACK_MARKER, markerBody)}\n# Feedback ${record.id}\n\n## User report\n\n${record.userContent.text}\n\n## Attachments\n\n${attachments}\n`;
+}
+
+export async function materializeFeedback(first: string | LegacyFeedbackRecord, second: FeedbackSubmission | string, third?: FeedbackLimits | 'json' | 'markdown'): Promise<FeedbackMaterialization | void> {
+  if (typeof first === 'string') return materializeFeedbackRecord(first, second as FeedbackSubmission, third as FeedbackLimits | undefined);
+  const path = second as string;
+  const format = (third as 'json' | 'markdown' | undefined) ?? 'json';
+  if (!path || path.includes('\0')) throw new Error('Feedback materialization path is invalid');
+  await mkdir(resolve(path, '..'), { recursive: true });
+  const body = format === 'markdown' ? renderFeedbackMarkdown(first) : `${JSON.stringify(first, null, 2)}\n`;
+  await writeFile(path, body, { encoding: 'utf8', mode: 0o600 });
 }
 
 export async function readFeedbackAttachment(root: string, attachment: FeedbackAttachment): Promise<Uint8Array> {
