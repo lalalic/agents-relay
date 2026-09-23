@@ -119,6 +119,20 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
+test('job rows keep lifecycle, runtime, and PR state distinct with accessible actions', () => {
+  assert.match(dashboardHtml, /'job-row'/);
+  assert.match(dashboardHtml, /element\('div','job-primary'\)/);
+  assert.match(dashboardHtml, /job\.state/);
+  assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
+  assert.match(dashboardHtml, /job\.githubState\|\|'UNKNOWN'/);
+  assert.match(dashboardHtml, /actionButton\(job,'start','Start','▶'\)/);
+  assert.match(dashboardHtml, /actionButton\(job,'reconcile','Reconcile','↻'\)/);
+  assert.match(dashboardHtml, /actionButton\(job,'cancel','Cancel','×'\)/);
+  assert.match(dashboardHtml, /button\.setAttribute\('aria-label',label\)/);
+  assert.match(dashboardHtml, /job-action/);
+  assert.match(dashboardHtml, /action==='start'.*job\.state==='DRAFT'/);
+});
+
 test('hidden dashboard views cannot be overridden by layout display rules', () => {
   assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
   assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
