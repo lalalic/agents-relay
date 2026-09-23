@@ -227,6 +227,30 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   };
 }
 
+export async function resolveAgentContract(context: ExecutionContext, agentName: string): Promise<{ agent: ResolvedAgent; definition: string }> {
+  const agent = context.agents.find(candidate => candidate.name === agentName);
+  if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
+  if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
+  const definition = await readFile(agent.path, 'utf8');
+  if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
+  return { agent, definition };
+}
+
+export async function agentContractPrompt(context: ExecutionContext, agentName: string): Promise<string> {
+  const { agent, definition } = await resolveAgentContract(context, agentName);
+  return `[Selected task agent contract]
+Agent: ${agent.name}
+Source: ${agent.path ?? agent.source}
+
+The following Markdown is the authoritative behavioral contract for this Task agent.
+Follow it in addition to the shared Job/Task and events-bus contracts. Worker/model routing
+does not change the selected agent identity.
+
+--- BEGIN AGENT CONTRACT ---
+${definition.trim()}
+--- END AGENT CONTRACT ---`;
+}
+
 export function executionContextPrompt(context: ExecutionContext): string {
   const instructions = context.instructions.map(item => `- ${item.path} [${item.source}]`).join('\n') || '- none';
   const skills = context.skills.map(item => `- ${item.name}: ${item.path} [${item.source}]`).join('\n') || '- none';

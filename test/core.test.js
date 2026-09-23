@@ -72,6 +72,21 @@ test('CLI task create stores optional project and agent metadata with parent', a
   assert.equal(saved.tasks[0].planningSource, undefined);
   assert.equal(saved.tasks.length, 1);
 });
+test('CLI task create persists Mermaid Agent Graph from file', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-cli-'));
+  const file = join(directory, 'job.json');
+  const graphFile = join(directory, 'agent-graph.mmd');
+  const graph = 'flowchart TD\nreviewer --> planner\n';
+  await writeFile(file, JSON.stringify(job([])));
+  await writeFile(graphFile, graph);
+  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','graph-task','--provider','openai','--model','gpt-test','--output','task-pr','--input','execute graph','--agent-graph-file',graphFile], {cwd:process.cwd()});
+  const [code] = await once(result,'exit');
+  assert.equal(code,0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  assert.equal(saved.tasks[0].agentGraph,graph);
+  await rm(directory,{recursive:true,force:true});
+});
+
 test('CLI task create accepts orchestrator self work without a model', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-create-'));
   const file = join(directory, 'job.json');
@@ -748,7 +763,7 @@ test('managed model worker input contains durable links without duplicating stor
   const { managedWorkerInput } = await import('../dist/reconciler.js');
   const t=task('prompt-context'); t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.taskUrl='https://github.com/lalalic/agents-relay/pull/7#issuecomment-5754690474'; t.input='implement the change'; t.output={kind:'task_pr'};
   const root=job([t]); root.prNumber=7; root.repository='lalalic/agents-relay';
-  const input=managedWorkerInput(root,t);
+  const input=await managedWorkerInput(root,t);
   assert.match(input,/Job URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
   assert.match(input,/Job ID: j/);
   assert.match(input,/Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7#issuecomment-5754690474/);
@@ -796,7 +811,8 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
   assert.equal(reviewer?.adapter, 'chatgpt');
   assert.deepEqual(reviewer?.routing, { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: reviewer?.routing?.decidedAt });
-  assert.match(reviewer?.input ?? '', /publish task\.started.*worker_owned=true.*Emit review\.started/);
+  assert.match(reviewer?.input ?? '', /Review existing PR #1 at exactly head SHA sha-review-1/);
+  assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
