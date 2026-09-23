@@ -65,3 +65,18 @@ A --> C: stop
   assert.deepEqual(engine.transitionsFrom('A').map(t=>[t.event,t.to]),[['go','B'],['stop','C']]);
   assert.throws(() => engine.transitionsFrom('MISSING'), /Unknown workflow state MISSING/);
 });
+
+
+test('canonical lifecycle graphs expose the integrated runtime event contract', async () => {
+  const closed=jobLifecycleWorkflow.graph.transitions.find(t=>t.from==='ACTIVE' && t.event==='pr.closed');
+  assert.deepEqual(closed && {to:closed.to,guard:closed.guard,actions:closed.actions},{to:'CANCELLED',guard:'notMerged',actions:['cancelJob']});
+  assert.equal(await jobLifecycleWorkflow.transition('ACTIVE','pr.closed',{notMerged:true}),'CANCELLED');
+  await assert.rejects(jobLifecycleWorkflow.transition('ACTIVE','pr.closed',{notMerged:false}),/No enabled workflow transition/);
+
+  assert.equal(await taskLifecycleWorkflow.transition('QUEUED','task.started'),'RUNNING');
+  assert.equal(await taskLifecycleWorkflow.transition('RUNNING','task.completed'),'SUCCEEDED');
+  assert.equal(await taskLifecycleWorkflow.transition('FAILED','reconcile.completed'),'SUCCEEDED');
+  assert.equal(await taskLifecycleWorkflow.transition('DRAFT','reconcile',{dependenciesSatisfied:true}),'QUEUED');
+  assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{dependenciesUnsatisfied:true}),'DRAFT');
+  assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{runnable:true}),'QUEUED');
+});

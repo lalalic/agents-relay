@@ -32,6 +32,8 @@ Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-pr
 
 ## Task readiness states
 
+Canonical Job/Task lifecycle legality is defined by the directly renderable runtime sources `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. Producers, runtime code, docs, and agents must treat those files as the transition source of truth; the prose below explains semantics and must not become a second transition table.
+
 Task readiness is explicit and must use these semantics:
 
 - `DRAFT`: durable Task exists but is not executable now. A DRAFT Task with dependencies is promoted to `QUEUED` when all dependencies succeed. A DRAFT Task with no dependencies remains held until an explicit release to `QUEUED`.

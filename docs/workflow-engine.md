@@ -34,7 +34,7 @@ Guards and actions are **names**, not embedded JavaScript. Runtime code register
 
 The generic engine parses and validates the Mermaid graph, checks whether a state-to-state transition is legal, resolves transitions by event, evaluates named guards, and invokes named actions. Callers remain responsible for durable persistence, locking/claims, event delivery, and external side effects.
 
-The first migration uses the graph to replace the hard-coded Job/Task transition tables. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
+The canonical graphs are now the runtime authority for Job/Task lifecycle legality and event resolution. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close feed named events/facts into the same engine rather than maintaining their own transition tables. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
 
 ## Non-goals
 
@@ -44,4 +44,32 @@ The first migration uses the graph to replace the hard-coded Job/Task transition
 - no BPMN/general-purpose scripting language;
 - no distributed workflow/locking implementation;
 - no worker-internal step graph;
-- no runtime-status projection engine in this first version.
+- no runtime-status projection engine; projection intentionally remains a separate orthogonal TypeScript calculation.
+
+
+## Integrated runtime boundary
+
+The graph owns lifecycle policy: legal source/target states, event names, named guards, and named actions. TypeScript still owns the primitives that are not state-machine policy:
+
+- durable persistence and GitHub marker serialization;
+- leases, execution IDs, and the lightweight atomic launch claim;
+- GitHub/NATS/process/browser I/O and scheduler clock handling;
+- concrete guard/action implementations and external side effects;
+- initial Task creation choice (`DRAFT` vs `QUEUED`) before any transition occurs;
+- runtime-status projection across Job/Task/Review/PR/schedule facts;
+- explicit compatibility repair of legacy records that persisted invalid derived Job states.
+
+These boundaries keep the executable Mermaid profile small while preventing lifecycle policy from drifting across CLI, reconciler, scheduler, planner, worker, review, and PR paths.
+
+## Integration verification checklist
+
+- `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` are the only persistent lifecycle transition sources.
+- Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
+- The npm package includes both canonical `.mmd` files alongside `dist/`.
+- Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.
+- Canonical terminal worker events own normal Task completion/failure/block/cancel transitions.
+- Dependency release/hold and runnable normalization are graph-driven `reconcile` transitions with named guards/actions.
+- PR merge/close drives Job lifecycle through graph events; review state remains orthogonal.
+- Planner lifecycle uses the same Task graph.
+- Runtime status remains derived and is not persisted as lifecycle truth.
+- No JSON/YAML mirror or second hard-coded lifecycle table exists.
