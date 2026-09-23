@@ -2,7 +2,7 @@ import { AgentRegistration, Job, Task } from './types.js';
 export const JOB_MARKER = 'agents-relay:job:v1';
 export const TASK_MARKER = 'agents-relay:task:v1';
 export const AGENT_MARKER = 'agents-relay:agent:v1';
-export function marker(label: string, value: unknown): string { return `<!-- ${label} ${JSON.stringify(value)} -->`; }
+export function marker(label: string, value: unknown): string { return `<!-- ${label} ${JSON.stringify(value).replace(/>/g, '\\u003e')} -->`; }
 export function parseMarker<T>(body: string, label: string): T | null {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const startMatch = body.match(new RegExp(`<!--\\s*${escaped}\\s+`));

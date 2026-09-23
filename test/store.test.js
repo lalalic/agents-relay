@@ -6,6 +6,7 @@ import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK
 test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
   const description = 'mermaid\\nflowchart TD\\nA --> B';
   const body = marker(JOB_MARKER, { id: 'mermaid-job', title: 'Mermaid', description, tasks: undefined });
+  assert.equal(body.indexOf('-->'), body.length - 3);
   const parsed = parseJob(body);
   assert.equal(parsed?.id, 'mermaid-job');
   assert.equal(parsed?.description, description);
