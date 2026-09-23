@@ -49,9 +49,9 @@ OPEN -> RUNNING -> WAITING|BLOCKED -> COMPLETED|FAILED|CANCELLED
 
 Task states:
 
-QUEUED -> READY -> RUNNING -> WAITING|BLOCKED -> SUCCEEDED|FAILED|CANCELLED
+WAITING -> QUEUED -> RUNNING -> WAITING|BLOCKED -> SUCCEEDED|FAILED|CANCELLED
 
-A task becomes READY when all declared dependencies have succeeded and any approval gate is satisfied. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
+A task is QUEUED only when it is executable now; tasks waiting on dependencies or another release condition remain WAITING until those conditions are satisfied. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
 
 ## Task record
 

@@ -155,7 +155,7 @@ export async function runScheduledBucket(
     return { job, status: 'skipped-idempotent' };
   }
 
-  const active = job.state === 'RUNNING' || job.tasks.some(task => ['READY', 'RUNNING'].includes(task.state));
+  const active = job.state === 'RUNNING' || job.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state));
   if (active && schedule.concurrencyPolicy === 'skip') {
     schedule.lastScheduledSlot = slot.toISOString();
     schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();

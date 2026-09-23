@@ -87,14 +87,14 @@ sequenceDiagram
     W->>R: wake/reconcile
     R->>S: load job + task tree
     alt lost or expired execution lease
-        R->>S: reclaim to READY or terminal failure
+        R->>S: reclaim to QUEUED or terminal failure
     end
     alt autonomous subtree settled
         R->>S: append planner task idempotently
         R->>P: execute planner
         P-->>R: in_progress + next_tasks
         R->>S: persist planner result + child tasks
-        R->>X: launch READY child work
+        R->>X: launch QUEUED child work
     else objective satisfied
         R->>S: persist satisfied planner result
         R->>R: apply normal completion gates

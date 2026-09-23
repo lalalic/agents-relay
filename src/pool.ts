@@ -9,7 +9,7 @@ export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
   // Create-only Jobs stay OPEN until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
-  if (job.tasks.some(task => ['READY','QUEUED','WAITING'].includes(task.state))) return true;
+  if (job.tasks.some(task => ['QUEUED','WAITING'].includes(task.state))) return true;
   return job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);
 }
 export function terminalManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState !== 'OPEN' && ((item.githubState === 'MERGED' && item.job.state !== 'COMPLETED') || (item.githubState === 'CLOSED' && item.job.state !== 'CANCELLED'))).map(item => item.job).sort(compareJobPriority); }
@@ -44,7 +44,7 @@ export class RepositoryWorkerPool {
     for (const job of jobs) {
       if (capacity <= 0) break;
       const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-      const ready = job.tasks.filter(task => ['READY','QUEUED','WAITING'].includes(task.state)).length;
+      const ready = job.tasks.filter(task => ['QUEUED','WAITING'].includes(task.state)).length;
       const expiredRunning = job.tasks.some(task => task.state === 'RUNNING' && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
