@@ -1,4 +1,4 @@
-import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task, TaskState, assertTaskTransition } from './types.js';
+import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task, TaskState } from './types.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow } from './workflow/definitions.js';
 import { WorkflowContext } from './workflow/mermaid.js';
 export function dependencyReady(task: Task, tasks: Map<string, Task>): boolean { return task.dependencies.every(id => tasks.get(id)?.state === 'SUCCEEDED'); }
@@ -51,7 +51,6 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
 function applyTaskState(task: Task, state: TaskState): void { task.state = state; if (['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
-export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); applyTaskState(task, state); }
 export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<void> {
   const state = await taskLifecycleWorkflow.transition(task.state, event, context) as TaskState;
   applyTaskState(task, state);
