@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
-import { dependencyReady, schedule, transitionTask } from './scheduler.js';
+import { dependencyReady, schedule, transitionJobEvent, transitionTask, transitionTaskEvent } from './scheduler.js';
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
@@ -124,7 +124,16 @@ export class Reconciler {
           transitionTask(task, 'CANCELLED'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
         }
         const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
-        if (job.state !== terminalState) { job.state = terminalState; job.updatedAt = new Date().toISOString(); await this.store.saveJob(job); }
+        if (job.state !== terminalState) {
+          if (!['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'].includes(job.state)) {
+            // Compatibility repair for legacy records that persisted derived runtime status as lifecycle.
+            job.state = terminalState;
+            job.updatedAt = new Date().toISOString();
+          } else {
+            await transitionJobEvent(job, prState === 'MERGED' ? 'pr.merged' : 'pr.closed');
+          }
+          await this.store.saveJob(job);
+        }
         return this.store.load(jobId);
       }
       if (job.state !== 'ACTIVE') return job;
@@ -685,7 +694,7 @@ export class Reconciler {
     if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;
     if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
       if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-      transitionTask(task, 'RUNNING');
+      await transitionTaskEvent(task, 'reconcile.started');
       task.failureReason = undefined;
       task.error = null;
     }
@@ -702,21 +711,21 @@ export class Reconciler {
       task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
       task.error = null;
       task.failureReason = undefined;
-      transitionTask(task, 'SUCCEEDED');
+      await transitionTaskEvent(task, 'task.completed');
       await this.store.saveTask(task);
       await this.deliverContinuation(job, task);
     } else if (event.type === 'task.failed') {
       task.error = event.message || `Task ${task.id} failed`;
       task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
-      transitionTask(task, 'FAILED');
+      await transitionTaskEvent(task, 'task.failed');
       await this.store.saveTask(task);
     } else if (event.type === 'task.blocked') {
       task.error = event.message || `Task ${task.id} blocked`;
-      transitionTask(task, 'BLOCKED');
+      await transitionTaskEvent(task, 'task.blocked');
       await this.store.saveTask(task);
     } else if (event.type === 'task.cancelled') {
       task.error = event.message || `Task ${task.id} cancelled`;
-      transitionTask(task, 'CANCELLED');
+      await transitionTaskEvent(task, 'task.cancelled');
       await this.store.saveTask(task);
     }
     this.detach(this.reconcile(job.id), job.id, task.id, 'terminal-event reconciliation');

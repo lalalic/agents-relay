@@ -22,6 +22,8 @@ stateDiagram-v2
 
     FAILED --> QUEUED: retry
     FAILED --> RUNNING: reconcile.started
+    FAILED --> SUCCEEDED: reconcile.completed
+    FAILED --> BLOCKED: reconcile.blocked
     FAILED --> CANCELLED: cancel
 
     SUCCEEDED --> [*]

@@ -1,4 +1,6 @@
 import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task, TaskState, assertTaskTransition } from './types.js';
+import { jobLifecycleWorkflow, taskLifecycleWorkflow } from './workflow/definitions.js';
+import { WorkflowContext } from './workflow/mermaid.js';
 export function dependencyReady(task: Task, tasks: Map<string, Task>): boolean { return task.dependencies.every(id => tasks.get(id)?.state === 'SUCCEEDED'); }
 export function detectCycles(tasks: Task[]): void { const map = new Map(tasks.map(t => [t.id, t])); const visiting = new Set<string>(); const done = new Set<string>(); const visit = (id: string): void => { if (visiting.has(id)) throw new Error(`Dependency cycle at ${id}`); if (done.has(id)) return; visiting.add(id); for (const dep of map.get(id)?.dependencies ?? []) visit(dep); visiting.delete(id); done.add(id); }; for (const task of tasks) visit(task.id); }
 function scheduledCycleTasks(job: Job): Task[] {
@@ -40,7 +42,16 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
-export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
+function applyTaskState(task: Task, state: TaskState): void { task.state = state; if (['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
+export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); applyTaskState(task, state); }
+export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<void> {
+  const state = await taskLifecycleWorkflow.transition(task.state, event, context) as TaskState;
+  applyTaskState(task, state);
+}
+export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}): Promise<void> {
+  job.state = await jobLifecycleWorkflow.transition(job.state, event, context) as Job['state'];
+  job.updatedAt = new Date().toISOString();
+}
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;
 export const RUN_BUCKET_LABEL_COUNT = 144;
