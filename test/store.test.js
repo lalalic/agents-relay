@@ -7,9 +7,11 @@ test('rendered job/task markers do not duplicate human markdown content', async 
   const { renderJobComment, renderTaskComment } = await import('../dist/markers.js');
   const durableJob = job('dedupe');
   durableJob.objective = '# Goal\n\nKeep this visible only.';
+  durableJob.description = durableJob.objective;
   const jobBody = renderJobComment(durableJob);
   const jobMarker = jobBody.slice(0, jobBody.indexOf('-->') + 3);
   assert.doesNotMatch(jobMarker, /Keep this visible only/);
+  assert.doesNotMatch(jobMarker, /description/);
   assert.equal(parseJob(jobBody)?.objective, durableJob.objective);
 
   const durableTask = task('dedupe', 'work');
@@ -27,6 +29,7 @@ test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
   const parsed = parseJob(body);
   assert.equal(parsed?.id, 'mermaid-job');
   assert.equal(parsed?.description, description);
+  assert.equal(parsed?.objective, description);
 });
 
 const now = () => new Date().toISOString();
@@ -247,8 +250,8 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   const second = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
 
   assert.equal(first.pr.number, second.pr.number);
-  assert.equal(first.job.description, 'body');
-  assert.equal(second.job.description, 'body');
+  assert.equal(first.job.objective, 'body');
+  assert.equal(second.job.objective, 'body');
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 1);
