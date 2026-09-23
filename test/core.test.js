@@ -16,6 +16,7 @@ import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
+import { dashboardTaskAction } from '../dist/cli.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -50,6 +51,19 @@ const graphCommentClient = (comments, prNumber=1, prState='OPEN') => {
   };
 };
 class FakeAdapter { name='codex'; id='fake-codex'; capabilities=['model','codex']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
+
+test('dashboard task action retries failed work and cancels queued work durably', async () => {
+  const failed=task('retry-me','FAILED'); failed.attempt=3; failed.maxAttempts=3; failed.error='boom';
+  const queued=task('cancel-me','QUEUED');
+  const store=new InMemoryStore(job([failed,queued]));
+  const reconciler={wake:async jobId=>store.load(jobId)};
+  let durable=await dashboardTaskAction(store,reconciler,'retry')('j','retry-me');
+  const retried=durable.tasks.find(item=>item.id==='retry-me'); assert.equal(retried.state,'QUEUED'); assert.equal(retried.error,null); assert.equal(retried.maxAttempts,6);
+  durable=await dashboardTaskAction(store,reconciler,'cancel')('j','cancel-me');
+  const cancelled=durable.tasks.find(item=>item.id==='cancel-me'); assert.equal(cancelled.state,'CANCELLED'); assert.equal(cancelled.error,'Cancelled by user');
+  await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
+});
+
 test('parses task marker JSON', () => { const t=task('a'); assert.equal(parseTask(marker(TASK_MARKER,t)).id,'a'); });
 test('discovers by hard requirements and keeps evidence explainable', () => {
   const base = { id:'a', name:'A', responsibility:'research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };
