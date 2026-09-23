@@ -367,7 +367,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
-    task.state = action === 'retry' ? 'READY' : 'CANCELLED';
+    task.state = action === 'retry' ? 'QUEUED' : 'CANCELLED';
     task.error = action === 'retry' ? null : 'Cancelled by user';
     task.updatedAt = new Date().toISOString();
     await store.saveTask(task);

@@ -20,8 +20,8 @@ export function schedule(job: Job): Job {
     return job;
   }
   const map = new Map(job.tasks.map(t => [t.id, t]));
-  for (const task of scopedTasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'READY'); }
-  const active = scopedTasks.some(t => ['READY', 'RUNNING'].includes(t.state)); const blocked = scopedTasks.some(t => t.state === 'BLOCKED'); const waiting = scopedTasks.some(t => ['QUEUED', 'WAITING'].includes(t.state)); const failed = scopedTasks.some(t => t.state === 'FAILED'); const cancelled = scopedTasks.every(t => t.state === 'CANCELLED');
+  for (const task of scopedTasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'QUEUED'); }
+  const active = scopedTasks.some(t => ['QUEUED', 'RUNNING'].includes(t.state)); const blocked = scopedTasks.some(t => t.state === 'BLOCKED'); const waiting = scopedTasks.some(t => t.state === 'WAITING'); const failed = scopedTasks.some(t => t.state === 'FAILED'); const cancelled = scopedTasks.every(t => t.state === 'CANCELLED');
   const next = active ? 'RUNNING' : failed ? 'FAILED' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
   if (job.schedule && next === 'WAITING') {
     const planners = scopedTasks.filter(task => task.kind === 'planner');
@@ -41,7 +41,7 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
-export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['READY', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
+export function transitionTask(task: Task, state: TaskState): void { assertTaskTransition(task.state, state); task.state = state; if (['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;
 export const RUN_BUCKET_LABEL_COUNT = 144;

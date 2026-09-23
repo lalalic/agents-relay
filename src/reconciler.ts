@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
-import { schedule, transitionTask } from './scheduler.js';
+import { dependencyReady, schedule, transitionTask } from './scheduler.js';
 import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
@@ -139,7 +139,7 @@ export class Reconciler {
       if (prState === 'OPEN') {
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-        for (const task of scheduled.tasks.filter(t => t.state === 'READY').sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
+        for (const task of scheduled.tasks.filter(t => t.state === 'QUEUED' && dependencyReady(t, new Map(scheduled.tasks.map(item => [item.id, item])))).sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
           if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
           else if (task.adapter === 'orchestrator') {
             transitionTask(task, 'RUNNING');
@@ -164,7 +164,7 @@ export class Reconciler {
     if (!headSha || !job.review || job.review.headSha === headSha || job.review.outcome === 'stale') return;
     job.review = { ...job.review, outcome: 'stale', updatedAt: new Date().toISOString() };
     const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
-    if (staleTask && ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(staleTask.state)) {
+    if (staleTask && ['QUEUED', 'RUNNING', 'WAITING'].includes(staleTask.state)) {
       this.live.get(staleTask.id)?.execution.cancel();
       transitionTask(staleTask, 'CANCELLED');
       staleTask.error = 'Review evidence became stale after the PR head changed';
@@ -180,7 +180,7 @@ export class Reconciler {
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
-    if (reviewTasks.some(task => ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(task.state))) return;
+    if (reviewTasks.some(task => ['QUEUED', 'RUNNING', 'WAITING'].includes(task.state))) return;
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
@@ -194,7 +194,7 @@ export class Reconciler {
     await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha} using ${reviewerRouting.reason}`, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     const ready = schedule(await this.store.load(job.id));
     await this.store.saveJob(ready);
-    const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'READY');
+    const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'QUEUED');
     if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
   }
   private async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: ReviewerCandidate; selection: WorkerSelection; reason: 'worker-diversity' | 'provider-model-diversity' | 'eligible-fallback' }> {
@@ -225,7 +225,7 @@ export class Reconciler {
   private async routeExecutableTasks(job: Job): Promise<void> {
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const candidates = workerCandidates(this.options.adapters, await this.store.listAgents(), usage);
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'READY', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
+    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
       const requirements = task.workerRequirements ?? { capabilities: task.capabilities.length > 0 ? task.capabilities : ['model'] };
       const routed = selectWorker(candidates, requirements);
       task.workerSelection = routed.selection;
@@ -310,7 +310,7 @@ export class Reconciler {
       const planner = this.plannerLive.get(task.id);
       if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
       if (task.attempt < task.maxAttempts) {
-        transitionTask(task, 'READY'); task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
+        transitionTask(task, 'QUEUED'); task.leaseOwner = null; task.leaseExpiresAt = null; await this.store.saveTask(task);
       } else {
         task.error = expired ? 'Lease expired after maximum attempts' : 'Execution owner restarted after maximum attempts';
         task.leaseOwner = null;
@@ -329,7 +329,7 @@ export class Reconciler {
     const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    if (planners.some(task => ['QUEUED', 'READY', 'RUNNING', 'WAITING'].includes(task.state))) return job;
+    if (planners.some(task => ['QUEUED', 'RUNNING', 'WAITING'].includes(task.state))) return job;
     if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
     if (scopedTasks.length > 0 && planners.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
@@ -505,7 +505,7 @@ export class Reconciler {
     if (!task || (executionId !== null && task.executionId !== executionId)) return;
     if (task.state === 'CANCELLED') return;
     if (error) {
-      task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task);
+      task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'QUEUED' : 'FAILED'); await this.store.saveTask(task);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${error.message}`, 'user')); this.detach(this.reconcile(jobId), jobId, task.id, 'planner retry reconciliation'); return;
     }
     try {
@@ -526,7 +526,7 @@ export class Reconciler {
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
       } else {
-        task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'READY' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
+        task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; transitionTask(task, task.attempt < task.maxAttempts ? 'QUEUED' : 'FAILED'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${message}`, 'user'));
       }
     }
     this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');

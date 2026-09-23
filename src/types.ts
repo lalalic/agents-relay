@@ -1,5 +1,5 @@
 export type JobState = 'OPEN' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
-export type TaskState = 'QUEUED' | 'READY' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+export type TaskState = 'QUEUED' | 'RUNNING' | 'WAITING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
@@ -85,6 +85,6 @@ export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; targe
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
 const jobTransitions: Record<JobState, JobState[]> = { OPEN: ['RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], RUNNING: ['OPEN', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'CANCELLED'], WAITING: ['RUNNING', 'BLOCKED', 'COMPLETED', 'CANCELLED'], BLOCKED: ['RUNNING', 'COMPLETED', 'CANCELLED'], COMPLETED: ['RUNNING', 'CANCELLED'], FAILED: ['RUNNING', 'COMPLETED', 'CANCELLED'], CANCELLED: ['RUNNING', 'COMPLETED'] };
-const taskTransitions: Record<TaskState, TaskState[]> = { QUEUED: ['READY', 'BLOCKED', 'CANCELLED'], READY: ['RUNNING', 'BLOCKED', 'FAILED', 'CANCELLED'], RUNNING: ['WAITING', 'BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'READY'], WAITING: ['READY', 'BLOCKED', 'CANCELLED'], BLOCKED: ['READY', 'CANCELLED'], SUCCEEDED: [], FAILED: ['READY', 'RUNNING', 'CANCELLED'], CANCELLED: [] };
+const taskTransitions: Record<TaskState, TaskState[]> = { QUEUED: ['RUNNING', 'BLOCKED', 'FAILED', 'CANCELLED'], RUNNING: ['WAITING', 'BLOCKED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'QUEUED'], WAITING: ['QUEUED', 'BLOCKED', 'CANCELLED'], BLOCKED: ['QUEUED', 'CANCELLED'], SUCCEEDED: [], FAILED: ['QUEUED', 'RUNNING', 'CANCELLED'], CANCELLED: [] };
 export function assertJobTransition(from: JobState, to: JobState): void { if (from !== to && !jobTransitions[from].includes(to)) throw new Error(`Invalid job transition ${from} -> ${to}`); }
 export function assertTaskTransition(from: TaskState, to: TaskState): void { if (from !== to && !taskTransitions[from].includes(to)) throw new Error(`Invalid task transition ${from} -> ${to}`); }

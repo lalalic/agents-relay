@@ -164,11 +164,11 @@ test('CLI task create and retry reactivate failed jobs as RUNNING', async () => 
   let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING');
   saved.state='FAILED'; await writeFile(file,JSON.stringify(saved));
   child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
-  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'READY');
+  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'RUNNING'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
 test('active replacement work keeps job RUNNING despite historical failed tasks', () => {
-  const old=task('old','FAILED'); const replacement=task('replacement','READY');
+  const old=task('old','FAILED'); const replacement=task('replacement','QUEUED');
   assert.equal(schedule({...job([old,replacement]),state:'FAILED'}).state,'RUNNING');
 });
 test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
@@ -186,16 +186,16 @@ test('CLI record persists completed orchestrator work without pretending it was 
   assert.equal(saved.tasks[0].result.data.commit, 'abc123');
 });
 test('healthy task states clear stale current errors without deleting history events', () => {
-  for (const state of ['READY','RUNNING','SUCCEEDED']) {
+  for (const state of ['QUEUED','RUNNING','SUCCEEDED']) {
     const current=task('state-'+state,'FAILED'); current.error='old failure';
-    if (state==='RUNNING') current.state='READY';
+    if (state==='RUNNING') current.state='QUEUED';
     if (state==='SUCCEEDED') current.state='RUNNING';
     transitionTask(current,state);
     assert.equal(current.error,null);
   }
   const queued=task('queued-with-old-error','QUEUED'); queued.error='stale dependency error';
   const scheduled=schedule(job([queued]));
-  assert.equal(scheduled.tasks[0].state,'READY');
+  assert.equal(scheduled.tasks[0].state,'QUEUED');
   assert.equal(scheduled.tasks[0].error,null);
 });
 test('manual retry budget advances in three-attempt windows without resetting history', () => {
@@ -204,7 +204,7 @@ test('manual retry budget advances in three-attempt windows without resetting hi
   assert.equal(extendRetryBudget({attempt:6,maxAttempts:6}),9);
   assert.equal(extendRetryBudget({attempt:8,maxAttempts:9}),12);
 });
-test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'READY'); assert.equal(value.state,'RUNNING'); });
+test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'RUNNING'); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('repository pool orders open jobs globally by durable priority', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','low']); });
 test('startup reconciliation selects expired durable RUNNING leases after daemon restart', () => {
