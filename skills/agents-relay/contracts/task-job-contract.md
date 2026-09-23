@@ -4,7 +4,7 @@ This contract is the shared protocol for every component that creates, schedules
 
 ## Job and Task authoring format
 
-Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. When the work has a workflow, state model, architecture, dependency graph, or relationship that is clearer visually, put a Mermaid block first and follow it with Markdown details. Otherwise use structured Markdown text directly.
+Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. Use Mermaid where a diagram materially explains a workflow, state model, architecture, dependency graph, relationship, or other visual structure. **Mermaid-first applies to that explanation/section, not to the entire Job objective or Task input.** Put the diagram before the prose that explains that visual model, but keep normal document structure: start with the goal/context when that is what the reader needs first. Do not force a Mermaid block at the top of every objective/input, and do not add decorative or redundant diagrams when Markdown is clearer.
 
 The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside the JSON marker; those long-form Markdown bodies remain the human-readable durable content rendered by the Job/Task comment (and, for a Job objective, the PR body). Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded them.
 
