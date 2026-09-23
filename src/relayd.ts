@@ -11,7 +11,7 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
+import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -96,6 +96,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
+  const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    return await dashboardJobAction(store, makeReconciler(store, concurrency), action)(jobId);
+  };
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
   const webhook = secret ? {
@@ -128,7 +134,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return null;
     }
   };
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob);
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob, {
+    start: workspaceJobAction('start'),
+    reconcile: workspaceJobAction('reconcile'),
+    cancel: workspaceJobAction('cancel'),
+  });
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     if (client.rateLimitStatus().limited) return;

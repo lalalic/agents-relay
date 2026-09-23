@@ -119,6 +119,35 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
+test('job rows keep lifecycle, runtime, and PR state distinct with accessible actions', () => {
+  assert.match(dashboardHtml, /'job-row'/);
+  assert.match(dashboardHtml, /element\('div','job-primary'\)/);
+  assert.match(dashboardHtml, /job\.state/);
+  assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
+  assert.match(dashboardHtml, /job\.githubState\|\|'UNKNOWN'/);
+  assert.match(dashboardHtml, /actionButton\(job,'start','Start','▶'\)/);
+  assert.match(dashboardHtml, /actionButton\(job,'reconcile','Reconcile','↻'\)/);
+  assert.match(dashboardHtml, /actionButton\(job,'cancel','Cancel','×'\)/);
+  assert.match(dashboardHtml, /button\.setAttribute\('aria-label',label\)/);
+  assert.match(dashboardHtml, /job-action/);
+  assert.match(dashboardHtml, /action==='start'.*job\.state==='DRAFT'/);
+});
+
+test('dashboard job actions invoke the supplied runtime handler', async () => {
+  const job = { id: 'action-job', title: 'Actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  let invoked = '';
+  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    reconcile: async jobId => { invoked = jobId; return job; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/job-action?id=${job.id}&action=reconcile`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(invoked, job.id);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
 test('hidden dashboard views cannot be overridden by layout display rules', () => {
   assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
   assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
