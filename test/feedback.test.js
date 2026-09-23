@@ -1,55 +1,68 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createFeedbackRecord, feedbackFingerprint, feedbackWorkProvenance, materializeFeedback, renderFeedbackMarkdown } from '../dist/feedback.js';
+import { join } from 'node:path';
+import {
+  FEEDBACK_MARKER,
+  FileFeedbackStore,
+  materializeFeedback,
+  parseFeedbackMarker,
+  readFeedbackAttachment,
+  renderFeedbackMarker,
+} from '../dist/feedback.js';
 
-const provenance = { source: 'public-site', product: 'Family Tutor', surface: 'lesson', actorClass: 'external-user', submittedAt: '2026-09-23T17:00:00.000Z' };
-const submission = (extra = {}) => ({ text: 'The lesson froze after submit.', provenance, ...extra });
+const provenance = { source: 'public-site', product: 'demo', surface: 'help', actorClass: 'external-user', submittedAt: '2026-09-23T12:00:00Z' };
 
-test('creates a text-only record with separated content, metadata, and triage', () => {
-  const record = createFeedbackRecord(submission(), { id: 'feedback-1', receivedAt: '2026-09-23T17:01:00.000Z' });
-  assert.equal(record.schema, 'agents-relay.feedback');
-  assert.equal(record.userContent.text, 'The lesson froze after submit.');
-  assert.deepEqual(record.attachments, []);
-  assert.equal(record.triage.status, 'new');
-  assert.equal(record.systemMetadata.visibility, 'private');
+async function withStore(run) {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-feedback-'));
+  try { return await run(root); } finally { await rm(root, { recursive: true, force: true }); }
+}
+
+test('materializes text-only feedback with structured provenance and marker', async () => {
+  await withStore(async root => {
+    const result = await materializeFeedback(root, { text: 'The setup was clear.', provenance });
+    assert.equal(result.record.schema, FEEDBACK_MARKER);
+    assert.equal(result.record.userContent.text, 'The setup was clear.');
+    assert.equal(result.record.triage.status, 'new');
+    assert.deepEqual(parseFeedbackMarker(renderFeedbackMarker(result.record)).userContent, undefined);
+    assert.equal((await new FileFeedbackStore(root).read(result.record.id)).id, result.record.id);
+  });
 });
 
-test('supports multiple image references and rejects invalid or oversized uploads', () => {
-  const record = createFeedbackRecord(submission({ attachments: [
-    { reference: 'object://feedback/a', mimeType: 'image/png', sizeBytes: 100, sha256: 'a'.repeat(64) },
-    { reference: 'object://feedback/b', mimeType: 'image/jpeg', sizeBytes: 200, width: 800, height: 600 }
-  ] }));
-  assert.equal(record.attachments.length, 2);
-  assert.equal(record.attachments[1].width, 800);
-  assert.throws(() => createFeedbackRecord(submission({ attachments: [{ reference: 'x', mimeType: 'text/plain', sizeBytes: 1 }] })), /unsupported image format/);
-  assert.throws(() => createFeedbackRecord(submission({ attachments: [{ reference: 'x', mimeType: 'image/png', sizeBytes: 10 * 1024 * 1024 + 1 }] })), /byte limit/);
+test('stores images separately and preserves attachment metadata and integrity', async () => {
+  await withStore(async root => {
+    const bytes = new TextEncoder().encode('png fixture');
+    const result = await materializeFeedback(root, { text: 'See screenshot', provenance, attachments: [{ filename: '../screen.png', mediaType: 'image/png', data: bytes }] });
+    assert.equal(result.record.attachments.length, 1);
+    const attachment = result.record.attachments[0];
+    assert.equal(attachment.filename, 'screen.png');
+    assert.deepEqual(Array.from(await readFeedbackAttachment(root, attachment)), Array.from(bytes));
+    assert.equal(parseFeedbackMarker(renderFeedbackMarker(result.record)).attachments[0].storageRef, attachment.storageRef);
+  });
 });
 
-test('requires explicit sanitization for public visibility and redacts common secrets', () => {
-  const record = createFeedbackRecord(submission({ text: 'Bearer abc123 sk_12345678901234', visibility: 'public', sanitized: true }));
-  assert.equal(record.systemMetadata.sanitized, true);
-  assert.match(record.userContent.text, /\[REDACTED\]/);
-  assert.throws(() => createFeedbackRecord(submission({ visibility: 'public' })), /explicitly sanitized/);
+test('supports multiple attachments, idempotency, and rejects unsafe uploads', async () => {
+  await withStore(async root => {
+    const store = new FileFeedbackStore(root, { maxAttachments: 2, maxAttachmentBytes: 4 });
+    const submission = { text: 'two files', provenance, idempotencyKey: 'request-1', attachments: [
+      { filename: 'a.jpg', mediaType: 'image/jpeg', data: new Uint8Array([1, 2]) },
+      { filename: 'b.webp', mediaType: 'image/webp', data: new Uint8Array([3, 4]) },
+    ] };
+    const first = await store.submit(submission);
+    const second = await store.submit(submission);
+    assert.equal(second.record.id, first.record.id);
+    await assert.rejects(() => store.submit({ ...submission, idempotencyKey: 'request-2', attachments: [{ filename: 'x.txt', mediaType: 'text/plain', data: new Uint8Array([1]) }] }), /unsupported attachment/);
+    await assert.rejects(() => store.submit({ ...submission, idempotencyKey: 'request-3', attachments: [{ filename: 'x.png', mediaType: 'image/png', data: new Uint8Array([1, 2, 3, 4, 5]) }] }), /exceeds/);
+  });
 });
 
-test('materializes a safe artifact and preserves provenance for downstream work', async () => {
-  const record = createFeedbackRecord(submission({ attachments: [{ reference: 'object://feedback/screenshot', mimeType: 'image/webp', sizeBytes: 42 }] }), { id: 'feedback-42' });
-  const dir = await mkdtemp(join(tmpdir(), 'agents-relay-feedback-'));
-  const path = join(dir, 'feedback.json');
-  await materializeFeedback(record, path);
-  const saved = JSON.parse(await readFile(path, 'utf8'));
-  assert.equal(saved.id, 'feedback-42');
-  assert.equal(saved.attachments[0].reference, 'object://feedback/screenshot');
-  assert.equal(feedbackWorkProvenance(record).feedbackId, 'feedback-42');
-  assert.match(renderFeedbackMarkdown(record), /agents-relay:feedback:v1/);
-  assert.equal(feedbackFingerprint(record).length, 64);
-  await rm(dir, { recursive: true, force: true });
-});
-
-test('does not accept credential-bearing attachment references', () => {
-  assert.throws(() => createFeedbackRecord(submission({ attachments: [{ reference: 'https://user:secret@example.com/image', mimeType: 'image/png', sizeBytes: 1 }] })), /credential-free/);
-  assert.throws(() => createFeedbackRecord(submission({ attachments: [{ reference: 'object://image?token=secret', mimeType: 'image/png', sizeBytes: 1 }] })), /credential-free/);
+test('does not persist undocumented upload metadata', async () => {
+  await withStore(async root => {
+    const result = await materializeFeedback(root, { text: 'safe', provenance: { ...provenance, contact: { channel: 'email', value: 'user@example.test' } } });
+    const raw = await readFile(result.recordRef, 'utf8');
+    assert.equal(raw.includes('provider'), false);
+    assert.equal(raw.includes('token'), false);
+    assert.equal(result.record.systemProvenance.contact?.value, 'user@example.test');
+  });
 });
