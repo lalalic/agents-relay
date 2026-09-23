@@ -157,7 +157,7 @@ export const dashboardHtml = `<!doctype html>
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><button id="quick-jobs" class="quick-filter" type="button" aria-pressed="true">JOBS</button><select id="quick-status" class="job-filter" aria-label="Filter jobs by derived status"><option value="">STATUS</option></select><button id="quick-autonomous" class="quick-filter" type="button" aria-pressed="false">AUTONOMOUS</button><button id="quick-draft" class="quick-filter" type="button" aria-pressed="false">DRAFT</button><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><select id="quick-status" class="job-filter" aria-label="Filter jobs by derived status"><option value="">STATUS</option></select><button id="quick-autonomous" class="quick-filter" type="button" aria-pressed="false">AUTONOMOUS</button><button id="quick-draft" class="quick-filter" type="button" aria-pressed="false">DRAFT</button><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -206,7 +206,6 @@ const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
 const repoFilter=document.querySelector('#repo-filter');
-const quickJobs=document.querySelector('#quick-jobs');
 const quickStatus=document.querySelector('#quick-status');
 const quickAutonomous=document.querySelector('#quick-autonomous');
 const quickDraft=document.querySelector('#quick-draft');
@@ -262,7 +261,6 @@ function syncFilters(){
   selectedRuntimeStatus=statuses.includes(previousStatus)?previousStatus:'';
   if(quickMode==='status'&&!selectedRuntimeStatus)quickMode='jobs';
   quickStatus.value=quickMode==='status'?selectedRuntimeStatus:'';
-  quickJobs.setAttribute('aria-pressed',String(quickMode==='jobs'));
   quickAutonomous.setAttribute('aria-pressed',String(quickMode==='autonomous'));
   quickDraft.setAttribute('aria-pressed',String(quickMode==='draft'));
 }
@@ -306,7 +304,6 @@ jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encode
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
-quickJobs.addEventListener('click',()=>setQuickMode('jobs'));
 quickAutonomous.addEventListener('click',()=>setQuickMode('autonomous'));
 quickDraft.addEventListener('click',()=>setQuickMode('draft'));
 quickStatus.addEventListener('change',()=>setQuickMode(quickStatus.value?'status':'jobs',quickStatus.value));

@@ -234,8 +234,8 @@ test('job list keeps repository quick filter without a separate repository metad
 
 
 
-test('job list quick filters are exclusive across jobs, status, autonomous, and draft modes', () => {
-  assert.match(dashboardHtml, /id="quick-jobs"/);
+test('job list quick filters omit redundant jobs mode while status, autonomous, and draft stay exclusive', () => {
+  assert.doesNotMatch(dashboardHtml, /id="quick-jobs"/);
   assert.match(dashboardHtml, /id="quick-status"/);
   assert.match(dashboardHtml, /id="quick-autonomous"/);
   assert.match(dashboardHtml, /id="quick-draft"/);
@@ -244,7 +244,7 @@ test('job list quick filters are exclusive across jobs, status, autonomous, and 
   assert.match(dashboardHtml, /quickMode==='draft'/);
   assert.match(dashboardHtml, /quickMode==='status'/);
   assert.match(dashboardHtml, /\(job\.runtimeStatus\|\|'IDLE'\)===selectedRuntimeStatus/);
-  assert.match(dashboardHtml, /quickJobs\.setAttribute\('aria-pressed',String\(quickMode==='jobs'\)\)/);
+  assert.doesNotMatch(dashboardHtml, /quickJobs/);
   assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
   assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
   assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
