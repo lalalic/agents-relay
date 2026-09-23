@@ -133,6 +133,29 @@ test('job rows keep lifecycle, runtime, and PR state distinct with accessible ac
   assert.match(dashboardHtml, /action==='start'.*job\.state==='DRAFT'/);
 });
 
+test('job rows keep autonomous and review flags in the status row', () => {
+  assert.match(dashboardHtml, /job\.executionMode==='autonomous'/);
+  assert.match(dashboardHtml, /text\('AUTONOMOUS'\)/);
+  assert.match(dashboardHtml, /job\.reviewEnabled!==false/);
+  assert.match(dashboardHtml, /text\('REVIEW REQUIRED'\)/);
+  assert.doesNotMatch(dashboardHtml, /job-meta/);
+  assert.doesNotMatch(dashboardHtml, /mode-\+value\(job\.executionMode/);
+});
+
+test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
+  assert.match(dashboardHtml, /function jobGroup\(job\)/);
+  assert.match(dashboardHtml, /if\(isTerminalJob\(job\)\)return 3/);
+  assert.match(dashboardHtml, /if\(job\.executionMode==='autonomous'\)return 1/);
+  assert.match(dashboardHtml, /if\(job\.draft\|\|job\.state==='DRAFT'\)return 2/);
+  assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
+});
+
+test('job row selection covers the row while action controls stop propagation', () => {
+  assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\.id\)\)/);
+  assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\.id\);\}\)/);
+  assert.match(dashboardHtml, /event\.stopPropagation\(\);void runJobAction/);
+});
+
 test('dashboard job actions invoke the supplied runtime handler', async () => {
   const job = { id: 'action-job', title: 'Actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let invoked = '';
@@ -164,9 +187,6 @@ test('job list uses repo-prefixed PR title and keeps time on the final line', ()
   assert.match(dashboardHtml, /function repoName\(repository\)/);
   assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
-  assert.match(dashboardHtml, /job\.draft\?'badge DRAFT':'/);
-  assert.match(dashboardHtml, /job\.draft\?'DRAFT':value\(job\.githubState\|\|'UNKNOWN'\)/);
-  assert.match(dashboardHtml, /\.badge\.DRAFT/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
@@ -212,6 +232,23 @@ test('job list keeps repository quick filter without a separate repository metad
   assert.doesNotMatch(dashboardHtml, /id="job-count"/);
 });
 
+
+
+test('job list quick filters are exclusive across jobs, status, autonomous, and draft modes', () => {
+  assert.match(dashboardHtml, /id="quick-jobs"/);
+  assert.match(dashboardHtml, /id="quick-status"/);
+  assert.match(dashboardHtml, /id="quick-autonomous"/);
+  assert.match(dashboardHtml, /id="quick-draft"/);
+  assert.match(dashboardHtml, /function setQuickMode\(mode,status=''\)/);
+  assert.match(dashboardHtml, /quickMode==='autonomous'/);
+  assert.match(dashboardHtml, /quickMode==='draft'/);
+  assert.match(dashboardHtml, /quickMode==='status'/);
+  assert.match(dashboardHtml, /\(job\.runtimeStatus\|\|'IDLE'\)===selectedRuntimeStatus/);
+  assert.match(dashboardHtml, /quickJobs\.setAttribute\('aria-pressed',String\(quickMode==='jobs'\)\)/);
+  assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
+  assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
+  assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
+});
 
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
