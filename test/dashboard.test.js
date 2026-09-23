@@ -171,6 +171,31 @@ test('dashboard job actions invoke the supplied runtime handler', async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
+
+test('selected task exposes restart and cancel controls with lifecycle gating', () => {
+  assert.match(dashboardHtml, /taskActionButton\(task,'retry','Restart task','↻'\)/);
+  assert.match(dashboardHtml, /taskActionButton\(task,'cancel','Cancel task','×'\)/);
+  assert.match(dashboardHtml, /\['FAILED','BLOCKED'\]\.includes\(task\.state\)/);
+  assert.match(dashboardHtml, /\['DRAFT','QUEUED','BLOCKED','FAILED'\]\.includes\(task\.state\)/);
+  assert.match(dashboardHtml, /\/api\/task-action\?id=/);
+});
+
+test('dashboard task actions invoke the supplied runtime handler', async () => {
+  const task = { id: 'failed-task', jobId: 'task-action-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
+  const job = { id: 'task-action-job', title: 'Task actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  let invoked = '';
+  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    taskRetry: async (jobId, taskId) => { invoked = jobId + '/' + taskId; return job; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/task-action?id=${job.id}&task=${task.id}&action=retry`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(invoked, `${job.id}/${task.id}`);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
 test('hidden dashboard views cannot be overridden by layout display rules', () => {
   assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
   assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);

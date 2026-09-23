@@ -11,7 +11,7 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
+import { dashboardJobAction, dashboardTaskAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -102,6 +102,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
     return await dashboardJobAction(store, makeReconciler(store, concurrency), action)(jobId);
   };
+  const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    return await dashboardTaskAction(store, makeReconciler(store, concurrency), action)(jobId, taskId);
+  };
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
   const webhook = secret ? {
@@ -138,6 +144,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
     cancel: workspaceJobAction('cancel'),
+    taskRetry: workspaceTaskAction('retry'),
+    taskCancel: workspaceTaskAction('cancel'),
   });
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
