@@ -2,10 +2,13 @@ stateDiagram-v2
     [*] --> DRAFT
 
     DRAFT --> QUEUED: release
+    DRAFT --> QUEUED: reconcile [dependenciesSatisfied] / release
     DRAFT --> BLOCKED: block
     DRAFT --> CANCELLED: cancel
 
     QUEUED --> DRAFT: hold
+    QUEUED --> DRAFT: reconcile [dependenciesUnsatisfied] / hold
+    QUEUED --> QUEUED: reconcile [runnable] / release
     QUEUED --> RUNNING: claim
     QUEUED --> BLOCKED: block
     QUEUED --> FAILED: fail

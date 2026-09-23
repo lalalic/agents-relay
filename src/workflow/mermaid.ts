@@ -122,6 +122,30 @@ export class WorkflowEngine {
     if (!this.graph.transitions.some(transition => transition.from === from && transition.to === to)) throw new Error(`Invalid ${kind} transition ${from} -> ${to}`);
   }
 
+  enabledSync(state: string, event: string, context: WorkflowContext = {}): WorkflowTransition[] {
+    const candidates = this.transitionsFrom(state).filter(transition => transition.event === event);
+    const enabled: WorkflowTransition[] = [];
+    for (const transition of candidates) {
+      if (!transition.guard) { enabled.push(transition); continue; }
+      const value = this.guards[transition.guard](context);
+      if (value instanceof Promise) throw new Error(`Workflow guard ${transition.guard} is asynchronous and cannot be used in a synchronous transition`);
+      if (value) enabled.push(transition);
+    }
+    return enabled;
+  }
+
+  transitionSync(state: string, event: string, context: WorkflowContext = {}): string {
+    const enabled = this.enabledSync(state, event, context);
+    if (enabled.length === 0) throw new Error(`No enabled workflow transition from ${state} on ${event}`);
+    if (enabled.length > 1) throw new Error(`Ambiguous workflow transition from ${state} on ${event}`);
+    const transition = enabled[0];
+    for (const actionName of transition.actions) {
+      const value = this.actions[actionName](context, transition);
+      if (value instanceof Promise) throw new Error(`Workflow action ${actionName} is asynchronous and cannot be used in a synchronous transition`);
+    }
+    return transition.to;
+  }
+
   async enabled(state: string, event: string, context: WorkflowContext = {}): Promise<WorkflowTransition[]> {
     const candidates = this.transitionsFrom(state).filter(transition => transition.event === event);
     const enabled: WorkflowTransition[] = [];

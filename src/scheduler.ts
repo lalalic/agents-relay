@@ -20,9 +20,17 @@ export function schedule(job: Job): Job {
   const map = new Map(job.tasks.map(t => [t.id, t]));
   for (const task of scopedTasks) {
     const ready = dependencyReady(task, map);
-    if (task.state === 'DRAFT' && task.dependencies.length > 0 && ready) transitionTask(task, 'QUEUED');
-    else if (task.state === 'QUEUED' && !ready) transitionTask(task, 'DRAFT');
-    else if (task.state === 'QUEUED' && ready && task.error !== null) transitionTask(task, 'QUEUED');
+    const facts: WorkflowContext = {
+      dependenciesSatisfied: task.dependencies.length > 0 && ready,
+      dependenciesUnsatisfied: task.dependencies.length > 0 && !ready,
+      runnable: ready,
+    };
+    const enabled = taskLifecycleWorkflow.enabledSync(task.state, 'reconcile', facts);
+    if (enabled.length > 1) throw new Error(`Ambiguous automatic task transition from ${task.state}`);
+    if (enabled.length === 1) {
+      const state = taskLifecycleWorkflow.transitionSync(task.state, 'reconcile', facts) as TaskState;
+      applyTaskState(task, state);
+    }
   }
   if (job.schedule) {
     const planners = scopedTasks.filter(task => task.kind === 'planner');
