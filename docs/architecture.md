@@ -62,6 +62,29 @@ DRAFT -> ACTIVE -> COMPLETED
 
 `RUNNING`, `WAITING`, `BLOCKED`, and `FAILED` are not durable Job lifecycle states. They are runtime projections derived from Task, Review, PR, and schedule facts. The current runtime statuses are `IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, and `CANCELLED`. Runtime status is recomputed; it is never persisted as Job lifecycle truth.
 
+Runtime-status projection intentionally remains TypeScript in `src/runtime-status.ts` rather than becoming a third executable Mermaid profile. Unlike Job/Task lifecycle, it does not describe legal transitions of one durable state machine; it folds several orthogonal fact sets into one observation. Making the projection executable would either duplicate those facts as fake states or expand the Graph Engine beyond its deliberately small `stateDiagram-v2` contract. Mermaid is still useful here as explanatory documentation:
+
+```mermaid
+flowchart TD
+    F[Job + Task + Review + PR + schedule facts] --> M{PR merged?}
+    M -- yes --> MERGED
+    M -- no --> C{Closed or Job cancelled?}
+    C -- yes --> CANCELLED
+    C -- no --> D{Job DRAFT?}
+    D -- yes --> IDLE
+    D -- no --> S{Scheduled recurring Job?}
+    S -- yes --> SP[Project Task activity; otherwise WAITING]
+    S -- no --> RV{Review approved or active/required?}
+    RV -- approved --> MERGE_PENDING
+    RV -- active/required --> REVIEWING
+    RV -- no --> TP[Project Task activity: RUNNING > QUEUED > BLOCKED > FAILED > WAITING]
+    TP --> NM{No-review implementation complete?}
+    NM -- yes --> MERGE_PENDING
+    NM -- no --> IDLE
+```
+
+Within Task activity, runnable/running work outranks blocked or failed siblings. `BLOCKED` or `FAILED` describes the Job only when no `RUNNING` or `QUEUED` work can still advance it. A scheduled `ACTIVE` Job with no current executable activity projects `WAITING` between runs.
+
 Task states:
 
 ```text
