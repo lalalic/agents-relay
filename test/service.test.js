@@ -167,3 +167,39 @@ test('startup reconciliation failure does not take down dashboard', async () => 
   await service.stop();
   await rm(directory, { recursive: true, force: true });
 });
+
+test('long-form Job and Task content prefers file inputs and avoids shell quoting', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-content-file-'));
+  const objectiveFile = join(directory, 'job.md');
+  const taskFile = join(directory, 'task.md');
+  await writeFile(objectiveFile, '```mermaid\nflowchart TD\n  A --> B\n```\n\n# Goal\n\nStandalone context.\n');
+  await writeFile(taskFile, '# Work\n\nUse `code`, $variables, "quotes", and Mermaid without shell escaping.\n');
+
+  const missingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','owner/repo','--id','job-file','--head','feat/file'], { encoding:'utf8' });
+  assert.notEqual(missingObjective.status, 0);
+  assert.match(missingObjective.stderr, /requires --objective-file PATH\|- or --objective MARKDOWN/);
+
+  const conflictingObjective = spawnSync(process.execPath, ['dist/cli.js','job','create','--repo','owner/repo','--id','job-file','--head','feat/file','--objective','short','--objective-file',objectiveFile], { encoding:'utf8' });
+  assert.notEqual(conflictingObjective.status, 0);
+  assert.match(conflictingObjective.stderr, /--objective and --objective-file are mutually exclusive/);
+
+  const now = new Date().toISOString();
+  const localJob = join(directory, 'job.json');
+  await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', executionMode:'fixed', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
+
+  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--task-id','file-task','--adapter','orchestrator','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
+  assert.equal(created.status, 0, created.stderr);
+  let saved = JSON.parse(await readFile(localJob, 'utf8'));
+  assert.equal(saved.tasks[0].input, await readFile(taskFile, 'utf8'));
+
+  const stdinText = '# Updated work\n\n```mermaid\nflowchart LR\n  X --> Y\n```\n';
+  const updated = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id','file-task','--input-file','-'], { encoding:'utf8', input:stdinText });
+  assert.equal(updated.status, 0, updated.stderr);
+  saved = JSON.parse(await readFile(localJob, 'utf8'));
+  assert.equal(saved.tasks[0].input, stdinText);
+
+  const conflictingInput = spawnSync(process.execPath, ['dist/cli.js','task','update','--file',localJob,'--task-id','file-task','--input','short','--input-file',taskFile], { encoding:'utf8' });
+  assert.notEqual(conflictingInput.status, 0);
+  assert.match(conflictingInput.stderr, /--input and --input-file are mutually exclusive/);
+  await rm(directory, { recursive:true, force:true });
+});

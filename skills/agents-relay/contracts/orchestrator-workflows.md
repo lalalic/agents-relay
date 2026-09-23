@@ -1,5 +1,9 @@
 # Agents Relay Orchestrator Workflows
 
+## Job context capture
+
+Before `job create`, the orchestrator converts the relevant discussion into a standalone Markdown objective. Prefer `--objective-file`; if a diagram materially clarifies workflow/state/architecture/dependencies, put Mermaid first. The objective must be sufficient for a fresh orchestrator/agent to complete the Job without access to the original conversation. Creating the Job is the context-compaction boundary: important decisions must be copied into durable Job context before work is delegated.
+
 This contract defines orchestrator-owned exception workflows that sit above normal Agents Relay task/job execution.
 
 ## Hotfix workflow

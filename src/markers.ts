@@ -15,8 +15,30 @@ export function parseMarker<T>(body: string, label: string): T | null {
   }
   return null;
 }
-export function renderJobComment(job: Job): string { return `${marker(JOB_MARKER, { ...job, tasks: undefined })}\n# Agents Relay job: ${job.title}\nState: ${job.state}\nPR: #${job.prNumber}`; }
-export function renderTaskComment(task: Task): string { return `${marker(TASK_MARKER, task)}\n## Task ${task.id}\nState: ${task.state}\n${task.result?.summary ?? task.input}`; }
+export function renderJobComment(job: Job): string {
+  const objective = job.objective?.trim() || '_No objective recorded._';
+  return `${marker(JOB_MARKER, { ...job, tasks: undefined })}
+# Agents Relay job: ${job.title}
+
+- **State:** ${job.state}
+- **PR:** #${job.prNumber}
+
+## Objective
+
+${objective}`;
+}
+export function renderTaskComment(task: Task): string {
+  const body = task.result?.summary ?? task.input;
+  return `${marker(TASK_MARKER, task)}
+## Task: ${task.id}
+
+- **State:** ${task.state}
+- **Priority:** ${task.priority ?? 'P2'}
+
+### Work
+
+${body}`;
+}
 export function parseJob(body: string): Job | null {
   const job = parseMarker<Job>(body, JOB_MARKER);
   if (!job) return null;
