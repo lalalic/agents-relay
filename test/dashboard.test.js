@@ -233,6 +233,23 @@ test('job list keeps repository quick filter without a separate repository metad
 });
 
 
+
+test('job list quick filters are exclusive across jobs, status, autonomous, and draft modes', () => {
+  assert.match(dashboardHtml, /id="quick-jobs"/);
+  assert.match(dashboardHtml, /id="quick-status"/);
+  assert.match(dashboardHtml, /id="quick-autonomous"/);
+  assert.match(dashboardHtml, /id="quick-draft"/);
+  assert.match(dashboardHtml, /function setQuickMode\(mode,status=''\)/);
+  assert.match(dashboardHtml, /quickMode==='autonomous'/);
+  assert.match(dashboardHtml, /quickMode==='draft'/);
+  assert.match(dashboardHtml, /quickMode==='status'/);
+  assert.match(dashboardHtml, /\(job\.runtimeStatus\|\|'IDLE'\)===selectedRuntimeStatus/);
+  assert.match(dashboardHtml, /quickJobs\.setAttribute\('aria-pressed',String\(quickMode==='jobs'\)\)/);
+  assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
+  assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
+  assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
+});
+
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
   assert.match(source, /forceRefresh && requestedJobId && exactJobProvider/);
