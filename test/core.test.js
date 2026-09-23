@@ -26,15 +26,19 @@ const activeEventSource = async (store, taskId, jobId='j') => {
   assert.ok(current?.executionId, `missing executionId for ${jobId}/${taskId}`);
   return eventSource(jobId, taskId, current.executionId);
 };
-const graphCommentClient = (comments, prNumber=1, prState='OPEN') => ({
-  request: async path => {
-    if (path.includes('/pulls?')) return [{number:prNumber,state:prState.toLowerCase(),merged_at:prState==='MERGED'?now():null,closed_at:prState!=='OPEN'?now():null,body:'',head:{ref:'fix'},base:{ref:'main'}}];
+const graphCommentClient = (comments, prNumber=1, prState='OPEN') => {
+  let prBody = '';
+  return {
+  get body() { return prBody; },
+  request: async (path, init={}) => {
+    if (path.includes('/pulls?')) return [{number:prNumber,state:prState.toLowerCase(),merged_at:prState==='MERGED'?now():null,closed_at:prState!=='OPEN'?now():null,body:prBody,head:{ref:'fix'},base:{ref:'main'}}];
+    if (path === 'repos/owner/repo/pulls/'+prNumber && init.method === 'PATCH') { prBody = JSON.parse(String(init.body)).body; return {body:prBody}; }
     throw new Error('unexpected REST '+path);
   },
   graphql: async (query, variables={}) => {
-    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:{id:'PR_'+prNumber,state:prState==='MERGED'?'CLOSED':prState,merged:prState==='MERGED',mergedAt:prState==='MERGED'?now():null,closedAt:prState!=='OPEN'?now():null}}};
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return {repository:{pullRequest:{id:'PR_'+prNumber,state:prState==='MERGED'?'CLOSED':prState,merged:prState==='MERGED',mergedAt:prState==='MERGED'?now():null,closedAt:prState!=='OPEN'?now():null,body:prBody}}};
     if (query.includes('open:pullRequests(first:50')) {
-      const node={number:prNumber,body:'',state:prState==='MERGED'?'CLOSED':prState,isDraft:false,merged:prState==='MERGED',mergedAt:prState==='MERGED'?now():null,closedAt:prState!=='OPEN'?now():null,comments:{nodes:comments.map(c=>({body:c.body,author:{login:c.user.login}}))}};
+      const node={number:prNumber,body:prBody,state:prState==='MERGED'?'CLOSED':prState,isDraft:false,merged:prState==='MERGED',mergedAt:prState==='MERGED'?now():null,closedAt:prState!=='OPEN'?now():null,comments:{nodes:comments.map(c=>({body:c.body,author:{login:c.user.login}}))}};
       return {repository:{open:{nodes:prState==='OPEN'?[node]:[],pageInfo:{hasNextPage:false,endCursor:null}},recentClosed:{nodes:prState==='OPEN'?[]:[node]}}};
     }
     if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(c=>({id:'IC_'+c.id,databaseId:c.id,body:c.body,updatedAt:c.updated_at,author:{login:c.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
@@ -43,7 +47,8 @@ const graphCommentClient = (comments, prNumber=1, prState='OPEN') => ({
     if (query.includes('deleteIssueComment')) {const id=Number(String(variables.id).replace('IC_',''));const i=comments.findIndex(x=>x.id===id);if(i>=0)comments.splice(i,1);return {deleteIssueComment:{clientMutationId:null}};}
     throw new Error('unexpected GraphQL '+query);
   }
-});
+  };
+};
 class FakeAdapter { name='codex'; id='fake-codex'; capabilities=['model','codex']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
 test('parses task marker JSON', () => { const t=task('a'); assert.equal(parseTask(marker(TASK_MARKER,t)).id,'a'); });
 test('discovers by hard requirements and keeps evidence explainable', () => {
@@ -279,8 +284,8 @@ test('repository pool reconciles merged PRs even though they are not runnable', 
   const client=graphCommentClient(comments,14,'MERGED');
   const pool=new RepositoryWorkerPool(client,'owner/repo',new Set(['bot']),2,store=>new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]}));
   await pool.reconcile();
-  const durable=comments.map(c=>c.body).map(body=>body.includes('agents-relay:job:v1') ? body : '').find(Boolean);
-  assert.match(durable,/\"state\":\"COMPLETED\"/);
+  assert.equal(comments.some(c=>c.body.includes('agents-relay:job:v1')),false);
+  assert.match(client.body,/\"state\":\"COMPLETED\"/);
 });
 test('task priority orders ready work and inherits job priority', () => { const a=task('a'), b=task('b'), c=task('c'); a.priority='P3'; b.priority='P0'; a.createdAt='2026-01-01T00:00:00.000Z'; b.createdAt='2026-01-02T00:00:00.000Z'; c.createdAt='2025-01-01T00:00:00.000Z'; assert.deepEqual([a,b,c].sort((x,y)=>compareTaskPriority(x,y,'P1')).map(x=>x.id), ['b','c','a']); });
 test('model task requires an event bus before launch', async () => {

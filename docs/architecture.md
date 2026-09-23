@@ -7,7 +7,7 @@ Provide a generic, shareable async agent job system where agents can create dura
 ## Core model
 
 - **GitHub pull request** — durable top-level job container and audit surface.
-- **Job marker comment** — durable job metadata and continuation state.
+- **PR body Job marker + objective** — the canonical durable Job surface: hidden job metadata/continuation state followed by the visible Markdown objective.
 - **Task marker comments** — append-friendly durable child-task records.
 - **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
 - **Agent adapters** — agent execution backends such as Codex and ChatGPT browser workers.
