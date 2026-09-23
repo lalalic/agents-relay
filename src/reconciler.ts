@@ -71,6 +71,8 @@ Before your final return, verify that a terminal event for this exact Job/Task w
 If no terminal event has been published, publish task.failed before exiting.`;
 }
 
+const taskLaunchClaims = new Set<string>();
+
 export class Reconciler {
   private readonly live = new Map<string, LiveExecution>();
   private readonly plannerLive = new Map<string, LivePlanner>();
@@ -403,15 +405,30 @@ export class Reconciler {
       await this.store.saveTask(task);
       return;
     }
-    const leaseMs = Math.max(this.options.leaseMs ?? 300000, task.timeoutMs);
-    const startedAt = (this.options.now ?? new Date()).getTime();
-    transitionTask(task, 'RUNNING');
-    task.attempt += 1;
-    task.leaseOwner = this.options.owner;
-    task.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
-    task.executionId = randomUUID();
-    const durableExecutionId = task.executionId;
-    await this.store.saveTask(task);
+    const claimKey = `${job.repository}#${job.prNumber}:${task.id}`;
+    if (taskLaunchClaims.has(claimKey)) return;
+    taskLaunchClaims.add(claimKey);
+    let claimedTask: Task | null = null;
+    try {
+      const freshJob = await this.store.load(job.id);
+      const freshTask = freshJob.tasks.find(item => item.id === task.id);
+      if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
+      const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
+      const startedAt = (this.options.now ?? new Date()).getTime();
+      transitionTask(freshTask, 'RUNNING');
+      freshTask.attempt += 1;
+      freshTask.leaseOwner = this.options.owner;
+      freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
+      freshTask.executionId = randomUUID();
+      await this.store.saveTask(freshTask);
+      claimedTask = freshTask;
+    } finally {
+      taskLaunchClaims.delete(claimKey);
+    }
+    if (!claimedTask) return;
+    task = claimedTask;
+    const startedAt = Date.now();
+    const durableExecutionId = task.executionId!;
     const controller = new AbortController();
     let execution: Execution;
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };

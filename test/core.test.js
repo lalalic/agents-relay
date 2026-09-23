@@ -914,27 +914,17 @@ test('closed unmerged PR cancels queued work and job without launching', async (
   assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
 });
 
-test('RepositoryWorkerPool serializes concurrent reconciliation for one job', async () => {
-  let concurrent=0; let maxConcurrent=0; let calls=0; let releaseFirst;
-  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
-  const pool = new RepositoryWorkerPool({}, 'owner/repo', new Set(['bot']), 4, () => ({
-    reconcile: async () => {
-      calls += 1;
-      concurrent += 1;
-      maxConcurrent = Math.max(maxConcurrent, concurrent);
-      if (calls === 1) await firstGate;
-      await new Promise(resolve => setTimeout(resolve, 5));
-      concurrent -= 1;
-    }
-  }));
-  const a = pool.reconcileTarget('owner/repo', 1, 'same-job');
-  await new Promise(resolve => setTimeout(resolve, 10));
-  const b = pool.reconcileTarget('owner/repo', 1, 'same-job');
-  await new Promise(resolve => setTimeout(resolve, 10));
-  assert.equal(calls, 1);
-  assert.equal(maxConcurrent, 1);
-  releaseFirst();
-  await Promise.all([a,b]);
-  assert.equal(calls, 2);
-  assert.equal(maxConcurrent, 1);
+test('concurrent reconciler instances atomically claim one queued task only once', async () => {
+  const t=task('atomic-launch');
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const adapter=new FakeAdapter();
+  const a=new Reconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus});
+  const b=new Reconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus});
+  await Promise.all([a.reconcile('j'),b.reconcile('j')]);
+  const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-launch');
+  assert.equal(adapter.launches,1);
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.attempt,1);
+  assert.ok(durable.executionId);
 });
