@@ -30,6 +30,18 @@ Relay derives the overall execution timeout from `storySize`. If `routing.reason
 
 Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-production interface.
 
+## Task readiness states
+
+Task readiness is explicit and must use these semantics:
+
+- `DRAFT`: durable Task exists but is not executable now. A DRAFT Task with dependencies is promoted to `QUEUED` when all dependencies succeed. A DRAFT Task with no dependencies remains held until an explicit release to `QUEUED`.
+- `QUEUED`: executable now; Relay may launch it immediately subject only to worker capacity/routing.
+- `RUNNING`: worker execution has actually started.
+- `BLOCKED`: execution cannot continue without an external resolution or intervention. Once a Task has entered `RUNNING`, it must not return to `DRAFT`; waiting discovered during execution is `BLOCKED`.
+- `SUCCEEDED`, `FAILED`, and `CANCELLED` are terminal outcomes, except that retry explicitly requeues a failed/blocked Task.
+
+Do not use `WAITING` as a Task state. `WAITING` remains a Job state for an active Job that is intentionally awaiting a future trigger, schedule slot, or condition.
+
 ## Worker lifecycle
 
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.

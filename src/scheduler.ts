@@ -20,8 +20,13 @@ export function schedule(job: Job): Job {
     return job;
   }
   const map = new Map(job.tasks.map(t => [t.id, t]));
-  for (const task of scopedTasks) { if (['QUEUED', 'WAITING'].includes(task.state) && dependencyReady(task, map)) transitionTask(task, 'QUEUED'); }
-  const active = scopedTasks.some(t => ['QUEUED', 'RUNNING'].includes(t.state)); const blocked = scopedTasks.some(t => t.state === 'BLOCKED'); const waiting = scopedTasks.some(t => t.state === 'WAITING'); const failed = scopedTasks.some(t => t.state === 'FAILED'); const cancelled = scopedTasks.every(t => t.state === 'CANCELLED');
+  for (const task of scopedTasks) {
+    const ready = dependencyReady(task, map);
+    if (task.state === 'DRAFT' && task.dependencies.length > 0 && ready) transitionTask(task, 'QUEUED');
+    else if (task.state === 'QUEUED' && !ready) transitionTask(task, 'DRAFT');
+    else if (task.state === 'QUEUED' && ready && task.error !== null) transitionTask(task, 'QUEUED');
+  }
+  const active = scopedTasks.some(t => ['QUEUED', 'RUNNING'].includes(t.state)); const blocked = scopedTasks.some(t => t.state === 'BLOCKED'); const waiting = scopedTasks.some(t => t.state === 'DRAFT'); const failed = scopedTasks.some(t => t.state === 'FAILED'); const cancelled = scopedTasks.every(t => t.state === 'CANCELLED');
   const next = active ? 'RUNNING' : failed ? 'FAILED' : blocked ? 'BLOCKED' : waiting ? 'WAITING' : cancelled ? 'CANCELLED' : completionGateSatisfied(job) ? 'COMPLETED' : 'WAITING';
   if (job.schedule && next === 'WAITING') {
     const planners = scopedTasks.filter(task => task.kind === 'planner');

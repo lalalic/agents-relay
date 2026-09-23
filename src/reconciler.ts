@@ -164,7 +164,7 @@ export class Reconciler {
     if (!headSha || !job.review || job.review.headSha === headSha || job.review.outcome === 'stale') return;
     job.review = { ...job.review, outcome: 'stale', updatedAt: new Date().toISOString() };
     const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
-    if (staleTask && ['QUEUED', 'RUNNING', 'WAITING'].includes(staleTask.state)) {
+    if (staleTask && ['DRAFT', 'QUEUED', 'RUNNING'].includes(staleTask.state)) {
       this.live.get(staleTask.id)?.execution.cancel();
       transitionTask(staleTask, 'CANCELLED');
       staleTask.error = 'Review evidence became stale after the PR head changed';
@@ -180,7 +180,7 @@ export class Reconciler {
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
-    if (reviewTasks.some(task => ['QUEUED', 'RUNNING', 'WAITING'].includes(task.state))) return;
+    if (reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return;
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
@@ -329,7 +329,7 @@ export class Reconciler {
     const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    if (planners.some(task => ['QUEUED', 'RUNNING', 'WAITING'].includes(task.state))) return job;
+    if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
     if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
     if (scopedTasks.length > 0 && planners.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
@@ -533,7 +533,7 @@ export class Reconciler {
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
   private clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);

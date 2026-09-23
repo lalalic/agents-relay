@@ -49,9 +49,9 @@ OPEN -> RUNNING -> WAITING|BLOCKED -> COMPLETED|FAILED|CANCELLED
 
 Task states:
 
-WAITING -> QUEUED -> RUNNING -> WAITING|BLOCKED -> SUCCEEDED|FAILED|CANCELLED
+DRAFT -> QUEUED -> RUNNING -> BLOCKED|SUCCEEDED|FAILED|CANCELLED
 
-A task is QUEUED only when it is executable now; tasks waiting on dependencies or another release condition remain WAITING until those conditions are satisfied. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
+A task is DRAFT when it exists durably but is not executable yet. Dependency-backed DRAFT tasks move to QUEUED when their dependencies succeed; a DRAFT task with no dependencies requires an explicit release to QUEUED. QUEUED means executable now. Once RUNNING, a task must not return to DRAFT; an external condition discovered during execution is BLOCKED. Autonomous completion additionally requires a durable planner result of `satisfied`, every planner/work task to be `SUCCEEDED`, and no unresolved failure or blocked task.
 
 ## Task record
 

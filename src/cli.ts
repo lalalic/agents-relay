@@ -17,7 +17,7 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { extendRetryBudget, parseJobSchedule } from './scheduler.js';
+import { extendRetryBudget, parseJobSchedule, transitionTask } from './scheduler.js';
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
@@ -95,16 +95,16 @@ Usage:
   npx agents-relay task <create|update|show|list|retry|cancel> [options]
 
 Actions:
-  create  Create one executable Task under an existing Job
+  create  Create one durable Task under an existing Job
   update  Update mutable Task fields
   show    Show one Task
   list    List Tasks for a Job
   retry   Retry a failed or blocked Task
   cancel  Cancel a Task`,
-  'task create': `Create one executable Task under an existing Job.
+  'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input TEXT and --output task-pr|file. Codex/ChatGPT tasks also require --model MODEL.
-Common: --task-id ID, --adapter codex|chatgpt|orchestrator, --priority P0|P1|P2|P3, --story-size S|M|L, --deps a,b, --parent ID.
+Common: --task-id ID, --adapter codex|chatgpt|orchestrator, --priority P0|P1|P2|P3, --story-size S|M|L, --deps a,b, --parent ID, --draft.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
@@ -112,7 +112,7 @@ Example:
   'task update': `Update mutable durable Task fields in place.
 
 Required: --task-id ID and the normal Job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Use --clear-routing to remove routing metadata.
 
 Example:
@@ -309,6 +309,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string): Task {
   const routing: RoutingDecision | undefined = adapter === 'orchestrator' ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
   const size = storySize(args);
+  const dependencies = arg(args, '--deps').split(',').filter(Boolean);
   const timeoutMs = adapter === 'orchestrator' ? 0 : hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : taskOverallTimeoutMs(size, routing?.reasoning);
   return {
     jobId: job.id,
@@ -318,7 +319,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string): Task {
     projectName: arg(args, '--project') || undefined,
     agentName: arg(args, '--agent') || undefined,
     parentTaskId: arg(args, '--parent') || null,
-    dependencies: arg(args, '--deps').split(',').filter(Boolean),
+    dependencies,
     capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
     adapter,
     chatgptTabClosePolicy: closePolicy,
@@ -328,7 +329,7 @@ function workerTaskFromArgs(job: Job, args: string[], now: string): Task {
     routing,
     continuation: continuation(args),
     continuationDeliveredAt: null,
-    state: 'QUEUED',
+    state: hasArg(args, '--draft') || dependencies.length > 0 ? 'DRAFT' : 'QUEUED',
     attempt: 0,
     maxAttempts: Number(arg(args, '--max-attempts', '3')),
     leaseOwner: null,
@@ -355,7 +356,12 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
-    if (refreshed.state !== 'RUNNING') { refreshed.state = 'RUNNING'; refreshed.updatedAt = now; await store.saveJob(refreshed); }
+    const hasActive = refreshed.tasks.some(item => ['QUEUED', 'RUNNING'].includes(item.state));
+    const hasBlocked = refreshed.tasks.some(item => item.state === 'BLOCKED');
+    const hasDraft = refreshed.tasks.some(item => item.state === 'DRAFT');
+    const hasFailed = refreshed.tasks.some(item => item.state === 'FAILED');
+    const nextState = hasActive ? 'RUNNING' : hasBlocked ? 'BLOCKED' : hasDraft ? 'WAITING' : hasFailed ? 'FAILED' : refreshed.state;
+    if (refreshed.state !== nextState) { refreshed.state = nextState; refreshed.updatedAt = now; await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
     await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
@@ -394,6 +400,13 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--chatgpt-tab-close-policy')) task.chatgptTabClosePolicy = chatGptTabClosePolicy(args);
   task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs);
   task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
+  if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive');
+  if (hasArg(args, '--draft')) transitionTask(task, 'DRAFT');
+  if (hasArg(args, '--queue')) {
+    const taskMap = new Map(job.tasks.map(item => [item.id, item]));
+    if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
+    transitionTask(task, 'QUEUED');
+  }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
   if (args.includes('--clear-routing')) task.routing = undefined;
@@ -440,7 +453,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   if (action === 'create') {
-    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path'];
+    const taskOnlyFlags = ['--start','--task-id','--input','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path','--draft','--queue'];
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
   }

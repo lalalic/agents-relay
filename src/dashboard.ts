@@ -94,7 +94,7 @@ export const dashboardHtml = `<!doctype html>
     .job-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .status-pill,.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
     .status-pill.ok,.badge.RUNNING,.badge.SUCCEEDED,.badge.COMPLETED { background:#e5f3e9; color:var(--ok); }
-    .status-pill.warn,.badge.BLOCKED,.badge.WAITING,.badge.QUEUED,.badge.OPEN { background:#fff1d2; color:var(--warn); }
+    .status-pill.warn,.badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.OPEN { background:#fff1d2; color:var(--warn); }
     .status-pill.bad,.badge.FAILED { background:#ffe8e8; color:var(--bad); }
     .status-pill.neutral,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
     .badge.DRAFT { background:#eef2ff; color:#3f51b5; }
@@ -219,7 +219,7 @@ function markdownField(label,input){const box=element('div','detail-group');box.
 function rememberSelection(){if(selectedJob)sessionStorage.setItem('agents-relay:selected-job',selectedJob);else sessionStorage.removeItem('agents-relay:selected-job');if(selectedTaskId)sessionStorage.setItem('agents-relay:selected-task',selectedTaskId);else sessionStorage.removeItem('agents-relay:selected-task');}
 function selected(){return jobs.find(job=>job.id===selectedJob)||jobs[0]||null;}
 function counts(tasks){const out={};for(const task of Array.isArray(tasks)?tasks:[])out[task.state]=(out[task.state]||0)+1;return out;}
-function compactCounts(input){const order=['RUNNING','BLOCKED','FAILED','QUEUED','WAITING','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
+function compactCounts(input){const order=['RUNNING','BLOCKED','FAILED','QUEUED','DRAFT','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
 function awaitingInitialTask(job){return job?.state==='OPEN'&&Array.isArray(job?.tasks)&&job.tasks.length===0;}
 function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.parse(timestamp);if(!Number.isFinite(parsed))return value(timestamp);const seconds=Math.max(0,Math.round((Date.now()-parsed)/1000));if(seconds<60)return 'just now';if(seconds<3600)return Math.floor(seconds/60)+'m ago';if(seconds<86400)return Math.floor(seconds/3600)+'h ago';return Math.floor(seconds/86400)+'d ago';}
 function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number.isInteger(prNumber)||prNumber<=0)return null;const parts=repository.split('/');if(parts.length!==2)return null;const [owner,repo]=parts;if(!owner||!repo||owner==='.'||owner==='..'||repo==='.'||repo==='..')return null;if(!/^[A-Za-z0-9-]+$/.test(owner)||!/^[A-Za-z0-9._-]+$/.test(repo))return null;return 'https://github.com/'+owner+'/'+repo+'/pull/'+prNumber;}
