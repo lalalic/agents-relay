@@ -661,7 +661,7 @@ test('continuation runs only after completed terminal event', async () => {
 });
 
 test('Codex launch requires routing metadata and applies command contract', () => {
-  const t=task('model','READY'); delete t.routing;
+  const t=task('model','QUEUED'); delete t.routing;
   assert.throws(() => new CodexAdapter('definitely-not-started').launch(t, new AbortController().signal), /routing metadata/);
 });
 
@@ -693,7 +693,7 @@ test('workspace webhook accepts configured repositories and forwards exact PR id
 
 test('webhook refresh immediately pushes the refreshed dashboard snapshot even when reconciliation fails', async () => {
   const selected={...job([task('webhook-task','SUCCEEDED')]),id:'webhook-job',repository:'lalalic/agents-relay',prNumber:9};
-  const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','READY')]};
+  const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','QUEUED')]};
   const secret='workspace-secret'; let reconciliationFailed=false; let current=selected; let wakeResolve;
   const wakeDone=new Promise(resolve=>{wakeResolve=resolve;});
   const server=serveDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:current,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),refresh:async()=>{current=refreshed; return ['webhook-job'];},wake:async()=>{
