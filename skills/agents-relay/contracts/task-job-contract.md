@@ -6,6 +6,8 @@ This contract is the shared protocol for every component that creates, schedules
 
 Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. When the work has a workflow, state model, architecture, dependency graph, or relationship that is clearer visually, put a Mermaid block first and follow it with Markdown details. Otherwise use structured Markdown text directly.
 
+The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside the JSON marker; those long-form Markdown bodies remain the human-readable durable content rendered by the Job/Task comment (and, for a Job objective, the PR body). Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded them.
+
 For long-form content, use files instead of shell-quoted arguments:
 
 - Job create/update: `--objective-file PATH` (or `--objective-file -` for stdin) is preferred. `--objective` is for short/simple content only. They are mutually exclusive.

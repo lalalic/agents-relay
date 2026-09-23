@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
+test('rendered job/task markers do not duplicate human markdown content', async () => {
+  const { renderJobComment, renderTaskComment } = await import('../dist/markers.js');
+  const durableJob = job('dedupe');
+  durableJob.objective = '# Goal\n\nKeep this visible only.';
+  const jobBody = renderJobComment(durableJob);
+  const jobMarker = jobBody.slice(0, jobBody.indexOf('-->') + 3);
+  assert.doesNotMatch(jobMarker, /Keep this visible only/);
+  assert.equal(parseJob(jobBody)?.objective, durableJob.objective);
+
+  const durableTask = task('dedupe', 'work');
+  durableTask.input = '```mermaid\nflowchart TD\nA --> B\n```\n\nDo the work.';
+  const taskBody = renderTaskComment(durableTask);
+  const taskMarker = taskBody.slice(0, taskBody.indexOf('-->') + 3);
+  assert.doesNotMatch(taskMarker, /Do the work/);
+  assert.doesNotMatch(taskMarker, /flowchart TD/);
+  assert.equal(parseTask(taskBody)?.input, durableTask.input);
+});
 test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
   const description = 'mermaid\\nflowchart TD\\nA --> B';
   const body = marker(JOB_MARKER, { id: 'mermaid-job', title: 'Mermaid', description, tasks: undefined });
