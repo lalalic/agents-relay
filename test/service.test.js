@@ -31,6 +31,9 @@ test('repository daemon wires account usage telemetry and the default planner in
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
   assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),exactJob/);
+  assert.match(source, /start: workspaceJobAction\('start'\)/);
+  assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
+  assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
 });
 
 test('workspace daemon establishes dashboard and event watch before remote refresh', async () => {
