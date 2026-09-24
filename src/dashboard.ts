@@ -79,7 +79,7 @@ export const dashboardHtml = `<!doctype html>
     .panel-actions { display:flex; align-items:center; gap:.45rem; }
     .job-filters { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
     .job-filter { max-width:145px; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .4rem; font:inherit; font-size:.72rem; }
-    .job-search { width:190px; max-width:28vw; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .45rem; font:inherit; font-size:.72rem; }
+    .job-search { width:95px; max-width:14vw; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .45rem; font:inherit; font-size:.72rem; }
     .quick-filter { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.27rem .42rem; font:inherit; font-size:.7rem; font-weight:750; cursor:pointer; }
     .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
     .refresh-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.28rem .55rem; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; }
