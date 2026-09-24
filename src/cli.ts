@@ -30,7 +30,7 @@ Usage:
 
 Commands:
   job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
-  task create|update|show|list|retry|cancel  Manage durable tasks
+  task create|update|show|list|complete|retry|cancel  Manage durable tasks
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   record                   Backfill a completed task into durable history
@@ -108,6 +108,7 @@ Actions:
   show    Show one Task
   list    List Tasks for a Job
   retry   Retry a failed or blocked Task
+  complete Complete an orchestrator-owned Task
   cancel  Cancel a Task`,
   'task create': `Create one durable Task under an existing Job.
 
@@ -131,6 +132,9 @@ Required: --task-id ID and the normal Job storage options.`,
   'task list': `List durable Tasks for one Job.
 
 Required: the normal Job storage options.`,
+  'task complete': `Complete one orchestrator-owned Task after the creating orchestrator has finished the work.
+
+Required: --task-id ID, --summary TEXT, and the normal Job storage options. The Task must use adapter=orchestrator and be QUEUED or RUNNING. This command is for the same orchestrator turn that created the self-task; it is not a deferred handoff mechanism.`,
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
@@ -369,7 +373,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
 }
 
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'retry', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -391,6 +395,22 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const task = job.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
+  if (action === 'complete') {
+    if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
+    if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
+    const summary = arg(args, '--summary');
+    if (!summary) throw new Error('task complete requires --summary');
+    if (task.state === 'QUEUED') await transitionTaskEvent(task, 'task.started');
+    task.attempt = Math.max(task.attempt, 1);
+    task.result = { summary };
+    task.error = null;
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+    await transitionTaskEvent(task, 'task.completed');
+    await store.saveTask(task);
+    await saveLocal(localFile, await store.load(job.id));
+    console.log(JSON.stringify(task, null, 2));
+    return;
+  }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
     await transitionTaskEvent(task, action === 'retry' ? 'retry' : 'cancel');
