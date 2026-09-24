@@ -177,7 +177,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
     const prompt = instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
-      const child = spawn(this.command, ['exec', '--json', '--', prompt], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(this.command, ['exec', '--json', '--', prompt], { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdoutBuffer = '';
       let finalMessage = '';
       let stderrTail = '';
