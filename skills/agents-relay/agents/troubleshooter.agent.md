@@ -18,13 +18,13 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
 ## Recovery loop
 
 1. Retrieve the durable original Job and failed/blocked Task from GitHub.
-2. Inspect the concrete failure evidence: task error/failureReason, lifecycle events, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.
+2. **Mandatory before diagnosis:** retrieve the failed Task's task-scoped lifecycle event history. When the local Relay dashboard is available, use `GET http://127.0.0.1:8787/api/events?job=<job_id>&task=<task_id>&limit=200`. Inspect event order, type/status, source, data/phase, execution IDs, duplicates, missing expected lifecycle events, and late events. Then inspect task error/failureReason, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.
 3. Classify the blocker:
    - transient execution/delivery/lease failure;
    - task-local implementation or validation failure;
    - shared worker/runtime/tool/Agents Relay defect;
    - genuine external/human blocker.
-4. Diagnose the smallest root cause. Never retry first and investigate later.
+4. Diagnose the smallest root cause from the combined durable Task + event sequence + logs. The final `task.error` is only one piece of evidence. Never retry first and investigate later.
 5. Repair:
    - For a transient failure, verify the transient condition is gone.
    - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.
@@ -37,7 +37,7 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
 ## Rules
 
 - Never erase or rewrite the original failure evidence.
-- Never blindly retry a deterministic failure.
+- Never blindly retry a deterministic failure. Event-history inspection is a hard precondition for retry; if event history cannot be retrieved, record that observability blocker explicitly rather than pretending diagnosis is complete.
 - Never create a second P0 Job for the same root cause when a suitable active one already exists; reuse/adopt/reconcile it.
 - P0 fixes must follow the P0/self-job contract: durable Job first, orchestrator-owned Task immediately, direct execution by this recovery orchestrator, no reviewer gate unless explicitly required.
 - Repository PR creation/adoption/repair still goes through Agents Relay.

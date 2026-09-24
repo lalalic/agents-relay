@@ -114,6 +114,6 @@ Keep secrets, credentials, private prompts, and large private payloads out of du
 
 ### Automatic task troubleshooting
 
-When an ACTIVE Job contains a current-run `FAILED` or `BLOCKED` task, reconciliation creates one P0-priority `troubleshooter` recovery task for that exact failed attempt. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract.
+When an ACTIVE Job contains a current-run `FAILED` or `BLOCKED` task, reconciliation creates one P0-priority `troubleshooter` recovery task for that exact failed attempt. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
 
 The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.

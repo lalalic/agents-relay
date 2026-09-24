@@ -22,7 +22,12 @@ Original worker: ${task.workerSelection?.workerId ?? task.adapter}
 Original routing: ${task.routing ? JSON.stringify(task.routing) : 'unrouted'}
 Failure reason: ${task.failureReason ?? task.error ?? 'unknown'}
 
-Follow the selected Troubleshooter agent contract. Diagnose root cause before retry. If the blocker is a shared worker/runtime/tool defect, create and directly complete a P0/self-job in the owning repository, including required release/deploy verification. Retry this exact original task only after the blocker is removed, reconcile the original job, and verify durable progress.`;
+MANDATORY EVENT EVIDENCE BEFORE DIAGNOSIS:
+Retrieve this task's lifecycle event history before classifying the root cause or retrying:
+GET http://127.0.0.1:8787/api/events?job=${encodeURIComponent(job.id)}&task=${encodeURIComponent(task.id)}&limit=200
+Inspect event order, type/status, source, data/phase, duplicate events, missing expected lifecycle events, late events, and execution identifiers. If the event stream points to delivery/runtime failure, inspect the corresponding Relay/worker/tool logs too. Do not treat the final task.error string as the complete root cause.
+
+Follow the selected Troubleshooter agent contract. Diagnose root cause from durable task state + event history + relevant runtime logs before retry. If the blocker is a shared worker/runtime/tool defect, create and directly complete a P0/self-job in the owning repository, including required release/deploy verification. Retry this exact original task only after the blocker is removed, reconcile the original job, and verify durable progress.`;
 }
 
 function belongsToCurrentRun(job: Job, task: Task): boolean {
