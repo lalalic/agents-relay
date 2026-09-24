@@ -252,7 +252,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
     if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (scopedTasks.length > 0 && planners.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
+    if (planners.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
