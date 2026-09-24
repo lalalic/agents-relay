@@ -119,12 +119,13 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
-test('job rows keep lifecycle, runtime, and PR state distinct with accessible actions', () => {
+test('job rows show lifecycle and runtime without PR state, while details keep PR state', () => {
   assert.match(dashboardHtml, /'job-row'/);
   assert.match(dashboardHtml, /element\('div','job-primary'\)/);
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
-  assert.match(dashboardHtml, /job\.githubState\|\|'UNKNOWN'/);
+  assert.doesNotMatch(dashboardHtml, /states\.append\([^;]*job\.githubState/);
+  assert.match(dashboardHtml, /field\('PR state',job\.githubState\|\|'UNKNOWN'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'start','Start','▶'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'reconcile','Reconcile','↻'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'cancel','Cancel','×'\)/);
