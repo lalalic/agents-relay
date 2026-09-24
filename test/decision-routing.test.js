@@ -25,22 +25,22 @@ test('decision request and choice output are validated against the caller contra
   assert.throws(() => validateDecisionRequest({ facts: { bad: undefined } }, contract), /undefined/);
 });
 
-test('Laya CLI decision engine is a transient stdin/stdout process', async () => {
-  const script = `let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const r=JSON.parse(s);const c=r.questions.decision.criteria;process.stdout.write(JSON.stringify({answers:{decision:{choice:c[1],probabilities:{[c[0]]:0.1,[c[1]]:0.9}}}}));});`;
-  const engine = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', script], timeoutMs: 1000 });
+test('Laya CLI decision engine materializes state/questions files for a transient process', async () => {
+  const script = `const fs=require('fs');const args=process.argv.slice(1);const state=JSON.parse(fs.readFileSync(args[args.indexOf('--state-file')+1],'utf8'));const q=JSON.parse(fs.readFileSync(args[args.indexOf('--questions')+1],'utf8'));if(state.task!=='x')process.exit(9);const c=q.decision.criteria;process.stdout.write(JSON.stringify({answers:{decision:{choice:c[1],probabilities:{[c[0]]:0.1,[c[1]]:0.9}}}}));`;
+  const engine = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', script, '--'], timeoutMs: 1000 });
   const result = await engine.decide({ facts: { task: 'x' } }, contract);
   assert.equal(result.choice, 'b');
   assert.deepEqual(result.probabilities, { a: 0.1, b: 0.9 });
 });
 
 test('Laya CLI failure, invalid JSON, out-of-contract output, and timeout reject cleanly', async () => {
-  const failed = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', 'process.exit(7)'], timeoutMs: 1000 });
+  const failed = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', 'process.exit(7)', '--'], timeoutMs: 1000 });
   await assert.rejects(() => failed.decide({ facts: {} }, contract), /exited 7/);
-  const invalid = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', `process.stdout.write('nope')`], timeoutMs: 1000 });
+  const invalid = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', `process.stdout.write('nope')`, '--'], timeoutMs: 1000 });
   await assert.rejects(() => invalid.decide({ facts: {} }, contract), /invalid JSON/);
-  const outside = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', `process.stdout.write(JSON.stringify({choice:'c'}))`], timeoutMs: 1000 });
+  const outside = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', `process.stdout.write(JSON.stringify({choice:'c'}))`, '--'], timeoutMs: 1000 });
   await assert.rejects(() => outside.decide({ facts: {} }, contract), /outside the contract/);
-  const timeout = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', 'setTimeout(()=>{},1000)'], timeoutMs: 20 });
+  const timeout = new LayaCliDecisionEngine({ command: process.execPath, args: ['-e', 'setTimeout(()=>{},1000)', '--'], timeoutMs: 20 });
   await assert.rejects(() => timeout.decide({ facts: {} }, contract), /timed out/);
 });
 

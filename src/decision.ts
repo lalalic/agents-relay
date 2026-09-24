@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -102,8 +105,9 @@ export type LayaCliOptions = {
 };
 
 /**
- * Stateless Laya invocation. The command receives one JSON request on stdin and
- * must emit one JSON decision on stdout. It is intentionally a subprocess per
+ * Stateless Laya invocation. The adapter materializes the caller's JSON state
+ * and question contract as temporary files for `uvx laya-mlx predict`. It is
+ * intentionally a subprocess per
  * decision: no daemon, resident model, socket, or PM2 lifecycle is introduced.
  */
 export class LayaCliDecisionEngine implements DecisionEngine {
@@ -114,7 +118,7 @@ export class LayaCliDecisionEngine implements DecisionEngine {
   private readonly env?: NodeJS.ProcessEnv;
 
   constructor(options: LayaCliOptions = {}) {
-    this.command = options.command ?? process.env.AGENTS_RELAY_LAYA_COMMAND ?? 'npx';
+    this.command = options.command ?? process.env.AGENTS_RELAY_LAYA_COMMAND ?? 'uvx';
     this.args = options.args ?? layaArgsFromEnv();
     this.timeoutMs = options.timeoutMs ?? Number(process.env.AGENTS_RELAY_LAYA_TIMEOUT_MS ?? 30_000);
     this.env = options.env;
@@ -122,29 +126,37 @@ export class LayaCliDecisionEngine implements DecisionEngine {
 
   async decide(request: DecisionRequest, contract: DecisionContract): Promise<DecisionResult> {
     validateDecisionRequest(request, contract);
-    const payload = {
-      state: request.facts,
-      questions: {
-        decision: {
-          type: contract.type,
-          instructions: contract.question,
-          criteria: [...contract.choices],
-        },
+    const questions = {
+      decision: {
+        type: contract.type,
+        instructions: contract.question,
+        criteria: [...contract.choices],
       },
     };
-    const stdout = await this.run(JSON.stringify(payload));
-    let parsed: unknown;
+    const dir = await mkdtemp(join(tmpdir(), 'agents-relay-laya-'));
     try {
-      parsed = JSON.parse(stdout);
-    } catch {
-      throw new Error('Laya CLI returned invalid JSON');
+      const statePath = join(dir, 'state.json');
+      const questionsPath = join(dir, 'questions.json');
+      await Promise.all([
+        writeFile(statePath, JSON.stringify(request.facts), 'utf8'),
+        writeFile(questionsPath, JSON.stringify(questions), 'utf8'),
+      ]);
+      const stdout = await this.run(['--state-file', statePath, '--questions', questionsPath]);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(stdout);
+      } catch {
+        throw new Error('Laya CLI returned invalid JSON');
+      }
+      return parseChoiceDecision(parsed, contract);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
-    return parseChoiceDecision(parsed, contract);
   }
 
-  private async run(stdin: string): Promise<string> {
+  private async run(extraArgs: readonly string[]): Promise<string> {
     return await new Promise<string>((resolve, reject) => {
-      const child = spawn(this.command, [...this.args], { stdio: ['pipe', 'pipe', 'pipe'], env: this.env ?? process.env });
+      const child = spawn(this.command, [...this.args, ...extraArgs], { stdio: ['ignore', 'pipe', 'pipe'], env: this.env ?? process.env });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let settled = false;
@@ -169,14 +181,13 @@ export class LayaCliDecisionEngine implements DecisionEngine {
         }
         finish(undefined, Buffer.concat(stdout).toString('utf8').trim());
       });
-      child.stdin.end(`${stdin}\n`);
     });
   }
 }
 
 function layaArgsFromEnv(): readonly string[] {
   const configured = process.env.AGENTS_RELAY_LAYA_ARGS;
-  if (!configured) return ['-y', 'laya', 'decide', '--json'];
+  if (!configured) return ['laya-mlx', 'predict'];
   try {
     const parsed = JSON.parse(configured) as unknown;
     if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string')) throw new Error('not a string array');

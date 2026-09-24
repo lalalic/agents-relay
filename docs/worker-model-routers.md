@@ -41,25 +41,22 @@ If only one legal choice remains, the router selects it directly without invokin
 
 ## Laya CLI decision engine
 
-`LayaCliDecisionEngine` is intentionally stateless. Each decision starts one transient process, writes a JSON request to stdin, reads one JSON decision from stdout, and exits. Agents Relay does **not** run a resident Laya daemon, sidecar, socket service, PM2 process, or permanently loaded model.
+`LayaCliDecisionEngine` is intentionally stateless. Each decision writes temporary JSON state/question files, starts one transient `uvx laya-mlx predict` process, reads one JSON decision from stdout, removes the files, and exits. Agents Relay does **not** run a resident Laya daemon, sidecar, socket service, PM2 process, or permanently loaded model.
 
 Default command contract:
 
 ```text
-npx -y laya decide --json
+uvx laya-mlx predict --state-file <state.json> --questions <questions.json>
 ```
 
-The process receives one JSON object shaped like:
+The adapter writes the caller facts to `state.json` and the typed decision contract to `questions.json`. The questions file is shaped like:
 
 ```json
 {
-  "state": { "task": {}, "candidates": [] },
-  "questions": {
-    "decision": {
-      "type": "choice",
-      "instructions": "Which eligible choice best fits this task?",
-      "criteria": ["candidate-a", "candidate-b"]
-    }
+  "decision": {
+    "type": "choice",
+    "instructions": "Which eligible choice best fits this task?",
+    "criteria": ["candidate-a", "candidate-b"]
   }
 }
 ```
@@ -82,11 +79,11 @@ It must write JSON containing either a direct `choice` result or `answers.decisi
 
 The concrete command is replaceable without changing routing code:
 
-- `AGENTS_RELAY_LAYA_COMMAND` — executable, default `npx`;
-- `AGENTS_RELAY_LAYA_ARGS` — JSON string array of arguments, default `["-y","laya","decide","--json"]`;
+- `AGENTS_RELAY_LAYA_COMMAND` — executable, default `uvx`;
+- `AGENTS_RELAY_LAYA_ARGS` — JSON string array of base arguments, default `["laya-mlx","predict"]`; the adapter appends `--state-file` and `--questions` paths;
 - `AGENTS_RELAY_LAYA_TIMEOUT_MS` — per-decision timeout, default 30000 ms.
 
-At the time this integration was added, the public npm package named `laya` did not expose a runnable executable in this environment. Therefore the default command currently fails closed and routing uses its deterministic fallback unless an actual compatible CLI/wrapper is installed or configured. This does not affect Relay availability.
+The default CLI is the `laya-mlx` package executed transiently through `uvx`; no project venv or resident model process is required. Routing still fails closed to the deterministic policy if `uvx`/Laya is unavailable or invalid.
 
 ## Rollout modes
 
