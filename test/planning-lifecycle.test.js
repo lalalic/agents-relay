@@ -75,6 +75,22 @@ test('fixed jobs stop after the orchestrator-created task batch', async () => {
   await stop();
 });
 
+test('cancelled planner history does not freeze an active autonomous job', async () => {
+  const completed = { ...work('business-cycle'), state: 'SUCCEEDED', result: { summary: 'diagnosed' } };
+  const cancelled = { ...work('planner-1'), kind: 'planner', state: 'CANCELLED', error: 'Cancelled by user' };
+  const store = new InMemoryStore(job([completed, cancelled]));
+  const bus = new MemoryEventBus();
+  let plannerCalls = 0;
+  const planner = { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } };
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
+  const stop = await reconciler.watch('planning');
+  await settle(reconciler);
+  const result = await store.load('planning');
+  assert.equal(plannerCalls, 1);
+  assert.equal(result.tasks.find(task => task.id === 'planner-2')?.state, 'SUCCEEDED');
+  await stop();
+});
+
 test('planner failure after an orchestrator-started batch does not invent executable tasks', async () => {
   const { job: initial } = plannedJob();
   const store = new InMemoryStore(initial);
