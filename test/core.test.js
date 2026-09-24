@@ -127,19 +127,32 @@ test('CLI task create accepts orchestrator self work without a model', async () 
   await rm(directory,{recursive:true,force:true});
 });
 
-test('reconciler assigns orchestrator work to self without launching an adapter and accepts terminal events', async () => {
+test('reconciler leaves orchestrator self work queued for its creating orchestrator', async () => {
   const self = task('self'); self.adapter='orchestrator'; self.routing=undefined; self.timeoutMs=0;
   const root = {...job([self]), executionMode:'fixed'};
   const store = new InMemoryStore(root); const events=[];
   const reconciler = new Reconciler(store,{owner:'test',adapters:[],emit:event=>events.push(event)});
   await reconciler.reconcile('j');
-  let durable=(await store.load('j')).tasks.find(item=>item.id==='self');
-  assert.equal(durable.state,'RUNNING');
+  const durable=(await store.load('j')).tasks.find(item=>item.id==='self');
+  assert.equal(durable.state,'QUEUED');
   assert.equal(durable.leaseOwner,null); assert.equal(durable.executionId,null);
-  assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),true);
-  await reconciler.handleEvent(eventFor('j','self',null,'task.completed','succeeded','orchestrator finished','orchestrator'));
-  durable=(await store.load('j')).tasks.find(item=>item.id==='self');
-  assert.equal(durable.state,'SUCCEEDED'); assert.equal(durable.result.summary,'orchestrator finished');
+  assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),false);
+});
+
+test('CLI task complete terminalizes the same orchestrator self task', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-complete-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  let child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','do it now'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  child = spawn(process.execPath, [join('dist','cli.js'),'task','complete','--file',file,'--task-id','self','--summary','done in creator turn'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  const completed = saved.tasks.find(item => item.id === 'self');
+  assert.equal(completed.state, 'SUCCEEDED');
+  assert.equal(completed.result.summary, 'done in creator turn');
+  assert.equal(completed.attempt, 1);
+  await rm(directory,{recursive:true,force:true});
 });
 
 test('CLI task create defaults story size to M and derives overall timeout from size', async () => {

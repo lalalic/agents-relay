@@ -168,14 +168,7 @@ export class Reconciler {
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
         for (const task of scheduled.tasks.filter(t => t.state === 'QUEUED' && t.executionId === null && dependencyReady(t, new Map(scheduled.tasks.map(item => [item.id, item])))).sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
           if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
-          else if (task.adapter === 'orchestrator') {
-            await transitionTaskEvent(task, 'task.started');
-            task.leaseOwner = null;
-            task.leaseExpiresAt = null;
-            task.executionId = null;
-            await this.store.saveTask(task);
-            await this.emit(eventFor(scheduled.id, task.id, task.parentTaskId, 'task.orchestrator_assigned', 'running', `Task ${task.id} assigned to orchestrator self`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }));
-          } else await this.launch(scheduled, task);
+          else if (task.adapter !== 'orchestrator') await this.launch(scheduled, task);
         }
       }
       const finalState = schedule(await this.store.load(jobId));

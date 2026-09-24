@@ -87,6 +87,16 @@ Task readiness is explicit and must use these semantics:
 
 Do not use `WAITING` as a Task state or durable Job lifecycle state. `WAITING` is a derived Job runtime status for an `ACTIVE` Job whose next progress depends on a future trigger, schedule slot, dependency release, or other condition.
 
+## Orchestrator self-task ownership
+
+A Task with `adapter: orchestrator` is synchronous self-work owned by the exact orchestrator turn that creates it. It is not a durable handoff to Relay, another worker, a later reconcile cycle, or a future orchestrator thread.
+
+- Creating an `adapter: orchestrator` Task is an execution commitment: the creating orchestrator must execute it in the current turn.
+- The creating orchestrator must not end its turn while any orchestrator Task it created remains `QUEUED` or `RUNNING`; it must drive each such Task to a terminal state before returning control to the user.
+- Relay must not auto-start, lease, route, or emit synthetic `task.started` / assignment evidence for orchestrator Tasks. A queued orchestrator Task means the creator has not yet terminalized its self-work.
+- Successful self-work is terminalized on the same durable Task with `task complete --task-id ... --summary ...`; do not use `record` as a substitute for a Task that was created before execution. `record` remains a backfill mechanism for work that genuinely happened outside Relay.
+- If work is intended to survive the current turn or be picked up asynchronously, use a real worker adapter rather than `orchestrator`.
+
 ## Worker lifecycle
 
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.
