@@ -79,6 +79,10 @@ test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempoten
   assert.match(recovery.input, /chatgpt\/browser-worker/);
   assert.match(recovery.input, /Temporary Chat toggle was not uniquely observed/);
   assert.match(recovery.input, /P0\/self-job/);
+  assert.match(recovery.input, /MANDATORY EVENT EVIDENCE BEFORE DIAGNOSIS/);
+  assert.match(recovery.input, /api\/events\?job=neo-pr40&task=final-review-3a941f98a1ad&limit=200/);
+  assert.match(recovery.input, /duplicate events/);
+  assert.match(recovery.input, /Do not treat the final task\.error string as the complete root cause/);
   assert.deepEqual(pendingTroubleshooterTasks(job([failed, recovery])), []);
 });
 
@@ -122,4 +126,8 @@ test('troubleshooter is a discoverable orchestrator-side execution role', async 
   assert.match(prompt, /Role: troubleshooter/);
   assert.match(prompt, /orchestrator-side recovery role/);
   assert.match(prompt, /P0\/self-job repair authority/);
+  const agentContract = await import('node:fs/promises').then(fs => fs.readFile(agent.path, 'utf8'));
+  assert.match(agentContract, /Mandatory before diagnosis/);
+  assert.match(agentContract, /api\/events\?job=<job_id>&task=<task_id>&limit=200/);
+  assert.match(agentContract, /event history cannot be retrieved/);
 });
