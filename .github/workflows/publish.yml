@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: npm-publish-main
@@ -89,3 +90,9 @@ jobs:
           fi
           git tag "$tag"
           git push origin "refs/tags/$tag"
+      - name: Record package publication on originating PR
+        run: node scripts/report-package-published.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_REGISTRY: https://registry.npmjs.org
