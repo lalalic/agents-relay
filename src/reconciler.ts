@@ -13,6 +13,7 @@ import { executionEventSource, type ReconcileOptions } from './reconciler-runtim
 export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
+import { pendingTroubleshooterTasks } from './troubleshooter.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -149,6 +150,10 @@ export class Reconciler extends ReconcilerReviewBase {
       if (job.state !== 'ACTIVE') return job;
       await this.recoverLostExecutions(job, now);
       await this.recoverPlannerChildren(job);
+      for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
+        await this.store.appendTask(recovery);
+        await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
+      }
       await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       const beforeSchedule = await this.store.load(jobId);
@@ -307,7 +312,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     let executionContext: ExecutionContext;
     try {
-      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.parentTaskId ? 'nested-worker' : 'worker';
+      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       executionContext = await this.resolvedContext(job, task, role);
 
     } catch (error) {

@@ -111,3 +111,9 @@ Planner-created child Tasks remain descriptive agent work and must include worke
 GitHub PR/job/task markers remain durable workflow state. Events are the authoritative execution-state transition signal for model-backed tasks. Runtime events, process exits, browser submission receipts, and conversation text are evidence only.
 
 Keep secrets, credentials, private prompts, and large private payloads out of durable markers and events.
+
+### Automatic task troubleshooting
+
+When an ACTIVE Job contains a current-run `FAILED` or `BLOCKED` task, reconciliation creates one P0-priority `troubleshooter` recovery task for that exact failed attempt. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract.
+
+The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.

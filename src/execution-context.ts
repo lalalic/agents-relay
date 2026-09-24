@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { AgentRegistration } from './types.js';
 
-export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'worker' | 'nested-worker';
+export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'troubleshooter' | 'worker' | 'nested-worker';
 export type ContextSource = 'project' | 'neo' | 'global' | 'builtin' | 'registry' | 'runtime';
 
 export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'> };
@@ -284,5 +284,5 @@ Runtime capabilities:
 ${runtimes}
 
 Delegation contract:
-Nested work MUST be created as an Agents Relay durable child task with parentTaskId lineage. Do not directly spawn arbitrary child agents. Leaf workers do not inherit top-level XChat orchestration duties merely because xchat-orchestrator is visible.`;
+${context.role === 'troubleshooter' ? 'This is an orchestrator-side recovery role. Follow the selected Troubleshooter contract for P0/self-job repair authority and use durable Agents Relay Jobs/Tasks for delegated work.' : 'Nested work MUST be created as an Agents Relay durable child task with parentTaskId lineage. Do not directly spawn arbitrary child agents. Leaf workers do not inherit top-level XChat orchestration duties merely because xchat-orchestrator is visible.'}`;
 }

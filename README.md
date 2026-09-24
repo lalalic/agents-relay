@@ -187,3 +187,9 @@ GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles 
 `adapter: orchestrator` is reserved for synchronous self-work by the exact orchestrator turn that creates the Task. Relay deliberately does not auto-start these Tasks during reconciliation. The creator must perform the work before ending the turn and terminalize the same Task with `npx agents-relay task complete --task-id <id> --summary <summary> ...`. If work should continue asynchronously or in a later turn, use a real worker adapter instead.
 
 For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. For managed jobs, the GitHub PR body is the canonical Job surface: hidden Job metadata marker plus the visible Markdown objective.
+
+### Automatic task troubleshooting
+
+When an ACTIVE Job contains a current-run `FAILED` or `BLOCKED` task, reconciliation creates one P0-priority `troubleshooter` recovery task for that exact failed attempt. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract.
+
+The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
