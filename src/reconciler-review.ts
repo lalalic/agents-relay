@@ -4,7 +4,8 @@ import { implementationComplete } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
 import { WorkerSelection } from './types.js';
-import { selectWorker, usageForProvider, workerCandidates } from './worker-routing.js';
+import { routeWorker, workerCandidates, type WorkerCandidate } from './worker-routing.js';
+import { discoverModelCandidates, routeModel } from './model-routing.js';
 import { ReconcilerRuntimeBase } from './reconciler-runtime.js';
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -50,40 +51,74 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const configured = this.options.reviewer;
     const registered = await this.store.listAgents();
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
-    const candidates: ReviewerCandidate[] = workerCandidates(this.options.adapters, registered, usage);
-    let constrained = candidates.filter(candidate => {
+    const workers = workerCandidates(this.options.adapters, registered, usage).filter(candidate => {
       if (configured?.workerId && configured.workerId !== candidate.workerId) return false;
       if (configured?.adapter && configured.adapter !== candidate.adapter) return false;
-      if (configured?.routing?.provider && configured.routing.provider !== candidate.routing.provider) return false;
-      if (configured?.routing?.model && configured.routing.model !== candidate.routing.model) return false;
       return true;
-    }).map(candidate => ({ ...candidate, routing: configured?.routing ? { ...candidate.routing, ...configured.routing } : candidate.routing }));
+    });
     // Explicit reviewer routing is a caller-owned hard constraint and remains
     // readable in isolated/test runtimes that do not instantiate that adapter.
-    if (constrained.length === 0 && configured?.adapter && configured.routing) {
-      constrained = [{ workerId: configured.workerId ?? configured.adapter, adapter: configured.adapter, capabilities: ['model'], runtime: configured.adapter, routing: configured.routing }];
+    if (workers.length === 0 && configured?.adapter && configured.routing) {
+      const candidate: ReviewerCandidate = {
+        workerId: configured.workerId ?? configured.adapter,
+        adapter: configured.adapter,
+        capabilities: ['model'],
+        runtime: configured.adapter,
+        routing: configured.routing,
+      };
+      return {
+        candidate,
+        selection: { workerId: candidate.workerId, adapter: candidate.adapter, capabilities: [...candidate.capabilities], selectedBy: 'worker-router:reviewer-diversity:eligible-fallback', selectedAt: new Date().toISOString() },
+        reason: 'eligible-fallback',
+      };
     }
-    const result = selectReviewer(constrained, implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
-    const resource = usageForProvider(usage, result.candidate.routing.provider);
-    result.selection.resourceHealthy = resource.healthy;
-    result.selection.resourceProvider = resource.healthy === undefined ? undefined : result.candidate.routing.provider;
-    result.selection.resourceUsedPercent = resource.usedPercent;
+
+    const previews = new Map<string, ReviewerCandidate>();
+    for (const worker of workers) {
+      try {
+        const models = await discoverModelCandidates(worker, registered, usage);
+        const preview = await routeModel(worker, models, { decisionMode: 'off', constraints: configured?.routing });
+        previews.set(worker.workerId, { ...worker, routing: preview.routing });
+      } catch {
+        continue;
+      }
+    }
+    const result = selectReviewer([...previews.values()], implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
+    const selectedWorker = workers.find(worker => worker.workerId === result.selection.workerId) as WorkerCandidate | undefined;
+    if (selectedWorker) {
+      result.selection.resourceHealthy = selectedWorker.resourceHealthy;
+      result.selection.resourceProvider = selectedWorker.resourceProvider;
+      result.selection.resourceUsedPercent = selectedWorker.resourceUsedPercent;
+      const models = await discoverModelCandidates(selectedWorker, registered, usage);
+      const routedModel = await routeModel(selectedWorker, models, {
+        decisionEngine: this.options.decisionEngine,
+        decisionMode: this.options.decisionMode,
+        constraints: configured?.routing,
+        taskFacts: { role: 'reviewer', implementationWorkers: implementationTasks.map(task => task.workerSelection?.workerId ?? task.adapter) },
+      });
+      result.candidate.routing = routedModel.routing;
+    }
     return result;
   }
-
   protected async routeExecutableTasks(job: Job): Promise<void> {
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
-    const candidates = workerCandidates(this.options.adapters, await this.store.listAgents(), usage);
+    const registered = await this.store.listAgents();
+    const candidates = workerCandidates(this.options.adapters, registered, usage);
     for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
       const requirements = task.workerRequirements ?? { capabilities: task.capabilities.length > 0 ? task.capabilities : ['model'] };
-      const routed = selectWorker(candidates, requirements);
-      task.workerSelection = routed.selection;
-      task.adapter = routed.candidate.adapter;
-      task.routing = routed.candidate.routing;
+      const taskFacts = { id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M', capabilities: task.capabilities };
+      const routedWorker = await routeWorker(candidates, requirements, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts });
+      const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
+      const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
+      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts, constraints: routingConstraints });
+      task.workerSelection = routedWorker.selection;
+      task.adapter = routedWorker.candidate.adapter;
+      task.routing = routedModel.routing;
       task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
       task.updatedAt = new Date().toISOString();
       await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'orchestrator', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routedWorker.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routedWorker.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
     }
   }
   protected isSupersededTask(task: Task): boolean {

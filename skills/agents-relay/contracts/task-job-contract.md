@@ -55,9 +55,10 @@ Keep these concepts distinct: observation is not root cause; hypothesis is not r
 Every new model-backed executable task follows this order:
 
 1. The planner declares `workerRequirements` (capabilities and optional runtime, task-kind, trust-domain, region, and label constraints).
-2. `worker-router` resolves those requirements against available workers and a fresh on-demand usage snapshot from the shared usage registry. It applies capability/availability hard gates before considering resource evidence.
-3. `model-router` chooses provider/model/reasoning details for the selected worker.
-4. Relay persists the selected worker and model routing on the durable task before launch.
+2. `worker-router` is code-driven: it gathers authoritative worker/resource facts, applies capability/availability and other hard gates, then may call the generic typed `decide(request, contract)` primitive only among eligible workers.
+3. `model-router` runs after worker selection, discovers model/profile facts usable by that worker, applies model hard gates, then may use the same typed `decide()` primitive among eligible profiles. Router judgment is not a free-form agent invocation.
+4. `decide()` owns no routing facts or legality policy. Its optional Laya implementation is a transient CLI subprocess per decision; unavailable/invalid decisions fall back to deterministic routing. `src/usage.ts` remains the shared resource-fact source.
+5. Relay persists the selected worker and model routing on the durable task before launch.
 
 Planner output must not hard-code `codex`/`chatgpt`, provider preference, or usage probes. The worker-router and model-router are separate responsibilities; usage readers remain owned by `src/usage.ts` and are not duplicated in either router. Legacy task records that already contain adapter/routing metadata remain readable, but newly produced planner tasks must carry worker requirements.
 
