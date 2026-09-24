@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           expected="${{ steps.version.outputs.version }}"
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 150); do
             observed="$(npm view "agents-relay@$expected" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
             if [ "$observed" = "$expected" ]; then
               echo "agents-relay@$expected is pullable from npm."
