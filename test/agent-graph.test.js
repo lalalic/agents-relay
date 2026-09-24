@@ -36,3 +36,21 @@ test('agent graph loads every node contract and preserves fan-in dependencies', 
     assert.match(prompt,/NOT durable child Tasks/);
   } finally { await rm(root,{recursive:true,force:true}); }
 });
+
+
+test('business-loop can feed the canonical bundled planner in an external project context', async () => {
+  const root=await mkdtemp(join(tmpdir(),'agents-relay-business-graph-'));
+  try {
+    const workspace=join(root,'workspace'), neo=join(workspace,'neo'), project=join(workspace,'product');
+    await Promise.all([mkdir(project,{recursive:true}),mkdir(neo,{recursive:true})]);
+    await writeAgent(neo,'business-loop');
+    const context=await resolveExecutionContext(project,'worker',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
+    const planner=context.agents.find(agent=>agent.name==='planner');
+    assert.equal(planner?.source,'builtin');
+    assert.match(planner?.path ?? '',/skills\/agents-relay\/agents\/planner\.agent\.md$/);
+    const prompt=await agentGraphPrompt(context,`flowchart TD\nbusiness-loop --> planner`);
+    assert.match(prompt,/Execution waves: 1:business-loop \| 2:planner/);
+    assert.match(prompt,/business-loop CONTRACT/);
+    assert.match(prompt,/# Planner Agent/);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});

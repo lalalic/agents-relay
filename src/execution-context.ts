@@ -2,13 +2,14 @@ import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentRegistration } from './types.js';
 
 export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'worker' | 'nested-worker';
-export type ContextSource = 'project' | 'neo' | 'global' | 'registry' | 'runtime';
+export type ContextSource = 'project' | 'neo' | 'global' | 'builtin' | 'registry' | 'runtime';
 
-export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'registry' | 'runtime'> };
-export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'registry' | 'runtime'>; description?: string };
+export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'> };
+export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'>; description?: string };
 export type ResolvedAgent = {
   name: string;
   path?: string;
@@ -42,6 +43,7 @@ export type ExecutionContextOptions = ExecutionContextRoots & {
 };
 
 type Frontmatter = Record<string, string>;
+const BUNDLED_AGENTS_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents');
 
 async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
@@ -197,6 +199,7 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const skills = selectByName([...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name)), options.explicitSkills, 'skill');
 
   const agentMap = new Map<string, ResolvedAgent>();
+  for (const agent of await agentFiles(dirname(BUNDLED_AGENTS_ROOT), 'builtin', [])) agentMap.set(agent.name, agent);
   for (const layer of uniqueLayers) {
     for (const agent of await agentFiles(layer.root, layer.source, skillsByLayer.get(layer.root) ?? [])) agentMap.set(agent.name, agent);
   }
