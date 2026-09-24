@@ -1,13 +1,9 @@
-import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task, TaskState } from './types.js';
+import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task } from './types.js';
 import { WorkflowContext } from './workflow/mermaid.js';
-import { decideJobLifecycle, decideTaskLifecycle } from './workflow/rollout.js';
-export function dependencyReady(task: Task, tasks: Map<string, Task>): boolean { return task.dependencies.every(id => tasks.get(id)?.state === 'SUCCEEDED'); }
-export function detectCycles(tasks: Task[]): void { const map = new Map(tasks.map(t => [t.id, t])); const visiting = new Set<string>(); const done = new Set<string>(); const visit = (id: string): void => { if (visiting.has(id)) throw new Error(`Dependency cycle at ${id}`); if (done.has(id)) return; visiting.add(id); for (const dep of map.get(id)?.dependencies ?? []) visit(dep); visiting.delete(id); done.add(id); }; for (const task of tasks) visit(task.id); }
-function scheduledCycleTasks(job: Job): Task[] {
-  const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
-  if (!Number.isFinite(slot)) return job.tasks;
-  return job.tasks.filter(task => Date.parse(task.createdAt) >= slot);
-}
+import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from './workflow/rollout.js';
+import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
+export { dependencyReady, detectCycles } from './workflow/task-reconcile.js';
+import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
@@ -15,20 +11,10 @@ export function completionGateSatisfied(job: Job): boolean {
   return planners.some(task => task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied') && job.tasks.every(task => task.state === 'SUCCEEDED');
 }
 export function schedule(job: Job): Job {
-  detectCycles(job.tasks);
-  const scopedTasks = scheduledCycleTasks(job);
-  const map = new Map(job.tasks.map(t => [t.id, t]));
-  for (const task of scopedTasks) {
-    const ready = dependencyReady(task, map);
-    const facts: WorkflowContext = {
-      dependenciesSatisfied: task.dependencies.length > 0 && ready,
-      dependenciesUnsatisfied: task.dependencies.length > 0 && !ready,
-      runnable: ready,
-    };
-    const decision = decideTaskLifecycle(task, 'reconcile', facts);
-    if (decision.reason === 'ambiguous') throw new Error(`Ambiguous automatic task transition from ${task.state}`);
-    if (decision.accepted && decision.target) applyTaskState(task, decision.target);
-  }
+  reconcileTaskDependencies(job);
+  const scopedTasks = job.schedule?.currentRunSlot
+    ? job.tasks.filter(task => Date.parse(task.createdAt) >= Date.parse(job.schedule?.currentRunSlot ?? ''))
+    : job.tasks;
   if (job.schedule) {
     const planners = scopedTasks.filter(task => task.kind === 'planner');
     const latest = planners.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
@@ -47,21 +33,21 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
-function applyTaskState(task: Task, state: TaskState): void { task.state = state; if (['QUEUED', 'RUNNING', 'SUCCEEDED'].includes(state)) task.error = null; task.updatedAt = new Date().toISOString(); }
-export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<void> {
+export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Task['state']>> {
   const decision = decideTaskLifecycle(task, event, context);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
     ? `Ambiguous workflow transition from ${task.state} on ${event}`
     : `No enabled workflow transition from ${task.state} on ${event}`);
-  applyTaskState(task, decision.target);
+  applyTaskWorkflowDecision(task, decision);
+  return decision;
 }
-export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}): Promise<void> {
+export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Job['state']>> {
   const decision = decideJobLifecycle(job, event, context);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
     ? `Ambiguous workflow transition from ${job.state} on ${event}`
     : `No enabled workflow transition from ${job.state} on ${event}`);
-  job.state = decision.target;
-  job.updatedAt = new Date().toISOString();
+  applyJobWorkflowDecision(job, decision);
+  return decision;
 }
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;

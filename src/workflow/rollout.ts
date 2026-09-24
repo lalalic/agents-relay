@@ -1,15 +1,16 @@
 import type { JobLifecycleState, TaskState } from '../types.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow } from './definitions.js';
-import { WorkflowContext, WorkflowEngine } from './mermaid.js';
+import type { WorkflowContext } from './mermaid.js';
+import {
+  classifyWorkflowActions,
+  emptyWorkflowDecision,
+  type WorkflowDecision,
+} from './contracts.js';
+import { graphWorkflowDecision } from './runtime.js';
 
 export type WorkflowRolloutMode = 'legacy' | 'shadow' | 'graph';
-export type WorkflowDecision<State extends string> = {
-  accepted: boolean;
-  target: State | null;
-  guard: string | null;
-  actions: readonly string[];
-  reason: 'accepted' | 'no_transition' | 'ambiguous';
-};
+export type { WorkflowDecision } from './contracts.js';
+
 export type WorkflowShadowDiagnostic = {
   type: 'workflow.shadow.match' | 'workflow.shadow.mismatch';
   kind: 'job' | 'task';
@@ -21,6 +22,7 @@ export type WorkflowShadowDiagnostic = {
   legacy: WorkflowDecision<string>;
   graph: WorkflowDecision<string>;
 };
+
 export type WorkflowRolloutSnapshot = {
   mode: WorkflowRolloutMode;
   matches: number;
@@ -28,6 +30,7 @@ export type WorkflowRolloutSnapshot = {
 };
 
 type Reporter = (diagnostic: WorkflowShadowDiagnostic) => void;
+type LegacyTransition<State extends string> = { target: State; guard?: string; actions?: readonly string[] };
 
 let modeOverride: WorkflowRolloutMode | null = null;
 let reporter: Reporter | null = null;
@@ -44,114 +47,118 @@ export function workflowRolloutMode(): WorkflowRolloutMode {
   return modeOverride ?? parseWorkflowRolloutMode(process.env.AGENTS_RELAY_WORKFLOW_MODE);
 }
 
-export function setWorkflowRolloutMode(mode: WorkflowRolloutMode | null): void {
-  modeOverride = mode;
-}
-
-export function setWorkflowShadowReporter(value: Reporter | null): void {
-  reporter = value;
-}
-
-export function resetWorkflowRolloutDiagnostics(): void {
-  matches = 0;
-  mismatches = 0;
-}
-
+export function setWorkflowRolloutMode(mode: WorkflowRolloutMode | null): void { modeOverride = mode; }
+export function setWorkflowShadowReporter(value: Reporter | null): void { reporter = value; }
+export function resetWorkflowRolloutDiagnostics(): void { matches = 0; mismatches = 0; }
 export function workflowRolloutSnapshot(): WorkflowRolloutSnapshot {
   return { mode: workflowRolloutMode(), matches, mismatches };
 }
 
-function graphDecision<State extends string>(
-  engine: WorkflowEngine,
-  from: State,
-  event: string,
-  context: WorkflowContext,
+function accepted<State extends string>(
+  target: State,
+  guard: string | null = null,
+  actions: readonly string[] = [],
 ): WorkflowDecision<State> {
-  const enabled = engine.enabledSync(from, event, context);
-  if (enabled.length === 0) return { accepted: false, target: null, guard: null, actions: [], reason: 'no_transition' };
-  if (enabled.length > 1) return { accepted: false, target: null, guard: null, actions: [], reason: 'ambiguous' };
-  const transition = enabled[0];
+  const actionList = [...actions];
   return {
     accepted: true,
-    target: transition.to as State,
-    guard: transition.guard,
-    actions: [...transition.actions],
+    target,
+    guard,
+    actions: actionList,
+    ...classifyWorkflowActions(actionList),
     reason: 'accepted',
   };
 }
 
-const taskLegacy: Readonly<Record<TaskState, Readonly<Record<string, { target: TaskState; guard?: string; actions?: readonly string[] }>>>> = {
+const CLEAR = ['mutation.clearError', 'mutation.clearFailureReason'] as const;
+
+const taskLegacy: Readonly<Record<TaskState, Readonly<Record<string, LegacyTransition<TaskState>>>>> = {
   DRAFT: {
-    release: { target: 'QUEUED' },
+    release: { target: 'QUEUED', actions: CLEAR },
     block: { target: 'BLOCKED' },
     cancel: { target: 'CANCELLED' },
   },
   QUEUED: {
     hold: { target: 'DRAFT' },
-    'task.started': { target: 'RUNNING' },
+    'task.started': { target: 'RUNNING', actions: CLEAR },
     block: { target: 'BLOCKED' },
     fail: { target: 'FAILED' },
+    'effect.launchTask.failed': { target: 'FAILED' },
     cancel: { target: 'CANCELLED' },
   },
   RUNNING: {
     'task.blocked': { target: 'BLOCKED' },
-    'task.completed': { target: 'SUCCEEDED' },
+    'task.completed': { target: 'SUCCEEDED', actions: CLEAR },
     'task.failed': { target: 'FAILED' },
     'task.cancelled': { target: 'CANCELLED' },
   },
   BLOCKED: {
-    retry: { target: 'QUEUED' },
+    retry: { target: 'QUEUED', actions: CLEAR },
     cancel: { target: 'CANCELLED' },
   },
   SUCCEEDED: {},
   FAILED: {
-    retry: { target: 'QUEUED' },
-    'reconcile.started': { target: 'RUNNING' },
-    'reconcile.completed': { target: 'SUCCEEDED' },
+    retry: { target: 'QUEUED', actions: CLEAR },
+    'reconcile.started': { target: 'RUNNING', actions: CLEAR },
+    'reconcile.completed': { target: 'SUCCEEDED', actions: CLEAR },
     'reconcile.blocked': { target: 'BLOCKED' },
     cancel: { target: 'CANCELLED' },
   },
   CANCELLED: {},
 };
 
-const jobLegacy: Readonly<Record<JobLifecycleState, Readonly<Record<string, { target: JobLifecycleState; guard?: string; actions?: readonly string[] }>>>> = {
+const CANCEL_EFFECT = ['effect.cancelActiveTasks'] as const;
+const MERGE_EFFECT = ['effect.mergePullRequest'] as const;
+const jobLegacy: Readonly<Record<JobLifecycleState, Readonly<Record<string, LegacyTransition<JobLifecycleState>>>>> = {
   DRAFT: {
     activate: { target: 'ACTIVE' },
-    'pr.merged': { target: 'COMPLETED' },
+    'pr.merged': { target: 'COMPLETED', actions: CANCEL_EFFECT },
     cancel: { target: 'CANCELLED' },
   },
   ACTIVE: {
-    'pr.merged': { target: 'COMPLETED' },
+    'pr.merged': { target: 'COMPLETED', actions: CANCEL_EFFECT },
     cancel: { target: 'CANCELLED' },
   },
-  COMPLETED: {},
+  COMPLETED: {
+    'effect.cancelActiveTasks.failed': { target: 'COMPLETED' },
+  },
   CANCELLED: {
-    'pr.merged': { target: 'COMPLETED' },
+    'pr.merged': { target: 'COMPLETED', actions: CANCEL_EFFECT },
+    'effect.cancelActiveTasks.failed': { target: 'CANCELLED' },
   },
 };
 
-function taskLegacyDecision(from: TaskState, event: string, context: WorkflowContext): WorkflowDecision<TaskState> {
+function taskLegacyDecision(from: TaskState, event: string, facts: WorkflowContext): WorkflowDecision<TaskState> {
   if (event === 'reconcile') {
-    if (from === 'DRAFT' && context.dependenciesSatisfied === true) return { accepted: true, target: 'QUEUED', guard: 'dependenciesSatisfied', actions: ['release'], reason: 'accepted' };
-    if (from === 'QUEUED' && context.dependenciesUnsatisfied === true) return { accepted: true, target: 'DRAFT', guard: 'dependenciesUnsatisfied', actions: ['hold'], reason: 'accepted' };
-    if (from === 'QUEUED' && context.runnable === true) return { accepted: true, target: 'QUEUED', guard: 'runnable', actions: ['release'], reason: 'accepted' };
-    return { accepted: false, target: null, guard: null, actions: [], reason: 'no_transition' };
+    if (from === 'DRAFT' && facts.dependenciesSatisfied === true) return accepted('QUEUED', 'dependenciesSatisfied', CLEAR);
+    if (from === 'QUEUED' && facts.dependenciesUnsatisfied === true) return accepted('DRAFT', 'dependenciesUnsatisfied');
+    if (from === 'QUEUED' && facts.runnable === true) return accepted('QUEUED', 'runnable', CLEAR);
+    return emptyWorkflowDecision('no_transition');
+  }
+  if (event === 'dispatch') {
+    if (from === 'QUEUED' && facts.dispatchable === true) return accepted('QUEUED', 'dispatchable', ['effect.launchTask']);
+    return emptyWorkflowDecision('no_transition');
   }
   const transition = taskLegacy[from][event];
-  if (!transition) return { accepted: false, target: null, guard: null, actions: [], reason: 'no_transition' };
-  return { accepted: true, target: transition.target, guard: transition.guard ?? null, actions: transition.actions ?? [], reason: 'accepted' };
+  if (!transition) return emptyWorkflowDecision('no_transition');
+  return accepted(transition.target, transition.guard ?? null, transition.actions ?? []);
 }
 
-function jobLegacyDecision(from: JobLifecycleState, event: string, context: WorkflowContext): WorkflowDecision<JobLifecycleState> {
+function jobLegacyDecision(from: JobLifecycleState, event: string, facts: WorkflowContext): WorkflowDecision<JobLifecycleState> {
   if (event === 'pr.closed') {
-    if ((from === 'DRAFT' || from === 'ACTIVE') && context.notMerged === true) {
-      return { accepted: true, target: 'CANCELLED', guard: 'notMerged', actions: ['cancelJob'], reason: 'accepted' };
+    if ((from === 'DRAFT' || from === 'ACTIVE') && facts.notMerged === true) {
+      return accepted('CANCELLED', 'notMerged', CANCEL_EFFECT);
     }
-    return { accepted: false, target: null, guard: null, actions: [], reason: 'no_transition' };
+    return emptyWorkflowDecision('no_transition');
   }
+  if (event === 'review.approved' || event === 'implementation.completed') {
+    if (from === 'ACTIVE' && facts.autoMerge === true) return accepted('ACTIVE', 'autoMerge', MERGE_EFFECT);
+    return emptyWorkflowDecision('no_transition');
+  }
+  if (event === 'effect.mergePullRequest.failed' && from === 'ACTIVE') return accepted('ACTIVE');
   const transition = jobLegacy[from][event];
-  if (!transition) return { accepted: false, target: null, guard: null, actions: [], reason: 'no_transition' };
-  return { accepted: true, target: transition.target, guard: transition.guard ?? null, actions: transition.actions ?? [], reason: 'accepted' };
+  if (!transition) return emptyWorkflowDecision('no_transition');
+  return accepted(transition.target, transition.guard ?? null, transition.actions ?? []);
 }
 
 function sameDecision(a: WorkflowDecision<string>, b: WorkflowDecision<string>): boolean {
@@ -160,7 +167,11 @@ function sameDecision(a: WorkflowDecision<string>, b: WorkflowDecision<string>):
     && a.guard === b.guard
     && a.reason === b.reason
     && a.actions.length === b.actions.length
-    && a.actions.every((value, index) => value === b.actions[index]);
+    && a.actions.every((value, index) => value === b.actions[index])
+    && a.mutations.length === b.mutations.length
+    && a.mutations.every((value, index) => value === b.mutations[index])
+    && a.effects.length === b.effects.length
+    && a.effects.every((value, index) => value === b.effects[index]);
 }
 
 function report(
@@ -194,14 +205,14 @@ function report(
 export function decideTaskLifecycle(
   task: Pick<{ jobId?: string; id: string; state: TaskState }, 'jobId' | 'id' | 'state'>,
   event: string,
-  context: WorkflowContext = {},
+  facts: WorkflowContext = {},
 ): WorkflowDecision<TaskState> {
-  const legacy = taskLegacyDecision(task.state, event, context);
+  const legacy = taskLegacyDecision(task.state, event, facts);
   const mode = workflowRolloutMode();
   if (mode === 'legacy') return legacy;
-  const graph = graphDecision(taskLifecycleWorkflow, task.state, event, context);
+  const graph = graphWorkflowDecision(taskLifecycleWorkflow, task.state, event, facts);
   if (mode === 'shadow') {
-    report('task', task.jobId ?? 'unknown', task.id, event, task.state, context, legacy, graph);
+    report('task', task.jobId ?? 'unknown', task.id, event, task.state, facts, legacy, graph);
     return legacy;
   }
   return graph;
@@ -210,14 +221,14 @@ export function decideTaskLifecycle(
 export function decideJobLifecycle(
   job: Pick<{ id: string; state: JobLifecycleState }, 'id' | 'state'>,
   event: string,
-  context: WorkflowContext = {},
+  facts: WorkflowContext = {},
 ): WorkflowDecision<JobLifecycleState> {
-  const legacy = jobLegacyDecision(job.state, event, context);
+  const legacy = jobLegacyDecision(job.state, event, facts);
   const mode = workflowRolloutMode();
   if (mode === 'legacy') return legacy;
-  const graph = graphDecision(jobLifecycleWorkflow, job.state, event, context);
+  const graph = graphWorkflowDecision(jobLifecycleWorkflow, job.state, event, facts);
   if (mode === 'shadow') {
-    report('job', job.id, undefined, event, job.state, context, legacy, graph);
+    report('job', job.id, undefined, event, job.state, facts, legacy, graph);
     return legacy;
   }
   return graph;
