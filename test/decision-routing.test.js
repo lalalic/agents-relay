@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { LayaCliDecisionEngine, parseChoiceDecision, validateDecisionRequest } from '../dist/decision.js';
+import { decisionMode, LayaCliDecisionEngine, parseChoiceDecision, validateDecisionRequest } from '../dist/decision.js';
 import { discoverModelCandidates, routeModel } from '../dist/model-routing.js';
 import { routeWorker, workerCandidates } from '../dist/worker-routing.js';
 
@@ -17,6 +17,17 @@ class FakeDecisionEngine {
     return { type: 'choice', choice: this.choice, probabilities: Object.fromEntries(decisionContract.choices.map(item => [item, item === this.choice ? 0.8 : 0.2])) };
   }
 }
+
+
+test('runtime decision mode is always active and ignores environment configuration', () => {
+  const previous = process.env.AGENTS_RELAY_DECISION_MODE;
+  process.env.AGENTS_RELAY_DECISION_MODE = 'off';
+  try {
+    assert.equal(decisionMode(), 'active');
+  } finally {
+    if (previous === undefined) delete process.env.AGENTS_RELAY_DECISION_MODE; else process.env.AGENTS_RELAY_DECISION_MODE = previous;
+  }
+});
 
 test('decision request and choice output are validated against the caller contract', () => {
   validateDecisionRequest({ facts: { task: 'x' } }, contract);

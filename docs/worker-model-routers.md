@@ -79,21 +79,16 @@ It must write JSON containing either a direct `choice` result or `answers.decisi
 
 The concrete command is replaceable without changing routing code:
 
-- `AGENTS_RELAY_LAYA_COMMAND` — executable, default `uvx`;
 - `AGENTS_RELAY_LAYA_ARGS` — JSON string array of base arguments, default `["laya-mlx","predict"]`; the adapter appends `--state-file` and `--questions` paths;
 - `AGENTS_RELAY_LAYA_TIMEOUT_MS` — per-decision timeout, default 30000 ms.
 
 The default CLI is the `laya-mlx` package executed transiently through `uvx`; no project venv or resident model process is required. Routing still fails closed to the deterministic policy if `uvx`/Laya is unavailable or invalid.
 
-## Rollout modes
+## Active decision behavior
 
-`AGENTS_RELAY_DECISION_MODE` controls authority:
+Laya decisions are authoritative whenever more than one legal candidate remains. The runtime always uses active mode; there is no production `off`/`shadow` configuration switch.
 
-- `off` — deterministic routing only; no Laya invocation;
-- `shadow` — invoke Laya and persist its proposed choice/evidence, but keep the deterministic route authoritative;
-- `active` — use a valid Laya decision; any process, timeout, JSON, or contract failure falls back deterministically.
-
-Invalid/out-of-contract choices can never bypass hard gates. The normal durable routing objects may include compact decision evidence (mode, engine, proposed choice, probabilities, fallback/error) for later evaluation.
+If Laya exits non-zero, times out, emits malformed JSON, or returns a choice outside the caller's contract, routing falls back to the deterministic policy. Hard gates remain authoritative and an invalid Laya answer can never make an ineligible worker or model eligible.
 
 ## Model profile discovery
 

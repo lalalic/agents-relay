@@ -118,7 +118,7 @@ export class LayaCliDecisionEngine implements DecisionEngine {
   private readonly env?: NodeJS.ProcessEnv;
 
   constructor(options: LayaCliOptions = {}) {
-    this.command = options.command ?? process.env.AGENTS_RELAY_LAYA_COMMAND ?? 'uvx';
+    this.command = options.command ?? 'uvx';
     this.args = options.args ?? layaArgsFromEnv();
     this.timeoutMs = options.timeoutMs ?? Number(process.env.AGENTS_RELAY_LAYA_TIMEOUT_MS ?? 30_000);
     this.env = options.env;
@@ -197,8 +197,8 @@ function layaArgsFromEnv(): readonly string[] {
   }
 }
 
-export function decisionMode(value = process.env.AGENTS_RELAY_DECISION_MODE): DecisionMode {
-  return value === 'shadow' || value === 'active' ? value : 'off';
+export function decisionMode(): DecisionMode {
+  return 'active';
 }
 
 export async function chooseWithDecision(
