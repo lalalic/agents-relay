@@ -345,7 +345,8 @@ test('repository pool routes correlated task lifecycle events to the target reco
   assert.deepEqual(calls,[
     {kind:'reconcile',id:'job-2',maxConcurrent:4},
     {kind:'event',type:'task.started',jobId:'job-2',taskId:'task-2',maxConcurrent:4},
-    {kind:'event',type:'task.completed',jobId:'job-2',taskId:'task-2',maxConcurrent:4}
+    {kind:'event',type:'task.completed',jobId:'job-2',taskId:'task-2',maxConcurrent:4},
+    {kind:'reconcile',id:'job-2',maxConcurrent:4}
   ]);
   await stop();
 });

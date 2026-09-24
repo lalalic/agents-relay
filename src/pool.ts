@@ -77,7 +77,9 @@ export class RepositoryWorkerPool {
       return;
     }
     const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
-    await this.makeReconciler(store, Math.max(1, this.concurrency)).handleEvent(event);
+    const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
+    await reconciler.handleEvent(event);
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) await reconciler.reconcile(event.job_id);
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
