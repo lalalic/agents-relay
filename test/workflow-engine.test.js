@@ -69,7 +69,7 @@ A --> C: stop
 
 test('canonical lifecycle graphs expose the integrated runtime event contract', async () => {
   const closed=jobLifecycleWorkflow.graph.transitions.find(t=>t.from==='ACTIVE' && t.event==='pr.closed');
-  assert.deepEqual(closed && {to:closed.to,guard:closed.guard,actions:closed.actions},{to:'CANCELLED',guard:'notMerged',actions:['cancelJob']});
+  assert.deepEqual(closed && {to:closed.to,guard:closed.guard,actions:closed.actions},{to:'CANCELLED',guard:'notMerged',actions:['effect.cancelActiveTasks']});
   assert.equal(await jobLifecycleWorkflow.transition('ACTIVE','pr.closed',{notMerged:true}),'CANCELLED');
   await assert.rejects(jobLifecycleWorkflow.transition('ACTIVE','pr.closed',{notMerged:false}),/No enabled workflow transition/);
 

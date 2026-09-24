@@ -18,6 +18,7 @@ export type WorkflowGraph = {
 export type WorkflowContext = Record<string, unknown>;
 export type WorkflowGuard = (context: WorkflowContext) => boolean | Promise<boolean>;
 export type WorkflowAction = (context: WorkflowContext, transition: WorkflowTransition) => void | Promise<void>;
+export type WorkflowActionBinding = WorkflowAction | { readonly declarative: true };
 
 const STATE = String.raw`(?:[A-Za-z_][A-Za-z0-9_.-]*|\[\*\])`;
 const TRANSITION = new RegExp(`^(${STATE})\\s*-->\\s*(${STATE})(?:\\s*:\\s*(.+))?$`);
@@ -99,7 +100,7 @@ export class WorkflowEngine {
   constructor(
     readonly graph: WorkflowGraph,
     private readonly guards: Readonly<Record<string, WorkflowGuard>> = {},
-    private readonly actions: Readonly<Record<string, WorkflowAction>> = {},
+    private readonly actions: Readonly<Record<string, WorkflowActionBinding>> = {},
   ) {
     this.validateRegistryBindings();
   }
@@ -140,7 +141,9 @@ export class WorkflowEngine {
     if (enabled.length > 1) throw new Error(`Ambiguous workflow transition from ${state} on ${event}`);
     const transition = enabled[0];
     for (const actionName of transition.actions) {
-      const value = this.actions[actionName](context, transition);
+      const action = this.actions[actionName];
+      if (typeof action !== 'function') continue;
+      const value = action(context, transition);
       if (value instanceof Promise) throw new Error(`Workflow action ${actionName} is asynchronous and cannot be used in a synchronous transition`);
     }
     return transition.to;
@@ -164,7 +167,7 @@ export class WorkflowEngine {
     const transition = enabled[0];
     for (const actionName of transition.actions) {
       const action = this.actions[actionName];
-      await action(context, transition);
+      if (typeof action === 'function') await action(context, transition);
     }
     return transition.to;
   }
