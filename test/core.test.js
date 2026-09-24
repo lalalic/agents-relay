@@ -51,6 +51,21 @@ const graphCommentClient = (comments, prNumber=1, prState='OPEN') => {
   };
 };
 class FakeAdapter { name='codex'; id='fake-codex'; capabilities=['model','codex']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
+class DelayedTerminalStore extends InMemoryStore {
+  constructor(initialJob) {
+    super(initialJob);
+    this.terminalSaveStarted = new Promise(resolve => { this.resolveTerminalSaveStarted = resolve; });
+    this.terminalSaveRelease = new Promise(resolve => { this.resolveTerminalSaveRelease = resolve; });
+  }
+  async saveTask(item) {
+    if (item.state === 'SUCCEEDED') {
+      this.resolveTerminalSaveStarted();
+      await this.terminalSaveRelease;
+    }
+    return super.saveTask(item);
+  }
+  releaseTerminalSave() { this.resolveTerminalSaveRelease(); }
+}
 
 test('dashboard task action retries failed work and cancels queued work durably', async () => {
   const failed=task('retry-me','FAILED'); failed.attempt=3; failed.maxAttempts=3; failed.error='boom';
@@ -510,6 +525,31 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   assert.equal(events.filter(event=>event.type==='task.failed').length,0);
   assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
   await stop(); await stopEvents();
+});
+
+test('accepted terminal event protects against process-exit watchdog while persistence is in flight', async () => {
+  const t=task('terminal-persist-race');
+  const store=new DelayedTerminalStore(job([t]));
+  const adapter=new FakeAdapter();
+  const bus=new MemoryEventBus();
+  const events=[];
+  const launchReconciler=new Reconciler(store,{owner:'launcher',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
+  const lifecycleReconciler=new Reconciler(store,{owner:'lifecycle',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  await launchReconciler.reconcile('j');
+  const source=await activeEventSource(store,'terminal-persist-race');
+  await lifecycleReconciler.handleEvent(eventFor('j','terminal-persist-race',null,'task.started','running','worker began','user',undefined,source));
+  const terminal=lifecycleReconciler.handleEvent(eventFor('j','terminal-persist-race',null,'task.completed','succeeded','durable output','user',undefined,source));
+  await store.terminalSaveStarted;
+  adapter.resolvers[0].resolve({summary:'runtime exited'});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(events.filter(event=>event.type==='task.failed').length,0);
+  store.releaseTerminalSave();
+  await terminal;
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  assert.equal(events.filter(event=>event.type==='task.failed').length,0);
+  await stopEvents();
 });
 
 test('worker failure before Codex nonzero exit is not duplicated by the watchdog', async () => {
