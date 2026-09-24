@@ -22,6 +22,34 @@ For a newly created PR (`job create --head`), standalone objective Markdown is r
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
+### Task input vs result
+
+A Task input records **what is known and what has already been decided before execution**. A Task result records **what execution discovered and what was actually done**.
+
+Task input should include, as applicable:
+
+- goal and observed behavior;
+- evidence and reproduction details;
+- constraints and acceptance criteria;
+- **known root cause** only when it is already confirmed by the user, a prior Task, or durable evidence;
+- **hypothesis** when a suspected cause is not yet confirmed;
+- **proposed solution** when there is a candidate approach that the executor may validate or change;
+- **required solution** when the user or orchestrator has already decided the implementation approach. Executors must follow it unless they discover that it is infeasible, unsafe, or conflicts with higher-priority constraints, in which case they must report the deviation explicitly.
+
+Do not require a producer to invent a root cause or solution that is not known yet.
+
+Task results should include, as applicable:
+
+- **root cause** for bug, incident, failure, diagnostic, or recovery work; if an investigation cannot determine it, state that explicitly with the remaining uncertainty;
+- **implemented solution**, describing what was actually changed or done;
+- **deviations** from any proposed or required solution, with the reason;
+- **validation** showing how the result was verified;
+- relevant changed files, commits, PR comments, artifacts, or remaining issues.
+
+For feature/refactor work with no failure to diagnose, root cause is not required. For research tasks, use findings/evidence instead of forcing root-cause language.
+
+Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
+
 ## Worker routing order
 
 Every new model-backed executable task follows this order:
