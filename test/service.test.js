@@ -72,6 +72,12 @@ test('service defaults and package bins use stable package entrypoints', async (
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
 });
 
+test('publish workflow can write publication markers to pull requests', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/publish.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /issues: write/);
+  assert.match(workflow, /pull-requests: write/);
+});
+
 test('release version selection starts at 1.0.0 and increments only the patch', () => {
   assert.equal(nextPatchVersion(''), '1.0.0');
   assert.equal(nextPatchVersion('1.0.0'), '1.0.1');
