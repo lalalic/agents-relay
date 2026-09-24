@@ -53,12 +53,14 @@ ${JOB_OBJECTIVE_END}`;
 }
 export function renderTaskComment(task: Task): string {
   const result = task.result?.summary?.trim() ? `\n\n### Result\n\n${task.result.summary.trim()}` : '';
+  const graph = task.agentGraph?.trim() ? `\n\n### Agent graph\n\n\`\`\`mermaid\n${task.agentGraph.trim()}\n\`\`\`` : '';
   const { input: _input, ...metadata } = task;
   return `${marker(TASK_MARKER, metadata)}
 ## Task: ${task.id}
 
 - **State:** ${task.state}
 - **Priority:** ${task.priority ?? 'P2'}
+${graph}
 
 ### Work
 

@@ -9,7 +9,7 @@ export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draf
 export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
   const [owner, name] = repository.split('/', 2);
   if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0 || !client.graphql) return [];
-  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergedAt closedAt body comments(last:100){nodes{author{login} body}}}}}';
+  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergedAt closedAt body comments(last:100){nodes{databaseId url author{login} body}}}}}';
   const data = await client.graphql(query, { owner, name, number: prNumber }) as Record<string, unknown>;
   const repo = data.repository as Record<string, unknown> | undefined;
   const pr = repo?.pullRequest as Record<string, unknown> | undefined;
@@ -22,7 +22,13 @@ export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, 
   const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
   const commentJobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
   const jobs = bodyJob ? [bodyJob] : commentJobs;
-  const tasks = trusted.map(item => parseTask(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Task => item !== null);
+  const tasks = trusted.map(item => {
+    const row = item as Record<string, unknown>;
+    const task = parseTask(String(row.body ?? ''));
+    if (!task) return null;
+    const taskUrl = typeof row.url === 'string' ? row.url : Number.isInteger(row.databaseId) ? `https://github.com/${repository}/pull/${prNumber}#issuecomment-${row.databaseId}` : undefined;
+    return taskUrl ? { ...task, taskUrl } : task;
+  }).filter((item): item is Task => item !== null);
   const state = String(pr.state ?? '').toUpperCase();
   const githubState: PullRequestState = pr.merged === true ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
   return jobs.map(job => {

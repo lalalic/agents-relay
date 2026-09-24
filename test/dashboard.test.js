@@ -232,8 +232,11 @@ test('task details expose ChatGPT thread as chat link instead of raw execution i
 test('task details omit input and result from dashboard', () => {
   assert.doesNotMatch(dashboardHtml, /markdownField\('Input'/);
   assert.doesNotMatch(dashboardHtml, /markdownField\('Result'/);
-  assert.doesNotMatch(dashboardHtml, /function markdownValue\(/);
   assert.doesNotMatch(dashboardHtml, /function inlineMarkdown\(/);
+  assert.match(dashboardHtml, /function taskCommentField\(task\)/);
+  assert.match(dashboardHtml, /Open task comment/);
+  assert.match(dashboardHtml, /function agentGraphField\(task\)/);
+  assert.match(dashboardHtml, /Task agent graph/);
 });
 
 
@@ -259,12 +262,13 @@ test('job list keeps repository quick filter without a separate repository metad
 
 
 
-test('job list quick filters omit redundant jobs mode while status, autonomous, and draft stay exclusive', () => {
+test('job list quick filters let autonomous and draft toggle back off', () => {
   assert.doesNotMatch(dashboardHtml, /id="quick-jobs"/);
   assert.match(dashboardHtml, /id="quick-status"/);
   assert.match(dashboardHtml, /id="quick-autonomous"/);
   assert.match(dashboardHtml, /id="quick-draft"/);
   assert.match(dashboardHtml, /function setQuickMode\(mode,status=''\)/);
+  assert.match(dashboardHtml, /function toggleQuickMode\(mode\)/);
   assert.match(dashboardHtml, /quickMode==='autonomous'/);
   assert.match(dashboardHtml, /quickMode==='draft'/);
   assert.match(dashboardHtml, /quickMode==='status'/);
@@ -273,6 +277,15 @@ test('job list quick filters omit redundant jobs mode while status, autonomous, 
   assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
   assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
   assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
+  assert.match(dashboardHtml, /toggleQuickMode\('autonomous'\)/);
+  assert.match(dashboardHtml, /toggleQuickMode\('draft'\)/);
+});
+
+test('job list supports title and PR-number wildcard search', () => {
+  assert.match(dashboardHtml, /id="job-search"/);
+  assert.match(dashboardHtml, /Search title or PR #/);
+  assert.match(dashboardHtml, /function matchesSearch\(job\)/);
+  assert.match(dashboardHtml, /agents-relay:job-search/);
 });
 
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {

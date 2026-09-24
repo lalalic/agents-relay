@@ -18,10 +18,12 @@ test('rendered job/task markers do not duplicate human markdown content', async 
 
   const durableTask = task('dedupe', 'work');
   durableTask.input = '```mermaid\nflowchart TD\nA --> B\n```\n\nDo the work.';
+  durableTask.agentGraph = 'flowchart LR\nresearch[agent:researcher] --> review[agent:reviewer]';
   const taskBody = renderTaskComment(durableTask);
   const taskMarker = taskBody.slice(0, taskBody.indexOf('-->') + 3);
   assert.doesNotMatch(taskMarker, /Do the work/);
-  assert.doesNotMatch(taskMarker, /flowchart TD/);
+  assert.match(taskBody, /### Agent graph/);
+  assert.match(taskBody, /research\[agent:researcher\] --> review\[agent:reviewer\]/);
   assert.equal(parseTask(taskBody)?.input, durableTask.input);
 });
 test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
