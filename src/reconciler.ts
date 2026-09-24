@@ -82,6 +82,15 @@ If no terminal event has been published, publish task.failed before exiting.`;
 }
 
 const taskLaunchClaims = new Set<string>();
+const terminalExecutionClaims = new Set<string>();
+function claimTerminalExecution(sourceId: string): void {
+  terminalExecutionClaims.add(sourceId);
+  const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
+  cleanup.unref();
+}
+function terminalExecutionClaimed(jobId: string, taskId: string, executionId: string): boolean {
+  return terminalExecutionClaims.has(executionEventSource(jobId, taskId, executionId));
+}
 
 export class Reconciler {
   private readonly live = new Map<string, LiveExecution>();
@@ -658,7 +667,7 @@ export class Reconciler {
       { authoritative: false, waitingForTerminalEvent: true, processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
-    if (['QUEUED', 'RUNNING'].includes(task.state) && task.adapter === 'codex') this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
+    if (['QUEUED', 'RUNNING'].includes(task.state) && task.adapter === 'codex' && !terminalExecutionClaimed(jobId, taskId, executionId)) this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
   }
 
   private scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
@@ -671,9 +680,10 @@ export class Reconciler {
   }
 
   private async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
+    if (terminalExecutionClaimed(jobId, taskId, executionId)) return;
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
+    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state) || terminalExecutionClaimed(jobId, taskId, executionId)) return;
     const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
     const message = workerStarted
       ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
@@ -734,7 +744,9 @@ export class Reconciler {
     if (task.state !== 'RUNNING') return;
     const terminalWaiter = this.terminalWaiters.get(task.id);
     if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
-    this.clearExecution(task.id, task.executionId);
+    const acceptedExecutionId = task.executionId;
+    if (modelBacked && acceptedExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, acceptedExecutionId));
+    this.clearExecution(task.id, acceptedExecutionId);
     task.leaseOwner = null;
     task.leaseExpiresAt = null;
     task.updatedAt = event.timestamp || new Date().toISOString();
