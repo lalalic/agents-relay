@@ -286,6 +286,21 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await stop();
 });
 
+test('repository pool emits package.published from a correlated publication webhook without service actions', async () => {
+  const bus=new MemoryEventBus();
+  const events=[];
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const root={...job([]),id:'release-job',repository:'owner/repo',prNumber:83};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{}}));
+  const stop=await bus.subscribe('release-job',async event=>events.push(event));
+  await pool.webhookWake(bus,root,{deliveryId:'delivery-123',event:'issue_comment',action:'created',repository:'owner/repo',pullRequest:83,publication:{package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'}});
+  assert.deepEqual(events.map(event=>event.type),['package.published','github.webhook']);
+  const published=events[0];
+  assert.deepEqual(published.data,{deliveryId:'delivery-123',repository:'owner/repo',prNumber:83,package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'});
+  assert.deepEqual(published.source,{id:'github/owner/repo/delivery/delivery-123',component:'github-webhook'});
+  await stop();
+});
+
 test('repository pool routes correlated task lifecycle events to the target reconciler', async () => {
   const bus=new MemoryEventBus();
   const calls=[];

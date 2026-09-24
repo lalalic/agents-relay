@@ -122,7 +122,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (!event.repository || !event.pullRequest) return;
       try {
         const refreshed = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
-        for (const item of refreshed) await pool.webhookWake(bus, item.job, event.deliveryId, event.event, event.action);
+        for (const item of refreshed) await pool.webhookWake(bus, item.job, event);
       } catch (error) {
         process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       }

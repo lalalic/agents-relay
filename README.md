@@ -108,6 +108,10 @@ Pushes to `main` run `.github/workflows/publish.yml`: install, test, choose the 
 
 Normal consumers should invoke the CLI with `npx agents-relay ...` (or `npx agents-relayd ...`).
 
+After a successful npm publish, the workflow records one idempotent `agents-relay:package-published:v1` marker comment on the originating managed PR. The existing GitHub `issue_comment` webhook resolves that PR back to its durable Job and emits a correlated `package.published` events-bus event containing repository, package, version, registry, commit SHA, PR number, and webhook delivery ID. Its source identity is the GitHub delivery (`github/<repository>/delivery/<delivery-id>`), not a worker execution identity.
+
+`package.published` is a release fact, not a service-management command. Agents Relay does not pull packages, restart PM2, or decide which local service consumes a package. An external deployment subscriber may listen for this event, verify that the exact version is pullable, update/restart the affected service, verify its running version and health, and publish its own deployment outcome event. This keeps publication, deployment, and healthy-running as separate facts and removes the need for an orchestrator thread to synchronously wait for npm readiness.
+
 For explicit local demo/test mode:
 
 ~~~sh
