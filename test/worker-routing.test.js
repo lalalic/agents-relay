@@ -4,7 +4,7 @@ import { parsePlannerResult } from '../dist/planner.js';
 import { discoverAgents } from '../dist/registry.js';
 import { readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
 import { selectReviewer } from '../dist/reviewer-routing.js';
-import { selectWorker } from '../dist/worker-routing.js';
+import { selectWorker, usageForProvider } from '../dist/worker-routing.js';
 
 const generatedAt = '2026-09-21T16:00:00.000Z';
 
@@ -251,4 +251,28 @@ test('known near-exhausted quota yields to an otherwise eligible worker with unk
     { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'], routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
   ], { capabilities: ['model'] });
   assert.equal(decision.selection.workerId, 'chatgpt');
+});
+
+test('usage facts expose remaining capacity and the nearest reset horizon for model routing', () => {
+  const now = Date.parse('2026-09-21T16:00:00.000Z');
+  const snapshot = {
+    generatedAt,
+    providers: [{ id: 'openai', label: 'OpenAI', usage: {
+      available: true,
+      generatedAt,
+      fiveHour: { usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor((now + 30 * 60_000) / 1000) },
+      weekly: { usedPercent: 10, windowMinutes: 10080, resetsAt: Math.floor((now + 3 * 24 * 60 * 60_000) / 1000) },
+      reason: null,
+    }}],
+    credits: [],
+  };
+  const resource = usageForProvider(snapshot, 'openai', now);
+  assert.equal(resource.usedPercent, 20);
+  assert.equal(resource.remainingPercent, 80);
+  assert.equal(resource.resetInMinutes, 30);
+  assert.equal(resource.resetAt, snapshot.providers[0].usage.fiveHour.resetsAt);
+  assert.equal(resource.windows.fiveHour.remainingPercent, 80);
+  assert.equal(resource.windows.fiveHour.resetInMinutes, 30);
+  assert.equal(resource.windows.weekly.remainingPercent, 90);
+  assert.equal(resource.windows.weekly.resetInMinutes, 3 * 24 * 60);
 });

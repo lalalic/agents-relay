@@ -112,6 +112,26 @@ test('model router discovers configured Codex profiles then calls decide after w
   }
 });
 
+
+test('model router passes reset-aware resource facts and burn guidance to the decision engine', async () => {
+  const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
+  const candidates = [
+    { id: 'standard', provider: 'openai', model: 'standard', reasoning: 'medium', resourceHealthy: true, resourceUsedPercent: 20, resourceRemainingPercent: 80, resourceResetAt: 1000, resourceResetInMinutes: 30, resourceWindows: { fiveHour: { remainingPercent: 80, resetAt: 1000, resetInMinutes: 30 }, weekly: { remainingPercent: 60, resetAt: 9000, resetInMinutes: 3000 } } },
+    { id: 'strong', provider: 'openai', model: 'strong', reasoning: 'high', resourceHealthy: true, resourceUsedPercent: 20, resourceRemainingPercent: 80, resourceResetAt: 1000, resourceResetInMinutes: 30, resourceWindows: { fiveHour: { remainingPercent: 80, resetAt: 1000, resetInMinutes: 30 }, weekly: { remainingPercent: 60, resetAt: 9000, resetInMinutes: 3000 } } },
+  ];
+  const engine = new FakeDecisionEngine('strong');
+  const routed = await routeModel(worker, candidates, { decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'implementation' } });
+  const facts = engine.calls[0].request.facts.candidates[0];
+  assert.equal(facts.resourceRemainingPercent, 80);
+  assert.equal(facts.resourceResetAt, 1000);
+  assert.equal(facts.resourceResetInMinutes, 30);
+  assert.equal(facts.resourceWindows.fiveHour.resetInMinutes, 30);
+  assert.equal(facts.resourceWindows.weekly.remainingPercent, 60);
+  assert.match(engine.calls[0].contract.question, /every quota window/);
+  assert.equal(routed.routing.model, 'strong');
+  assert.equal(routed.routing.reasoning, 'high');
+});
+
 test('model hard gates precede decide, single candidate bypasses decide, and failure falls back', async () => {
   const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
   const candidates = [

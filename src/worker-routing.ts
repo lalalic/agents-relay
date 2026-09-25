@@ -1,6 +1,6 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
 import { AccountUsageOverview } from './usage.js';
-import { AdapterName, AgentAvailability, AgentRegistration, WorkerRequirements, WorkerSelection } from './types.js';
+import { AdapterName, AgentAvailability, AgentRegistration, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
 
 export type WorkerCandidate = {
   workerId: string;
@@ -15,6 +15,10 @@ export type WorkerCandidate = {
   resourceHealthy?: boolean;
   resourceProvider?: string;
   resourceUsedPercent?: number;
+  resourceRemainingPercent?: number;
+  resourceResetAt?: number;
+  resourceResetInMinutes?: number;
+  resourceWindows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow };
 };
 
 export type WorkerRoutingDecision = { candidate: WorkerCandidate; selection: WorkerSelection };
@@ -24,11 +28,32 @@ export type WorkerRoutingOptions = {
   taskFacts?: Record<string, unknown>;
 };
 
-export function usageForProvider(snapshot: AccountUsageOverview | undefined, provider: string): { healthy?: boolean; usedPercent?: number } {
+export function usageForProvider(snapshot: AccountUsageOverview | undefined, provider: string, now = Date.now()): { healthy?: boolean; usedPercent?: number; remainingPercent?: number; resetAt?: number; resetInMinutes?: number; windows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow } } {
   const usage = snapshot?.providers.find(item => item.id === provider)?.usage;
   if (usage?.available) {
     const usedPercent = Math.max(usage.fiveHour?.usedPercent ?? 0, usage.weekly?.usedPercent ?? 0);
-    return { healthy: usedPercent < 100, usedPercent };
+    const resourceWindow = (window: typeof usage.fiveHour): ResourceUsageWindow | undefined => {
+      if (!window) return undefined;
+      const resetAt = window.resetsAt;
+      return {
+        remainingPercent: 100 - window.usedPercent,
+        resetAt,
+        resetInMinutes: resetAt === null ? null : Math.max(0, Math.ceil((resetAt * 1000 - now) / 60_000)),
+      };
+    };
+    const windows = { fiveHour: resourceWindow(usage.fiveHour), weekly: resourceWindow(usage.weekly) };
+    const resetWindow = [usage.fiveHour, usage.weekly]
+      .filter((window): window is NonNullable<typeof window> => window?.resetsAt !== null && window?.resetsAt !== undefined)
+      .filter(window => window.resetsAt! * 1000 > now)
+      .sort((left, right) => left.resetsAt! - right.resetsAt!)[0];
+    return {
+      healthy: usedPercent < 100,
+      usedPercent,
+      remainingPercent: resetWindow ? 100 - resetWindow.usedPercent : undefined,
+      resetAt: resetWindow?.resetsAt ?? undefined,
+      resetInMinutes: resetWindow?.resetsAt ? Math.max(0, Math.ceil((resetWindow.resetsAt * 1000 - now) / 60_000)) : undefined,
+      windows,
+    };
   }
   const credits = snapshot?.credits.find(item => item.id === provider)?.credits;
   if (credits?.available) {
@@ -63,6 +88,10 @@ export function workerCandidates(
         resourceHealthy: resource.healthy,
         resourceProvider: provider,
         resourceUsedPercent: resource.usedPercent,
+        resourceRemainingPercent: resource.remainingPercent,
+        resourceResetAt: resource.resetAt,
+        resourceResetInMinutes: resource.resetInMinutes,
+        resourceWindows: resource.windows,
       };
     });
   });
@@ -101,6 +130,10 @@ function selection(selected: WorkerCandidate, selectedBy: string, decisionEviden
     resourceHealthy: selected.resourceHealthy,
     resourceProvider: selected.resourceProvider,
     resourceUsedPercent: selected.resourceUsedPercent,
+    resourceRemainingPercent: selected.resourceRemainingPercent,
+    resourceResetAt: selected.resourceResetAt,
+    resourceResetInMinutes: selected.resourceResetInMinutes,
+    resourceWindows: selected.resourceWindows,
     decisionEvidence,
   };
 }
@@ -137,6 +170,10 @@ export async function routeWorker(
       resourceHealthy: item.resourceHealthy ?? null,
       resourceProvider: item.resourceProvider ?? null,
       resourceUsedPercent: item.resourceUsedPercent ?? null,
+      resourceRemainingPercent: item.resourceRemainingPercent ?? null,
+      resourceResetAt: item.resourceResetAt ?? null,
+      resourceResetInMinutes: item.resourceResetInMinutes ?? null,
+      resourceWindows: item.resourceWindows ?? null,
     })),
   })) as JsonValue;
   const choice = await chooseWithDecision(
