@@ -114,10 +114,19 @@ test('legacy active recovery without parent linkage still suppresses duplicate r
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 
-test('terminal prior recovery permits a later recovery generation', () => {
+test('failed prior recovery suppresses another automatic recovery generation', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
   recovery.state = 'FAILED';
+
+  const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
+  assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
+});
+
+test('successful prior recovery permits a later recovery generation', () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.state = 'SUCCEEDED';
 
   const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
   const [next] = pendingTroubleshooterTasks(job([retriedFailure, recovery]));
