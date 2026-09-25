@@ -85,6 +85,10 @@ ReconcilerRuntimeBase
 
 Direct lifecycle state assignment is reserved for the explicit historical compatibility repair boundary. Normal lifecycle changes go through graph transitions.
 
-## Authority
+## Stability contract
 
-The Mermaid Graph Engine is the only authoritative Job/Task lifecycle decision path. The temporary legacy/shadow rollout evaluator and comparison telemetry have been removed.
+The Mermaid Graph Engine is the only authoritative Job/Task lifecycle decision path. There is no alternate lifecycle evaluator or runtime mode switch.
+
+Canonical graphs fail closed at load time when they reference an undeclared event, fact/guard, mutation, or effect. Dependency reconciliation persists graph-decided Task transitions before later dispatch/effect work proceeds. External effects remain behind `WorkflowEffectExecutor`; they do not mutate lifecycle policy directly.
+
+This stabilization phase is complete once the repository contract tests pass. Future lifecycle regressions are treated as bugs against this contract rather than as unfinished Graph Engine migration work.
