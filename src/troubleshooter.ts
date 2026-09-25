@@ -43,8 +43,9 @@ function recoveryTargetsTask(recovery: Task, original: Task): boolean {
   return recovery.id.startsWith(`troubleshoot-${slug(original.id)}-a`);
 }
 
-function hasActiveRecovery(job: Job, original: Task): boolean {
-  return job.tasks.some(task => recoveryTargetsTask(task, original) && ACTIVE_RECOVERY_STATES.has(task.state));
+function hasRecoveryBarrier(job: Job, original: Task): boolean {
+  return job.tasks.some(task => recoveryTargetsTask(task, original)
+    && (ACTIVE_RECOVERY_STATES.has(task.state) || ['FAILED', 'CANCELLED'].includes(task.state)));
 }
 
 export function pendingTroubleshooterTasks(job: Job): Task[] {
@@ -53,7 +54,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
   for (const task of job.tasks) {
     if (!['FAILED', 'BLOCKED'].includes(task.state) || task.kind === 'planner' || task.agentName === 'troubleshooter' || !belongsToCurrentRun(job, task)) continue;
     const id = troubleshooterTaskId(task);
-    if (existing.has(id) || hasActiveRecovery(job, task)) continue;
+    if (existing.has(id) || hasRecoveryBarrier(job, task)) continue;
     const now = new Date().toISOString();
     recoveries.push({
       jobId: job.id,

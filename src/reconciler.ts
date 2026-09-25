@@ -216,7 +216,7 @@ export class Reconciler extends ReconcilerReviewBase {
     for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
       this.live.get(task.id)?.execution.cancel();
       this.plannerLive.get(task.id)?.controller.abort();
-      await transitionTaskEvent(task, 'cancel');
+      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
       task.error = reason;
       task.leaseOwner = null;
       task.leaseExpiresAt = null;

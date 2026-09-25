@@ -612,6 +612,49 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 });
 
 
+test('delivery failure after correlated task.started is diagnostic only and terminal event remains authoritative', async () => {
+  const t=task('chat-delivery-after-start'); t.adapter='chatgpt';
+  const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+  let rejectRun;
+  const adapter={
+    name:'chatgpt',id:'chatgpt-after-start',capabilities:['model','chatgpt'],
+    launch(current) {
+      const source=eventSource('j',current.id,current.executionId);
+      const promise=new Promise((_resolve,reject)=>{rejectRun=reject;});
+      void bus.publish(eventFor('j',current.id,null,'task.started','running','worker began','user',undefined,source));
+      return {id:'chat-run',launched:Promise.resolve(),promise,cancel(){}};
+    }
+  };
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>events.push(event)});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  rejectRun(new LaunchFailure('DOM receipt missed the submitted user turn'));
+  await new Promise(resolve=>setTimeout(resolve,20));
+  let durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(events.some(event=>event.type==='task.failed'),false);
+  assert.equal(events.some(event=>event.type==='task.process.delivery_failed' && event.data?.authoritative===false),true);
+  await bus.publish(eventFor('j',durable.id,null,'task.completed','succeeded','review finished','user',undefined,eventSource('j',durable.id,durable.executionId)));
+  await new Promise(resolve=>setTimeout(resolve,20));
+  durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.error,null);
+  await stop();
+});
+
+test('late completed recovers legacy delivery-after-start failure', async () => {
+  const t=task('legacy-delivery-failure','FAILED'); t.adapter='chatgpt'; t.executionId='legacy-delivery-exec';
+  t.error='Worker delivery failed after task.started: DOM receipt missed user turn';
+  t.failureReason='worker_delivery_after_start';
+  t.updatedAt='2026-09-20T20:00:00.000Z';
+  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent({...eventFor('j',t.id,null,'task.completed','succeeded','late valid completion','user',undefined,eventSource('j',t.id,t.executionId)),timestamp:'2026-09-20T20:00:03.000Z'});
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.error,null);
+});
+
 test('scheduled autonomous cycle ignores failures from older slots and creates a fresh planner', async () => {
   const oldFailed=task('old-failed','FAILED'); oldFailed.createdAt='2026-09-21T16:00:00.000Z'; oldFailed.updatedAt=oldFailed.createdAt;
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
@@ -1028,6 +1071,17 @@ test('open zero-task jobs remain create-only and do not consume reconciliation c
   assert.deepEqual(root.tasks, []);
   assert.match(dashboardHtml, /Lifecycle state/);
   assert.match(dashboardHtml, /Runtime status/);
+});
+
+test('merged PR cancels running work with task.cancelled lifecycle event', async () => {
+  const t=task('running-on-merge','RUNNING'); t.executionId='run-merge'; t.leaseOwner='worker'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED';
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const result=await reconciler.reconcile('j');
+  const durable=result.tasks.find(item=>item.id===t.id);
+  assert.equal(result.state,'COMPLETED');
+  assert.equal(durable.state,'CANCELLED');
+  assert.equal(durable.error,'Pull request merged');
 });
 
 test('closed unmerged PR cancels queued work and job without launching', async () => {

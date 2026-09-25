@@ -178,12 +178,13 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected isRecoverableWatchdogFailure(task: Task): boolean {
-    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event'].includes(task.failureReason ?? '')) return true;
+    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event', 'worker_delivery_after_start'].includes(task.failureReason ?? '')) return true;
     const error = task.error ?? '';
     return error.includes('worker_start_timeout')
       || error.includes('timed out waiting for the mandatory terminal worker event')
       || error.includes('exited before publishing task.started')
-      || error.includes('exited after task.started without publishing a terminal task event');
+      || error.includes('exited after task.started without publishing a terminal task event')
+      || error.includes('Worker delivery failed after task.started');
   }
 
   protected isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
@@ -199,17 +200,27 @@ export abstract class ReconcilerRuntimeBase {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    if (task.state === 'QUEUED') {
-      this.clearExecution(task.id, executionId);
-      task.error = event.message;
-      task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
-      task.leaseOwner = null; task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-    } else {
-      await this.applyTerminalEvent(event, true);
+    if (task.state === 'RUNNING') {
+      await this.emit(eventFor(
+        jobId,
+        taskId,
+        task.parentTaskId,
+        'task.process.delivery_failed',
+        'failed',
+        `Worker ${phase} reported after task.started: ${message}`,
+        'orchestrator',
+        { phase, authoritative: false, executionId },
+        { agent: 'relay', component: 'agents-relay' },
+      ));
+      return;
     }
+    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
+    this.clearExecution(task.id, executionId);
+    task.error = event.message;
+    task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
+    task.leaseOwner = null; task.leaseExpiresAt = null;
+    await transitionTaskEvent(task, 'fail');
+    await this.store.saveTask(task);
     await this.emit(event);
   }
 
