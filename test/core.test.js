@@ -1130,6 +1130,15 @@ test('closed unmerged PR cancels queued work and job without launching', async (
   assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
 });
 
+test('reconciler durably persists Graph dependency release transitions', async () => {
+  const dep=task('dep','SUCCEEDED');
+  const child=task('child','DRAFT',['dep']);
+  const store=new InMemoryStore(job([dep,child]));
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  await reconciler.reconcile('j');
+  assert.equal((await store.load('j')).tasks.find(item=>item.id==='child').state,'QUEUED');
+});
+
 test('concurrent reconciler instances atomically claim one queued task only once', async () => {
   const t=task('atomic-launch');
   const store=new InMemoryStore(job([t]));
