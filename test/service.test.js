@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { normalizeDaemonArguments } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
+import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
 test('daemon arguments require and normalize durable identifiers', () => {
@@ -34,6 +35,20 @@ test('repository daemon wires account usage telemetry and the default planner in
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
+});
+
+test('managed CLI reconciliation delegates through relayd and rejects a missing event bus', async () => {
+  const now = new Date().toISOString();
+  const job = { id: 'managed-cli', repository: 'owner/repo', prNumber: 106, state: 'ACTIVE', tasks: [], createdAt: now, updatedAt: now };
+  await assert.rejects(() => requestManagedReconciliation(undefined, job), /requires --events nats/);
+  const events = [];
+  const bus = { publish: async event => { events.push(event); }, subscribe: async () => async () => {}, subscribeAll: async () => async () => {} };
+  await requestManagedReconciliation(bus, job);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'job.wake');
+  assert.deepEqual(events[0].data, { repository: 'owner/repo', prNumber: 106 });
+  const source = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+  assert.ok(source.indexOf("if (command === 'reconcile' && !localFile)") < source.lastIndexOf('const reconciler = runtime('));
 });
 
 test('workspace daemon establishes dashboard and event watch before remote refresh', async () => {

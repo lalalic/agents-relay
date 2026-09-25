@@ -156,9 +156,11 @@ Common: --task-id ID, --commit SHA, --project NAME.
 
 Example:
   npx agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123`,
-  reconcile: `Reconcile a job once, launching ready tasks and persisting results.
+  reconcile: `Reconcile a job once by requesting one reconciliation pass.
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+
+Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; use --events nats.
 
 Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
