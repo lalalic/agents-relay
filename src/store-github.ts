@@ -18,7 +18,7 @@ export class GitHubStore implements DurableStore {
   private async prNode(): Promise<Record<string, unknown>> {
     const { owner, name } = this.repoParts();
     const data = await this.graphql(
-      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt body}}}',
+      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt body headRefName headRefOid}}}',
       { owner, name, number: this.prNumber }
     );
     const repository = data.repository as Record<string, unknown> | undefined;
@@ -80,13 +80,13 @@ export class GitHubStore implements DurableStore {
   async updatePullRequestBody(body: string): Promise<void> {
     await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber, { method: 'PATCH', body: JSON.stringify({ body }) });
   }
-  async headSha(): Promise<string | null> {
-    const { owner, name } = this.repoParts();
-    const data = await this.graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid}}}', { owner, name, number: this.prNumber });
-    const repository = data.repository as Record<string, unknown> | undefined;
-    const pr = repository?.pullRequest as Record<string, unknown> | undefined;
-    return typeof pr?.headRefOid === 'string' ? pr.headRefOid : null;
+  async pullRequestHead(): Promise<{ ref: string; sha: string } | null> {
+    const pr = await this.prNode();
+    const ref = typeof pr.headRefName === 'string' ? pr.headRefName : '';
+    const sha = typeof pr.headRefOid === 'string' ? pr.headRefOid : '';
+    return ref && sha ? { ref, sha } : null;
   }
+  async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const bodyJob = parseJob(await this.pullRequestBody());

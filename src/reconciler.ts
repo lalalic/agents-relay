@@ -14,6 +14,7 @@ export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
+import { prepareManagedExecutionWorktree } from './workspace.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -228,14 +229,13 @@ export class Reconciler extends ReconcilerReviewBase {
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     for (const task of job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null))) {
       const expired = task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now;
-      const ownerLost = task.leaseOwner !== null && task.leaseOwner !== this.options.owner;
-      if (!expired && !ownerLost) continue;
+      if (!expired) continue;
       this.live.get(task.id)?.execution.cancel();
       const planner = this.plannerLive.get(task.id);
       if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
       const failedEvent = task.state === 'RUNNING' ? 'task.failed' : 'fail';
       await transitionTaskEvent(task, failedEvent);
-      task.error = expired ? 'Lease expired' : 'Execution owner restarted';
+      task.error = 'Lease expired';
       task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
       if (task.attempt < task.maxAttempts) {
         await transitionTaskEvent(task, 'retry');
@@ -243,7 +243,7 @@ export class Reconciler extends ReconcilerReviewBase {
       } else {
         task.error += ' after maximum attempts';
         await this.store.saveTask(task);
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: expired ? 'lease_expired' : 'execution_owner_lost' }));
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'lease_expired' }));
       }
     }
   }
@@ -287,8 +287,8 @@ export class Reconciler extends ReconcilerReviewBase {
       }
     }
   }
-  private async resolvedContext(job: Job, task: Task, role: ExecutionRole): Promise<ExecutionContext> {
-    const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
+  private async resolvedContext(job: Job, task: Task, role: ExecutionRole, projectPathOverride?: string): Promise<ExecutionContext> {
+    const projectPath = projectPathOverride ?? (this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd());
     return resolveExecutionContext(projectPath, role, {
       ...(this.options.executionContextRoots ?? {}),
       registeredAgents: await this.store.listAgents(),
@@ -307,17 +307,6 @@ export class Reconciler extends ReconcilerReviewBase {
     if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
       await transitionTaskEvent(task, 'block');
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
-      await this.store.saveTask(task);
-      return;
-    }
-    let executionContext: ExecutionContext;
-    try {
-      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      executionContext = await this.resolvedContext(job, task, role);
-
-    } catch (error) {
-      await transitionTaskEvent(task, 'block');
-      task.error = error instanceof Error ? error.message : String(error);
       await this.store.saveTask(task);
       return;
     }
@@ -343,13 +332,36 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     if (!claimedTask) return;
     task = claimedTask;
+    let executionContext: ExecutionContext;
+    let managedHead: { ref: string; sha: string } | null = null;
+    try {
+      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
+      let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
+      if (['codex', 'chatgpt'].includes(task.adapter) && this.store.pullRequestHead && task.executionId) {
+        managedHead = await this.store.pullRequestHead();
+        if (!managedHead) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
+        projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, managedHead, task.executionId);
+      }
+      executionContext = await this.resolvedContext(job, task, role, projectPath);
+    } catch (error) {
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.executionId = null;
+      await transitionTaskEvent(task, 'block');
+      task.error = `Execution checkout unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      await this.store.saveTask(task);
+      return;
+    }
     const startedAt = Date.now();
     const durableExecutionId = task.executionId!;
     const controller = new AbortController();
     let execution: Execution;
     const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
-    const workerInput = await managedWorkerInput(job, task, executionContext);
-    const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };
+    const baseWorkerInput = await managedWorkerInput(job, task, executionContext);
+    const workerInput = managedHead
+      ? `${baseWorkerInput}\n\n[Managed PR checkout]\nExecution cwd: ${executionContext.project.path}\nExpected PR head: ${managedHead.ref} @ ${managedHead.sha}\nThis checkout is isolated from the user's primary checkout. Commit only here. Push durable changes with: git push origin HEAD:${managedHead.ref}\nDo not switch, reset, merge into, or commit on the primary checkout.`
+      : baseWorkerInput;
+    const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'

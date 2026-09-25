@@ -1,5 +1,5 @@
-import { readdir, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { mkdir, readdir, stat } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -63,6 +63,44 @@ export async function resolveWorkspaceRepositoryPath(repository: string, root = 
 export async function resolveManagedProjectPath(repository: string | undefined, explicitProjectPath = '', root = defaultWorkspaceRoot(), cwd = process.cwd()): Promise<string> {
   if (explicitProjectPath) return resolve(explicitProjectPath);
   return repository ? resolveWorkspaceRepositoryPath(repository, root) : resolve(cwd);
+}
+
+async function git(path: string, args: string[]): Promise<string> {
+  return (await execFileAsync('git', ['-C', path, ...args])).stdout.trim();
+}
+
+export type ManagedPullRequestHead = { ref: string; sha: string };
+
+export async function prepareManagedExecutionWorktree(
+  projectPath: string,
+  repository: string,
+  prNumber: number,
+  head: ManagedPullRequestHead,
+  executionId: string,
+): Promise<string> {
+  const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
+  const remote = await git(primary, ['config', '--get', 'remote.origin.url']);
+  if (githubRepositoryFromRemote(remote) !== repository) throw new Error(`Primary checkout ${primary} does not match ${repository}`);
+  await git(primary, ['fetch', 'origin', `refs/heads/${head.ref}:refs/remotes/origin/${head.ref}`]);
+  const fetched = await git(primary, ['rev-parse', `refs/remotes/origin/${head.ref}`]);
+  if (fetched !== head.sha) throw new Error(`PR #${prNumber} head changed while preparing execution checkout (${head.sha} -> ${fetched})`);
+
+  const safeRepo = repository.replace(/[^A-Za-z0-9_.-]+/g, '-');
+  const safeExecution = executionId.replace(/[^A-Za-z0-9_.-]+/g, '-');
+  const worktree = join(dirname(primary), '.worktrees', 'agents-relay', `${safeRepo}-pr-${prNumber}`, safeExecution);
+  await mkdir(dirname(worktree), { recursive: true });
+  try {
+    const existingRoot = await git(worktree, ['rev-parse', '--show-toplevel']);
+    const existingHead = await git(worktree, ['rev-parse', 'HEAD']);
+    if (resolve(existingRoot) !== resolve(worktree) || existingHead !== head.sha) throw new Error(`Existing execution worktree ${worktree} is not the expected PR head`);
+    return worktree;
+  } catch (error) {
+    try { await stat(worktree); } catch {
+      await git(primary, ['worktree', 'add', '--detach', worktree, head.sha]);
+      return worktree;
+    }
+    throw error;
+  }
 }
 
 function repositoryPathRank(path: string, root: string): number {
