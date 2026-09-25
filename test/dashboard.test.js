@@ -344,6 +344,11 @@ test('dashboard warns when GitHub API is rate limited', () => {
   assert.match(dashboardHtml, /function renderRateLimitStatus\(status\)/);
 });
 
+test('dashboard shows the current package version at the top right', () => {
+  assert.match(dashboardHtml, /class="version">v\d+\.\d+\.\d+<\/span>/);
+  assert.match(dashboardHtml, /\.version \{ margin-left:auto;/);
+});
+
 
 test('completed but unmerged jobs are pinned and highlighted for merge follow-up', () => {
   assert.match(dashboardHtml, /function isCompleteUnmerged\(job\)/);

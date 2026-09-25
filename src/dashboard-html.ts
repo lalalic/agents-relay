@@ -1,3 +1,7 @@
+import { createRequire } from 'node:module';
+
+const packageVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
+
 export const dashboardHtml = `<!doctype html>
 <html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
 <head>
@@ -11,6 +15,7 @@ export const dashboardHtml = `<!doctype html>
     body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
     header { position:sticky; top:0; z-index:3; background:var(--surface); border-bottom:1px solid var(--border); padding:.8rem 1rem; }
     .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
+    .version { margin-left:auto; color:var(--muted); font-size:.72rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:nowrap; }
     h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
     .tagline,.subtle { color:var(--muted); font-size:.78rem; }
     .warning-banner { margin:.65rem 0 0; padding:.5rem .65rem; border:1px solid #e6bf62; border-radius:.4rem; background:#fff4d6; color:#6f4b00; font-size:.78rem; font-weight:700; }
@@ -103,7 +108,7 @@ export const dashboardHtml = `<!doctype html>
 </head>
 <body>
 <header>
-  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p></div>
+  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${packageVersion}</span></div>
   <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
