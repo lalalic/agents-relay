@@ -88,7 +88,13 @@ export const dashboardHtml = `<!doctype html>
     .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
     .event-kind { color:var(--accent); font-weight:800; }
     .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
-    #usage-view { grid-column:1 / -1; }
+    #usage-view,#rules-view { grid-column:1 / -1; }
+    .rules-editor { display:grid; gap:.65rem; }
+    .rules-help { margin:0; color:var(--muted); font-size:.8rem; }
+    .rules-textarea { width:100%; min-height:55vh; resize:vertical; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); color:var(--text); padding:.8rem; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .rules-footer { display:flex; align-items:center; justify-content:space-between; gap:.75rem; flex-wrap:wrap; }
+    .rules-save { border:1px solid var(--accent); border-radius:.35rem; background:var(--accent); color:#fff; padding:.38rem .8rem; font:inherit; font-weight:750; cursor:pointer; }
+    .rules-save:disabled { opacity:.55; cursor:default; }
     .usage-providers { display:grid; gap:.55rem; }
     .usage-provider { display:grid; grid-template-columns:minmax(130px,180px) minmax(0,1fr); gap:1rem; align-items:center; padding:.7rem .8rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
     .usage-provider h3 { margin:0; font-size:.86rem; }
@@ -113,6 +119,7 @@ export const dashboardHtml = `<!doctype html>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
+    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Model Router Rules</button>
   </nav>
 </header>
 <main>
@@ -142,6 +149,18 @@ export const dashboardHtml = `<!doctype html>
       <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
     </div>
   </section>
+  <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>Model Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
+      <div class="panel-body">
+        <div class="rules-editor">
+          <p class="rules-help">Free-text guidance loaded by the model decider for every routing decision. Hard capability and health gates remain enforced by code.</p>
+          <textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Model router rules" placeholder="Example: Prefer ZAI when paid quota is abundant and task quality is sufficient. If a provider/runtime path just failed, reconsider using the failure evidence and fresh usage."></textarea>
+          <div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><button id="rules-save" class="rules-save" type="button">Save rules</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 <script>
 'use strict';
@@ -160,8 +179,10 @@ export const dashboardHtml = `<!doctype html>
 const MAX_EVENTS=60;
 const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
+const rulesTab=document.querySelector('#rules-tab');
 const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
+const rulesView=document.querySelector('#rules-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
@@ -181,6 +202,10 @@ const connection=document.querySelector('#connection');
 const selectedJobTitle=document.querySelector('#selected-job-title');
 const usageRoot=document.querySelector('#usage-root');
 const usageMeta=document.querySelector('#usage-meta');
+const rulesText=document.querySelector('#rules-text');
+const rulesMeta=document.querySelector('#rules-meta');
+const rulesStatus=document.querySelector('#rules-status');
+const rulesSave=document.querySelector('#rules-save');
 const rateLimitWarning=document.querySelector('#rate-limit-warning');
 let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
@@ -271,7 +296,9 @@ function usageProvider(provider){const card=element('section','usage-provider');
 function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
 function creditProvider(provider){const row=element('section','usage-provider');row.append(element('h3','',text(provider.label)));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){row.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return row;}const balance=credits.balances[0];row.append(element('div','detail-value',text(formatCredit(balance.remaining,balance.currency))));return row;}
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
-function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
+async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/model-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}}
+async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/model-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
+function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));if(isJobs)void refresh();else if(isUsage)void drawUsage();else void drawRules();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
@@ -282,15 +309,17 @@ quickDraft.addEventListener('click',()=>toggleQuickMode('draft'));
 quickStatus.addEventListener('change',()=>setQuickMode(quickStatus.value?'status':'jobs',quickStatus.value));
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
-window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
+rulesTab.addEventListener('click',()=>{location.hash='#/model-router-rules';showView('rules');});
+rulesSave.addEventListener('click',()=>void saveRules());
+window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const next=location.hash==='#/usage'?'rules':location.hash==='#/model-router-rules'?'jobs':'usage';location.hash=next==='usage'?'#/usage':next==='rules'?'#/model-router-rules':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
 const stream=new EventSource('/events');
 stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
-if(location.hash==='#/usage')showView('usage');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage')void refresh();},300000);
+if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/model-router-rules')showView('rules');else showView('jobs');
+setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/model-router-rules')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
 </script>

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 export type RoutingPolicy = {
   disabledProfiles?: string[];
@@ -16,6 +16,7 @@ export type LoadedRoutingPolicy = {
   hash: string;
   policy: RoutingPolicy;
   snapshot: RoutingPolicy;
+  rules: { path: string; hash: string; text: string };
 };
 
 const EMPTY_POLICY: RoutingPolicy = {};
@@ -47,14 +48,36 @@ export function policyPath(explicit?: string): string {
   return explicit ?? process.env.AGENTS_RELAY_ROUTING_POLICY ?? join(process.cwd(), '.agents-relay-routing-policy.json');
 }
 
-export async function loadRoutingPolicy(explicit?: string): Promise<LoadedRoutingPolicy> {
+export function modelRouterRulesPath(explicit?: string): string {
+  return explicit ?? process.env.AGENTS_RELAY_MODEL_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-model-router-rules.md');
+}
+
+export async function loadModelRouterRules(explicit?: string): Promise<{ path: string; hash: string; text: string }> {
+  const path = modelRouterRulesPath(explicit);
+  try {
+    const text = await readFile(path, 'utf8');
+    return { path, hash: createHash('sha256').update(text).digest('hex'), text };
+  } catch {
+    return { path, hash: 'none', text: '' };
+  }
+}
+
+export async function saveModelRouterRules(text: string, explicit?: string): Promise<{ path: string; hash: string; text: string }> {
+  const path = modelRouterRulesPath(explicit);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, text, 'utf8');
+  return { path, hash: createHash('sha256').update(text).digest('hex'), text };
+}
+
+export async function loadRoutingPolicy(explicit?: string, explicitRules?: string): Promise<LoadedRoutingPolicy> {
   const path = policyPath(explicit);
+  const rules = await loadModelRouterRules(explicitRules);
   try {
     const text = await readFile(path, 'utf8');
     const policy = safePolicy(JSON.parse(text));
-    return { path, hash: createHash('sha256').update(text).digest('hex'), policy, snapshot: JSON.parse(JSON.stringify(policy)) as RoutingPolicy };
+    return { path, hash: createHash('sha256').update(text).digest('hex'), policy, snapshot: JSON.parse(JSON.stringify(policy)) as RoutingPolicy, rules };
   } catch {
-    return { path: null, hash: 'none', policy: EMPTY_POLICY, snapshot: {} };
+    return { path: null, hash: 'none', policy: EMPTY_POLICY, snapshot: {}, rules };
   }
 }
 

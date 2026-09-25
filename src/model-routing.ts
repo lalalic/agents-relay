@@ -32,6 +32,7 @@ export type ModelRoutingOptions = {
   auditStore?: DecisionAuditStore;
   auditTask?: import('./types.js').Task;
   policyPath?: string;
+  rulesPath?: string;
   priorDecisionId?: string;
   priorFailure?: import('./decision-audit.js').AuditFailureEvidence;
 };
@@ -122,7 +123,7 @@ export async function routeModel(
   candidates: readonly ModelCandidate[],
   options: ModelRoutingOptions = {},
 ): Promise<ModelRoutingDecision> {
-  const policy = await loadRoutingPolicy(options.policyPath);
+  const policy = await loadRoutingPolicy(options.policyPath, options.rulesPath);
   const eligible = eligibleModels(candidates, options.constraints, policy);
   if (eligible.length === 0) throw new Error(`No eligible model profile is usable by worker ${worker.workerId}`);
   const taskKind = typeof options.taskFacts?.kind === 'string' ? options.taskFacts.kind : undefined;
@@ -135,7 +136,7 @@ export async function routeModel(
       {
         facts: JSON.parse(JSON.stringify({
           task: options.taskFacts ?? {},
-          environment_policy: policy.snapshot,
+          environment_policy: { structured_policy: policy.snapshot, rules: policy.rules.text },
           prior_decision_id: options.priorDecisionId ?? null,
           prior_failure: options.priorFailure ?? null,
           worker: { id: worker.workerId, adapter: worker.adapter, capabilities: [...worker.capabilities] },

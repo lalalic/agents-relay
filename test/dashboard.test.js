@@ -363,3 +363,13 @@ test('dashboard exposes reviewer approval, changes-required, stale, and merge-re
   assert.match(dashboardHtml, /Review changes required/);
   assert.match(dashboardHtml, /Review head SHA/);
 });
+
+
+test('dashboard exposes free-text model router rules editor', () => {
+  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Model Router Rules</);
+  assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
+  assert.match(dashboardHtml, /Free-text guidance loaded by the model decider/);
+  assert.match(dashboardHtml, /fetch\('\/api\/model-router-rules'/);
+  assert.match(dashboardHtml, /method:'PUT'/);
+  assert.match(dashboardHtml, /New routing decisions will load these rules/);
+});

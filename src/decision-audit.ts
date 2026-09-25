@@ -5,13 +5,13 @@ import { ModelCandidate } from './model-routing.js';
 import { DecisionEvidence, RoutingDecision, Task } from './types.js';
 import { LoadedRoutingPolicy } from './routing-policy.js';
 
-export const DECISION_AUDIT_SCHEMA_VERSION = 1;
+export const DECISION_AUDIT_SCHEMA_VERSION = 2;
 export type AuditFailureEvidence = { classification: string; summary: string; sources: string[]; details?: Record<string, unknown> };
 export type DecisionAuditRecord = {
   record_type: 'decision'; schema_version: number; decision_id: string; prior_decision_id?: string; timestamp: string;
   correlation: { job_id?: string; task_id?: string; execution_id?: string | null; attempt?: number };
   task: Record<string, unknown>; worker: Record<string, unknown>; contract: Record<string, unknown>;
-  policy: { path: string | null; hash: string; snapshot: Record<string, unknown> };
+  policy: { path: string | null; hash: string; snapshot: Record<string, unknown>; rules: { path: string; hash: string; text: string } };
   candidates: Array<Record<string, unknown>>; gate_results: Array<{ candidate_id: string; eligible: boolean; rejection_reasons: string[] }>;
   eligible_candidates: Array<Record<string, unknown>>;
   selected: Record<string, unknown>; engine: string; fallback: { used: boolean; reason?: string };
@@ -63,5 +63,5 @@ export function makeDecisionAudit(input: { task?: Pick<Task, 'jobId' | 'id' | 'a
     if (item.profile && input.policy.policy.disabledProfiles?.includes(item.profile)) reasons.push('policy_disabled_profile');
     return { candidate_id: item.id, eligible: eligibleIds.has(item.id), rejection_reasons: reasons };
   });
-  return { record_type: 'decision', schema_version: DECISION_AUDIT_SCHEMA_VERSION, decision_id: decisionAuditId(), prior_decision_id: input.priorDecisionId, timestamp: input.routing.decidedAt, correlation: { job_id: input.task?.jobId, task_id: input.task?.id, execution_id: input.task?.executionId, attempt: input.task?.attempt }, task: taskAuditFacts(input.task), worker: input.worker, contract: input.contract, policy: { path: input.policy.path, hash: input.policy.hash, snapshot: input.policy.snapshot as Record<string, unknown> }, candidates: input.candidates.map(candidate), gate_results, eligible_candidates: input.eligibleCandidates.map(candidate), selected: candidate(input.selected), engine: input.routing.decidedBy, fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error }, decision_evidence: input.routing.decisionEvidence, prior_failure: input.priorFailure };
+  return { record_type: 'decision', schema_version: DECISION_AUDIT_SCHEMA_VERSION, decision_id: decisionAuditId(), prior_decision_id: input.priorDecisionId, timestamp: input.routing.decidedAt, correlation: { job_id: input.task?.jobId, task_id: input.task?.id, execution_id: input.task?.executionId, attempt: input.task?.attempt }, task: taskAuditFacts(input.task), worker: input.worker, contract: input.contract, policy: { path: input.policy.path, hash: input.policy.hash, snapshot: input.policy.snapshot as Record<string, unknown>, rules: input.policy.rules }, candidates: input.candidates.map(candidate), gate_results, eligible_candidates: input.eligibleCandidates.map(candidate), selected: candidate(input.selected), engine: input.routing.decidedBy, fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error }, decision_evidence: input.routing.decisionEvidence, prior_failure: input.priorFailure };
 }
