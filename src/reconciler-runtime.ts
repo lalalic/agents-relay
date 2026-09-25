@@ -328,7 +328,8 @@ export abstract class ReconcilerRuntimeBase {
     const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
     if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return;
     if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && (trustedInternal || !modelBacked || this.isCorrelatedWorkerEvent(task, event))) {
-      if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
+      const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
+      if (!processExitedAfterPublishedTerminal && event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
       await transitionTaskEvent(task, 'reconcile.started');
       task.failureReason = undefined;
       task.error = null;

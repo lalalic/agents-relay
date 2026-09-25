@@ -28,7 +28,7 @@ export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
   storeFor, saveLocal, githubStore, eventBus, publishWake, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs,
+  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, requestManagedReconciliation,
 } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
@@ -469,6 +469,15 @@ async function main(): Promise<void> {
     await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
   }
   if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
+  if (command === 'reconcile' && !localFile) {
+    try {
+      await requestManagedReconciliation(bus, job);
+      console.log(JSON.stringify(await store.load(job.id), null, 2));
+    } finally {
+      await bus?.close?.();
+    }
+    return;
+  }
   const reconciler = runtime(store, args, bus);
   if (command === 'reconcile') { await reconciler.reconcile(job.id); await reconciler.idle(); const finalState = await store.load(job.id); await saveLocal(localFile, finalState); console.log(JSON.stringify(finalState, null, 2)); return; }
   if (command === 'serve') { await startService(args); return; }

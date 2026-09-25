@@ -50,6 +50,14 @@ export async function storeFor(args: string[]): Promise<{ store: DurableStore; j
 export async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
+export async function requestManagedReconciliation(bus: EventBus | undefined, job: Job): Promise<void> {
+  if (!bus) throw new Error('Managed GitHub reconciliation requires --events nats so agents-relayd can execute the job');
+  try {
+    await bus.publish(eventFor(job.id, 'reconcile', null, 'job.wake', 'queued', `Reconcile requested for ${job.id}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber }));
+  } catch (error) {
+    throw new Error(`Unable to deliver managed reconciliation wake to agents-relayd: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 export function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
 export function storySize(args: string[], fallback: StorySize = 'M'): StorySize { const value = arg(args, '--story-size', fallback).toUpperCase(); if (!['S','M','L'].includes(value)) throw new Error('--story-size must be S, M, or L'); return value as StorySize; }
 export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }

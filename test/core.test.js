@@ -566,6 +566,38 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   await stop(); await stopEvents();
 });
 
+test('late correlated terminal event recovers an exit watchdog failure', async () => {
+  const t = task('late-terminal-recovery');
+  const store = new InMemoryStore(job([t]));
+  const adapter = new FakeAdapter();
+  const bus = new MemoryEventBus();
+  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, terminalExitGraceMs: 10 });
+  const stop = await reconciler.watch('j');
+  await reconciler.reconcile('j');
+
+  const source = await activeEventSource(store, 'late-terminal-recovery');
+  const started = eventFor('j', t.id, null, 'task.started', 'running', 'worker began', 'user', undefined, source);
+  await bus.publish(started);
+
+  const completedAt = new Date(Date.now() + 5).toISOString();
+  const completed = eventFor('j', t.id, null, 'task.completed', 'succeeded', 'durable output', 'user', undefined, source);
+  completed.timestamp = completedAt;
+  adapter.resolvers[0].resolve({ summary: 'runtime exited' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  const failed = (await store.load('j')).tasks[0];
+  assert.equal(failed.state, 'FAILED');
+  assert.equal(failed.failureReason, 'worker_exit_without_terminal_event');
+
+  await reconciler.handleEvent(completed);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const recovered = (await store.load('j')).tasks[0];
+  assert.equal(recovered.state, 'SUCCEEDED');
+  assert.equal(recovered.result?.summary, 'durable output');
+  assert.equal(recovered.failureReason, undefined);
+  await stop();
+});
+
 test('accepted terminal event protects against process-exit watchdog while persistence is in flight', async () => {
   const t=task('terminal-persist-race');
   const store=new DelayedTerminalStore(job([t]));
