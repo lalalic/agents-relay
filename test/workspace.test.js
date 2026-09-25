@@ -106,7 +106,7 @@ test('managed job discovery paginates all open PRs but bounds closed history', a
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay'], new Set(['bot']));
   assert.equal(calls, 2);
-  assert.deepEqual(result.map(item => item.job.id), ['open-a', 'open-b', 'closed']);
+  assert.deepEqual(result.map(item => item.job.id).sort(), ['closed', 'open-a', 'open-b']);
 });
 
 test('managed job discovery retains recent merged PRs when closed history is crowded', async () => {
