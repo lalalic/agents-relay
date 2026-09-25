@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseAgentGraph, agentGraphPrompt } from '../dist/agent-graph.js';
+import { parseAgentGraph, agentGraphPrompt, validateAgentSelection } from '../dist/agent-graph.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 
 async function writeAgent(root, name) {
@@ -19,6 +19,20 @@ test('agent graph parses fan-out/fan-in into deterministic waves', () => {
 
 test('agent graph rejects cycles', () => {
   assert.throws(()=>parseAgentGraph(`flowchart TD\na --> b\nb --> a`),/cycle/);
+});
+
+test('agent selection rejects invisible named and graph agents but allows an unnamed task', async () => {
+  const root=await mkdtemp(join(tmpdir(),'agents-relay-agent-validation-'));
+  try {
+    const workspace=join(root,'workspace'), neo=join(workspace,'neo'), project=join(workspace,'project');
+    await Promise.all([mkdir(project,{recursive:true}),mkdir(neo,{recursive:true})]);
+    await writeAgent(neo,'reviewer');
+    const context=await resolveExecutionContext(project,'planner',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
+    assert.doesNotThrow(() => validateAgentSelection(context));
+    assert.doesNotThrow(() => validateAgentSelection(context, 'reviewer'));
+    assert.throws(() => validateAgentSelection(context, 'implementation'), /Agent implementation is not visible in the resolved planning\/execution context/);
+    assert.throws(() => validateAgentSelection(context, undefined, 'flowchart TD\nreviewer --> implementation'), /Agent implementation referenced by agentGraph node implementation is not visible/);
+  } finally { await rm(root,{recursive:true,force:true}); }
 });
 
 test('agent graph loads every node contract and preserves fan-in dependencies', async () => {

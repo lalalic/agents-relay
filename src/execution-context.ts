@@ -259,6 +259,7 @@ export function executionContextPrompt(context: ExecutionContext): string {
   const skills = context.skills.map(item => `- ${item.name}: ${item.path} [${item.source}]`).join('\n') || '- none';
   const agents = context.agents.map(item => {
     const details = [
+      item.description ? `purpose=${item.description}` : '',
       item.capabilities.length ? `capabilities=${item.capabilities.join(',')}` : '',
       item.runtime ? `runtime=${item.runtime}` : '',
       item.trustDomains.length ? `trust=${item.trustDomains.join(',')}` : '',
