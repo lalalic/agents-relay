@@ -35,13 +35,25 @@ function belongsToCurrentRun(job: Job, task: Task): boolean {
   return !slot || task.createdAt >= slot;
 }
 
+const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED']);
+
+function recoveryTargetsTask(recovery: Task, original: Task): boolean {
+  if (recovery.agentName !== 'troubleshooter') return false;
+  if (recovery.parentTaskId) return recovery.parentTaskId === original.id;
+  return recovery.id.startsWith(`troubleshoot-${slug(original.id)}-a`);
+}
+
+function hasActiveRecovery(job: Job, original: Task): boolean {
+  return job.tasks.some(task => recoveryTargetsTask(task, original) && ACTIVE_RECOVERY_STATES.has(task.state));
+}
+
 export function pendingTroubleshooterTasks(job: Job): Task[] {
   const existing = new Set(job.tasks.filter(task => task.agentName === 'troubleshooter').map(task => task.id));
   const recoveries: Task[] = [];
   for (const task of job.tasks) {
     if (!['FAILED', 'BLOCKED'].includes(task.state) || task.kind === 'planner' || task.agentName === 'troubleshooter' || !belongsToCurrentRun(job, task)) continue;
     const id = troubleshooterTaskId(task);
-    if (existing.has(id)) continue;
+    if (existing.has(id) || hasActiveRecovery(job, task)) continue;
     const now = new Date().toISOString();
     recoveries.push({
       jobId: job.id,
@@ -51,7 +63,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       storySize: 'M',
       projectName: job.title,
       agentName: 'troubleshooter',
-      parentTaskId: null,
+      parentTaskId: task.id,
       dependencies: [],
       capabilities: ['troubleshoot', 'recovery'],
       workerRequirements: { capabilities: ['model', 'local_repo', 'iterative_tools'], runtime: 'codex' },

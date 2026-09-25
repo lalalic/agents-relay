@@ -71,6 +71,7 @@ test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempoten
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
   assert.equal(recovery.id, troubleshooterTaskId(failed));
   assert.equal(recovery.agentName, 'troubleshooter');
+  assert.equal(recovery.parentTaskId, failed.id);
   assert.equal(recovery.priority, 'P0');
   assert.deepEqual(recovery.workerRequirements, {
     capabilities: ['model', 'local_repo', 'iterative_tools'],
@@ -84,6 +85,44 @@ test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempoten
   assert.match(recovery.input, /duplicate events/);
   assert.match(recovery.input, /Do not treat the final task\.error string as the complete root cause/);
   assert.deepEqual(pendingTroubleshooterTasks(job([failed, recovery])), []);
+});
+
+
+test('active recovery suppresses a new troubleshooter when the root attempt increases', () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.state = 'RUNNING';
+
+  const retriedFailure = {
+    ...failed,
+    attempt: failed.attempt + 1,
+    executionId: 'exec-next',
+    error: 'same deterministic delivery failure after retry',
+    updatedAt: now(),
+  };
+  assert.notEqual(troubleshooterTaskId(retriedFailure), recovery.id);
+  assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
+});
+
+test('legacy active recovery without parent linkage still suppresses duplicate root recovery', () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.parentTaskId = null;
+  recovery.state = 'BLOCKED';
+
+  const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
+  assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
+});
+
+test('terminal prior recovery permits a later recovery generation', () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.state = 'FAILED';
+
+  const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
+  const [next] = pendingTroubleshooterTasks(job([retriedFailure, recovery]));
+  assert.equal(next.id, troubleshooterTaskId(retriedFailure));
+  assert.equal(next.parentTaskId, failed.id);
 });
 
 test('reconcile automatically creates and routes one troubleshooter for failed work', async () => {
