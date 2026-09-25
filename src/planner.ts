@@ -134,7 +134,14 @@ export function parsePlannerOutput(output: string): PlannerResult {
 }
 
 export function plannerInput(context: PlannerContext): string {
-  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
+  const visibleAgents = context.executionContext?.agents.map(agent => ({
+    name: agent.name,
+    description: agent.description,
+    capabilities: agent.capabilities,
+    boundaries: agent.restrictions,
+    runtime: agent.runtime,
+  }));
+  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, visible_agents: visibleAgents ?? [], execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
 }
 
 export class CommandObjectivePlanner implements ObjectivePlanner {

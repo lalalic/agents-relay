@@ -7,7 +7,7 @@ import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adap
 import { eventFor } from './events.js';
 import { parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
-import { agentGraphPrompt } from './agent-graph.js';
+import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js';
@@ -280,8 +280,11 @@ export class Reconciler extends ReconcilerReviewBase {
     return this.store.load(job.id);
   }
   private async recoverPlannerChildren(job: Job): Promise<void> {
+    const contextTask = job.tasks.find(task => task.kind === 'planner') ?? job.tasks[0];
+    if (!contextTask) return;
+    const executionContext = await this.resolvedContext(job, contextTask, 'planner');
     for (const planner of job.tasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)) {
-      const children = planner.plannerResult?.next_tasks.map(spec => this.plannerChild(job, planner, spec)) ?? [];
+      const children = planner.plannerResult?.next_tasks.map(spec => this.plannerChild(job, planner, spec, executionContext)) ?? [];
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing) {
@@ -443,7 +446,8 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     try {
       const result = parsePlannerResult(raw);
-      const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec));
+      const executionContext = await this.resolvedContext(job, task, 'planner');
+      const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (!existing) continue;
@@ -464,7 +468,8 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
   }
-  private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
+  private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
+    validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
     const now = new Date().toISOString();
     return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }

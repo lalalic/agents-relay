@@ -63,8 +63,22 @@ export function parseAgentGraph(source: string): AgentGraph {
   return { source, nodes: [...agents].map(([id, agent]) => ({ id, agent })), edges, waves };
 }
 
+export function validateAgentSelection(context: ExecutionContext, agentName?: string, agentGraph?: string): void {
+  const visible = new Set(context.agents.map(agent => agent.name));
+  if (agentName && !visible.has(agentName)) {
+    throw new Error(`Agent ${agentName} is not visible in the resolved planning/execution context`);
+  }
+  if (!agentGraph) return;
+  for (const node of parseAgentGraph(agentGraph).nodes) {
+    if (!visible.has(node.agent)) {
+      throw new Error(`Agent ${node.agent} referenced by agentGraph node ${node.id} is not visible in the resolved planning/execution context`);
+    }
+  }
+}
+
 export async function agentGraphPrompt(context: ExecutionContext, source: string): Promise<string> {
   const graph = parseAgentGraph(source);
+  validateAgentSelection(context, undefined, source);
   const contracts = await Promise.all(graph.nodes.map(async node => ({ node, prompt: await agentContractPrompt(context, node.agent) })));
   const incoming = new Map(graph.nodes.map(node => [node.id, graph.edges.filter(edge => edge.to === node.id).map(edge => edge.from)]));
   return `[Task Agent Graph]\n${source.trim()}\n\nExecution waves: ${graph.waves.map((wave, index) => `${index + 1}:${wave.join(',')}`).join(' | ')}\n\nExecute this graph inside the current durable Task. Nodes are reasoning roles, NOT durable child Tasks. Preserve the original Job/Task context for every node. Nodes in the same wave are independent: evaluate each from the same original context without using sibling prose. For each later node, provide the original context plus structured outputs only from its declared predecessors. Do not emit outer task.started or task terminal events per node; the current durable Task owns exactly one start and one terminal event.\n\n${contracts.map(({ node, prompt }) => `[Node ${node.id}; predecessors=${(incoming.get(node.id) ?? []).join(',') || 'none'}]\n${prompt}`).join('\n\n')}`;
