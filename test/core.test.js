@@ -547,6 +547,7 @@ test('adapter runtime exit is not task completion', async () => {
   adapter.resolvers[0].resolve({summary:'process exited zero'});
   await reconciler.idle();
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await reconciler.close();
   await stop();
 });
 
@@ -601,6 +602,7 @@ test('worker failure before Codex nonzero exit is not duplicated by the watchdog
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal((await store.load('j')).tasks[0].state,'FAILED');
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  await reconciler.close();
   await stop(); await stopEvents();
 });
 
@@ -616,6 +618,7 @@ test('unexpected Codex exit after task.started fails after a short terminal grac
   assert.equal(durable.state,'FAILED');
   assert.match(durable.error,/without publishing a terminal/);
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  await reconciler.close();
   await stop(); await stopEvents();
 });
 
@@ -816,6 +819,7 @@ test('correlated failed and blocked events set terminal durable states', async (
     await bus.publish(eventFor('j',type,null,type,type==='task.failed'?'failed':'blocked','terminal','user',undefined,await activeEventSource(store,type)));
     await new Promise(resolve=>setTimeout(resolve,10));
     assert.equal((await store.load('j')).tasks[0].state,state);
+    await reconciler.close();
     await stop();
   }
 });

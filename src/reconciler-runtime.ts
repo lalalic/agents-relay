@@ -112,6 +112,24 @@ export abstract class ReconcilerRuntimeBase {
     }
   }
   async idle(): Promise<void> { while (this.live.size > 0 || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
+  async close(): Promise<void> {
+    for (const live of this.live.values()) {
+      live.controller.abort();
+      live.execution.cancel();
+    }
+    this.live.clear();
+    for (const timer of this.terminalTimers.values()) clearTimeout(timer);
+    this.terminalTimers.clear();
+    for (const timer of this.terminalExitGraceTimers.values()) clearTimeout(timer);
+    this.terminalExitGraceTimers.clear();
+    for (const planner of this.plannerLive.values()) {
+      clearTimeout(planner.timer);
+      planner.controller.abort();
+    }
+    this.plannerLive.clear();
+    for (const waiter of this.terminalWaiters.values()) waiter.resolve();
+    this.terminalWaiters.clear();
+  }
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   protected async startAck(jobId: string, taskId: string, sourceId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
     if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
