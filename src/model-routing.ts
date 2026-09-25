@@ -5,6 +5,8 @@ import { chooseWithDecision, DecisionChoice, DecisionEngine, DecisionMode } from
 import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, ResourceUsageWindow, RoutingDecision } from './types.js';
 import { usageForProvider, WorkerCandidate } from './worker-routing.js';
+import { DecisionAuditStore, DecisionAuditRecord, makeDecisionAudit } from './decision-audit.js';
+import { loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
 
 export type ModelCandidate = {
   id: string;
@@ -20,13 +22,18 @@ export type ModelCandidate = {
   resourceWindows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow };
 };
 
-export type ModelRoutingDecision = { candidate: ModelCandidate; routing: RoutingDecision };
+export type ModelRoutingDecision = { candidate: ModelCandidate; routing: RoutingDecision; audit?: DecisionAuditRecord };
 
 export type ModelRoutingOptions = {
   decisionEngine?: DecisionEngine;
   decisionMode?: DecisionMode;
   taskFacts?: Record<string, unknown>;
   constraints?: Partial<Pick<RoutingDecision, 'provider' | 'model' | 'profile' | 'reasoning'>>;
+  auditStore?: DecisionAuditStore;
+  auditTask?: import('./types.js').Task;
+  policyPath?: string;
+  priorDecisionId?: string;
+  priorFailure?: import('./decision-audit.js').AuditFailureEvidence;
 };
 
 type CodexConfig = { model?: string; provider?: string; reasoning?: string };
@@ -91,9 +98,10 @@ export async function discoverModelCandidates(
   return candidates.filter((candidate, index, all) => all.findIndex(item => item.id === candidate.id) === index);
 }
 
-function eligibleModels(candidates: readonly ModelCandidate[], constraints?: ModelRoutingOptions['constraints']): ModelCandidate[] {
+function eligibleModels(candidates: readonly ModelCandidate[], constraints?: ModelRoutingOptions['constraints'], policy?: LoadedRoutingPolicy): ModelCandidate[] {
   return candidates.filter(candidate => {
     if (candidate.resourceHealthy === false) return false;
+    if (policy && !policyAllows(candidate, policy.policy)) return false;
     if (constraints?.provider && candidate.provider !== constraints.provider) return false;
     if (constraints?.model && candidate.model !== constraints.model) return false;
     if (constraints?.profile && candidate.profile !== constraints.profile) return false;
@@ -102,10 +110,10 @@ function eligibleModels(candidates: readonly ModelCandidate[], constraints?: Mod
   });
 }
 
-function deterministicModel(candidates: readonly ModelCandidate[]): ModelCandidate {
+function deterministicModel(candidates: readonly ModelCandidate[], taskKind?: string, policy?: LoadedRoutingPolicy): ModelCandidate {
   return [...candidates].map((candidate, index) => ({ candidate, index })).sort((left, right) => {
     const pressure = (item: ModelCandidate): number => item.resourceUsedPercent === undefined ? 1 : item.resourceUsedPercent >= 90 ? 2 : 0;
-    return pressure(left.candidate) - pressure(right.candidate) || left.index - right.index;
+    return pressure(left.candidate) - pressure(right.candidate) || (policy ? policyRank(right.candidate, taskKind, policy.policy) - policyRank(left.candidate, taskKind, policy.policy) : 0) || left.index - right.index;
   })[0].candidate;
 }
 
@@ -114,9 +122,11 @@ export async function routeModel(
   candidates: readonly ModelCandidate[],
   options: ModelRoutingOptions = {},
 ): Promise<ModelRoutingDecision> {
-  const eligible = eligibleModels(candidates, options.constraints);
+  const policy = await loadRoutingPolicy(options.policyPath);
+  const eligible = eligibleModels(candidates, options.constraints, policy);
   if (eligible.length === 0) throw new Error(`No eligible model profile is usable by worker ${worker.workerId}`);
-  const deterministic = deterministicModel(eligible);
+  const taskKind = typeof options.taskFacts?.kind === 'string' ? options.taskFacts.kind : undefined;
+  const deterministic = deterministicModel(eligible, taskKind, policy);
   const choice: DecisionChoice = eligible.length === 1
     ? { choice: deterministic.id, evidence: { mode: options.decisionMode ?? 'off', fallback: true } as const }
     : await chooseWithDecision(
@@ -125,24 +135,43 @@ export async function routeModel(
       {
         facts: JSON.parse(JSON.stringify({
           task: options.taskFacts ?? {},
+          environment_policy: policy.snapshot,
+          prior_decision_id: options.priorDecisionId ?? null,
+          prior_failure: options.priorFailure ?? null,
           worker: { id: worker.workerId, adapter: worker.adapter, capabilities: [...worker.capabilities] },
           candidates: eligible.map(item => ({ id: item.id, provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null, resourceRemainingPercent: item.resourceRemainingPercent ?? null, resourceResetAt: item.resourceResetAt ?? null, resourceResetInMinutes: item.resourceResetInMinutes ?? null, resourceWindows: item.resourceWindows ?? null })),
         })) as import('./decision.js').JsonValue,
       },
-      { type: 'choice', question: 'Which eligible model profile is best suited to execute this task? Prefer spending otherwise-expiring paid quota on stronger reasoning when reset is near and substantial capacity remains, but consider every quota window so a tighter longer-horizon limit is not needlessly depleted; never violate task fit or continuity.', choices: eligible.map(item => item.id) },
+      { type: 'choice', question: 'Which eligible model profile is best suited to execute this task? Apply hard gates first, then explicit task constraints, then current environment policy; consider every quota window and never violate task fit or continuity.', choices: eligible.map(item => item.id) },
       () => deterministic.id,
     );
   const selected = eligible.find(item => item.id === choice.choice) ?? deterministic;
+  const routing: RoutingDecision = {
+    provider: selected.provider,
+    model: selected.model,
+    profile: selected.profile,
+    reasoning: options.constraints?.reasoning ?? selected.reasoning,
+    decidedBy: choice.evidence.engine && !choice.evidence.fallback ? 'model-router:laya' : 'model-router',
+    decidedAt: new Date().toISOString(),
+    decisionEvidence: choice.evidence,
+  };
+  const audit = makeDecisionAudit({
+    task: options.auditTask,
+    worker: { id: worker.workerId, adapter: worker.adapter, capabilities: [...worker.capabilities] },
+    contract: { question: 'model-profile-selection', task: options.taskFacts ?? {}, constraints: options.constraints ?? {} },
+    policy,
+    candidates,
+    eligibleCandidates: eligible,
+    selected,
+    routing,
+    priorDecisionId: options.priorDecisionId,
+    priorFailure: options.priorFailure,
+  });
+  routing.decisionId = audit.decision_id;
+  if (options.auditStore) await options.auditStore.append(audit);
   return {
     candidate: selected,
-    routing: {
-      provider: selected.provider,
-      model: selected.model,
-      profile: selected.profile,
-      reasoning: options.constraints?.reasoning ?? selected.reasoning,
-      decidedBy: choice.evidence.engine && !choice.evidence.fallback ? 'model-router:laya' : 'model-router',
-      decidedAt: new Date().toISOString(),
-      decisionEvidence: choice.evidence,
-    },
+    routing,
+    audit,
   };
 }

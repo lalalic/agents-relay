@@ -48,7 +48,7 @@ export type AgentRegistration = {
   updatedAt: string;
 };
 export type DecisionEvidence = { mode: 'off' | 'shadow' | 'active'; engine?: string; proposed?: string; probabilities?: Record<string, number>; fallback: boolean; error?: string };
-export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string; decisionEvidence?: DecisionEvidence };
+export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decisionId?: string; decidedBy: string; decidedAt: string; decisionEvidence?: DecisionEvidence };
 /** Requirements declared by a planner before a worker is selected. */
 export type WorkerRequirements = {
   capabilities: string[];
