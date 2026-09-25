@@ -1,0 +1,102 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  decideJobLifecycle,
+  decideTaskLifecycle,
+} from '../dist/workflow/lifecycle.js';
+import { schedule, transitionJobEvent, transitionTaskEvent } from '../dist/scheduler.js';
+
+const task = state => ({
+  jobId: 'job-graph',
+  id: 'task-graph',
+  state,
+  dependencies: [],
+  error: null,
+  updatedAt: '2026-09-23T00:00:00.000Z',
+});
+
+const job = state => ({
+  id: 'job-graph',
+  state,
+  tasks: [],
+  executionMode: 'fixed',
+  title: 'Graph lifecycle',
+  prNumber: 74,
+  repository: 'lalalic/agents-relay',
+  continuation: null,
+  createdAt: '2026-09-23T00:00:00.000Z',
+  updatedAt: '2026-09-23T00:00:00.000Z',
+});
+
+const taskCases = [
+  ['DRAFT','release',{},'QUEUED'],
+  ['DRAFT','reconcile',{dependenciesSatisfied:true},'QUEUED'],
+  ['DRAFT','block',{},'BLOCKED'],
+  ['DRAFT','cancel',{},'CANCELLED'],
+  ['QUEUED','hold',{},'DRAFT'],
+  ['QUEUED','reconcile',{dependenciesUnsatisfied:true},'DRAFT'],
+  ['QUEUED','reconcile',{runnable:true},'QUEUED'],
+  ['QUEUED','task.started',{},'RUNNING'],
+  ['QUEUED','block',{},'BLOCKED'],
+  ['QUEUED','fail',{},'FAILED'],
+  ['QUEUED','cancel',{},'CANCELLED'],
+  ['RUNNING','task.blocked',{},'BLOCKED'],
+  ['RUNNING','task.completed',{},'SUCCEEDED'],
+  ['RUNNING','task.failed',{},'FAILED'],
+  ['RUNNING','task.cancelled',{},'CANCELLED'],
+  ['BLOCKED','retry',{},'QUEUED'],
+  ['BLOCKED','cancel',{},'CANCELLED'],
+  ['FAILED','retry',{},'QUEUED'],
+  ['FAILED','reconcile.started',{},'RUNNING'],
+  ['FAILED','reconcile.completed',{},'SUCCEEDED'],
+  ['FAILED','reconcile.blocked',{},'BLOCKED'],
+  ['FAILED','cancel',{},'CANCELLED'],
+];
+
+const jobCases = [
+  ['DRAFT','activate',{},'ACTIVE'],
+  ['DRAFT','pr.merged',{},'COMPLETED'],
+  ['DRAFT','cancel',{},'CANCELLED'],
+  ['DRAFT','pr.closed',{notMerged:true},'CANCELLED'],
+  ['ACTIVE','pr.merged',{},'COMPLETED'],
+  ['ACTIVE','cancel',{},'CANCELLED'],
+  ['ACTIVE','pr.closed',{notMerged:true},'CANCELLED'],
+  ['CANCELLED','pr.merged',{},'COMPLETED'],
+];
+
+test('Graph Engine is authoritative for the lifecycle transition corpus', () => {
+  for (const [from,event,facts,target] of taskCases) {
+    const decision=decideTaskLifecycle(task(from),event,facts);
+    assert.equal(decision.accepted,true,String(from)+' '+String(event));
+    assert.equal(decision.target,target,String(from)+' '+String(event));
+  }
+  for (const [from,event,facts,target] of jobCases) {
+    const decision=decideJobLifecycle(job(from),event,facts);
+    assert.equal(decision.accepted,true,String(from)+' '+String(event));
+    assert.equal(decision.target,target,String(from)+' '+String(event));
+  }
+  for (const [from,event,facts] of [
+    ['RUNNING','hold',{}],
+    ['SUCCEEDED','retry',{}],
+    ['DRAFT','reconcile',{dependenciesSatisfied:false}],
+  ]) assert.equal(decideTaskLifecycle(task(from),event,facts).accepted,false);
+});
+
+test('graph decisions drive durable transition mutations', async () => {
+  const current=task('QUEUED');
+  current.error='stale';
+  await transitionTaskEvent(current,'task.started');
+  assert.equal(current.state,'RUNNING');
+  assert.equal(current.error,null);
+
+  const currentJob=job('DRAFT');
+  await transitionJobEvent(currentJob,'activate');
+  assert.equal(currentJob.state,'ACTIVE');
+});
+
+test('graph reconcile releases satisfied dependencies', () => {
+  const dep={...task('SUCCEEDED'),id:'dep'};
+  const child={...task('DRAFT'),id:'child',dependencies:['dep']};
+  const scheduled=schedule({...job('ACTIVE'),tasks:[dep,child]});
+  assert.equal(scheduled.tasks[1].state,'QUEUED');
+});

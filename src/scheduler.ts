@@ -1,6 +1,6 @@
 import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task } from './types.js';
 import { WorkflowContext } from './workflow/mermaid.js';
-import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from './workflow/rollout.js';
+import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from './workflow/lifecycle.js';
 import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
 export { dependencyReady, detectCycles } from './workflow/task-reconcile.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';

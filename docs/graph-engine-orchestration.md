@@ -85,8 +85,6 @@ ReconcilerRuntimeBase
 
 Direct lifecycle state assignment is reserved for the explicit historical compatibility repair boundary. Normal lifecycle changes go through graph transitions.
 
-## Rollout
+## Authority
 
-The existing `legacy | shadow | graph` rollout remains in place so PR #74 can continue live equivalence validation. Legacy decisions now carry the same mutation/effect result shape as graph decisions, so shadow mode compares the complete orchestration decision rather than only the target state.
-
-This job does not perform the production authoritative cutover. The cutover remains a separate controlled step after live shadow validation.
+The Mermaid Graph Engine is the only authoritative Job/Task lifecycle decision path. The temporary legacy/shadow rollout evaluator and comparison telemetry have been removed.
