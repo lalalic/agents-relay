@@ -1,5 +1,5 @@
 import type { Job, Task } from '../types.js';
-import { decideTaskLifecycle } from './rollout.js';
+import { decideTaskLifecycle } from './lifecycle.js';
 import { applyTaskWorkflowDecision } from './runtime.js';
 import type { WorkflowContext } from './mermaid.js';
 

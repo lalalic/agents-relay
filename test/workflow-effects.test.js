@@ -13,13 +13,10 @@ import {
 import {
   decideJobLifecycle,
   decideTaskLifecycle,
-  setWorkflowRolloutMode,
-} from '../dist/workflow/rollout.js';
+} from '../dist/workflow/lifecycle.js';
 import { transitionTaskEvent } from '../dist/scheduler.js';
 
 test('graph decision separates deterministic mutations from declarative effects', () => {
-  setWorkflowRolloutMode('graph');
-  try {
     const dispatch = decideTaskLifecycle(
       { jobId: 'j1', id: 't1', state: 'QUEUED' },
       'dispatch',
@@ -36,14 +33,9 @@ test('graph decision separates deterministic mutations from declarative effects'
     );
     assert.equal(closed.target, 'CANCELLED');
     assert.deepEqual(closed.effects, ['effect.cancelActiveTasks']);
-  } finally {
-    setWorkflowRolloutMode(null);
-  }
 });
 
 test('workflow mutation registry owns healthy-state cleanup', async () => {
-  setWorkflowRolloutMode('graph');
-  try {
     const task = {
       id: 't1',
       state: 'FAILED',
@@ -56,9 +48,6 @@ test('workflow mutation registry owns healthy-state cleanup', async () => {
     assert.equal(task.error, null);
     assert.equal(task.failureReason, undefined);
     assert.deepEqual(decision.mutations, ['mutation.clearError', 'mutation.clearFailureReason']);
-  } finally {
-    setWorkflowRolloutMode(null);
-  }
 });
 
 test('effect executor deduplicates by handler idempotency key', async () => {
@@ -88,17 +77,12 @@ test('effect failures map back to canonical workflow events', async () => {
   assert.equal(outcomes[0].status, 'failed');
   assert.equal(workflowEffectFailureEvent(outcomes[0].effect), 'effect.mergePullRequest.failed');
 
-  setWorkflowRolloutMode('graph');
-  try {
     const feedback = decideJobLifecycle(
       { id: 'j1', state: 'ACTIVE' },
       'effect.mergePullRequest.failed',
     );
     assert.equal(feedback.accepted, true);
     assert.equal(feedback.target, 'ACTIVE');
-  } finally {
-    setWorkflowRolloutMode(null);
-  }
 });
 
 test('canonical action classifier rejects undeclared next actions', () => {

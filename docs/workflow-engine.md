@@ -34,7 +34,7 @@ Guards and actions are **names**, not embedded JavaScript. Runtime code register
 
 The generic engine parses and validates the Mermaid graph, checks whether a state-to-state transition is legal, resolves transitions by event, evaluates named guards, and invokes named actions. Callers remain responsible for durable persistence, locking/claims, event delivery, and external side effects.
 
-The canonical graphs are the target lifecycle authority, but rollout is confidence-gated. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same lifecycle event seam. That seam can run the temporary legacy evaluator, compare legacy vs Mermaid in shadow mode, or explicitly select the graph. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
+The canonical graphs are the lifecycle authority. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same graph lifecycle event seam. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
 
 ## Non-goals
 
@@ -72,56 +72,7 @@ These boundaries keep the executable Mermaid profile small while preventing life
 - PR merge/close drives Job lifecycle through graph events; review state remains orthogonal.
 - Planner lifecycle uses the same Task graph.
 - Runtime status remains derived and is not persisted as lifecycle truth.
-- No JSON/YAML mirror exists. During A/B rollout, one isolated legacy evaluator is retained only as the temporary comparison oracle; it must not spread back into callers.
-
-## A/B rollout modes
-
-Graph Engine integration is intentionally gated by one process-level setting:
-
-```text
-AGENTS_RELAY_WORKFLOW_MODE=legacy|shadow|graph
-```
-
-The default is `legacy`.
-
-```mermaid
-flowchart LR
-    I[State + event + facts] --> A[Legacy evaluator]
-    I --> B[Mermaid evaluator]
-    A --> C{rollout mode}
-    B --> C
-    C -->|legacy| LA[A is authoritative]
-    C -->|shadow| SC[Compare A and B; A authoritative]
-    C -->|graph| GB[B is authoritative]
-    SC --> O[/api/workflow-rollout + mismatch diagnostics]
-```
-
-- **legacy** keeps the isolated TypeScript lifecycle evaluator authoritative. The legacy evaluator exists only as a temporary rollout oracle; it is not a new durable workflow source and should be deleted after graph cutover.
-- **shadow** evaluates the same pre-transition state/event/facts through both evaluators. Only the legacy decision is applied. Graph evaluation uses transition inspection only: it does not persist state, invoke graph actions, acquire leases, launch/cancel workers, or perform external side effects.
-- **graph** makes the canonical Mermaid decision authoritative. This is opt-in until the shadow confidence gate is explicitly approved.
-
-Shadow comparison is semantic: accepted/rejected outcome, target state, selected guard, selected actions, and rejection reason are compared. Matches increment an in-process counter without producing routine user-visible noise. Mismatches increment a mismatch counter and emit a structured JSON diagnostic containing Job/Task correlation, event, source state, facts, and both decisions.
-
-The dashboard HTTP server exposes the current process snapshot at:
-
-```text
-GET /api/workflow-rollout
-{"mode":"shadow","matches":1234,"mismatches":0}
-```
-
-These counters and diagnostics are observability only; they are never durable lifecycle truth.
-
-### Cutover gate
-
-Do not change the default to `graph` merely because the graph unit tests pass. A later cutover should require all of:
-
-1. zero mismatches in the deterministic parity corpus;
-2. the full regression suite passing in `legacy`, `shadow`, and explicit `graph` mode;
-3. zero shadow mismatches over an agreed representative workload/observation window;
-4. no duplicate persistence, worker, PR, or action side effects;
-5. explicit human approval to remove the temporary legacy oracle and change the default.
-
-Until then, shipping the Graph Engine means shipping it behind this rollout boundary, not replacing live lifecycle behavior.
+- No JSON/YAML mirror or parallel lifecycle evaluator exists; the canonical Mermaid graphs are the single lifecycle policy source.
 
 ## Task Agent Graph execution
 

@@ -51,7 +51,7 @@ Jobs separate durable lifecycle from derived runtime status. Durable lifecycle i
 
 Lifecycle transition authority lives in the directly renderable canonical sources [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd); see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
 
-Graph-engine rollout is confidence-gated with `AGENTS_RELAY_WORKFLOW_MODE=legacy|shadow|graph` (default `legacy`). `shadow` keeps legacy authoritative while comparing the Mermaid decision and exposing `{mode,matches,mismatches}` at `/api/workflow-rollout`; `graph` is explicit opt-in until the shadow cutover gate is approved.
+The canonical Mermaid Graph Engine is the single authoritative Job/Task lifecycle decision path. Lifecycle events, guards, deterministic mutations, and declarative effects are defined by the workflow graphs and executed through the shared graph runtime.
 
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 
