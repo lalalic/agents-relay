@@ -83,7 +83,17 @@ ReconcilerRuntimeBase
 - `runtime-status.ts`: pure derived projection; it is not durable lifecycle state.
 - Store implementations: persistence only.
 
-Direct lifecycle state assignment is reserved for the explicit historical compatibility repair boundary. Normal lifecycle changes go through graph transitions.
+Normal lifecycle changes go through graph transitions. The sole exception is
+`applyHistoricalJobCompatibilityRepair` in `src/workflow/runtime.ts`, which
+repairs legacy records that stored derived runtime status in the Job lifecycle
+field and validates the terminal target before persisting it.
+
+Semantic lifecycle handlers are serialized per Task. Terminal worker events,
+process-exit watchdogs, and timeout recovery all re-read durable state inside
+that critical section before applying a Mermaid decision. A `task.completed`
+transition that persists `SUCCEEDED` therefore cannot be overwritten by a
+watchdog callback holding an older `RUNNING` snapshot. Process lifecycle
+events remain evidence and never authorize a semantic transition on their own.
 
 ## Stability contract
 

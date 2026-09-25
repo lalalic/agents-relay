@@ -38,11 +38,27 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>();
+  // Serialize competing semantic handlers per task. Each handler re-reads
+  // durable state after the preceding graph transition has been persisted.
+  private readonly taskLifecycleLocks = new Map<string, Promise<void>>();
   protected readonly workflowEffects = new WorkflowEffectExecutor();
   protected reconciling = false;
   constructor(protected readonly store: DurableStore, protected readonly options: ReconcileOptions) {}
   abstract reconcile(jobId: string): Promise<Job>;
   protected abstract applyReviewEvent(event: EventRecord): Promise<void>;
+
+  private async withTaskLifecycleLock<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.taskLifecycleLocks.get(taskId);
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    this.taskLifecycleLocks.set(taskId, current);
+    if (previous) await previous;
+    try { return await work(); }
+    finally {
+      release();
+      if (this.taskLifecycleLocks.get(taskId) === current) this.taskLifecycleLocks.delete(taskId);
+    }
+  }
 
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
     for (const outcome of outcomes.filter(item => item.status === 'failed')) {
@@ -169,6 +185,10 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async markWorkerStarted(event: EventRecord): Promise<void> {
+    await this.withTaskLifecycleLock(event.task_id, () => this.markWorkerStartedUnlocked(event));
+  }
+
+  private async markWorkerStartedUnlocked(event: EventRecord): Promise<void> {
     const live = this.live.get(event.task_id);
     if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
     const job = await this.store.load(event.job_id);
@@ -239,7 +259,9 @@ export abstract class ReconcilerRuntimeBase {
     task.leaseOwner = null; task.leaseExpiresAt = null;
     await transitionTaskEvent(task, 'fail');
     await this.store.saveTask(task);
-    await this.emit(event);
+    // Do not publish while holding the task lock: the event bus may deliver
+    // the diagnostic event back to this reconciler synchronously.
+    this.detach(this.emit(event), jobId, taskId, 'watchdog failure event');
   }
 
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
@@ -272,6 +294,10 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
+    await this.withTaskLifecycleLock(taskId, () => this.failUnexpectedExitUnlocked(jobId, taskId, executionId, workerStarted));
+  }
+
+  private async failUnexpectedExitUnlocked(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
     if (terminalExecutionClaimed(jobId, taskId, executionId)) return;
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
@@ -290,12 +316,18 @@ export abstract class ReconcilerRuntimeBase {
       await transitionTaskEvent(task, 'fail');
       await this.store.saveTask(task);
     } else {
-      await this.applyTerminalEvent(event, true);
+      await this.applyTerminalEventUnlocked(event, true);
     }
-    await this.emit(event);
+    // Do not publish while holding the task lock; MemoryEventBus delivery is
+    // synchronous and would otherwise wait on this same lock.
+    this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
   }
 
   protected async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {
+    await this.withTaskLifecycleLock(taskId, () => this.timeoutTaskUnlocked(jobId, taskId, executionId));
+  }
+
+  private async timeoutTaskUnlocked(jobId: string, taskId: string, executionId: string): Promise<void> {
     const live = this.live.get(taskId);
     if (live?.executionId === executionId) {
       live.controller.abort();
@@ -316,12 +348,18 @@ export abstract class ReconcilerRuntimeBase {
       await this.store.saveTask(task);
       this.clearExecution(task.id, executionId);
     } else {
-      await this.applyTerminalEvent(event, true);
+      await this.applyTerminalEventUnlocked(event, true);
     }
-    await this.emit(event);
+    // Do not publish while holding the task lock; MemoryEventBus delivery is
+    // synchronous and would otherwise wait on this same lock.
+    this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
   }
 
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<void> {
+    await this.withTaskLifecycleLock(event.task_id, () => this.applyTerminalEventUnlocked(event, trustedInternal));
+  }
+
+  private async applyTerminalEventUnlocked(event: EventRecord, trustedInternal = false): Promise<void> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id);
     if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;

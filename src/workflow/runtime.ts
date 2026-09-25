@@ -54,3 +54,14 @@ export function applyJobWorkflowDecision(
   job.state = decision.target;
   job.updatedAt = timestamp;
 }
+
+/** Historical repair for records that stored derived runtime status as Job lifecycle. */
+export function applyHistoricalJobCompatibilityRepair(
+  job: Job,
+  target: JobLifecycleState,
+  timestamp = new Date().toISOString(),
+): void {
+  if (target !== 'COMPLETED' && target !== 'CANCELLED') throw new Error(`Invalid historical Job repair target ${target}`);
+  job.state = target;
+  job.updatedAt = timestamp;
+}
