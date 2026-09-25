@@ -13,6 +13,8 @@ test('job runtime status is derived independently from lifecycle state',()=>{
   assert.equal(deriveJobRuntimeStatus(job([task('blocked','BLOCKED')])),'BLOCKED');
   assert.equal(deriveJobRuntimeStatus(job([task('failed','FAILED')])),'FAILED');
   assert.equal(deriveJobRuntimeStatus(job([task('held','DRAFT')])),'WAITING');
+  assert.equal(deriveJobRuntimeStatus(job([task('done','SUCCEEDED')],{executionMode:'autonomous',autoMerge:false,reviewEnabled:false})),'WAITING');
+  assert.equal(deriveJobRuntimeStatus(job([task('done','SUCCEEDED')],{executionMode:'fixed',autoMerge:false,reviewEnabled:false})),'MERGE_PENDING');
 });
 
 test('schedule, review and PR facts project to runtime status',()=>{

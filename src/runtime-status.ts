@@ -42,6 +42,7 @@ export function deriveJobRuntimeStatus(job: Job, prState: PullRequestRuntimeStat
   if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
   if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
 
+  if (job.executionMode === 'autonomous' && job.autoMerge === false && job.reviewEnabled === false && implementationComplete(job) && prState === 'OPEN') return 'WAITING';
   if (job.reviewEnabled === false && implementationComplete(job) && prState === 'OPEN') return 'MERGE_PENDING';
   return 'IDLE';
 }
