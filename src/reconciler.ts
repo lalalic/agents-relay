@@ -146,6 +146,7 @@ export class Reconciler extends ReconcilerReviewBase {
             await this.applyJobEffectOutcomes(job, outcomes);
           }
         }
+        if (prState === 'MERGED' && this.store.resolveBlockerDependents) await this.store.resolveBlockerDependents(job.id, 'merge');
         return this.store.load(jobId);
       }
       if (job.state !== 'ACTIVE') return job;

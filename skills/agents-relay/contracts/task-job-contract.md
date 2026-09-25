@@ -98,6 +98,12 @@ A Task with `adapter: orchestrator` is synchronous self-work owned by the exact 
 - Successful self-work is terminalized on the same durable Task with `task complete --task-id ... --summary ...`; do not use `record` as a substitute for a Task that was created before execution. `record` remains a backfill mechanism for work that genuinely happened outside Relay.
 - If work is intended to survive the current turn or be picked up asynchronously, use a real worker adapter rather than `orchestrator`.
 
+## Cross-Job blocker dependencies
+
+Task `dependencies` remain local to one Job and must contain only Task IDs from that Job. Shared runtime/tool/platform blockers use a separate durable cross-Job relation. The blocker Job owns reverse `unblocks` records identifying dependent repository, PR, Job, Task, and blocked attempt. The dependent Task may carry a lightweight `blockedBy` reference for observability and deduplication.
+
+Blocker resolution is generation-safe and idempotent: Relay retries a dependent only when it is still FAILED/BLOCKED on the recorded attempt and still points at that blocker. Otherwise the relation becomes obsolete. Merge-mode blockers resolve when the blocker PR is observed merged. Blockers requiring package publication, deployment, runtime health, human/external verification, or another post-merge fact use verified mode and resolve only through the explicit verified-resolution path. Existing failure evidence is preserved; retry uses the normal FAILED/BLOCKED -> QUEUED lifecycle transition.
+
 ## Worker lifecycle
 
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.

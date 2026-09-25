@@ -22,6 +22,7 @@ import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTask
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
+import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 export { helpText } from './cli-help.js';
 import {
@@ -293,6 +294,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const headSha = await store.headSha();
     await store.mergePullRequest(headSha ?? undefined);
     await transitionJobEvent(job, 'pr.merged'); await store.saveJob(job);
+    await store.resolveBlockerDependents(id, 'merge');
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
@@ -432,6 +434,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
+  if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: scheduleFromArgs(args) ? 'ACTIVE' : 'DRAFT', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const bus = eventBus(args);
   if (command === 'tick') {

@@ -2,6 +2,7 @@ import type { DurableStore, GitHubClient, Comment, PullRequestState } from './st
 import { Job, Task, AgentRegistration } from './types.js';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderTaskComment, JOB_MARKER } from './markers.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
+import { resolveBlockerDependencies } from './blockers.js';
 
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
@@ -87,6 +88,9 @@ export class GitHubStore implements DurableStore {
     return ref && sha ? { ref, sha } : null;
   }
   async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
+  async resolveBlockerDependents(jobId: string, resolution: 'merge' | 'verified') {
+    return await resolveBlockerDependencies({ blockerStore: this, blockerJobId: jobId, resolution, dependentStore: (repository, prNumber) => new GitHubStore(this.client, repository, prNumber, this.trustedAuthors) });
+  }
   async load(jobId: string): Promise<Job> {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const bodyJob = parseJob(await this.pullRequestBody());
