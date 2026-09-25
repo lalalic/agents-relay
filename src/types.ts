@@ -59,6 +59,7 @@ export type WorkerRequirements = {
   labels?: Record<string, string>;
 };
 /** The worker-router's selection; model routing happens only after this exists. */
+export type ResourceUsageWindow = { remainingPercent: number; resetAt: number | null; resetInMinutes: number | null };
 export type WorkerSelection = {
   workerId: string;
   adapter: Exclude<AdapterName, 'orchestrator'>;
@@ -68,6 +69,10 @@ export type WorkerSelection = {
   resourceHealthy?: boolean;
   resourceProvider?: string;
   resourceUsedPercent?: number;
+  resourceRemainingPercent?: number;
+  resourceResetAt?: number;
+  resourceResetInMinutes?: number;
+  resourceWindows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow };
   decisionEvidence?: DecisionEvidence;
 };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };

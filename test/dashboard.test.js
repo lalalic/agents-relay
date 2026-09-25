@@ -96,6 +96,9 @@ test('account usage is limited to two real rate-limit percentage bars', () => {
   assert.match(dashboardHtml, /function creditProvider\(provider\)/);
   assert.match(dashboardHtml, /progressbar/);
   assert.match(dashboardHtml, /Math\.round\(percent\)\+'%'/);
+  assert.match(dashboardHtml, /function resetText\(windowData\)/);
+  assert.match(dashboardHtml, /Resets /);
+  assert.match(dashboardHtml, /toLocaleString\(\)/);
   assert.doesNotMatch(dashboardHtml, /% available|% used/);
   assert.match(dashboardHtml, /Real account telemetry when available/);
   assert.doesNotMatch(dashboardHtml, /Quota \/ balance|Current durable job|requests ·|tokens ·/i);

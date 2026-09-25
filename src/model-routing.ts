@@ -3,7 +3,7 @@ import { basename, join } from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';
 import { chooseWithDecision, DecisionChoice, DecisionEngine, DecisionMode } from './decision.js';
 import { AccountUsageOverview } from './usage.js';
-import { AgentRegistration, RoutingDecision } from './types.js';
+import { AgentRegistration, ResourceUsageWindow, RoutingDecision } from './types.js';
 import { usageForProvider, WorkerCandidate } from './worker-routing.js';
 
 export type ModelCandidate = {
@@ -14,6 +14,10 @@ export type ModelCandidate = {
   reasoning?: string;
   resourceHealthy?: boolean;
   resourceUsedPercent?: number;
+  resourceRemainingPercent?: number;
+  resourceResetAt?: number;
+  resourceResetInMinutes?: number;
+  resourceWindows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow };
 };
 
 export type ModelRoutingDecision = { candidate: ModelCandidate; routing: RoutingDecision };
@@ -50,7 +54,7 @@ async function readConfig(path: string): Promise<CodexConfig | null> {
 
 function withResource(candidate: ModelCandidate, usage?: AccountUsageOverview): ModelCandidate {
   const resource = usageForProvider(usage, candidate.provider);
-  return { ...candidate, resourceHealthy: resource.healthy, resourceUsedPercent: resource.usedPercent };
+  return { ...candidate, resourceHealthy: resource.healthy, resourceUsedPercent: resource.usedPercent, resourceRemainingPercent: resource.remainingPercent, resourceResetAt: resource.resetAt, resourceResetInMinutes: resource.resetInMinutes, resourceWindows: resource.windows };
 }
 
 export async function discoverModelCandidates(
@@ -122,10 +126,10 @@ export async function routeModel(
         facts: JSON.parse(JSON.stringify({
           task: options.taskFacts ?? {},
           worker: { id: worker.workerId, adapter: worker.adapter, capabilities: [...worker.capabilities] },
-          candidates: eligible.map(item => ({ id: item.id, provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null })),
+          candidates: eligible.map(item => ({ id: item.id, provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null, resourceRemainingPercent: item.resourceRemainingPercent ?? null, resourceResetAt: item.resourceResetAt ?? null, resourceResetInMinutes: item.resourceResetInMinutes ?? null, resourceWindows: item.resourceWindows ?? null })),
         })) as import('./decision.js').JsonValue,
       },
-      { type: 'choice', question: 'Which eligible model profile is best suited to execute this task?', choices: eligible.map(item => item.id) },
+      { type: 'choice', question: 'Which eligible model profile is best suited to execute this task? Prefer spending otherwise-expiring paid quota on stronger reasoning when reset is near and substantial capacity remains, but consider every quota window so a tighter longer-horizon limit is not needlessly depleted; never violate task fit or continuity.', choices: eligible.map(item => item.id) },
       () => deterministic.id,
     );
   const selected = eligible.find(item => item.id === choice.choice) ?? deterministic;
