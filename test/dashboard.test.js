@@ -119,18 +119,42 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
-test('job rows keep lifecycle, runtime, and PR state distinct with accessible actions', () => {
+test('job rows show lifecycle and runtime without PR state, while details keep PR state', () => {
   assert.match(dashboardHtml, /'job-row'/);
   assert.match(dashboardHtml, /element\('div','job-primary'\)/);
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
-  assert.match(dashboardHtml, /job\.githubState\|\|'UNKNOWN'/);
+  assert.doesNotMatch(dashboardHtml, /states\.append\([^;]*job\.githubState/);
+  assert.match(dashboardHtml, /field\('PR state',job\.githubState\|\|'UNKNOWN'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'start','Start','▶'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'reconcile','Reconcile','↻'\)/);
   assert.match(dashboardHtml, /actionButton\(job,'cancel','Cancel','×'\)/);
   assert.match(dashboardHtml, /button\.setAttribute\('aria-label',label\)/);
   assert.match(dashboardHtml, /job-action/);
   assert.match(dashboardHtml, /action==='start'.*job\.state==='DRAFT'/);
+});
+
+test('job rows keep autonomous and review flags in the status row', () => {
+  assert.match(dashboardHtml, /job\.executionMode==='autonomous'/);
+  assert.match(dashboardHtml, /text\('AUTONOMOUS'\)/);
+  assert.match(dashboardHtml, /job\.reviewEnabled!==false/);
+  assert.match(dashboardHtml, /text\('REVIEW REQUIRED'\)/);
+  assert.doesNotMatch(dashboardHtml, /job-meta/);
+  assert.doesNotMatch(dashboardHtml, /mode-\+value\(job\.executionMode/);
+});
+
+test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
+  assert.match(dashboardHtml, /function jobGroup\(job\)/);
+  assert.match(dashboardHtml, /if\(isTerminalJob\(job\)\)return 3/);
+  assert.match(dashboardHtml, /if\(job\.executionMode==='autonomous'\)return 1/);
+  assert.match(dashboardHtml, /if\(job\.draft\|\|job\.state==='DRAFT'\)return 2/);
+  assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
+});
+
+test('job row selection covers the row while action controls stop propagation', () => {
+  assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\.id\)\)/);
+  assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\.id\);\}\)/);
+  assert.match(dashboardHtml, /event\.stopPropagation\(\);void runJobAction/);
 });
 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
@@ -145,6 +169,31 @@ test('dashboard job actions invoke the supplied runtime handler', async () => {
   const response = await fetch(`http://127.0.0.1:${address.port}/api/job-action?id=${job.id}&action=reconcile`, { method: 'POST' });
   assert.equal(response.status, 200);
   assert.equal(invoked, job.id);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
+
+test('selected task exposes restart and cancel controls with lifecycle gating', () => {
+  assert.match(dashboardHtml, /taskActionButton\(task,'retry','Restart task','↻'\)/);
+  assert.match(dashboardHtml, /taskActionButton\(task,'cancel','Cancel task','×'\)/);
+  assert.match(dashboardHtml, /\['FAILED','BLOCKED'\]\.includes\(task\.state\)/);
+  assert.match(dashboardHtml, /\['DRAFT','QUEUED','BLOCKED','FAILED'\]\.includes\(task\.state\)/);
+  assert.match(dashboardHtml, /\/api\/task-action\?id=/);
+});
+
+test('dashboard task actions invoke the supplied runtime handler', async () => {
+  const task = { id: 'failed-task', jobId: 'task-action-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
+  const job = { id: 'task-action-job', title: 'Task actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  let invoked = '';
+  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    taskRetry: async (jobId, taskId) => { invoked = jobId + '/' + taskId; return job; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/task-action?id=${job.id}&task=${task.id}&action=retry`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(invoked, `${job.id}/${task.id}`);
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
@@ -164,9 +213,6 @@ test('job list uses repo-prefixed PR title and keeps time on the final line', ()
   assert.match(dashboardHtml, /function repoName\(repository\)/);
   assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
-  assert.match(dashboardHtml, /job\.draft\?'badge DRAFT':'/);
-  assert.match(dashboardHtml, /job\.draft\?'DRAFT':value\(job\.githubState\|\|'UNKNOWN'\)/);
-  assert.match(dashboardHtml, /\.badge\.DRAFT/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
@@ -187,8 +233,11 @@ test('task details expose ChatGPT thread as chat link instead of raw execution i
 test('task details omit input and result from dashboard', () => {
   assert.doesNotMatch(dashboardHtml, /markdownField\('Input'/);
   assert.doesNotMatch(dashboardHtml, /markdownField\('Result'/);
-  assert.doesNotMatch(dashboardHtml, /function markdownValue\(/);
   assert.doesNotMatch(dashboardHtml, /function inlineMarkdown\(/);
+  assert.match(dashboardHtml, /function taskCommentField\(task\)/);
+  assert.match(dashboardHtml, /Open task comment/);
+  assert.match(dashboardHtml, /function agentGraphField\(task\)/);
+  assert.match(dashboardHtml, /Task agent graph/);
 });
 
 
@@ -212,6 +261,33 @@ test('job list keeps repository quick filter without a separate repository metad
   assert.doesNotMatch(dashboardHtml, /id="job-count"/);
 });
 
+
+
+test('job list quick filters let autonomous and draft toggle back off', () => {
+  assert.doesNotMatch(dashboardHtml, /id="quick-jobs"/);
+  assert.match(dashboardHtml, /id="quick-status"/);
+  assert.match(dashboardHtml, /id="quick-autonomous"/);
+  assert.match(dashboardHtml, /id="quick-draft"/);
+  assert.match(dashboardHtml, /function setQuickMode\(mode,status=''\)/);
+  assert.match(dashboardHtml, /function toggleQuickMode\(mode\)/);
+  assert.match(dashboardHtml, /quickMode==='autonomous'/);
+  assert.match(dashboardHtml, /quickMode==='draft'/);
+  assert.match(dashboardHtml, /quickMode==='status'/);
+  assert.match(dashboardHtml, /\(job\.runtimeStatus\|\|'IDLE'\)===selectedRuntimeStatus/);
+  assert.doesNotMatch(dashboardHtml, /quickJobs/);
+  assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
+  assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
+  assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
+  assert.match(dashboardHtml, /toggleQuickMode\('autonomous'\)/);
+  assert.match(dashboardHtml, /toggleQuickMode\('draft'\)/);
+});
+
+test('job list supports title and PR-number wildcard search', () => {
+  assert.match(dashboardHtml, /id="job-search"/);
+  assert.match(dashboardHtml, /Search title or PR #/);
+  assert.match(dashboardHtml, /function matchesSearch\(job\)/);
+  assert.match(dashboardHtml, /agents-relay:job-search/);
+});
 
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));

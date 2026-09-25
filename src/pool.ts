@@ -2,6 +2,7 @@ import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs } 
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
+import { GitHubWebhookWake } from './github-webhook.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
@@ -69,19 +70,21 @@ export class RepositoryWorkerPool {
     const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
     await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
   }
-  private async handleTerminalEvent(event: import('./types.js').EventRecord): Promise<void> {
+  private async handleLifecycleEvent(event: import('./types.js').EventRecord): Promise<void> {
     const target = this.jobTargets.get(event.job_id);
     if (!target || !this.repositories.includes(target.repository)) {
       process.stderr.write(`warning: terminal event target unknown for job ${event.job_id}\n`);
       return;
     }
     const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
-    await this.makeReconciler(store, Math.max(1, this.concurrency)).handleEvent(event);
+    const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
+    await reconciler.handleEvent(event);
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) await reconciler.reconcile(event.job_id);
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
-      if (['task.completed', 'task.failed', 'task.blocked', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) {
-        await this.handleTerminalEvent(event);
+      if (['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) {
+        await this.handleLifecycleEvent(event);
         return;
       }
       if (event.type === 'job.wake' || event.type === 'github.webhook') {
@@ -95,9 +98,31 @@ export class RepositoryWorkerPool {
       if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile();
     });
   }
-  async webhookWake(bus: EventBus | undefined, job: Job, deliveryId: string, event: string, action: string | null): Promise<void> {
+  async webhookWake(bus: EventBus | undefined, job: Job, wake: GitHubWebhookWake): Promise<void> {
     if (bus) {
-      await bus.publish(eventFor(job.id, 'github', null, 'github.webhook', 'queued', `GitHub webhook ${event}${action ? ':' + action : ''}`, 'orchestrator', { deliveryId, event, action, repository: job.repository, prNumber: job.prNumber }));
+      const source = { id: `github/${job.repository}/delivery/${wake.deliveryId}`, component: 'github-webhook' };
+      if (wake.publication) {
+        await bus.publish(eventFor(
+          job.id,
+          'release',
+          null,
+          'package.published',
+          'succeeded',
+          `Published ${wake.publication.package}@${wake.publication.version}`,
+          'orchestrator',
+          {
+            deliveryId: wake.deliveryId,
+            repository: job.repository,
+            prNumber: job.prNumber,
+            package: wake.publication.package,
+            version: wake.publication.version,
+            registry: wake.publication.registry,
+            sha: wake.publication.sha,
+          },
+          source,
+        ));
+      }
+      await bus.publish(eventFor(job.id, 'github', null, 'github.webhook', 'queued', `GitHub webhook ${wake.event}${wake.action ? ':' + wake.action : ''}`, 'orchestrator', { deliveryId: wake.deliveryId, event: wake.event, action: wake.action, repository: job.repository, prNumber: job.prNumber }, source));
       return;
     }
     await this.reconcileTarget(job.repository, job.prNumber, job.id);

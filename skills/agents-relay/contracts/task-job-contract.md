@@ -6,7 +6,7 @@ This contract is the shared protocol for every component that creates, schedules
 
 Job objectives and Task inputs are **Markdown** and are durable execution context, not short labels. Use Mermaid where a diagram materially explains a workflow, state model, architecture, dependency graph, relationship, or other visual structure. **Mermaid-first applies to that explanation/section, not to the entire Job objective or Task input.** Put the diagram before the prose that explains that visual model, but keep normal document structure: start with the goal/context when that is what the reader needs first. Do not force a Mermaid block at the top of every objective/input, and do not add decorative or redundant diagrams when Markdown is clearer.
 
-The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside the JSON marker; those long-form Markdown bodies remain the human-readable durable content rendered by the Job/Task comment (and, for a Job objective, the PR body). Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded them.
+The trusted machine-readable Job/Task marker stores lifecycle and execution metadata only. Do **not** duplicate the Job objective or Task input inside marker JSON. The Job marker lives in the PR body immediately before the human-readable Job objective; Task markers live in their Task comments immediately before the human-readable Task input/result. Readers reconstruct `objective` / `input` from that visible Markdown while remaining backward-compatible with legacy markers that embedded long-form content or stored the Job marker in a separate comment.
 
 For long-form content, use files instead of shell-quoted arguments:
 
@@ -15,21 +15,50 @@ For long-form content, use files instead of shell-quoted arguments:
 
 When creating a new Job from an active discussion, the orchestrator must consolidate **all context needed to finish the Job without the originating thread** into the Job objective before creation. Include, as applicable: goal, relevant background, decisions already made, requirements, constraints, lifecycle/workflow semantics, non-goals, implementation boundaries, acceptance criteria, delivery/review instructions, and any important known issues. Do not create a Job whose objective is only a one-line summary when the discussion contains material implementation context.
 
-For a newly created PR (`job create --head`), standalone objective Markdown is required and becomes the default PR body. Updating the Job objective also updates the PR body. The trusted Job marker remains the machine-readable durable state, while the PR body and rendered Job comment expose the same objective to humans and agents.
+For a newly created PR (`job create --head`), standalone objective Markdown is required. The PR body is the single durable Job surface: one hidden `agents-relay:job:v1` marker followed by the objective Markdown. Updating Job metadata or objective updates that same body. New Jobs must not create a separate Job comment that repeats the objective. Readers must remain backward-compatible with legacy Job-comment markers, and a successful Job save may migrate such a legacy marker into the PR body only after validating the replacement before deleting the redundant legacy Job comment.
 
 ## Task producers
 
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
+### Task input vs result
+
+A Task input records **what is known and what has already been decided before execution**. A Task result records **what execution discovered and what was actually done**.
+
+Task input should include, as applicable:
+
+- goal and observed behavior;
+- evidence and reproduction details;
+- constraints and acceptance criteria;
+- **known root cause** only when it is already confirmed by the user, a prior Task, or durable evidence;
+- **hypothesis** when a suspected cause is not yet confirmed;
+- **proposed solution** when there is a candidate approach that the executor may validate or change;
+- **required solution** when the user or orchestrator has already decided the implementation approach. Executors must follow it unless they discover that it is infeasible, unsafe, or conflicts with higher-priority constraints, in which case they must report the deviation explicitly.
+
+Do not require a producer to invent a root cause or solution that is not known yet.
+
+Task results should include, as applicable:
+
+- **root cause** for bug, incident, failure, diagnostic, or recovery work; if an investigation cannot determine it, state that explicitly with the remaining uncertainty;
+- **implemented solution**, describing what was actually changed or done;
+- **deviations** from any proposed or required solution, with the reason;
+- **validation** showing how the result was verified;
+- relevant changed files, commits, PR comments, artifacts, or remaining issues.
+
+For feature/refactor work with no failure to diagnose, root cause is not required. For research tasks, use findings/evidence instead of forcing root-cause language.
+
+Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
+
 ## Worker routing order
 
 Every new model-backed executable task follows this order:
 
 1. The planner declares `workerRequirements` (capabilities and optional runtime, task-kind, trust-domain, region, and label constraints).
-2. `worker-router` resolves those requirements against available workers and a fresh on-demand usage snapshot from the shared usage registry. It applies capability/availability hard gates before considering resource evidence.
-3. `model-router` chooses provider/model/reasoning details for the selected worker.
-4. Relay persists the selected worker and model routing on the durable task before launch.
+2. `worker-router` is code-driven: it gathers authoritative worker/resource facts, applies capability/availability and other hard gates, then may call the generic typed `decide(request, contract)` primitive only among eligible workers.
+3. `model-router` runs after worker selection, discovers model/profile facts usable by that worker, applies model hard gates, then may use the same typed `decide()` primitive among eligible profiles. Router judgment is not a free-form agent invocation.
+4. `decide()` owns no routing facts or legality policy. Its optional Laya implementation is a transient CLI subprocess per decision; unavailable/invalid decisions fall back to deterministic routing. `src/usage.ts` remains the shared resource-fact source.
+5. Relay persists the selected worker and model routing on the durable task before launch.
 
 Planner output must not hard-code `codex`/`chatgpt`, provider preference, or usage probes. The worker-router and model-router are separate responsibilities; usage readers remain owned by `src/usage.ts` and are not duplicated in either router. Legacy task records that already contain adapter/routing metadata remain readable, but newly produced planner tasks must carry worker requirements.
 
@@ -59,9 +88,21 @@ Task readiness is explicit and must use these semantics:
 
 Do not use `WAITING` as a Task state or durable Job lifecycle state. `WAITING` is a derived Job runtime status for an `ACTIVE` Job whose next progress depends on a future trigger, schedule slot, dependency release, or other condition.
 
+## Orchestrator self-task ownership
+
+A Task with `adapter: orchestrator` is synchronous self-work owned by the exact orchestrator turn that creates it. It is not a durable handoff to Relay, another worker, a later reconcile cycle, or a future orchestrator thread.
+
+- Creating an `adapter: orchestrator` Task is an execution commitment: the creating orchestrator must execute it in the current turn.
+- The creating orchestrator must not end its turn while any orchestrator Task it created remains `QUEUED` or `RUNNING`; it must drive each such Task to a terminal state before returning control to the user.
+- Relay must not auto-start, lease, route, or emit synthetic `task.started` / assignment evidence for orchestrator Tasks. A queued orchestrator Task means the creator has not yet terminalized its self-work.
+- Successful self-work is terminalized on the same durable Task with `task complete --task-id ... --summary ...`; do not use `record` as a substitute for a Task that was created before execution. `record` remains a backfill mechanism for work that genuinely happened outside Relay.
+- If work is intended to survive the current turn or be picked up asynchronously, use a real worker adapter rather than `orchestrator`.
+
 ## Worker lifecycle
 
 Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.
+
+Relay allocates the durable `executionId` before launching model-backed work and gives that worker one exact event source identity: `job/<job-id>/task/<task-id>/execution/<execution-id>`. Every semantic lifecycle event from that execution must copy the identity verbatim in `source.id`. Relay correlates model-worker lifecycle only by this execution identity; `source.agent`, `source.component`, provider/adapter names, and `data.worker_owned` are diagnostic/legacy metadata and MUST NOT authorize or correlate lifecycle state. A retry receives a new execution identity, so events from an older execution are ignored.
 
 ## Job lifecycle and runtime status
 

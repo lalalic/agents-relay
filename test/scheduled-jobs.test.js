@@ -53,7 +53,7 @@ const scheduledJob = (overrides = {}) => ({
 });
 
 function fakeClient(initialLabels, comments, options = {}) {
-  const state = { labels: [...initialLabels], wakeComments: [], repositoryLabels: [...new Set(initialLabels)], searchQueries: [], searchPR: 1, deleted: [], added: [], createdRepositoryLabels: [] };
+  const state = { labels: [...initialLabels], wakeComments: [], repositoryLabels: [...new Set(initialLabels)], searchQueries: [], searchPR: 1, deleted: [], added: [], createdRepositoryLabels: [], prBody: '' };
   const comment = (body, id = 1) => ({ id, body, updated_at: now(), user: { login: 'bot' } });
   const trusted = comments ?? [comment(marker(JOB_MARKER, scheduledJob()))];
   const findComment = (query, variables = {}) => {
@@ -63,8 +63,8 @@ function fakeClient(initialLabels, comments, options = {}) {
     if (query.includes('comments(last:100)') || query.includes('comments(first:100')) {
       return { repository: { pullRequest: { comments: { nodes: trusted.map(item => ({ id: `IC_${item.id}`, databaseId: item.id, url: `https://github.com/owner/repo/pull/1#issuecomment-${item.id}`, body: item.body, updatedAt: item.updated_at, author: { login: item.user.login } })), pageInfo: { hasNextPage: false, endCursor: null } } } } };
     }
-    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) {
-      return { repository: { pullRequest: { id: 'PR_1', state: 'OPEN', merged: false, mergedAt: null, closedAt: null } } };
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) {
+      return { repository: { pullRequest: { id: 'PR_1', state: 'OPEN', merged: false, mergedAt: null, closedAt: null, body: state.prBody } } };
     }
     if (query.includes('addComment')) {
       const item = comment(variables.body, trusted.length + 1);
@@ -87,6 +87,10 @@ function fakeClient(initialLabels, comments, options = {}) {
   return {
     state,
     request: async (path, init = {}) => {
+      if (path === 'repos/owner/repo/pulls/1' && init.method === 'PATCH') {
+        state.prBody = JSON.parse(String(init.body)).body;
+        return { body: state.prBody };
+      }
       if (path.startsWith('search/issues?')) {
         const query = new URL(path, 'https://github.com').searchParams.get('q');
         state.searchQueries.push(query);

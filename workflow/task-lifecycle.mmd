@@ -1,30 +1,32 @@
 stateDiagram-v2
     [*] --> DRAFT
 
-    DRAFT --> QUEUED: release
-    DRAFT --> QUEUED: reconcile [dependenciesSatisfied] / release
+    DRAFT --> QUEUED: release / mutation.clearError,mutation.clearFailureReason
+    DRAFT --> QUEUED: reconcile [dependenciesSatisfied] / mutation.clearError,mutation.clearFailureReason
     DRAFT --> BLOCKED: block
     DRAFT --> CANCELLED: cancel
 
     QUEUED --> DRAFT: hold
-    QUEUED --> DRAFT: reconcile [dependenciesUnsatisfied] / hold
-    QUEUED --> QUEUED: reconcile [runnable] / release
-    QUEUED --> RUNNING: task.started
+    QUEUED --> DRAFT: reconcile [dependenciesUnsatisfied]
+    QUEUED --> QUEUED: reconcile [runnable] / mutation.clearError,mutation.clearFailureReason
+    QUEUED --> QUEUED: dispatch [dispatchable] / effect.launchTask
+    QUEUED --> RUNNING: task.started / mutation.clearError,mutation.clearFailureReason
     QUEUED --> BLOCKED: block
     QUEUED --> FAILED: fail
+    QUEUED --> FAILED: effect.launchTask.failed
     QUEUED --> CANCELLED: cancel
 
     RUNNING --> BLOCKED: task.blocked
-    RUNNING --> SUCCEEDED: task.completed
+    RUNNING --> SUCCEEDED: task.completed / mutation.clearError,mutation.clearFailureReason
     RUNNING --> FAILED: task.failed
     RUNNING --> CANCELLED: task.cancelled
 
-    BLOCKED --> QUEUED: retry
+    BLOCKED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
     BLOCKED --> CANCELLED: cancel
 
-    FAILED --> QUEUED: retry
-    FAILED --> RUNNING: reconcile.started
-    FAILED --> SUCCEEDED: reconcile.completed
+    FAILED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
+    FAILED --> RUNNING: reconcile.started / mutation.clearError,mutation.clearFailureReason
+    FAILED --> SUCCEEDED: reconcile.completed / mutation.clearError,mutation.clearFailureReason
     FAILED --> BLOCKED: reconcile.blocked
     FAILED --> CANCELLED: cancel
 

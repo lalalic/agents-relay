@@ -2,13 +2,14 @@ import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentRegistration } from './types.js';
 
-export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'worker' | 'nested-worker';
-export type ContextSource = 'project' | 'neo' | 'global' | 'registry' | 'runtime';
+export type ExecutionRole = 'orchestrator' | 'planner' | 'reviewer' | 'troubleshooter' | 'worker' | 'nested-worker';
+export type ContextSource = 'project' | 'neo' | 'global' | 'builtin' | 'registry' | 'runtime';
 
-export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'registry' | 'runtime'> };
-export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'registry' | 'runtime'>; description?: string };
+export type ResolvedInstruction = { path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'> };
+export type ResolvedSkill = { name: string; path: string; source: Exclude<ContextSource, 'builtin' | 'registry' | 'runtime'>; description?: string };
 export type ResolvedAgent = {
   name: string;
   path?: string;
@@ -42,6 +43,7 @@ export type ExecutionContextOptions = ExecutionContextRoots & {
 };
 
 type Frontmatter = Record<string, string>;
+const BUNDLED_AGENTS_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents');
 
 async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
@@ -197,6 +199,7 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const skills = selectByName([...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name)), options.explicitSkills, 'skill');
 
   const agentMap = new Map<string, ResolvedAgent>();
+  for (const agent of await agentFiles(dirname(BUNDLED_AGENTS_ROOT), 'builtin', [])) agentMap.set(agent.name, agent);
   for (const layer of uniqueLayers) {
     for (const agent of await agentFiles(layer.root, layer.source, skillsByLayer.get(layer.root) ?? [])) agentMap.set(agent.name, agent);
   }
@@ -225,6 +228,30 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
     runtimes: (options.runtimes ?? []).map(runtime => ({ name: runtime.name ?? runtime.adapter ?? 'unknown', id: runtime.id, capabilities: [...runtime.capabilities], source: 'runtime' })),
     delegation: { mode: 'relay-child-task', parentTaskIdRequired: role === 'nested-worker' },
   };
+}
+
+export async function resolveAgentContract(context: ExecutionContext, agentName: string): Promise<{ agent: ResolvedAgent; definition: string }> {
+  const agent = context.agents.find(candidate => candidate.name === agentName);
+  if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
+  if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
+  const definition = await readFile(agent.path, 'utf8');
+  if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
+  return { agent, definition };
+}
+
+export async function agentContractPrompt(context: ExecutionContext, agentName: string): Promise<string> {
+  const { agent, definition } = await resolveAgentContract(context, agentName);
+  return `[Selected task agent contract]
+Agent: ${agent.name}
+Source: ${agent.path ?? agent.source}
+
+The following Markdown is the authoritative behavioral contract for this Task agent.
+Follow it in addition to the shared Job/Task and events-bus contracts. Worker/model routing
+does not change the selected agent identity.
+
+--- BEGIN AGENT CONTRACT ---
+${definition.trim()}
+--- END AGENT CONTRACT ---`;
 }
 
 export function executionContextPrompt(context: ExecutionContext): string {
@@ -257,5 +284,5 @@ Runtime capabilities:
 ${runtimes}
 
 Delegation contract:
-Nested work MUST be created as an Agents Relay durable child task with parentTaskId lineage. Do not directly spawn arbitrary child agents. Leaf workers do not inherit top-level XChat orchestration duties merely because xchat-orchestrator is visible.`;
+${context.role === 'troubleshooter' ? 'This is an orchestrator-side recovery role. Follow the selected Troubleshooter contract for P0/self-job repair authority and use durable Agents Relay Jobs/Tasks for delegated work.' : 'Nested work MUST be created as an Agents Relay durable child task with parentTaskId lineage. Do not directly spawn arbitrary child agents. Leaf workers do not inherit top-level XChat orchestration duties merely because xchat-orchestrator is visible.'}`;
 }

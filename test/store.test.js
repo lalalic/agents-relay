@@ -4,22 +4,26 @@ import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
 test('rendered job/task markers do not duplicate human markdown content', async () => {
-  const { renderJobComment, renderTaskComment } = await import('../dist/markers.js');
+  const { renderJobBody, renderJobComment, renderTaskComment } = await import('../dist/markers.js');
   const durableJob = job('dedupe');
   durableJob.objective = '# Goal\n\nKeep this visible only.';
   durableJob.description = durableJob.objective;
-  const jobBody = renderJobComment(durableJob);
+  const jobBody = renderJobBody(durableJob);
   const jobMarker = jobBody.slice(0, jobBody.indexOf('-->') + 3);
   assert.doesNotMatch(jobMarker, /Keep this visible only/);
   assert.doesNotMatch(jobMarker, /description/);
   assert.equal(parseJob(jobBody)?.objective, durableJob.objective);
+  assert.equal(jobBody.split('Keep this visible only.').length - 1, 1);
+  assert.equal(parseJob(renderJobComment(durableJob))?.objective, durableJob.objective);
 
   const durableTask = task('dedupe', 'work');
   durableTask.input = '```mermaid\nflowchart TD\nA --> B\n```\n\nDo the work.';
+  durableTask.agentGraph = 'flowchart LR\nresearch[agent:researcher] --> review[agent:reviewer]';
   const taskBody = renderTaskComment(durableTask);
   const taskMarker = taskBody.slice(0, taskBody.indexOf('-->') + 3);
   assert.doesNotMatch(taskMarker, /Do the work/);
-  assert.doesNotMatch(taskMarker, /flowchart TD/);
+  assert.match(taskBody, /### Agent graph/);
+  assert.match(taskBody, /research\[agent:researcher\] --> review\[agent:reviewer\]/);
   assert.equal(parseTask(taskBody)?.input, durableTask.input);
 });
 test('marker parser tolerates Mermaid arrows inside JSON string values', () => {
@@ -76,7 +80,7 @@ const githubComment = (body, login = 'bot', id = Math.floor(Math.random() * 1_00
 const trustedClient = comments => ({
   request: async () => { throw new Error('REST should not be used by GitHubStore'); },
   graphql: async (query, variables = {}) => {
-    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null } } };
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null } } };
     if (query.includes('comments(first:100')) return { repository:{ pullRequest:{ comments:{ nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})), pageInfo:{hasNextPage:false,endCursor:null} } } } };
     if (query.includes('addComment')) { const item=githubComment(variables.body); comments.push(item); return { addComment:{ commentEdge:{ node:{ id:'IC_'+item.id } } } }; }
     if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const item=comments.find(row=>row.id===id); item.body=variables.body; return { updateIssueComment:{ issueComment:{id:variables.id} } }; }
@@ -183,7 +187,7 @@ class ManagedGitHubClient {
   nextComment;
   async graphql(query, variables = {}) {
     const pr = this.pulls.find(item => item.number === Number(variables.number)) ?? this.pulls[0];
-    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return { repository:{ pullRequest: pr ? { id:'PR_'+pr.number, state:String(pr.state||'open').toUpperCase(), merged:false, mergedAt:null, closedAt:null } : null } };
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return { repository:{ pullRequest: pr ? { id:'PR_'+pr.number, state:String(pr.state||'open').toUpperCase(), merged:false, mergedAt:null, closedAt:null, body:pr.body ?? '' } : null } };
     if (query.includes('pullRequest(number:$number){number title body state headRefName baseRefName}')) return { repository:{ pullRequest: pr ? {number:pr.number,title:pr.title,body:pr.body,state:String(pr.state||'open').toUpperCase(),headRefName:pr.head.ref,baseRefName:pr.base.ref} : null } };
     if (query.includes('pullRequests(first:20')) {
       const nodes=this.pulls.filter(item=>item.state==='open'&&(!variables.head||item.head.ref===variables.head)&&(!variables.base||item.base.ref===variables.base)).map(item=>({number:item.number,title:item.title,body:item.body,state:'OPEN',headRefName:item.head.ref,baseRefName:item.base.ref}));
@@ -207,6 +211,14 @@ class ManagedGitHubClient {
     if (path.includes('/pulls?')) return this.pulls.filter(item => item.state === 'open');
     const pullMatch = path.match(/\/pulls\/(\d+)$/);
     if (method === 'GET' && pullMatch) return this.pulls.find(item => item.number === Number(pullMatch[1]));
+    if (method === 'PATCH' && pullMatch) {
+      const pull = this.pulls.find(item => item.number === Number(pullMatch[1]));
+      if (!pull) throw new Error('pull not found');
+      const patch = JSON.parse(String(init.body));
+      if (typeof patch.body === 'string') pull.body = patch.body;
+      if (typeof patch.state === 'string') pull.state = patch.state;
+      return pull;
+    }
     if (method === 'POST' && path.endsWith('/pulls')) {
       const body = JSON.parse(String(init.body));
       const pull = { number: this.nextPr++, title: body.title, body: body.body, state: 'open', head: { ref: body.head }, base: { ref: body.base } };
@@ -254,7 +266,9 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   assert.equal(second.job.objective, 'body');
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
-  assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 1);
+  assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 0);
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'managed');
+  assert.equal(parseJob(client.pulls[0].body)?.objective, 'body');
 });
 
 test('dashboard keeps every unfinished job and only the latest ten completed jobs', () => {
@@ -282,7 +296,40 @@ test('managed job create binds an existing PR with zero comments', async () => {
 
   assert.equal(result.pr.number, 6);
   assert.equal(client.pulls.length, 1);
-  assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'adopted').length, 1);
+  assert.equal((client.comments.get(6) ?? []).filter(item => parseJob(item.body)?.id === 'adopted').length, 0);
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'adopted');
+});
+
+test('saveJob migrates a legacy Job comment into the PR body without touching Task comments', async () => {
+  const { renderJobComment } = await import('../dist/markers.js');
+  const legacyJob = { ...job('legacy-body'), objective: '# Goal\n\nKeep this objective once.' };
+  const child = task('legacy-body', 'child');
+  const client = new ManagedGitHubClient([{ number: 6, title: 'Legacy', body: legacyJob.objective, state: 'open', head: { ref: 'feat/legacy' }, base: { ref: 'main' } }]);
+  const legacyComment = githubComment(renderJobComment(legacyJob), 'bot', 1);
+  const taskComment = githubComment(marker(TASK_MARKER, child), 'bot', 2);
+  client.comments.set(6, [legacyComment, taskComment]);
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
+
+  const loaded = await store.load('legacy-body');
+  assert.equal(loaded.objective, legacyJob.objective);
+  await store.saveJob(loaded);
+
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'legacy-body');
+  assert.equal(parseJob(client.pulls[0].body)?.objective, legacyJob.objective);
+  const comments = client.comments.get(6) ?? [];
+  assert.equal(comments.some(item => parseJob(item.body)?.id === 'legacy-body'), false);
+  assert.equal(comments.filter(item => parseTask(item.body)?.id === 'child').length, 1);
+});
+
+test('plain objective text mentioning the Job marker name is not treated as a malformed marker', async () => {
+  const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: 'Discuss agents-relay:job:v1 storage without embedding a marker.', state: 'open', head: { ref: 'feat/existing' }, base: { ref: 'main' } }]);
+  const legacy = { ...job('mention-marker'), objective: client.pulls[0].body };
+  client.comments.set(6, [githubComment(marker(JOB_MARKER, legacy), 'bot', 1)]);
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
+
+  await store.validateJobBinding('mention-marker');
+  await store.saveJob(await store.load('mention-marker'));
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'mention-marker');
 });
 
 test('job update validation rejects duplicate markers instead of repairing them', async () => {
@@ -307,10 +354,10 @@ test('managed GitHub task creation is gated on a durable job marker', async () =
   await store.appendTask(task(durable.id, 'child'));
 
   const comments = client.comments.get(6) ?? [];
-  const jobIndex = comments.findIndex(item => parseJob(item.body)?.id === 'gated');
   const taskIndex = comments.findIndex(item => parseTask(item.body)?.id === 'child');
-  assert.ok(jobIndex >= 0);
-  assert.ok(taskIndex > jobIndex);
+  assert.equal(comments.some(item => parseJob(item.body)?.id === 'gated'), false);
+  assert.equal(parseJob(client.pulls[0].body)?.id, 'gated');
+  assert.ok(taskIndex >= 0);
 });
 
 test('agent registrations persist through trusted stores and ignore forged markers', async () => {
@@ -371,6 +418,7 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
     currentLogin: async () => 'bot',
     request: async (path, init = {}) => {
       calls.push(path);
+      if (path === 'repos/owner/repo/pulls/7' && init.method === 'PATCH') { pr.body = JSON.parse(String(init.body)).body; return pr; }
       if (path.includes('/compare/')) { if (!headExists) throw new Error('gh: Not Found (HTTP 404)'); return { ahead_by: bootstrapped ? 1 : 0, behind_by: 5 }; }
       if (path.endsWith('/git/refs') && init.method === 'POST') { const body = JSON.parse(String(init.body)); assert.equal(body.ref, 'refs/heads/feat/empty'); assert.equal(body.sha, 'parent'); headExists = true; return { ref: body.ref, object: { sha: body.sha } }; }
       if (path.endsWith('/git/commits') && init.method === 'POST') {
@@ -398,7 +446,7 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
         return {createPullRequest:{pullRequest:{number:7,title:pr.title,body:pr.body,state:'OPEN',headRefName:pr.head.ref,baseRefName:pr.base.ref}}};
       }
       if (query.includes('head:ref(qualifiedName:$head)')) return {repository:{head:headExists?{target:{oid:'parent',tree:{oid:'tree'}}}:null,base:{target:{oid:'parent',tree:{oid:'tree'}}}}};
-      if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt}')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null}:null}};
+      if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return {repository:{pullRequest:pr?{id:'PR_7',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:pr.body ?? ''}:null}};
       if (query.includes('comments(first:100')) return {repository:{pullRequest:{comments:{nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})),pageInfo:{hasNextPage:false,endCursor:null}}}}};
       if (query.includes('addComment')) { const item=githubComment(variables.body,'bot',comments.length+1); comments.push(item); return {addComment:{commentEdge:{node:{id:'IC_'+item.id}}}}; }
       if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const item=comments.find(row=>row.id===id); item.body=variables.body; return {updateIssueComment:{issueComment:{id:variables.id}}}; }
@@ -415,7 +463,8 @@ test('managed job creation proactively bootstraps a head branch with no ahead co
   assert.equal(bootstrapped, true);
   assert.equal(calls.filter(call => String(call).endsWith('/git/refs')).length, 1);
   assert.equal(calls.filter(call => String(call).endsWith('/git/commits')).length, 1);
-  assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 1);
+  assert.equal(comments.filter(item => parseJob(item.body)?.id === 'empty-job').length, 0);
+  assert.equal(parseJob(pr.body)?.id, 'empty-job');
 });
 
 test('GitHubStore closes its backing pull request explicitly', async () => {

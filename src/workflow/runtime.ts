@@ -1,0 +1,56 @@
+import type { Job, JobLifecycleState, Task, TaskState } from '../types.js';
+import type { WorkflowContext, WorkflowEngine } from './mermaid.js';
+import {
+  classifyWorkflowActions,
+  emptyWorkflowDecision,
+  type WorkflowDecision,
+  type WorkflowMutationName,
+} from './contracts.js';
+
+export function graphWorkflowDecision<State extends string>(
+  engine: WorkflowEngine,
+  from: State,
+  event: string,
+  facts: WorkflowContext = {},
+): WorkflowDecision<State> {
+  const enabled = engine.enabledSync(from, event, facts);
+  if (enabled.length === 0) return emptyWorkflowDecision<State>('no_transition');
+  if (enabled.length > 1) return emptyWorkflowDecision<State>('ambiguous');
+  const transition = enabled[0];
+  const actions = [...transition.actions];
+  const classified = classifyWorkflowActions(actions);
+  return {
+    accepted: true,
+    target: transition.to as State,
+    guard: transition.guard,
+    actions,
+    ...classified,
+    reason: 'accepted',
+  };
+}
+
+function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
+  if (mutation === 'mutation.clearError') task.error = null;
+  if (mutation === 'mutation.clearFailureReason') task.failureReason = undefined;
+}
+
+export function applyTaskWorkflowDecision(
+  task: Task,
+  decision: WorkflowDecision<TaskState>,
+  timestamp = new Date().toISOString(),
+): void {
+  if (!decision.accepted || !decision.target) throw new Error(`Cannot apply rejected workflow decision to task ${task.id}`);
+  task.state = decision.target;
+  for (const mutation of decision.mutations) applyTaskMutation(task, mutation);
+  task.updatedAt = timestamp;
+}
+
+export function applyJobWorkflowDecision(
+  job: Job,
+  decision: WorkflowDecision<JobLifecycleState>,
+  timestamp = new Date().toISOString(),
+): void {
+  if (!decision.accepted || !decision.target) throw new Error(`Cannot apply rejected workflow decision to job ${job.id}`);
+  job.state = decision.target;
+  job.updatedAt = timestamp;
+}

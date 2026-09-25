@@ -47,7 +47,8 @@ export type AgentRegistration = {
   registeredAt: string;
   updatedAt: string;
 };
-export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string };
+export type DecisionEvidence = { mode: 'off' | 'shadow' | 'active'; engine?: string; proposed?: string; probabilities?: Record<string, number>; fallback: boolean; error?: string };
+export type RoutingDecision = { provider: string; model: string; profile?: string; reasoning?: string; cwd?: string; projectId?: string; decidedBy: string; decidedAt: string; decisionEvidence?: DecisionEvidence };
 /** Requirements declared by a planner before a worker is selected. */
 export type WorkerRequirements = {
   capabilities: string[];
@@ -67,13 +68,14 @@ export type WorkerSelection = {
   resourceHealthy?: boolean;
   resourceProvider?: string;
   resourceUsedPercent?: number;
+  decisionEvidence?: DecisionEvidence;
 };
 export type Result = { summary: string; artifacts?: string[]; data?: Record<string, unknown> };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
 export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_required' | 'blocked' | 'stale';
 export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
 export type Task = {
-  jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
+  jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number;
   input: string; attachments?: string[]; output?: TaskOutput; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;

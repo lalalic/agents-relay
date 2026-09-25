@@ -27,10 +27,20 @@ function contentBeforeDelimiter(body: string, heading: string, end: string): str
   return body.slice(contentStart, endAt);
 }
 
+function jobMetadata(job: Job): Omit<Job, 'objective' | 'description' | 'tasks'> {
+  const { objective: _objective, description: _description, tasks: _tasks, ...metadata } = job;
+  return metadata;
+}
+
+export function renderJobBody(job: Job): string {
+  const objective = job.objective?.trim() || '_No objective recorded._';
+  return `${marker(JOB_MARKER, jobMetadata(job))}
+${objective}`;
+}
+
 export function renderJobComment(job: Job): string {
   const objective = job.objective?.trim() || '_No objective recorded._';
-  const { objective: _objective, description: _description, tasks: _tasks, ...metadata } = job;
-  return `${marker(JOB_MARKER, metadata)}
+  return `${marker(JOB_MARKER, jobMetadata(job))}
 # Agents Relay job: ${job.title}
 
 - **State:** ${job.state}
@@ -43,12 +53,14 @@ ${JOB_OBJECTIVE_END}`;
 }
 export function renderTaskComment(task: Task): string {
   const result = task.result?.summary?.trim() ? `\n\n### Result\n\n${task.result.summary.trim()}` : '';
+  const graph = task.agentGraph?.trim() ? `\n\n### Agent graph\n\n\`\`\`mermaid\n${task.agentGraph.trim()}\n\`\`\`` : '';
   const { input: _input, ...metadata } = task;
   return `${marker(TASK_MARKER, metadata)}
 ## Task: ${task.id}
 
 - **State:** ${task.state}
 - **Priority:** ${task.priority ?? 'P2'}
+${graph}
 
 ### Work
 
@@ -63,7 +75,9 @@ function markdownSection(body: string, heading: string): string | undefined {
 export function parseJob(body: string): Job | null {
   const job = parseMarker<Job>(body, JOB_MARKER);
   if (!job) return null;
-  const objective = job.objective ?? job.description ?? contentBeforeDelimiter(body, '\n## Objective\n\n', JOB_OBJECTIVE_END) ?? markdownSection(body, '\n## Objective\n');
+  const markerEnd = body.indexOf('-->');
+  const bodyObjective = markerEnd >= 0 ? body.slice(markerEnd + 3).trim() || undefined : undefined;
+  const objective = job.objective ?? job.description ?? contentBeforeDelimiter(body, '\n## Objective\n\n', JOB_OBJECTIVE_END) ?? markdownSection(body, '\n## Objective\n') ?? bodyObjective;
   const parsed = { ...job, objective };
   if (parsed.executionMode === undefined) return { ...parsed, executionMode: 'fixed' };
   if (parsed.executionMode !== 'fixed' && parsed.executionMode !== 'autonomous') return null;

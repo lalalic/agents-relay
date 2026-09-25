@@ -51,258 +51,8 @@ async function eventHistory(jobId: string, taskId: string | null, limit: number)
   return output;
 }
 
-export const dashboardHtml = `<!doctype html>
-<html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agents Relay Console</title>
-  <style>
-    :root { color-scheme: light dark; --bg:#f3f5f8; --surface:#fff; --surface2:#f8fafc; --border:#d8dee7; --text:#17202b; --muted:#687587; --accent:#285f86; --accent2:#e8f1f8; --ok:#19703a; --warn:#8b5b08; --bad:#a33c3c; --shadow:0 1px 2px rgba(15,23,42,.06); }
-    * { box-sizing:border-box; }
-    [hidden] { display:none !important; }
-    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,sans-serif; }
-    header { position:sticky; top:0; z-index:3; background:var(--surface); border-bottom:1px solid var(--border); padding:.8rem 1rem; }
-    .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
-    h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
-    .tagline,.subtle { color:var(--muted); font-size:.78rem; }
-    .warning-banner { margin:.65rem 0 0; padding:.5rem .65rem; border:1px solid #e6bf62; border-radius:.4rem; background:#fff4d6; color:#6f4b00; font-size:.78rem; font-weight:700; }
-    .tagline { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    nav[role="tablist"] { display:flex; gap:.3rem; margin-top:.65rem; }
-    nav button { border:0; border-radius:.35rem; background:transparent; color:var(--muted); padding:.38rem .68rem; font:inherit; font-weight:700; cursor:pointer; }
-    nav button[aria-selected="true"] { background:var(--accent); color:#fff; }
-    button:focus-visible,a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    main { max-width:1500px; margin:auto; padding:1rem; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; align-items:start; }
-    .panel { min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:.55rem; box-shadow:var(--shadow); }
-    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:.6rem; padding:.65rem .75rem; border-bottom:1px solid var(--border); }
-    .panel-head h2,.panel-head h3 { margin:0; color:var(--muted); font-size:.75rem; letter-spacing:.07em; text-transform:uppercase; min-width:0; }\n    #workspace-heading { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\n    #selected-job-title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .panel-actions { display:flex; align-items:center; gap:.45rem; }
-    .job-filters { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
-    .job-filter { max-width:145px; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .4rem; font:inherit; font-size:.72rem; }
-    .refresh-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.28rem .55rem; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; }
-    .refresh-button:disabled { cursor:default; opacity:.55; }
-    .panel-body { padding:.75rem; overflow:auto; max-height:calc(100vh - 11.5rem); }
-    #jobs-workspace > .panel:first-child .panel-body { overflow:visible; max-height:none; }
-    .jobs-panel { grid-row:1/span 2; }
-    .workspace { display:grid; gap:1rem; }
-    .job-list,.tree,.event-list { list-style:none; margin:0; padding:0; }
-    .job-list { display:grid; gap:.35rem; }
-    .job-row { display:grid; gap:.2rem; padding:.35rem .45rem; border:1px solid transparent; border-radius:.4rem; }
-    .job-row[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
-    .job-row.complete-unmerged { border-color:#d69a1b; background:#fff8df; }
-    .job-row.complete-unmerged[aria-current="true"] { border-color:#b77900; background:#fff0bd; }
-    .job-button { min-width:0; display:grid; gap:.2rem; padding:.12rem 0; border:0; background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; }
-    .job-title { font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .job-meta { display:flex; gap:.4rem; flex-wrap:wrap; color:var(--muted); font-size:.7rem; }
-    .job-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .job-last-line { display:flex; align-items:center; justify-content:space-between; gap:.5rem; min-width:0; }
-    .job-last-line .subtle:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .job-last-line .subtle:last-child { flex:none; white-space:nowrap; }
-    .job-primary { display:flex; align-items:center; justify-content:space-between; gap:.45rem; min-width:0; }
-    .job-status-line { display:flex; align-items:center; gap:.3rem; min-width:0; white-space:nowrap; }
-    .job-status-line .badge { flex:0 0 auto; }
-    .job-actions { display:flex; align-items:center; gap:.2rem; }
-    .job-action { width:1.8rem; height:1.8rem; display:inline-grid; place-items:center; padding:0; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); font:inherit; font-size:.95rem; line-height:1; cursor:pointer; }
-    .job-action:hover:not(:disabled) { color:var(--accent); border-color:var(--accent); }
-    .job-action:disabled { cursor:default; opacity:.4; }
-    .status-pill,.badge { display:inline-flex; align-items:center; border-radius:999px; padding:.06rem .42rem; min-height:1.35rem; font-size:.68rem; font-weight:800; }
-    .status-pill.ok,.badge.ACTIVE,.badge.RUNNING,.badge.SUCCEEDED,.badge.COMPLETED,.badge.MERGED { background:#e5f3e9; color:var(--ok); }
-    .status-pill.warn,.badge.BLOCKED,.badge.DRAFT,.badge.QUEUED,.badge.WAITING,.badge.OPEN { background:#fff1d2; color:var(--warn); }
-    .status-pill.bad,.badge.FAILED { background:#ffe8e8; color:var(--bad); }
-    .status-pill.neutral,.badge.IDLE,.badge.CANCELLED { background:#edf0f4; color:var(--muted); }
-    .badge.DRAFT { background:#eef2ff; color:#3f51b5; }
-    .badge.MERGE_PENDING { background:#ffe3a3; color:#7a4a00; }
-    .job-summary,.detail-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
-    .detail-group { min-width:0; padding:.5rem; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
-    .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
-    .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
-    .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
-    ul.tree { display:grid; gap:.25rem; }
-    ul.tree ul { list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
-    .task-row { width:100%; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
-    .task-row[aria-current="true"] { background:var(--accent2); }
-    .task-id { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
-    .event-list { display:grid; gap:.45rem; }
-    .event-item { padding-bottom:.4rem; border-bottom:1px solid var(--border); }
-    .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
-    .event-kind { color:var(--accent); font-weight:800; }
-    .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
-    #usage-view { grid-column:1 / -1; }
-    .usage-providers { display:grid; gap:.55rem; }
-    .usage-provider { display:grid; grid-template-columns:minmax(130px,180px) minmax(0,1fr); gap:1rem; align-items:center; padding:.7rem .8rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
-    .usage-provider h3 { margin:0; font-size:.86rem; }
-    .usage-bars { display:grid; gap:1rem; }
-    .usage-row { display:grid; gap:.35rem; }
-    .usage-label { display:flex; justify-content:space-between; gap:1rem; font-weight:700; }
-    .usage-track { height:.72rem; overflow:hidden; border:1px solid var(--border); border-radius:999px; background:var(--surface2); }
-    .usage-fill { height:100%; width:0; border-radius:inherit; background:var(--accent); transition:width .2s ease; }
-    .empty,.error-state { padding:.85rem; border:1px dashed var(--border); border-radius:.4rem; color:var(--muted); }
-    .error-state,.error-text { color:var(--bad); }
-    .skeleton { height:3.2rem; border-radius:.4rem; background:linear-gradient(90deg,#edf0f4,#fafbfc,#edf0f4); animation:pulse 1.2s infinite; }
-    @keyframes pulse { 50% { opacity:.55; } }
-    @media (max-width:1050px) { main { grid-template-columns:1fr; } .jobs-panel { grid-row:auto; } .panel-body { max-height:24rem; } #jobs-workspace > .panel:first-child .panel-body { max-height:none; } }
-    @media (max-width:650px) { main { padding:.65rem; } .job-summary,.detail-groups { grid-template-columns:1fr; } .tagline { display:none; } }
-    @media (prefers-reduced-motion:reduce) { .skeleton { animation:none; } .usage-fill { transition:none; } }
-  </style>
-</head>
-<body>
-<header>
-  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p></div>
-  <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
-  <nav role="tablist" aria-label="Console views">
-    <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
-    <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
-  </nav>
-</header>
-<main>
-  <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
-    <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
-  </section>
-  <div class="workspace" id="jobs-workspace">
-    <section class="panel" aria-labelledby="workspace-heading">
-      <div class="panel-head"><h2 id="workspace-heading"><span id="selected-job-title" class="subtle"></span></h2><div class="panel-actions"><button id="selected-job-refresh" class="refresh-button" type="button">Refresh</button><span id="connection" class="status-pill neutral" aria-live="polite" aria-label="Connecting"></span></div></div>
-      <div class="panel-body">
-        <div id="job-detail"><div class="skeleton"></div></div>
-        <h3 class="section-title">Task hierarchy</h3>
-        <ul id="task-tree" class="tree"><li class="skeleton"></li></ul>
-        <h3 class="section-title">Task detail</h3>
-        <div id="task-detail"><p class="empty">Select a task to inspect execution details.</p></div>
-      </div>
-    </section>
-    <section class="panel" id="events-panel" aria-labelledby="events-heading">
-      <div class="panel-head"><h2 id="events-heading">Events</h2><div class="panel-actions"><button id="events-all-tasks" class="refresh-button" type="button">All tasks</button><span id="events-scope" class="subtle">Job-wide · newest first · 60 max</span></div></div>
-      <div class="panel-body"><ol id="event-feed" class="event-list"><li class="empty">Waiting for events.</li></ol></div>
-    </section>
-  </div>
-  <section id="usage-view" role="tabpanel" aria-labelledby="usage-tab" hidden>
-    <div class="panel">
-      <div class="panel-head"><h2 id="usage-heading">Usage</h2><span id="usage-meta" class="subtle"></span></div>
-      <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
-    </div>
-  </section>
-</main>
-<script>
-'use strict';
-// Compatibility contracts retained for dashboard tests:
-// function taskDetail(
-// location.hash = selectedJob ? '#/jobs/' + encodeURIComponent(selectedJob) : '#/jobs'
-// const url = githubPrUrl(job.repository, job.prNumber);
-// const link = document.createElement('a');
-// link.href = url;
-// link.target = '_blank';
-// link.rel = 'noopener noreferrer';
-// link.textContent = 'PR #' + job.prNumber;
-// while (eventFeed.children.length > MAX_EVENTS)
-// function usageBar(label, window)
-
-const MAX_EVENTS=60;
-const jobsTab=document.querySelector('#jobs-tab');
-const usageTab=document.querySelector('#usage-tab');
-const jobsView=document.querySelector('#jobs-view');
-const usageView=document.querySelector('#usage-view');
-const jobsWorkspace=document.querySelector('#jobs-workspace');
-const jobList=document.querySelector('#job-list');
-const jobsRefresh=document.querySelector('#jobs-refresh');
-const repoFilter=document.querySelector('#repo-filter');
-const selectedJobRefresh=document.querySelector('#selected-job-refresh');
-const jobDetail=document.querySelector('#job-detail');
-const taskTree=document.querySelector('#task-tree');
-const taskDetailRoot=document.querySelector('#task-detail');
-const eventFeed=document.querySelector('#event-feed');
-const eventsAllTasks=document.querySelector('#events-all-tasks');
-const eventsScope=document.querySelector('#events-scope');
-const connection=document.querySelector('#connection');
-const selectedJobTitle=document.querySelector('#selected-job-title');
-const usageRoot=document.querySelector('#usage-root');
-const usageMeta=document.querySelector('#usage-meta');
-const rateLimitWarning=document.querySelector('#rate-limit-warning');
-let jobs=[];
-let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
-let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
-let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
-let eventTaskId=selectedTaskId;
-const displayedEventIds=new Set();
-
-function value(input){return input===null||input===undefined||input===''?'—':String(input);}
-function text(input){return document.createTextNode(value(input));}
-function element(name,className,child){const node=document.createElement(name);if(className)node.className=className;if(child)node.append(child);return node;}
-function field(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),element('p','detail-value',text(input)));return box;}
-function markdownField(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),markdownValue(input));return box;}
-function rememberSelection(){if(selectedJob)sessionStorage.setItem('agents-relay:selected-job',selectedJob);else sessionStorage.removeItem('agents-relay:selected-job');if(selectedTaskId)sessionStorage.setItem('agents-relay:selected-task',selectedTaskId);else sessionStorage.removeItem('agents-relay:selected-task');}
-function selected(){return jobs.find(job=>job.id===selectedJob)||jobs[0]||null;}
-function counts(tasks){const out={};for(const task of Array.isArray(tasks)?tasks:[])out[task.state]=(out[task.state]||0)+1;return out;}
-function compactCounts(input){const order=['RUNNING','BLOCKED','FAILED','QUEUED','DRAFT','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
-function relativeTime(timestamp){if(!timestamp)return '—';const parsed=Date.parse(timestamp);if(!Number.isFinite(parsed))return value(timestamp);const seconds=Math.max(0,Math.round((Date.now()-parsed)/1000));if(seconds<60)return 'just now';if(seconds<3600)return Math.floor(seconds/60)+'m ago';if(seconds<86400)return Math.floor(seconds/3600)+'h ago';return Math.floor(seconds/86400)+'d ago';}
-function safePrUrl(repository,prNumber){if(typeof repository!=='string'||!Number.isInteger(prNumber)||prNumber<=0)return null;const parts=repository.split('/');if(parts.length!==2)return null;const [owner,repo]=parts;if(!owner||!repo||owner==='.'||owner==='..'||repo==='.'||repo==='..')return null;if(!/^[A-Za-z0-9-]+$/.test(owner)||!/^[A-Za-z0-9._-]+$/.test(repo))return null;return 'https://github.com/'+owner+'/'+repo+'/pull/'+prNumber;}
-function prField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('GitHub PR')));const line=element('p','detail-value');const url=safePrUrl(job.repository,job.prNumber);if(url){const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='PR #'+job.prNumber;line.append(link);}else line.append(text('unavailable'));box.append(line);return box;}
-function chatField(task){const box=element('div','detail-group');box.append(element('p','detail-label',text('Chat')));const line=element('p','detail-value');if(task.adapter==='chatgpt'&&typeof task.threadId==='string'&&task.threadId){const link=document.createElement('a');link.href='https://chatgpt.com/c/'+encodeURIComponent(task.threadId);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open chat';line.append(link);}else line.append(text('—'));box.append(line);return box;}
-function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(element('li','empty',text('Waiting for events.')));}
-async function loadEventHistory(){if(!selectedJob){clearEvents();return;}const params=new URLSearchParams({job:selectedJob,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON('/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
-function selectJob(id){selectedJob=id;selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=id?'#/jobs/'+encodeURIComponent(id):'#/jobs';renderAll();void loadEventHistory();}
-function filteredJobs(){return jobs.filter(job=>!selectedRepo||job.repository===selectedRepo);}
-function syncFilters(){
-  const repos=[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
-  const previousRepo=selectedRepo;
-  repoFilter.replaceChildren(new Option('All repos',''),...repos.map(repo=>new Option(repo,repo)));
-  selectedRepo=repos.includes(previousRepo)?previousRepo:'';
-  repoFilter.value=selectedRepo;
-}
-function actionEnabled(job,action){if(action==='start')return job.state==='DRAFT'&&job.githubState!=='CLOSED'&&job.githubState!=='MERGED';if(action==='reconcile')return job.state==='ACTIVE'&&job.githubState==='OPEN';if(action==='cancel')return job.state!=='COMPLETED'&&job.state!=='CANCELLED'&&job.githubState==='OPEN';return false;}
-function actionButton(job,action,label,icon){const button=document.createElement('button');button.type='button';button.className='job-action';button.textContent=icon;button.title=label;button.setAttribute('aria-label',label);button.disabled=!actionEnabled(job,action);button.addEventListener('click',event=>{event.stopPropagation();void runJobAction(job,action,button);});return button;}
-async function runJobAction(job,action,button){button.disabled=true;try{const response=await fetch('/api/job-action?id='+encodeURIComponent(job.id)+'&action='+encodeURIComponent(action),{method:'POST'});if(!response.ok)throw new Error(response.status+' '+response.statusText);await refresh(true);}catch(error){button.title=labelForAction(action)+': '+error.message;}finally{renderAll();}}
-function labelForAction(action){return action==='start'?'Start':action==='reconcile'?'Reconcile':'Cancel';}
-function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',()=>selectJob(job.id));select.append(element('span','job-title',text(repoName(job.repository)+'/PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))),element('span','badge '+value(job.githubState||'UNKNOWN'),text(value(job.githubState||'UNKNOWN'))));const actions=element('span','job-actions');actions.append(actionButton(job,'start','Start','▶'),actionButton(job,'reconcile','Reconcile','↻'),actionButton(job,'cancel','Cancel','×'));const primary=element('div','job-primary');primary.append(states,actions);const meta=element('span','job-meta');meta.append(element('span','badge mode-'+value(job.executionMode||'fixed'),text(value(job.executionMode||'fixed').toUpperCase())),element('span',job.draft?'badge DRAFT':'',text(job.draft?'DRAFT':value(job.githubState||'UNKNOWN'))));if(isCompleteUnmerged(job))meta.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,meta,lastLine);row.append(content);jobList.append(element('li','',row));}}
-function taskNode(task,children,depth){const li=element('li');const row=document.createElement('button');row.type='button';row.className='task-row';row.setAttribute('aria-current',String(task.id===selectedTaskId));row.title=task.id;row.addEventListener('click',()=>{selectedTaskId=task.id;eventTaskId=task.id;rememberSelection();clearEvents();renderAll();void loadEventHistory();});const id=element('span','task-id',text(task.id));id.style.paddingLeft=Math.min(depth,4)*6+'px';row.append(id,element('span','badge '+value(task.state),text(task.state)));li.append(row);const nested=children.get(task.id)||[];if(nested.length){const ul=element('ul','tree');for(const child of nested)ul.append(taskNode(child,children,depth+1));li.append(ul);}return li;}
-function buildTree(tasks){taskTree.replaceChildren();if(!Array.isArray(tasks)||!tasks.length){taskTree.append(element('li','empty',text('No tasks in durable state.')));return;}const known=new Set(tasks.map(task=>task.id));const children=new Map();const roots=[];for(const task of tasks){if(!task.parentTaskId||!known.has(task.parentTaskId))roots.push(task);else{const siblings=children.get(task.parentTaskId)||[];siblings.push(task);children.set(task.parentTaskId,siblings);}}for(const task of roots)taskTree.append(taskNode(task,children,0));}
-function attemptBudget(task){const attempt=Number(task?.attempt)||0;const max=Number(task?.maxAttempts)||0;if(max>=3&&max%3===0){const effectiveMax=Math.max(max,Math.ceil(attempt/3)*3);return attempt+' / 3×'+(effectiveMax/3);}return attempt+' / '+max;}
-function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('Kind',task.kind||'work'),field('State',task.state),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),chatField(task));if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
-function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>task.agentName==='reviewer'&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}
-function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',job.githubState||'UNKNOWN'),field('Lifecycle state',job.state),field('Runtime status',job.runtimeStatus||'IDLE'),field('Execution mode',job.executionMode||'fixed'),field('Review',reviewStatus(job)),field('Review head SHA',job.review?.headSha||job.headSha||'—'),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}
-function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();}
-function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
-function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
-function compareJobs(a,b){const mergePendingDelta=Number(isCompleteUnmerged(b))-Number(isCompleteUnmerged(a));if(mergePendingDelta)return mergePendingDelta;const terminalDelta=Number(isTerminalJob(a))-Number(isTerminalJob(b));return terminalDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
-async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
-function renderRateLimitStatus(status){
-  if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
-  const until=status.cooldownUntil?new Date(status.cooldownUntil):null;
-  const suffix=until&&!Number.isNaN(until.getTime())?' Live GitHub refresh will retry after '+until.toLocaleTimeString()+'.':' Live GitHub refresh is temporarily paused.';
-  rateLimitWarning.textContent='GitHub API rate limit reached. Showing cached job data.'+suffix;
-  rateLimitWarning.hidden=false;
-}
-async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();void loadEventHistory();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
-function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
-function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
-function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob||eventTaskId&&event.task_id!==eventTaskId)return;if(event.event_id&&displayedEventIds.has(event.event_id))return;if(event.event_id)displayedEventIds.add(event.event_id);const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(eventLabel(event.type))),element('span','event-type',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
-function usageBar(label,windowData){const percent=Math.max(0,Math.min(100,100-windowData.usedPercent));const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(Math.round(percent)+'%')));const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' available');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(percent));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);return row;}
-function usageProvider(provider){const card=element('section','usage-provider');card.append(element('h3','',text(provider.label)));const usage=provider.usage||{};if(!usage.available||!usage.fiveHour||!usage.weekly){card.append(element('p','empty',text(usage.reason||'Account usage telemetry is unavailable.')));return card;}const bars=element('div','usage-bars');bars.append(usageBar('5-hour remaining',usage.fiveHour),usageBar('Weekly remaining',usage.weekly));card.append(bars);return card;}
-function formatCredit(value,currency){if(value===null||value===undefined||!Number.isFinite(Number(value)))return '—';const number=Number(value);if(currency==='USD')return '$'+number.toFixed(2);if(currency==='CNY')return '¥'+number.toFixed(2);return number.toFixed(2)+' '+currency;}
-function creditProvider(provider){const row=element('section','usage-provider');row.append(element('h3','',text(provider.label)));const credits=provider.credits||{};if(!credits.available||!Array.isArray(credits.balances)||!credits.balances.length){row.append(element('p','empty',text(credits.reason||'Credit balance is unavailable.')));return row;}const balance=credits.balances[0];row.append(element('div','detail-value',text(formatCredit(balance.remaining,balance.currency))));return row;}
-async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];if(!providers.length&&!credits.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}const grid=element('div','usage-providers');for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
-function showView(view){const isJobs=view==='jobs';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=isJobs;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(!isJobs));if(isJobs)void refresh();else void drawUsage();}
-jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
-jobsRefresh.addEventListener('click',()=>void refresh(true));
-eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
-repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
-selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
-usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
-window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();showView(location.hash==='#/usage'?'jobs':'usage');}});
-function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
-const stream=new EventSource('/events');
-stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
-stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
-stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
-stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
-if(location.hash==='#/usage')showView('usage');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage')void refresh();},300000);
-setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
-async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
-</script>
-</body>
-</html>`;
+export { dashboardHtml } from './dashboard-html.js';
+import { dashboardHtml } from './dashboard-html.js';
 
 export function serveDashboard(
   store: DurableStore,
@@ -315,7 +65,7 @@ export function serveDashboard(
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
-  actions?: { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job> },
+  actions?: { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job> },
 ): Server {
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
@@ -433,6 +183,17 @@ export function serveDashboard(
       const handler = action === 'start' ? actions?.start : action === 'reconcile' ? actions?.reconcile : action === 'cancel' ? actions?.cancel : undefined;
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
       try { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(await handler(requestedJobId))); }
+      catch (error) { res.writeHead(409); res.end(error instanceof Error ? error.message : String(error)); }
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/task-action') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const requestedJobId = url.searchParams.get('id') ?? '';
+      const requestedTaskId = url.searchParams.get('task') ?? '';
+      const action = url.searchParams.get('action') ?? '';
+      const handler = action === 'retry' ? actions?.taskRetry : action === 'cancel' ? actions?.taskCancel : undefined;
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !/^[A-Za-z0-9_-]+$/.test(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
+      try { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(await handler(requestedJobId, requestedTaskId))); }
       catch (error) { res.writeHead(409); res.end(error instanceof Error ? error.message : String(error)); }
       return;
     }

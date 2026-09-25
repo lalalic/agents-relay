@@ -1,6 +1,6 @@
 # Agents Relay
 
-Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. GitHub PR comments store durable workflow state; correlated terminal events are authoritative for model-backed task lifecycle transitions.
+Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. The PR body stores the durable Job marker plus human-readable Job objective, while PR comments store durable Task and other append-friendly records; correlated terminal events are authoritative for model-backed task lifecycle transitions.
 
 ## Quick start
 
@@ -53,7 +53,7 @@ Lifecycle transition authority lives in the directly renderable canonical source
 
 Graph-engine rollout is confidence-gated with `AGENTS_RELAY_WORKFLOW_MODE=legacy|shadow|graph` (default `legacy`). `shadow` keeps legacy authoritative while comparing the Mermaid decision and exposing `{mode,matches,mismatches}` at `/api/workflow-rollout`; `graph` is explicit opt-in until the shadow cutover gate is approved.
 
-Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat; its objective becomes the default PR body and objective updates keep the PR body synchronized.
+Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 
 Jobs default to `fixed`. `job create` persists only the durable job and never
 creates executable tasks. The top-level orchestrator decides whether the user's
@@ -69,6 +69,8 @@ snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.
 Task producers must follow `skills/agents-relay/contracts/task-job-contract.md`; that shared skill contract defines story size, lifecycle events, review, and auto-merge semantics.
+
+Worker/model routing is code-driven: Relay gathers authoritative worker/model/resource facts, applies hard gates, then can call the generic typed `decide(request, contract)` boundary for judgment among legal candidates. The optional Laya implementation is a transient CLI subprocess per decision (no resident model/service), with active Laya decisions and deterministic fallback on decision failure. See [Worker Router, Model Router, and typed decisions](docs/worker-model-routers.md).
 All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 minutes, and `L`≈45 minutes of normal-reasoning execution, with `M` as the default. `high` reasoning doubles that overall window. ChatGPT Browser Worker start-ack timeout is derived as one third of the effective overall timeout, clamped between 1 and 5 minutes. Orchestrators and planners should choose `storySize`, not raw timeout milliseconds; `--timeout` remains only as an explicit compatibility/debug override.
 
 Autonomous jobs can also be scheduled without a Relay database. The job marker
@@ -108,6 +110,10 @@ Pushes to `main` run `.github/workflows/publish.yml`: install, test, choose the 
 
 Normal consumers should invoke the CLI with `npx agents-relay ...` (or `npx agents-relayd ...`).
 
+After a successful npm publish, the workflow records one idempotent `agents-relay:package-published:v1` marker comment on the originating managed PR. The existing GitHub `issue_comment` webhook resolves that PR back to its durable Job and emits a correlated `package.published` events-bus event containing repository, package, version, registry, commit SHA, PR number, and webhook delivery ID. Its source identity is the GitHub delivery (`github/<repository>/delivery/<delivery-id>`), not a worker execution identity.
+
+`package.published` is a release fact, not a service-management command. Agents Relay does not pull packages, restart PM2, or decide which local service consumes a package. An external deployment subscriber may listen for this event, verify that the exact version is pullable, update/restart the affected service, verify its running version and health, and publish its own deployment outcome event. This keeps publication, deployment, and healthy-running as separate facts and removes the need for an orchestrator thread to synchronously wait for npm readiness.
+
 For explicit local demo/test mode:
 
 ~~~sh
@@ -135,13 +141,15 @@ events, durable-thread reuse, resume, or retry behavior.
 
 Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
 
+External product feedback uses the reusable `src/feedback.ts` contract. See [docs/feedback-intake.md](docs/feedback-intake.md) for the schema, attachment limits, privacy rules, materialization path, and provenance envelope for later Jobs/Tasks/PRs.
+
 reconcile leases and launches ready tasks without waiting inside the runtime scheduler; the CLI waits only long enough for its launched workers to persist results. agents-relayd (or the equivalent npx agents-relay serve) is the watchdog/dashboard mode. Model-backed workers require --events nats; the event transport carries authoritative terminal worker events as well as wake/progress traffic. See [docs/service.md](docs/service.md). --file PATH is explicit local demo/test mode only.
 
 `agents-relayd` without `--pr`/`--id` runs in workspace mode by default: it discovers nested Git repositories under `~/Workspace`, keeps only GitHub `origin` remotes, and aggregates their managed PR jobs into one dashboard and worker pool. Pass `--workspace PATH` to use another root. `--repo OWNER/REPO` remains the single-repository pool mode.
 
 For automation, Agents Relay can use GitHub App installation authentication via `AGENTS_RELAY_GITHUB_APP_ID`, `AGENTS_RELAY_GITHUB_APP_INSTALLATION_ID`, and `AGENTS_RELAY_GITHUB_APP_PRIVATE_KEY_FILE` (or matching CLI flags). Webhook mode is cache-first: targeted webhook reconciliation is primary, dashboard auto-refresh reads cached job state, and the broad watchdog drops to a 30-minute fallback. See [docs/github-app-rate-limit.md](docs/github-app-rate-limit.md).
 
-V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in PR marker comments; store only summaries and artifact references.
+V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in the PR-body Job marker or PR-comment Task markers; store only summaries and artifact references.
 
 Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
 
@@ -176,4 +184,12 @@ npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
 
 GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles its managed job to `COMPLETED`; a closed, unmerged PR reconciles to `CANCELLED` and cannot launch queued work. The dashboard exposes `/api/jobs` and shows PR state, durable Job lifecycle, and derived runtime status separately. A merged PR reconciles lifecycle to `COMPLETED`; a closed, unmerged PR reconciles lifecycle to `CANCELLED`.
 
-For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. Managed jobs also retain the GitHub PR body as the job description for dashboard display.
+`adapter: orchestrator` is reserved for synchronous self-work by the exact orchestrator turn that creates the Task. Relay deliberately does not auto-start these Tasks during reconciliation. The creator must perform the work before ending the turn and terminalize the same Task with `npx agents-relay task complete --task-id <id> --summary <summary> ...`. If work should continue asynchronously or in a later turn, use a real worker adapter instead.
+
+For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. For managed jobs, the GitHub PR body is the canonical Job surface: hidden Job metadata marker plus the visible Markdown objective.
+
+### Automatic task troubleshooting
+
+When an ACTIVE Job contains a current-run `FAILED` or `BLOCKED` task, reconciliation creates one P0-priority `troubleshooter` recovery task for that exact failed attempt. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
+
+The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.

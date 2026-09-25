@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, realpath, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
 import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
-import { Reconciler } from '../dist/reconciler.js';
+import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { executionMode } from '../dist/cli.js';
@@ -31,8 +31,9 @@ function executionHarness(bus) {
     capabilities: ['model','codex'],
     launch(current) {
       queueMicrotask(async () => {
-        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.started', 'running', `started ${current.id}`, 'user', undefined, { agent: 'codex' }));
-        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.completed', 'succeeded', `completed ${current.id}`, 'orchestrator'));
+        const source = { id: executionEventSource('auto', current.id, current.executionId) };
+        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.started', 'running', `started ${current.id}`, 'user', undefined, source));
+        await bus.publish(eventFor('auto', current.id, current.parentTaskId, 'task.completed', 'succeeded', `completed ${current.id}`, 'orchestrator', undefined, source));
       });
       return { id: `exec-${current.id}`, promise: Promise.resolve({ summary: 'runtime exited' }), cancel() {} };
     },
@@ -100,6 +101,30 @@ test('default planner agent loads markdown instructions and returns typed planni
     await chmod(command, 0o700);
     const planner = new AgentObjectivePlanner(command, agentFile);
     assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null }, new AbortController().signal)).objective_status, 'satisfied');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('default planner agent runs from the resolved project working directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-cwd-'));
+  try {
+    const command = join(root, 'model-runtime');
+    const agentFile = join(root, 'planner.agent.md');
+    await writeFile(agentFile, '# Planner Agent\nReturn JSON only.\n');
+    await writeFile(command, ['#!/bin/sh', 'pwd > planner.cwd', "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"objective_status\\\":\\\"satisfied\\\",\\\"assessment\\\":\\\"done\\\",\\\"next_tasks\\\":[]}\"}}'"].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const planner = new AgentObjectivePlanner(command, agentFile);
+    const executionContext = {
+      project: { name: 'project', path: root, workspaceRoot: root, neoRoot: null, globalRoot: root },
+      role: 'planner',
+      instructions: [],
+      skills: [],
+      agents: [],
+      runtimes: [],
+      delegation: { mode: 'relay-child-task', parentTaskIdRequired: false }
+    };
+    const result = await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, executionContext }, new AbortController().signal);
+    assert.equal(result.objective_status, 'satisfied');
+    assert.equal((await readFile(join(root, 'planner.cwd'), 'utf8')).trim(), await realpath(root));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

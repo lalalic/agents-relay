@@ -1,101 +1,106 @@
-# Worker Router and Model Router
+# Worker Router, Model Router, and typed decisions
 
-Agents Relay uses two routing stages for model-backed executable work:
+Agents Relay routes model-backed executable work in two code-driven stages:
 
-- **worker-router** chooses the execution environment.
+- **worker-router** chooses the execution environment;
 - **model-router** chooses the model/profile inside that environment.
 
-The order is always:
+Neither router delegates its decision to a free-form routing agent. Each router gathers authoritative facts in TypeScript, applies deterministic hard gates, then optionally calls the shared typed `decide(request, contract)` primitive to judge among the remaining legal choices.
 
 ```text
-Task requirements → worker-router → model-router → launch
+Task
+  -> worker facts + hard gates
+  -> decide(choice of eligible workers)
+  -> selected worker
+  -> model/profile facts + hard gates for that worker
+  -> decide(choice of eligible profiles)
+  -> persist worker/model decisions
+  -> worker.selected
+  -> model.selected
+  -> launch
 ```
 
-## Responsibilities
+## Responsibility boundary
 
-| Router | Decides | Typical choices | Must not decide |
-| --- | --- | --- | --- |
-| `worker-router` | **Where/how the task runs** | `codex`, `chatgpt`, future workers | Provider/model quality inside the selected worker |
-| `model-router` | **Which intelligence configuration runs there** | provider, model, profile, reasoning level | Switching to another worker/runtime |
+| Component | Owns | Must not do |
+| --- | --- | --- |
+| worker-router code | worker discovery, capabilities, availability, trust/runtime/resource facts, hard worker eligibility | choose a model/profile |
+| model-router code | profiles usable by the selected worker, model/provider/resource facts, hard model eligibility | switch to another worker |
+| `decide()` | typed judgment among caller-supplied legal choices | discover facts, weaken hard gates, know routing semantics |
+| `src/usage.ts` | canonical account usage / credit observations | routing policy |
 
-`worker-router` applies hard execution requirements first, then considers fresh resource/usage information, continuity, and reliability.
+The caller constructs both the **request** (JSON-safe facts) and the **contract** (currently a bounded `choice` contract). `decide()` returns a typed result and validates that the answer stays inside the contract.
 
-`model-router` runs only after a worker has been selected and may only choose profiles/models available to that worker.
+## Hard gates first
 
-## When routing runs
+Worker eligibility is determined before a decision call. Capability, runtime, availability, trust domain, region, labels, explicit constraints, and known impossible resource state remain deterministic constraints.
 
-Routing is required whenever an orchestrator, planner, or task-producing agent creates a **new model-backed executable task**.
+After the worker is selected, model-router discovers only profiles usable by that worker. Provider/model/profile constraints and known impossible resource state are applied before a decision call.
 
-Sticky continuations do not reroute unless routing must be reconsidered because of capability, availability, quota/resource pressure, or an explicit request.
+If only one legal choice remains, the router selects it directly without invoking Laya.
 
-```mermaid
-flowchart TD
-    A[Orchestrator / Planner<br/>creates executable task] --> B[Resolve TaskRequirements]
+## Laya CLI decision engine
 
-    B --> C{worker-router}
-    C -->|hard capability gates| D[Eligible workers]
-    D --> E[Read fresh usage / quota / health]
-    E --> F[Select worker<br/>codex / chatgpt / future]
+`LayaCliDecisionEngine` is intentionally stateless. Each decision writes temporary JSON state/question files, starts one transient `uvx laya-mlx predict` process, reads one JSON decision from stdout, removes the files, and exits. Agents Relay does **not** run a resident Laya daemon, sidecar, socket service, PM2 process, or permanently loaded model.
 
-    F --> G{model-router}
-    G --> H[Only profiles/models<br/>available to selected worker]
-    H --> I[Select provider / model / profile / reasoning]
-
-    I --> J[Persist routing decisions]
-    J --> K[Emit worker.selected]
-    K --> L[Emit model.selected]
-    L --> M[Launch task]
-
-    N[Sticky continuation] --> O{Need reroute?}
-    O -->|No| M
-    O -->|Yes| B
-```
-
-## Worker Router inputs
-
-Typical inputs:
-
-- required capabilities such as local repo, shell, browser session, attachments, or persistent iteration
-- worker availability and runtime constraints
-- fresh usage/quota/health information
-- continuity with prior work
-- recent reliability
-
-Examples:
-
-- Local repo edit/test/retry loop → usually `codex`
-- ChatGPT web session or attachment-heavy one-shot work → usually `chatgpt`
-- If both are capable, resource pressure may shift work to the healthier worker
-
-Capability constraints are always stronger than resource preference.
-
-## Model Router inputs
-
-After the worker is fixed, `model-router` considers only models/profiles that worker can actually use.
-
-Typical inputs:
-
-- task complexity and minimum capability
-- available provider/model profiles
-- subscription/quota/resource state
-- reasoning level needed
-- sticky model/profile continuity
-
-Example:
+Default command contract:
 
 ```text
-worker-router → codex
-model-router  → openai / gpt-5.6-luna / medium
+uvx laya-mlx predict --state-file <state.json> --questions <questions.json>
 ```
 
-The model router cannot change the selected worker to ChatGPT; that requires a new worker-routing decision.
+The adapter writes the caller facts to `state.json` and the typed decision contract to `questions.json`. The questions file is shaped like:
 
-## Usage data
+```json
+{
+  "decision": {
+    "type": "choice",
+    "instructions": "Which eligible choice best fits this task?",
+    "criteria": ["candidate-a", "candidate-b"]
+  }
+}
+```
 
-Both routers should reuse the shared Agents Relay usage readers/registry used by the dashboard.
+It must write JSON containing either a direct `choice` result or `answers.decision`, for example:
 
-Usage is read **on demand when routing needs it**. The routing layer should not duplicate provider-specific usage readers or introduce a separate usage cache/scheduler.
+```json
+{
+  "answers": {
+    "decision": {
+      "choice": "candidate-b",
+      "probabilities": {
+        "candidate-a": 0.2,
+        "candidate-b": 0.8
+      }
+    }
+  }
+}
+```
 
-## Core rule
+The concrete command is replaceable without changing routing code:
 
-> **Worker Router selects the execution runtime. Model Router selects the intelligence inside that runtime.**
+- `AGENTS_RELAY_LAYA_ARGS` — JSON string array of base arguments, default `["laya-mlx","predict"]`; the adapter appends `--state-file` and `--questions` paths;
+- `AGENTS_RELAY_LAYA_TIMEOUT_MS` — per-decision timeout, default 30000 ms.
+
+The default CLI is the `laya-mlx` package executed transiently through `uvx`; no project venv or resident model process is required. Routing still fails closed to the deterministic policy if `uvx`/Laya is unavailable or invalid.
+
+## Active decision behavior
+
+Laya decisions are authoritative whenever more than one legal candidate remains. The runtime always uses active mode; there is no production `off`/`shadow` configuration switch.
+
+If Laya exits non-zero, times out, emits malformed JSON, or returns a choice outside the caller's contract, routing falls back to the deterministic policy. Hard gates remain authoritative and an invalid Laya answer can never make an ineligible worker or model eligible.
+
+## Model profile discovery
+
+For the built-in Codex worker, model-router reads the actual local Codex configuration at routing time:
+
+- the top-level model from `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`);
+- `*.config.toml` profiles and their configured provider/model/reasoning values.
+
+For ChatGPT Browser Worker, the account-default model profile remains the single usable profile unless a richer configured profile surface is introduced later. Registered workers that explicitly pin provider/model metadata stay pinned to that configured route.
+
+This keeps model selection after worker selection and removes the previous worker-router behavior that pre-populated provider/model defaults.
+
+## Failure behavior
+
+Routing does not depend on Laya availability. Non-zero exit, timeout, malformed JSON, contract violation, or unavailable CLI all return to the existing deterministic ranking. No task should fail solely because the optional decision engine is unavailable.

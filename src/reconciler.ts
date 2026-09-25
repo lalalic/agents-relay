@@ -1,29 +1,31 @@
 import { randomUUID } from 'node:crypto';
+import { Job, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
-import { Job, Task, EventRecord, Priority, ReviewOutcome, ChatGptTabClosePolicy, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { implementationComplete } from './runtime-status.js';
-import { Execution, LaunchFailure, StartAckTimeout, WorkerAdapter, LaunchContext } from './adapters.js';
-import { ContinuationAdapter } from './continuation.js';
-import { EventBus, eventFor } from './events.js';
-import { ObjectivePlanner, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
-import { ExecutionContext, ExecutionContextRoots, ExecutionRole, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
-import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
-import { WorkerRequirements, WorkerSelection } from './types.js';
-import { AccountUsageOverview } from './usage.js';
-import { selectWorker, usageForProvider, workerCandidates } from './worker-routing.js';
+import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
+import { eventFor } from './events.js';
+import { parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
+import { agentGraphPrompt } from './agent-graph.js';
+import { ReconcilerReviewBase } from './reconciler-review.js';
+import { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
+export { executionEventSource } from './reconciler-runtime.js';
+export type { ReconcileOptions } from './reconciler-runtime.js';
+import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
+import { pendingTroubleshooterTasks } from './troubleshooter.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
-type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
-type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
-type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
-
-export function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): string {
+export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
+  const selectedAgent = task.agentName && context ? await agentContractPrompt(context, task.agentName) : '';
+  const selectedGraph = task.agentGraph && context ? await agentGraphPrompt(context, task.agentGraph) : '';
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
+  if (!task.executionId) throw new Error(`Task ${task.id} requires an executionId before worker input is built`);
+  const sourceId = executionEventSource(job.id, task.id, task.executionId);
   const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
   const taskUrl = task.taskUrl ?? `${prUrl}#issuecomment-${task.id}`;
   const output = task.output.kind === 'file'
@@ -38,13 +40,15 @@ Project: ${task.projectName ?? context?.project.name ?? 'unspecified'}
 
 Retrieve the durable job and task from GitHub before doing the work. Use whatever GitHub access this environment provides: the URLs, a GitHub integration/tool, or GitHub CLI/API. GitHub is the source of truth for task intent and declared output.
 
-${context ? executionContextPrompt(context) + '\n\n' : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
+${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? selectedAgent + '\n\n' : ''}${selectedGraph ? selectedGraph + '\n\n' : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
 
 [Output contract]
 ${output}
 
 [Execution event contract — mandatory]
 Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
+Your exact event source identity is: ${sourceId}
+Every lifecycle event for this execution MUST set source.id to that exact string. Do not derive, rename, or replace it.
 Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
 publish through the federated MCP tool events__publish; do not open NATS directly.
 For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
@@ -73,39 +77,35 @@ If no terminal event has been published, publish task.failed before exiting.`;
 
 const taskLaunchClaims = new Set<string>();
 
-export class Reconciler {
-  private readonly live = new Map<string, LiveExecution>();
-  private readonly plannerLive = new Map<string, LivePlanner>();
-  private readonly terminalTimers = new Map<string, NodeJS.Timeout>();
-  private readonly terminalExitGraceTimers = new Map<string, NodeJS.Timeout>();
-  private readonly continuationLive = new Set<string>();
-  private readonly launchFailureClaims = new Set<string>();
-  private readonly terminalWaiters = new Map<string, TerminalWaiter>();
-  private reconciling = false;
-  constructor(private readonly store: DurableStore, private readonly options: ReconcileOptions) {}
-  async handleEvent(event: EventRecord): Promise<void> {
-    if (event.type === 'task.started') {
-      await this.markWorkerStarted(event);
-      return;
-    }
-    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
-      await this.applyTerminalEvent(event);
-      return;
-    }
-    if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) { await this.applyReviewEvent(event); return; }
-    if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(event.job_id);
+export class Reconciler extends ReconcilerReviewBase {
+  constructor(store: DurableStore, options: ReconcileOptions) {
+    super(store, options);
+    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
+      'effect.launchTask',
+      async context => {
+        const job = await this.store.load(context.jobId);
+        const task = context.taskId ? job.tasks.find(item => item.id === context.taskId) : undefined;
+        if (!task || task.state !== 'QUEUED' || task.executionId !== null) return;
+        if (task.kind === 'planner') await this.launchPlanner(job, task);
+        else if (task.adapter !== 'orchestrator') await this.launch(job, task);
+      },
+      context => `effect.launchTask:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}`,
+    ));
+    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
+      'effect.cancelActiveTasks',
+      async context => this.cancelActiveTasks(context.jobId, String(context.data?.reason ?? 'Job terminated')),
+    ));
+    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
+      'effect.mergePullRequest',
+      async context => {
+        const headSha = typeof context.data?.headSha === 'string' ? context.data.headSha : null;
+        if (!headSha || !this.store.mergePullRequest) throw new Error('Pull request merge effect requires a head SHA and merge-capable store');
+        await this.store.mergePullRequest(headSha);
+      },
+      context => `effect.mergePullRequest:${context.jobId}:${String(context.data?.headSha ?? 'missing')}`,
+    ));
   }
-  async watch(jobId: string): Promise<() => Promise<void>> {
-    if (!this.options.eventBus) return async () => {};
-    try {
-      return await this.options.eventBus.subscribe(jobId, event => this.handleEvent(event));
-    } catch (error) {
-      await this.reportTransportFailure(error);
-      return async () => {};
-    }
-  }
-  async idle(): Promise<void> { while (this.live.size > 0 || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
-  async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
+
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
     this.reconciling = true;
@@ -119,26 +119,41 @@ export class Reconciler {
       const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
-        for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
-          this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort();
-          await transitionTaskEvent(task, 'cancel'); task.error = reason; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await this.store.saveTask(task);
-        }
         const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
         if (job.state !== terminalState) {
           if (!['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'].includes(job.state)) {
-            // Compatibility repair for legacy records that persisted derived runtime status as lifecycle.
+            // Compatibility repair boundary for historical records that persisted runtime status as lifecycle.
             job.state = terminalState;
             job.updatedAt = new Date().toISOString();
+            await this.store.saveJob(job);
+            const outcomes = await this.workflowEffects.execute(
+              ['effect.cancelActiveTasks'],
+              { jobId: job.id, transitionKey: `compatibility:${prState}`, data: { reason } },
+            );
+            await this.applyJobEffectOutcomes(job, outcomes);
           } else {
-            await transitionJobEvent(job, prState === 'MERGED' ? 'pr.merged' : 'pr.closed', prState === 'CLOSED' ? { notMerged: true } : {});
+            const decision = await transitionJobEvent(
+              job,
+              prState === 'MERGED' ? 'pr.merged' : 'pr.closed',
+              prState === 'CLOSED' ? { notMerged: true } : {},
+            );
+            await this.store.saveJob(job);
+            const outcomes = await this.workflowEffects.execute(
+              decision.effects,
+              { jobId: job.id, transitionKey: `${decision.target}:${prState}`, data: { reason } },
+            );
+            await this.applyJobEffectOutcomes(job, outcomes);
           }
-          await this.store.saveJob(job);
         }
         return this.store.load(jobId);
       }
       if (job.state !== 'ACTIVE') return job;
       await this.recoverLostExecutions(job, now);
       await this.recoverPlannerChildren(job);
+      for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
+        await this.store.appendTask(recovery);
+        await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
+      }
       await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       const beforeSchedule = await this.store.load(jobId);
@@ -156,161 +171,60 @@ export class Reconciler {
       if (prState === 'OPEN') {
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-        for (const task of scheduled.tasks.filter(t => t.state === 'QUEUED' && t.executionId === null && dependencyReady(t, new Map(scheduled.tasks.map(item => [item.id, item])))).sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2')).slice(0, capacity)) {
-          if (task.kind === 'planner') await this.launchPlanner(scheduled, task);
-          else if (task.adapter === 'orchestrator') {
-            await transitionTaskEvent(task, 'task.started');
-            task.leaseOwner = null;
-            task.leaseExpiresAt = null;
-            task.executionId = null;
-            await this.store.saveTask(task);
-            await this.emit(eventFor(scheduled.id, task.id, task.parentTaskId, 'task.orchestrator_assigned', 'running', `Task ${task.id} assigned to orchestrator self`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }));
-          } else await this.launch(scheduled, task);
+        const dispatchable = scheduled.tasks
+          .filter(task => task.state === 'QUEUED'
+            && task.executionId === null
+            && (task.kind === 'planner' || task.adapter !== 'orchestrator')
+            && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
+          .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
+          .slice(0, capacity);
+        for (const task of dispatchable) {
+          const decision = await transitionTaskEvent(task, 'dispatch', { dispatchable: true });
+          await this.store.saveTask(task);
+          const outcomes = await this.workflowEffects.execute(
+            decision.effects,
+            {
+              jobId: scheduled.id,
+              taskId: task.id,
+              transitionKey: `dispatch:${task.attempt}`,
+              data: { attempt: task.attempt },
+            },
+          );
+          await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
         }
       }
       const finalState = schedule(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, prState, headSha);
       if (prState === 'OPEN' && finalState.reviewEnabled === false && implementationComplete(finalState) && finalState.autoMerge !== false && this.store.mergePullRequest && headSha) {
-        await this.store.mergePullRequest(headSha);
-        await this.emit(eventFor(finalState.id, 'job', null, 'job.merged', 'succeeded', 'Completed work merged PR #' + finalState.prNumber, 'user', { headSha, autoMerge: true }, { agent: 'relay', component: 'agents-relay' }));
+        const decision = await transitionJobEvent(finalState, 'implementation.completed', { autoMerge: true });
+        await this.store.saveJob(finalState);
+        const outcomes = await this.workflowEffects.execute(
+          decision.effects,
+          { jobId: finalState.id, transitionKey: `implementation.completed:${headSha}`, data: { headSha } },
+        );
+        await this.applyJobEffectOutcomes(finalState, outcomes);
+        if (outcomes.some(item => item.effect === 'effect.mergePullRequest' && item.status !== 'failed')) {
+          await this.emit(eventFor(finalState.id, 'job', null, 'job.merged', 'succeeded', 'Completed work requested merge for PR #' + finalState.prNumber, 'user', { headSha, autoMerge: true }, { agent: 'relay', component: 'agents-relay' }));
+        }
       }
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
-  private async currentHeadSha(job: Job): Promise<string | null> { return await this.store.headSha?.() ?? job.headSha ?? job.review?.headSha ?? null; }
-  private async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
-    if (!headSha || !job.review || job.review.headSha === headSha || job.review.outcome === 'stale') return;
-    job.review = { ...job.review, outcome: 'stale', updatedAt: new Date().toISOString() };
-    const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
-    if (staleTask && ['DRAFT', 'QUEUED', 'RUNNING'].includes(staleTask.state)) {
-      this.live.get(staleTask.id)?.execution.cancel();
-      await transitionTaskEvent(staleTask, 'cancel');
-      staleTask.error = 'Review evidence became stale after the PR head changed';
-      staleTask.leaseOwner = null;
-      staleTask.leaseExpiresAt = null;
-      await this.store.saveTask(staleTask);
-    }
-    await this.store.saveJob(job);
-  }
-  private async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'ACTIVE' || !implementationComplete(job) || !headSha) return;
-    if (!this.preReviewGatesPass(job)) return;
-    const review = job.review;
-    if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
-    const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
-    if (reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return;
-    if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
-    const id = `final-review-${headSha.slice(0, 12)}`;
-    const now = new Date().toISOString();
-    const implementationTasks = job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item));
-    const reviewerRouting = await this.selectReviewer(implementationTasks);
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review PR #${job.prNumber} at head SHA ${headSha}. Objective: ${job.objective ?? job.description ?? job.title}. First publish task.started as the worker start acknowledgement with data.worker_owned=true, then verify the deterministic pre-review gates have passed and inspect the completed work. Emit review.started, then exactly one of review.approved, review.changes_required, or review.blocked with data.review.headSha set to ${headSha}. For review.changes_required, include every actionable finding in data.review.issues as an array of concise issue strings; Relay will create one durable fix task containing all findings. Do not modify code. When auto-merge is enabled, Relay will merge this exact reviewed head after review.approved.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
-    await this.store.appendTask(task);
-    job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
-    job.updatedAt = now;
-    await this.store.saveJob(job);
-    await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', `Final review task ${id} created for ${headSha} using ${reviewerRouting.reason}`, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
-    const ready = schedule(await this.store.load(job.id));
-    await this.store.saveJob(ready);
-    const reviewTask = ready.tasks.find(item => item.id === id && item.state === 'QUEUED');
-    if (reviewTask && (this.options.maxConcurrent ?? 4) > this.live.size + this.plannerLive.size) await this.launch(ready, reviewTask);
-  }
-  private async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: ReviewerCandidate; selection: WorkerSelection; reason: 'worker-diversity' | 'provider-model-diversity' | 'eligible-fallback' }> {
-    const configured = this.options.reviewer;
-    const registered = await this.store.listAgents();
-    const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
-    const candidates: ReviewerCandidate[] = workerCandidates(this.options.adapters, registered, usage);
-    let constrained = candidates.filter(candidate => {
-      if (configured?.workerId && configured.workerId !== candidate.workerId) return false;
-      if (configured?.adapter && configured.adapter !== candidate.adapter) return false;
-      if (configured?.routing?.provider && configured.routing.provider !== candidate.routing.provider) return false;
-      if (configured?.routing?.model && configured.routing.model !== candidate.routing.model) return false;
-      return true;
-    }).map(candidate => ({ ...candidate, routing: configured?.routing ? { ...candidate.routing, ...configured.routing } : candidate.routing }));
-    // Explicit reviewer routing is a caller-owned hard constraint and remains
-    // readable in isolated/test runtimes that do not instantiate that adapter.
-    if (constrained.length === 0 && configured?.adapter && configured.routing) {
-      constrained = [{ workerId: configured.workerId ?? configured.adapter, adapter: configured.adapter, capabilities: ['model'], runtime: configured.adapter, routing: configured.routing }];
-    }
-    const result = selectReviewer(constrained, implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
-    const resource = usageForProvider(usage, result.candidate.routing.provider);
-    result.selection.resourceHealthy = resource.healthy;
-    result.selection.resourceProvider = resource.healthy === undefined ? undefined : result.candidate.routing.provider;
-    result.selection.resourceUsedPercent = resource.usedPercent;
-    return result;
-  }
-
-  private async routeExecutableTasks(job: Job): Promise<void> {
-    const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
-    const candidates = workerCandidates(this.options.adapters, await this.store.listAgents(), usage);
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
-      const requirements = task.workerRequirements ?? { capabilities: task.capabilities.length > 0 ? task.capabilities : ['model'] };
-      const routed = selectWorker(candidates, requirements);
-      task.workerSelection = routed.selection;
-      task.adapter = routed.candidate.adapter;
-      task.routing = routed.candidate.routing;
-      task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
-      task.updatedAt = new Date().toISOString();
+  private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
+    const job = await this.store.load(jobId);
+    for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
+      this.live.get(task.id)?.execution.cancel();
+      this.plannerLive.get(task.id)?.controller.abort();
+      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
+      task.error = reason;
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.executionId = null;
       await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'orchestrator', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
     }
   }
-  private isSupersededTask(task: Task): boolean {
-    return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
-  }
-  private preReviewGatesPass(job: Job): boolean {
-    return job.tasks.filter(task => task.agentName !== 'reviewer' && !this.isSupersededTask(task)).every(task => task.state === 'SUCCEEDED');
-  }
-  private async applyReviewEvent(event: EventRecord): Promise<void> {
-    const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
-    const reviewData = event.data?.review && typeof event.data.review === 'object' ? event.data.review as Record<string, unknown> : undefined;
-    const headSha = typeof reviewData?.headSha === 'string' ? reviewData.headSha : typeof event.data?.headSha === 'string' ? event.data.headSha : task?.reviewHeadSha;
-    if (!task || !headSha || task.reviewHeadSha !== headSha) return;
-    const outcome: ReviewOutcome = event.type === 'review.started' ? 'started' : event.type === 'review.approved' ? 'approved' : event.type === 'review.changes_required' ? 'changes_required' : 'blocked';
-    const currentHeadSha = await this.store.headSha?.();
-    if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
-    const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
-    job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
 
-    if (outcome === 'changes_required') {
-      const rawIssues = Array.isArray(reviewData?.issues) ? reviewData.issues : [];
-      const issues = rawIssues.map(item => {
-        if (typeof item === 'string') return item.trim();
-        if (item && typeof item === 'object') {
-          const value = item as Record<string, unknown>;
-          const summary = typeof value.summary === 'string' ? value.summary : typeof value.message === 'string' ? value.message : typeof value.title === 'string' ? value.title : '';
-          return summary.trim();
-        }
-        return '';
-      }).filter(Boolean);
-      if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
-      const now = event.timestamp || new Date().toISOString();
-      const id = `review-fix-${headSha.slice(0, 8)}`;
-      if (!job.tasks.some(item => item.id === id)) {
-        const input = `Address all reviewer findings for PR #${job.prNumber} at ${headSha}:\n\n${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}`;
-        const fixTask: Task = {
-          jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title,
-          agentName: 'review-fix', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'],
-          adapter: 'codex', input, output: { kind: 'task_pr' },
-          routing: { provider: 'openai', model: 'gpt-5.6-luna', reasoning: 'medium', decidedBy: 'review-fix', decidedAt: now },
-          continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3,
-          leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
-          error: null, timeoutMs: storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
-        };
-        await this.store.appendTask(fixTask);
-        await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', `Created one fix task ${id} for ${issues.length} reviewer finding(s)`, 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
-      }
-    }
-    job.updatedAt = job.review.updatedAt;
-    await this.store.saveJob(job);
-    if (outcome === 'changes_required') this.detach(this.reconcile(job.id), job.id, task.id, 'review-fix reconciliation');
-    if (outcome === 'approved' && job.autoMerge !== false && this.store.mergePullRequest) {
-      await this.store.mergePullRequest(headSha);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'review.merged', 'succeeded', 'Reviewer-approved PR #' + job.prNumber + ' merged', 'user', { headSha, autoMerge: true }, { agent: 'reviewer', component: 'agents-relay' }));
-    }
-  }
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     for (const task of job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null))) {
       const expired = task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now;
@@ -343,7 +257,7 @@ export class Reconciler {
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
     if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (scopedTasks.length > 0 && planners.length > 0 && !planners.some(task => task.state === 'SUCCEEDED')) return job;
+    if (planners.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
@@ -382,7 +296,7 @@ export class Reconciler {
     });
   }
 
-  private async launch(job: Job, task: Task): Promise<void> {
+  protected async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
       await transitionTaskEvent(task, 'fail');
@@ -396,12 +310,11 @@ export class Reconciler {
       await this.store.saveTask(task);
       return;
     }
-    let workerInput: string;
     let executionContext: ExecutionContext;
     try {
-      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.parentTaskId ? 'nested-worker' : 'worker';
+      const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       executionContext = await this.resolvedContext(job, task, role);
-      workerInput = managedWorkerInput(job, task, executionContext);
+
     } catch (error) {
       await transitionTaskEvent(task, 'block');
       task.error = error instanceof Error ? error.message : String(error);
@@ -434,8 +347,10 @@ export class Reconciler {
     const durableExecutionId = task.executionId!;
     const controller = new AbortController();
     let execution: Execution;
+    const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
+    const workerInput = await managedWorkerInput(job, task, executionContext);
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: task.routing.cwd ?? executionContext.project.path } : task.routing };
-    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
+    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
       ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
@@ -476,35 +391,6 @@ export class Reconciler {
       task.id,
       'worker runtime completion',
     );
-  }
-
-  private async startAck(jobId: string, taskId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
-    if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
-    let resolveAck!: () => void;
-    let rejectAck!: (error: Error) => void;
-    let settled = false;
-    let timer: NodeJS.Timeout | undefined;
-    const ack = new Promise<void>((resolve, reject) => { resolveAck = resolve; rejectAck = reject; });
-    const unsubscribe = await this.options.eventBus.subscribe(jobId, async event => {
-      if (settled || event.type !== 'task.started' || event.job_id !== jobId || event.task_id !== taskId) return;
-      const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-      const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-      const workerOwned = event.data?.worker_owned === true || ['codex', 'chatgpt'].includes(sourceAgent);
-      if (!workerOwned || sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
-      if (!event.timestamp || new Date(event.timestamp).getTime() < launchBarrier) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolveAck();
-    });
-    timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      void unsubscribe();
-      rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_timeout: no worker task.started start-ack`));
-    }, timeoutMs);
-    let stopped = false;
-    const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer); await unsubscribe(); };
-    return { ack, stop };
   }
 
   private async launchPlanner(job: Job, task: Task): Promise<void> {
@@ -563,241 +449,10 @@ export class Reconciler {
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec): Task {
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
-  private clearExecution(taskId: string, executionId?: string | null): void {
-    const live = this.live.get(taskId);
-    if (!executionId || live?.executionId === executionId) this.live.delete(taskId);
-    const timer = this.terminalTimers.get(taskId);
-    if (timer) clearTimeout(timer);
-    this.terminalTimers.delete(taskId);
-    const graceTimer = this.terminalExitGraceTimers.get(taskId);
-    if (graceTimer) clearTimeout(graceTimer);
-    this.terminalExitGraceTimers.delete(taskId);
-  }
-
-  private async markWorkerStarted(event: EventRecord): Promise<void> {
-    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-    if (sourceAgent === 'relay' || sourceComponent === 'agents-relay') return;
-    const live = this.live.get(event.task_id);
-    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
-    const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task) return;
-    const claimedExecution = task.state === 'QUEUED' && task.executionId !== null && task.leaseOwner !== null;
-    const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
-    if ((exactLiveExecution || claimedExecution) && task.state === 'QUEUED') {
-      await transitionTaskEvent(task, 'task.started');
-      task.failureReason = undefined;
-      task.error = null;
-      task.updatedAt = event.timestamp || new Date().toISOString();
-      await this.store.saveTask(task);
-      if (live) live.workerStarted = true;
-      return;
-    }
-    if (task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
-    if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-    await transitionTaskEvent(task, 'reconcile.started');
-    task.failureReason = undefined;
-    task.error = null;
-    task.updatedAt = event.timestamp || new Date().toISOString();
-    await this.store.saveTask(task);
-    this.detach(this.reconcile(job.id), job.id, task.id, 'late worker-start reconciliation');
-  }
-
-  private isRecoverableWatchdogFailure(task: Task): boolean {
-    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event'].includes(task.failureReason ?? '')) return true;
-    const error = task.error ?? '';
-    return error.includes('worker_start_timeout')
-      || error.includes('timed out waiting for the mandatory terminal worker event')
-      || error.includes('exited before publishing task.started')
-      || error.includes('exited after task.started without publishing a terminal task event');
-  }
-
-  private isWorkerOwnedEvent(event: EventRecord): boolean {
-    const sourceAgent = typeof event.source?.agent === 'string' ? event.source.agent : '';
-    const sourceComponent = typeof event.source?.component === 'string' ? event.source.component : '';
-    return sourceAgent !== 'relay' && sourceComponent !== 'agents-relay';
-  }
-
-  private async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
-    const claim = executionId ?? `${jobId}:${taskId}`;
-    if (this.launchFailureClaims.has(claim)) return;
-    this.launchFailureClaims.add(claim);
-    const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000);
-    cleanup.unref();
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    if (task.state === 'QUEUED') {
-      this.clearExecution(task.id, executionId);
-      task.error = event.message;
-      task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
-      task.leaseOwner = null; task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-    } else {
-      await this.applyTerminalEvent(event);
-    }
-    await this.emit(event);
-  }
-
-  private async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
-    const live = this.live.get(taskId);
-    const liveWorkerStarted = live?.executionId === executionId && live.workerStarted;
-    if (live?.executionId === executionId) this.live.delete(taskId);
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    const workerStarted = liveWorkerStarted || task?.state === 'RUNNING';
-    if (!task || task.executionId !== executionId) return;
-    await this.emit(eventFor(
-      jobId, taskId, task.parentTaskId,
-      task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
-      error ? 'failed' : 'succeeded',
-      error ?? result?.summary ?? 'Worker runtime exited',
-      'orchestrator',
-      { authoritative: false, waitingForTerminalEvent: true, processError: error },
-      { agent: 'relay', component: 'agents-relay' },
-    ));
-    if (['QUEUED', 'RUNNING'].includes(task.state) && task.adapter === 'codex') this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
-  }
-
-  private scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
-    const graceMs = Math.max(1, this.options.terminalExitGraceMs ?? 1000);
-    const timer = setTimeout(() => {
-      this.terminalExitGraceTimers.delete(taskId);
-      this.detach(this.failUnexpectedExit(jobId, taskId, executionId, workerStarted), jobId, taskId, 'unexpected worker process exit');
-    }, graceMs);
-    this.terminalExitGraceTimers.set(taskId, timer);
-  }
-
-  private async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
-    const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
-    const message = workerStarted
-      ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
-      : `Worker ${taskId} exited before publishing task.started`;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', message, 'user', { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000 }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    if (task.state === 'QUEUED') {
-      this.clearExecution(task.id, executionId);
-      task.error = message;
-      task.failureReason = reason;
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-    } else {
-      await this.applyTerminalEvent(event);
-    }
-    await this.emit(event);
-  }
-
-  private async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {
-    const live = this.live.get(taskId);
-    if (live?.executionId === executionId) {
-      live.controller.abort();
-      live.execution.cancel();
-    }
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) {
-      this.clearExecution(taskId, executionId);
-      return;
-    }
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Task ${taskId} timed out waiting for the mandatory terminal worker event`, 'user', { reason: 'terminal_event_timeout', timeoutMs: task.timeoutMs });
-    if (task.state === 'QUEUED') {
-      task.error = event.message;
-      task.failureReason = 'terminal_event_timeout';
-      task.leaseOwner = null; task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-      this.clearExecution(task.id, executionId);
-    } else {
-      await this.applyTerminalEvent(event);
-    }
-    await this.emit(event);
-  }
-
-  private async applyTerminalEvent(event: EventRecord): Promise<void> {
-    const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;
-    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && this.isWorkerOwnedEvent(event)) {
-      if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-      await transitionTaskEvent(task, 'reconcile.started');
-      task.failureReason = undefined;
-      task.error = null;
-    }
-    if (task.state !== 'RUNNING') return;
-    const terminalWaiter = this.terminalWaiters.get(task.id);
-    if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
-    this.clearExecution(task.id, task.executionId);
-    task.leaseOwner = null;
-    task.leaseExpiresAt = null;
-    task.updatedAt = event.timestamp || new Date().toISOString();
-    this.terminalWaiters.get(task.id)?.resolve();
-    this.terminalWaiters.delete(task.id);
-    if (event.type === 'task.completed') {
-      task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
-      task.error = null;
-      task.failureReason = undefined;
-      await transitionTaskEvent(task, 'task.completed');
-      await this.store.saveTask(task);
-      await this.deliverContinuation(job, task);
-    } else if (event.type === 'task.failed') {
-      task.error = event.message || `Task ${task.id} failed`;
-      task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
-      await transitionTaskEvent(task, 'task.failed');
-      await this.store.saveTask(task);
-    } else if (event.type === 'task.blocked') {
-      task.error = event.message || `Task ${task.id} blocked`;
-      await transitionTaskEvent(task, 'task.blocked');
-      await this.store.saveTask(task);
-    } else if (event.type === 'task.cancelled') {
-      task.error = event.message || `Task ${task.id} cancelled`;
-      await transitionTaskEvent(task, 'task.cancelled');
-      await this.store.saveTask(task);
-    }
-    this.detach(this.reconcile(job.id), job.id, task.id, 'terminal-event reconciliation');
-  }
-  private terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
-    let resolve!: () => void;
-    const promise = new Promise<void>(resolver => { resolve = resolver; });
-    this.terminalWaiters.set(taskId, { executionId, launchBarrier, resolve });
-    return {
-      promise,
-      cancel: () => {
-        const current = this.terminalWaiters.get(taskId);
-        if (current?.executionId === executionId) this.terminalWaiters.delete(taskId);
-      },
-    };
-  }
-  private async deliverContinuation(job: Job, task: Task): Promise<void> {
-    const continuation = task.continuation ?? job.continuation;
-    if (!continuation || task.continuationDeliveredAt || this.continuationLive.has(task.id)) return;
-    const adapter = this.options.continuations?.find(candidate => candidate.kind === continuation.kind);
-    if (!adapter) { task.error = `No continuation adapter for ${continuation.kind}`; await this.store.saveTask(task); return; }
-    this.continuationLive.add(task.id);
-    try { await adapter.continue(task.result?.summary ?? '', continuation); const fresh = await this.store.load(job.id); const durable = fresh.tasks.find(item => item.id === task.id); if (durable?.state === 'SUCCEEDED' && !durable.continuationDeliveredAt) { durable.continuationDeliveredAt = new Date().toISOString(); await this.store.saveTask(durable); } }
-    catch (error) { await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'continuation.failed', 'failed', `Continuation failed: ${error instanceof Error ? error.message : String(error)}`, 'user')); }
-    finally { this.continuationLive.delete(task.id); }
-  }
-  private async emit(event: EventRecord): Promise<void> { try { if (this.options.emit) await this.options.emit(event); } catch { /* observability cannot block durable execution */ } try { if (this.options.eventBus) await this.options.eventBus.publish(event); } catch (error) { await this.reportTransportFailure(error); } }
-  private detach(promise: Promise<unknown>, jobId: string, taskId: string, context: string): void {
-    void promise.catch(error => this.reportDetachedFailure(jobId, taskId, context, error));
-  }
-  private async reportDetachedFailure(jobId: string, taskId: string, context: string, error: unknown): Promise<void> {
-    if (!this.options.emit) return;
-    const message = error instanceof Error ? error.message : String(error);
-    try { await this.options.emit(eventFor(jobId, taskId, null, 'runtime.persistence.failed', 'failed', `${context} failed: ${message}`, 'orchestrator')); } catch { /* detached failure reporting must never crash the daemon */ }
-  }
-  private async reportTransportFailure(error: unknown): Promise<void> { if (this.options.emit) { try { await this.options.emit(eventFor('system', 'event-bus', null, 'event.transport.failed', 'failed', `Event transport unavailable: ${error instanceof Error ? error.message : String(error)}`, 'orchestrator')); } catch { /* reporting is best effort */ } } }
 }
 
 function samePlannerChildDefinition(left: Task, right: Task): boolean {
-  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, storySize: left.storySize ?? 'M', projectName: left.projectName, agentName: left.agentName, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, storySize: right.storySize ?? 'M', projectName: right.projectName, agentName: right.agentName, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
+  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, storySize: left.storySize ?? 'M', projectName: left.projectName, agentName: left.agentName, agentGraph: left.agentGraph, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, storySize: right.storySize ?? 'M', projectName: right.projectName, agentName: right.agentName, agentGraph: right.agentGraph, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
 }

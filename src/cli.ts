@@ -13,6 +13,7 @@ import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } fro
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { serveDashboard } from './dashboard.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
+import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
@@ -21,261 +22,14 @@ import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTask
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
-const usage = 'agents-relay <job|task|context|init|record|agent-register|agent-discover|reconcile|tick|serve> [options]';
-const help = {
-  root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
-
-Usage:
-  npx agents-relay <command> [options]
-
-Commands:
-  job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
-  task create|update|show|list|retry|cancel  Manage durable tasks
-  context resolve          Resolve shared project instructions, skills, agents, and runtimes
-  init                     Create a local demo job or initialize a GitHub job
-  record                   Backfill a completed task into durable history
-  agent-register           Register an agent role and its capabilities
-  agent-discover           Find registered agents matching hard filters
-  reconcile                Run reconciliation once
-  tick                     Run the indexed autonomous scheduler heartbeat
-  serve                    Run the dashboard and reconciliation service
-
-Run 'npx agents-relay <command> --help' for command options and examples.
-Use 'node dist/cli.js' only for explicit local development/demo mode.`,
-  job: `Manage GitHub-backed durable jobs.
-
-Usage:
-  npx agents-relay job <create|update|show|list|merge|cancel> [options]
-
-Actions:
-  create  Create a durable Job, optionally binding an existing unmanaged PR
-  update  Partially update mutable metadata on a healthy existing Job
-  show    Show one durable Job
-  list    List managed Jobs in a repository
-  merge   Merge the backing PR and complete the Job
-  cancel  Close the backing PR and cancel the Job
-
-Common options:
-  --repo OWNER/REPO       GitHub repository
-  --id JOB_ID             Durable job identifier
-  --pr NUMBER             Existing PR number
-
-Example:
-  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
-  'job create': `Create a durable Job and its trusted marker.
-
-Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
-With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
-Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-auto-merge, --no-review. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
-Job creation never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
-
-Example:
-  npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective" --objective-file job.md`,
-  'job update': `Partially update mutable metadata on a healthy existing Job.
-
-Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --priority, --mode fixed|autonomous, --schedule, --auto-merge|--no-auto-merge, --review|--no-review, and continuation options. Updating the objective also updates the PR body.
-Unspecified fields are preserved. Marker/binding corruption is never repaired implicitly; update fails with a precise diagnostic instead.
-
-Example:
-  npx agents-relay job update --repo OWNER/REPO --pr 12 --id job-1 --priority P0 --no-auto-merge`,
-  'job show': `Show one durable Job.
-
-Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-
-Example:
-  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
-  'job list': `List managed Jobs in a repository.
-
-Required: --repo OWNER/REPO.
-
-Example:
-  npx agents-relay job list --repo OWNER/REPO`,
-  'job merge': `Merge the backing pull request and complete the durable Job.
-
-Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
-  'job cancel': `Cancel the durable Job and close its backing pull request.
-
-Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
-  task: `Manage durable tasks.
-
-Usage:
-  npx agents-relay task <create|update|show|list|retry|cancel> [options]
-
-Actions:
-  create  Create one durable Task under an existing Job
-  update  Update mutable Task fields
-  show    Show one Task
-  list    List Tasks for a Job
-  retry   Retry a failed or blocked Task
-  cancel  Cancel a Task`,
-  'task create': `Create one durable Task under an existing Job.
-
-Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive. Codex/ChatGPT tasks also require --model MODEL.
-Common: --task-id ID, --adapter codex|chatgpt|orchestrator, --priority P0|P1|P2|P3, --story-size S|M|L, --deps a,b, --parent ID, --draft.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
-Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
-
-Example:
-  npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter codex --provider openai --model MODEL --output task-pr --input-file task.md`,
-  'task update': `Update mutable durable Task fields in place.
-
-Required: --task-id ID and the normal Job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
-Use --clear-routing to remove routing metadata.
-
-Example:
-  npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
-  'task show': `Show one durable Task.
-
-Required: --task-id ID and the normal Job storage options.`,
-  'task list': `List durable Tasks for one Job.
-
-Required: the normal Job storage options.`,
-  'task retry': `Retry one durable Task.
-
-Required: --task-id ID and the normal Job storage options.`,
-  'task cancel': `Cancel one durable Task.
-
-Required: --task-id ID and the normal Job storage options.`,
-  context: `Resolve the shared execution context used by XChat and Relay.
-
-Usage:
-  npx agents-relay context resolve --project-path PATH --role ROLE [options]
-
-Actions:
-  resolve  Resolve instructions, visible skills/agents, and runtime/delegation metadata`,
-  'context resolve': `Resolve shared execution context without creating durable state.
-
-Required: --project-path PATH.
-Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
-Root overrides for testing/configuration: --workspace-root PATH, --neo-root PATH|none, --global-root PATH.
-
-Example:
-  npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator`,
-  record: `Backfill work completed outside the relay into durable history.
-
-Required: --file PATH or --repo/--pr/--id, plus --summary TEXT.
-Common: --task-id ID, --commit SHA, --project NAME.
-
-Example:
-  npx agents-relay record --file .agents-relay.json --summary "Built release" --commit abc123`,
-  reconcile: `Reconcile a job once, launching ready tasks and persisting results.
-
-Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
-
-Example:
-  npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
-  tick: `Process autonomous jobs indexed into current/recent GitHub next-run buckets.
-
-Required: --repo OWNER/REPO.
-Common: --lookback-buckets N (default 3).
-
-Example:
-  npx agents-relay tick --repo OWNER/REPO`,
-  init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
-
-Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
-
-Example:
-  npx agents-relay init --repo OWNER/REPO --pr 12 --id job-1 --title "Objective"`,
-  serve: `Run the dashboard and reconciliation service for a managed job.
-
-Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
-Common: --port PORT, --interval MS, --events nats.
-
-Example:
-  npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,
-  'agent-register': `Register an agent role and its execution endpoint.
-
-Required: --file PATH or managed GitHub options, plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET.
-Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --model NAME.
-
-Example:
-  npx agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell`,
-  'agent-discover': `Find registered agents using hard filters.
-
-Required: --file PATH or managed GitHub options.
-Common: --capabilities a,b, --runtime NAME, --availability available,busy, --task-kind NAME, --explore.
-
-Example:
-  npx agents-relay agent-discover --file .agents-relay.json --capabilities shell`,
-
-} as const;
-
-export function helpText(command?: string, action?: string): string {
-  if (command === 'job') return action ? help[`job ${action}` as keyof typeof help] ?? help.job : help.job;
-  if (command === 'task') return action ? help[`task ${action}` as keyof typeof help] ?? help.task : help.task;
-  if (command === 'context') return action ? help[`context ${action}` as keyof typeof help] ?? help.context : help.context;
-  return command ? help[command as keyof typeof help] ?? help.root : help.root;
-}
-export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 1800000, dashboardRefreshMs: 300000 } as const;
-class ServiceEventBus implements EventBus {
-  private readonly unsubscribers = new Set<() => Promise<void>>();
-  constructor(private readonly upstream: EventBus) {}
-  async publish(event: EventRecord): Promise<void> { await this.upstream.publish(event); }
-  async subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> {
-    const unsubscribe = await this.upstream.subscribe(jobId, wake);
-    this.unsubscribers.add(unsubscribe);
-    return async (): Promise<void> => { this.unsubscribers.delete(unsubscribe); await unsubscribe(); };
-  }
-  async subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> {
-    const unsubscribe = await this.upstream.subscribeAll(wake);
-    this.unsubscribers.add(unsubscribe);
-    return async (): Promise<void> => { this.unsubscribers.delete(unsubscribe); await unsubscribe(); };
-  }
-  async close(): Promise<void> {
-    const pending = [...this.unsubscribers].map(unsubscribe => unsubscribe());
-    this.unsubscribers.clear(); await Promise.all(pending);
-  }
-}
-function arg(args: string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
-function hasArg(args: string[], name: string): boolean { return args.includes(name); }
-async function readStdinText(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-  return Buffer.concat(chunks).toString('utf8');
-}
-async function textOption(args: string[], inlineFlag: string, fileFlag: string): Promise<string> {
-  if (hasArg(args, inlineFlag) && hasArg(args, fileFlag)) throw new Error(`${inlineFlag} and ${fileFlag} are mutually exclusive`);
-  if (hasArg(args, fileFlag)) {
-    const path = arg(args, fileFlag);
-    if (!path) throw new Error(`${fileFlag} requires a path or - for stdin`);
-    return path === '-' ? readStdinText() : readFile(path, 'utf8');
-  }
-  return arg(args, inlineFlag);
-}
-function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
-function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
-function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
-async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
-async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
-async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }
-async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
-export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
-async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
-function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
-function storySize(args: string[], fallback: StorySize = 'M'): StorySize { const value = arg(args, '--story-size', fallback).toUpperCase(); if (!['S','M','L'].includes(value)) throw new Error('--story-size must be S, M, or L'); return value as StorySize; }
-export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
-export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
-  const value = arg(args, '--chatgpt-tab-close-policy', process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY || 'after-start');
-  if (!['after-start', 'never', 'after-terminal'].includes(value)) throw new Error('--chatgpt-tab-close-policy must be after-start, never, or after-terminal');
-  return value as ChatGptTabClosePolicy;
-}
-function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
-function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
-function scheduleFromArgs(args: string[]): Job['schedule'] {
-  const cron = arg(args, '--schedule');
-  if (!cron) return undefined;
-  const nextRunAt = arg(args, '--schedule-next-run') || undefined;
-  return parseJobSchedule({
-    cron,
-    timezone: arg(args, '--schedule-timezone', 'UTC'),
-    nextRunAt,
-    missedRunPolicy: arg(args, '--missed-run-policy', 'skip') as 'run' | 'skip',
-    concurrencyPolicy: arg(args, '--schedule-concurrency', 'skip') as 'skip' | 'queue',
-  });
-}
-
+import { helpText, usage } from './cli-help.js';
+export { helpText } from './cli-help.js';
+import {
+  SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
+  storeFor, saveLocal, githubStore, eventBus, publishWake, priority, storySize, executionMode,
+  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs,
+} from './cli-support.js';
+export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
@@ -323,6 +77,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   const outputKind = arg(args, '--output');
   const outputPath = arg(args, '--output-path');
   const input = await textOption(args, '--input', '--input-file');
+  const agentGraph = hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file') ? await textOption(args, '--agent-graph', '--agent-graph-file') : undefined;
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
   if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('task create --adapter must be codex, chatgpt, or orchestrator');
   if (adapter !== 'orchestrator' && !model) throw new Error('task create requires --model for codex/chatgpt tasks');
@@ -340,6 +95,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     storySize: size,
     projectName: arg(args, '--project') || undefined,
     agentName: arg(args, '--agent') || undefined,
+    agentGraph,
     parentTaskId: arg(args, '--parent') || null,
     dependencies,
     capabilities: arg(args, '--capabilities').split(',').filter(Boolean),
@@ -367,7 +123,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
 }
 
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'retry', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -389,6 +145,22 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const task = job.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
+  if (action === 'complete') {
+    if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
+    if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
+    const summary = arg(args, '--summary');
+    if (!summary) throw new Error('task complete requires --summary');
+    if (task.state === 'QUEUED') await transitionTaskEvent(task, 'task.started');
+    task.attempt = Math.max(task.attempt, 1);
+    task.result = { summary };
+    task.error = null;
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+    await transitionTaskEvent(task, 'task.completed');
+    await store.saveTask(task);
+    await saveLocal(localFile, await store.load(job.id));
+    console.log(JSON.stringify(task, null, 2));
+    return;
+  }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
     await transitionTaskEvent(task, action === 'retry' ? 'retry' : 'cancel');
@@ -412,6 +184,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--input') || hasArg(args, '--input-file')) task.input = await textOption(args, '--input', '--input-file');
   if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
   if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
+  if (hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file')) task.agentGraph = await textOption(args, '--agent-graph', '--agent-graph-file');
   if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null;
   if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean);
   if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);
@@ -531,7 +304,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   }
 
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
-  if (hasArg(args, '--objective') || hasArg(args, '--objective-file')) { const objective = await textOption(args, '--objective', '--objective-file'); if (!objective.trim()) throw new Error('Job objective cannot be empty'); job.objective = objective; await store.updatePullRequestBody?.(objective); }
+  if (hasArg(args, '--objective') || hasArg(args, '--objective-file')) { const objective = await textOption(args, '--objective', '--objective-file'); if (!objective.trim()) throw new Error('Job objective cannot be empty'); job.objective = objective; }
   if (hasArg(args, '--priority')) job.priority = priority(args, job.priority ?? 'P2');
   if (hasArg(args, '--mode') || hasArg(args, '--execution-mode')) job.executionMode = executionMode(args, job.executionMode ?? 'fixed');
   if (hasArg(args, '--schedule')) job.schedule = scheduleFromArgs(args);
@@ -554,7 +327,28 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtimeReviewer() { return { requirements: { capabilities: ['model'] } }; }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: job => resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()) }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: new LayaCliDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: job => resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()) }); }
+export function dashboardTaskAction(store: DurableStore, reconciler: Reconciler, action: 'retry' | 'cancel'): (jobId: string, taskId: string) => Promise<Job> {
+  return async (jobId: string, taskId: string): Promise<Job> => {
+    const job = await store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (action === 'retry') {
+      if (!['FAILED','BLOCKED'].includes(task.state)) throw new Error(`Task ${task.id} is not restartable (${task.state})`);
+      task.maxAttempts = extendRetryBudget(task);
+      await transitionTaskEvent(task, 'retry');
+      task.error = null;
+    } else {
+      if (!['DRAFT','QUEUED','BLOCKED','FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
+      await transitionTaskEvent(task, 'cancel');
+      task.error = 'Cancelled by user';
+    }
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+    await store.saveTask(task);
+    return await reconciler.wake(job.id);
+  };
+}
+
 export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, action: 'start' | 'reconcile' | 'cancel'): (jobId: string) => Promise<Job> {
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);
@@ -590,6 +384,8 @@ export async function createService(args: string[]): Promise<Service> {
     start: dashboardJobAction(loaded.store, reconciler, 'start'),
     reconcile: dashboardJobAction(loaded.store, reconciler, 'reconcile'),
     cancel: dashboardJobAction(loaded.store, reconciler, 'cancel'),
+    taskRetry: dashboardTaskAction(loaded.store, reconciler, 'retry'),
+    taskCancel: dashboardTaskAction(loaded.store, reconciler, 'cancel'),
   });
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
