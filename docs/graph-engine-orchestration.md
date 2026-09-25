@@ -83,7 +83,26 @@ ReconcilerRuntimeBase
 - `runtime-status.ts`: pure derived projection; it is not durable lifecycle state.
 - Store implementations: persistence only.
 
-Direct lifecycle state assignment is reserved for the explicit historical compatibility repair boundary. Normal lifecycle changes go through graph transitions.
+Normal lifecycle changes go through graph transitions. The sole exception is
+`applyHistoricalJobCompatibilityRepair` in `src/workflow/runtime.ts`, which
+repairs legacy records that stored derived runtime status in the Job lifecycle
+field and validates the terminal target before persisting it.
+
+`DurableTaskTransitionRuntime` is the shared application seam for runtime-owned
+Task lifecycle inputs. It serializes competing inputs for one durable Task,
+re-reads the current Task immediately before decision, asks the canonical
+Mermaid graph about the original semantic event, and persists only an accepted
+decision. Serialization is an application primitive, not lifecycle policy.
+
+Watchdog and worker-delivery conditions have explicit graph events such as
+`watchdog.failed`, `worker.delivery_failed`, and `worker.start_ack_failed`. A
+late correlated worker event remains the original `task.started`,
+`task.completed`, `task.failed`, or `task.blocked` event; recovery legality is a
+graph guard (`recoverableExecution`) rather than a Reconciler-created
+`reconcile.*` lifecycle event. Consequently, after `task.completed` persists
+`SUCCEEDED`, a stale watchdog callback re-reads `SUCCEEDED` and the graph rejects
+`watchdog.failed` because no such edge exists. Process lifecycle events remain
+evidence and never authorize a semantic transition on their own.
 
 ## Stability contract
 

@@ -13,6 +13,7 @@ import { executionEventSource, type ReconcileOptions } from './reconciler-runtim
 export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
+import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 
@@ -124,8 +125,7 @@ export class Reconciler extends ReconcilerReviewBase {
         if (job.state !== terminalState) {
           if (!['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'].includes(job.state)) {
             // Compatibility repair boundary for historical records that persisted runtime status as lifecycle.
-            job.state = terminalState;
-            job.updatedAt = new Date().toISOString();
+            applyHistoricalJobCompatibilityRepair(job, terminalState);
             await this.store.saveJob(job);
             const outcomes = await this.workflowEffects.execute(
               ['effect.cancelActiveTasks'],

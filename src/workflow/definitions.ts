@@ -46,5 +46,6 @@ export const taskLifecycleWorkflow = load(
     dependenciesUnsatisfied: booleanGuard('dependenciesUnsatisfied'),
     runnable: booleanGuard('runnable'),
     dispatchable: booleanGuard('dispatchable'),
+    recoverableExecution: booleanGuard('recoverableExecution'),
   },
 );
