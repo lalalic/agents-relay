@@ -23,7 +23,9 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - run: npm test
+      - name: Run test suite
+        timeout-minutes: 10
+        run: npm test
       - run: chmod +x dist/cli.js dist/relayd.js
       - name: Select next package version
         id: version
