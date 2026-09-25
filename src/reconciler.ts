@@ -159,8 +159,12 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       const beforeSchedule = await this.store.load(jobId);
+      const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       const scheduleBefore = JSON.stringify(beforeSchedule.schedule ?? null);
       let scheduled = schedule(beforeSchedule);
+      for (const task of scheduled.tasks) {
+        if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
+      }
       if (scheduled.state !== previousState || JSON.stringify(scheduled.schedule ?? null) !== scheduleBefore) await this.store.saveJob(scheduled);
       if (prState === 'OPEN') {
         await this.ensureFinalReview(scheduled, prState, headSha);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseExecutableMermaid, WorkflowEngine } from '../dist/workflow/mermaid.js';
-import { jobLifecycleWorkflow, taskLifecycleWorkflow } from '../dist/workflow/definitions.js';
+import { jobLifecycleWorkflow, taskLifecycleWorkflow, validateCanonicalWorkflowGraph } from '../dist/workflow/definitions.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
 
 test('canonical Mermaid workflow graphs load as executable profile', () => {
@@ -79,4 +79,30 @@ test('canonical lifecycle graphs expose the integrated runtime event contract', 
   assert.equal(await taskLifecycleWorkflow.transition('DRAFT','reconcile',{dependenciesSatisfied:true}),'QUEUED');
   assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{dependenciesUnsatisfied:true}),'DRAFT');
   assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{runnable:true}),'QUEUED');
+});
+
+test('canonical graph contract fails closed on undeclared events, facts, and actions', () => {
+  const unknownEvent=parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: invented.event
+`);
+  assert.throws(() => validateCanonicalWorkflowGraph(unknownEvent), /Unknown canonical workflow event/);
+
+  const unknownFact=parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: reconcile [inventedFact]
+`);
+  assert.throws(() => validateCanonicalWorkflowGraph(unknownFact), /Unknown canonical workflow fact/);
+
+  const unknownAction=parseExecutableMermaid(`stateDiagram-v2
+[*] --> A
+A --> B: reconcile / effect.invented
+`);
+  assert.throws(() => validateCanonicalWorkflowGraph(unknownAction), /Unknown canonical workflow action/);
+});
+
+test('every canonical graph transition uses the shared event, fact, and action contracts', () => {
+  for (const workflow of [jobLifecycleWorkflow, taskLifecycleWorkflow]) {
+    assert.doesNotThrow(() => validateCanonicalWorkflowGraph(workflow.graph));
+  }
 });
