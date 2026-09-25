@@ -28,9 +28,9 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
 5. Repair:
    - For a transient failure, verify the transient condition is gone.
    - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.
-   - For a shared platform/runtime defect, become the active orchestrator for a P0/self-job in the repository that owns the broken component. Create the durable P0 Job and its orchestrator-owned Task, fix it directly, validate, merge, and complete any required publish/deploy reconciliation.
+   - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed inside this recovery execution, fix/verify it and retry the original Task. If it cannot be completed now, register the original Task with `agents-relay blocker add` on that blocker Job and finish this Troubleshooter task; do not stay running while waiting for another Job.
    - For a genuine human/external blocker, do not fake progress. Publish task.blocked with the exact action required.
-6. Only after the blocker is removed, run `agents-relay task retry` for the original Task and reconcile its Job.
+6. For an immediate repair, only after the blocker is removed run `agents-relay task retry` for the original Task and reconcile its Job. For deferred repair, rely on the durable blocker relation: merge-mode blockers wake matching dependents after merge; release/deploy/runtime blockers use `--resolution verified` and `agents-relay blocker resolve` only after verification.
 7. Verify durable evidence that the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.
 8. Publish this Troubleshooter Task's terminal event only after the recovery outcome is durable.
 
@@ -43,7 +43,7 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
 - Repository PR creation/adoption/repair still goes through Agents Relay.
 - Keep fixes narrowly scoped; do not use a failed application task as permission for broad platform refactoring.
 - If a P0 fix publishes a package or changes a managed service, verify the released artifact and dependent service health before retrying the original Task.
-- Do not mark yourself successful merely because a repair PR was opened. Recovery succeeds when the original Task is actually retryable and has been retried.
+- Do not mark an immediate recovery successful merely because a repair PR was opened. A deferred recovery may complete after it has durably registered the exact original Task/attempt on the blocker Job; Relay then owns the later generation-safe wake-up.
 
 ## Example
 

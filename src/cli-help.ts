@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|context|init|record|agent-register|agent-discover|reconcile|tick|serve> [options]';
+export const usage = 'agents-relay <job|task|blocker|context|init|record|agent-register|agent-discover|reconcile|tick|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -8,6 +8,7 @@ Usage:
 Commands:
   job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
   task create|update|show|list|complete|retry|cancel  Manage durable tasks
+  blocker add|resolve|show  Manage cross-Job blocker dependencies
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   record                   Backfill a completed task into durable history
@@ -118,6 +119,21 @@ Required: --task-id ID and the normal Job storage options.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  blocker: `Manage durable cross-Job blocker dependencies.
+
+Usage:
+  npx agents-relay blocker <add|resolve|show> [options]
+
+The blocker Job owns reverse \`unblocks\` references. \`add\` registers a failed/blocked dependent task. \`resolve\` is the explicit verified-resolution path; merge-mode blockers also resolve automatically after the blocker PR is observed merged.`,
+  'blocker add': `Register a dependent failed/blocked Task on a blocker Job.
+
+Blocker: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+Dependent: --dependent-repo OWNER/REPO --dependent-pr NUMBER --dependent-job JOB_ID --dependent-task TASK_ID.
+Common: --resolution merge|verified (default merge).`,
+  'blocker resolve': `Resolve a verified blocker and safely requeue matching dependents.
+
+Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID. This explicit path is required for blockers configured with --resolution verified.`,
+  'blocker show': `Show a blocker Job including its durable unblocks relations.`,
   context: `Resolve the shared execution context used by XChat and Relay.
 
 Usage:
@@ -187,5 +203,6 @@ export function helpText(command?: string, action?: string): string {
   if (command === 'job') return action ? help[`job ${action}` as keyof typeof help] ?? help.job : help.job;
   if (command === 'task') return action ? help[`task ${action}` as keyof typeof help] ?? help.task : help.task;
   if (command === 'context') return action ? help[`context ${action}` as keyof typeof help] ?? help.context : help.context;
+  if (command === 'blocker') return action ? help[`blocker ${action}` as keyof typeof help] ?? help.blocker : help.blocker;
   return command ? help[command as keyof typeof help] ?? help.root : help.root;
 }
