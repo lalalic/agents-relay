@@ -51,7 +51,7 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {

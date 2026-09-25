@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
-import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, resolveManagedProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
+import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -119,4 +119,76 @@ test('managed job discovery retains recent merged PRs when closed history is cro
   } };
   const result = await aggregateManagedGitHubJobs(client, ['lalalic/agents-relay'], new Set(['bot']));
   assert.equal(result.some(item => item.job.id === 'merged-44'), true);
+});
+
+test('managed PR execution worktrees isolate concurrent jobs from the primary checkout', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-pr-worktrees-'));
+  try {
+    const bare = join(root, 'remote.git');
+    const primary = join(root, 'neo');
+    await exec('git', ['init', '--bare', '-q', bare]);
+    await exec('git', ['init', '-q', primary]);
+    await exec('git', ['-C', primary, 'config', 'user.email', 'test@example.com']);
+    await exec('git', ['-C', primary, 'config', 'user.name', 'Test']);
+    await exec('git', ['-C', primary, 'checkout', '-q', '-b', 'main']);
+    await writeFile(join(primary, 'base.txt'), 'base\n');
+    await exec('git', ['-C', primary, 'add', 'base.txt']);
+    await exec('git', ['-C', primary, 'commit', '-qm', 'base']);
+    await exec('git', ['-C', primary, 'remote', 'add', 'origin', bare]);
+    await exec('git', ['-C', primary, 'push', '-q', '-u', 'origin', 'main']);
+
+    const heads = {};
+    for (const branch of ['feature-a', 'feature-b']) {
+      await exec('git', ['-C', primary, 'checkout', '-q', '-b', branch, 'main']);
+      await writeFile(join(primary, branch + '.txt'), branch + '\n');
+      await exec('git', ['-C', primary, 'add', branch + '.txt']);
+      await exec('git', ['-C', primary, 'commit', '-qm', branch]);
+      heads[branch] = (await exec('git', ['-C', primary, 'rev-parse', 'HEAD'])).stdout.trim();
+      await exec('git', ['-C', primary, 'push', '-q', 'origin', branch]);
+    }
+    await exec('git', ['-C', primary, 'checkout', '-q', 'main']);
+    const primaryHeadBefore = (await exec('git', ['-C', primary, 'rev-parse', 'HEAD'])).stdout.trim();
+    const primaryBranchBefore = (await exec('git', ['-C', primary, 'branch', '--show-current'])).stdout.trim();
+
+    const githubRemote = 'git@github.com:owner/repo.git';
+    await exec('git', ['-C', primary, 'remote', 'set-url', 'origin', githubRemote]);
+    await exec('git', ['-C', primary, 'config', 'url.file://' + bare + '/.insteadOf', githubRemote]);
+
+    const first = await prepareManagedExecutionWorktree(primary, 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-a');
+    const second = await prepareManagedExecutionWorktree(primary, 'owner/repo', 8, { ref: 'feature-b', sha: heads['feature-b'] }, 'exec-b');
+
+    assert.notEqual(first, second);
+    assert.equal((await exec('git', ['-C', first, 'rev-parse', 'HEAD'])).stdout.trim(), heads['feature-a']);
+    assert.equal((await exec('git', ['-C', second, 'rev-parse', 'HEAD'])).stdout.trim(), heads['feature-b']);
+    assert.equal((await exec('git', ['-C', first, 'branch', '--show-current'])).stdout.trim(), '');
+    assert.equal((await exec('git', ['-C', second, 'branch', '--show-current'])).stdout.trim(), '');
+    assert.equal((await exec('git', ['-C', primary, 'rev-parse', 'HEAD'])).stdout.trim(), primaryHeadBefore);
+    assert.equal((await exec('git', ['-C', primary, 'branch', '--show-current'])).stdout.trim(), primaryBranchBefore);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('managed PR execution worktree fails closed when expected head is stale', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-pr-stale-head-'));
+  try {
+    const bare = join(root, 'remote.git');
+    const primary = join(root, 'repo');
+    await exec('git', ['init', '--bare', '-q', bare]);
+    await exec('git', ['init', '-q', primary]);
+    await exec('git', ['-C', primary, 'config', 'user.email', 'test@example.com']);
+    await exec('git', ['-C', primary, 'config', 'user.name', 'Test']);
+    await exec('git', ['-C', primary, 'checkout', '-q', '-b', 'main']);
+    await writeFile(join(primary, 'a.txt'), 'a\n');
+    await exec('git', ['-C', primary, 'add', 'a.txt']);
+    await exec('git', ['-C', primary, 'commit', '-qm', 'base']);
+    await exec('git', ['-C', primary, 'remote', 'add', 'origin', bare]);
+    await exec('git', ['-C', primary, 'push', '-q', '-u', 'origin', 'main']);
+    const actual = (await exec('git', ['-C', primary, 'rev-parse', 'HEAD'])).stdout.trim();
+    const githubRemote = 'git@github.com:owner/repo.git';
+    await exec('git', ['-C', primary, 'remote', 'set-url', 'origin', githubRemote]);
+    await exec('git', ['-C', primary, 'config', 'url.file://' + bare + '/.insteadOf', githubRemote]);
+    await assert.rejects(
+      prepareManagedExecutionWorktree(primary, 'owner/repo', 9, { ref: 'main', sha: '0'.repeat(40) }, 'stale'),
+      new RegExp('head changed.*' + actual),
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

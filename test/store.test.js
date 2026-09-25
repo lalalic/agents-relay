@@ -80,7 +80,7 @@ const githubComment = (body, login = 'bot', id = Math.floor(Math.random() * 1_00
 const trustedClient = comments => ({
   request: async () => { throw new Error('REST should not be used by GitHubStore'); },
   graphql: async (query, variables = {}) => {
-    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null } } };
+    if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null, headRefName:'feat/test', headRefOid:'abc123' } } };
     if (query.includes('comments(first:100')) return { repository:{ pullRequest:{ comments:{ nodes:comments.map(item=>({id:'IC_'+item.id,databaseId:item.id,body:item.body,updatedAt:item.updated_at,author:{login:item.user.login}})), pageInfo:{hasNextPage:false,endCursor:null} } } } };
     if (query.includes('addComment')) { const item=githubComment(variables.body); comments.push(item); return { addComment:{ commentEdge:{ node:{ id:'IC_'+item.id } } } }; }
     if (query.includes('updateIssueComment')) { const id=Number(String(variables.id).replace('IC_','')); const item=comments.find(row=>row.id===id); item.body=variables.body; return { updateIssueComment:{ issueComment:{id:variables.id} } }; }
@@ -475,4 +475,11 @@ test('GitHubStore closes its backing pull request explicitly', async () => {
   assert.equal(seenPath, 'repos/owner/repo/pulls/7');
   assert.equal(seenInit.method, 'PATCH');
   assert.deepEqual(JSON.parse(seenInit.body), { state: 'closed' });
+});
+
+
+test('GitHubStore exposes exact pull request head ref and sha for execution isolation', async () => {
+  const store = githubWithComments([]);
+  assert.deepEqual(await store.pullRequestHead(), { ref: 'feat/test', sha: 'abc123' });
+  assert.equal(await store.headSha(), 'abc123');
 });
