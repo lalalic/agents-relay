@@ -12,9 +12,6 @@ export const WORKFLOW_EVENT_NAMES = [
   'pr.closed',
   'pr.merged',
   'reconcile',
-  'reconcile.blocked',
-  'reconcile.completed',
-  'reconcile.started',
   'release',
   'retry',
   'review.approved',
@@ -23,6 +20,9 @@ export const WORKFLOW_EVENT_NAMES = [
   'task.completed',
   'task.failed',
   'task.started',
+  'watchdog.failed',
+  'worker.delivery_failed',
+  'worker.start_ack_failed',
 ] as const;
 
 export const WORKFLOW_FACT_NAMES = [
@@ -32,6 +32,7 @@ export const WORKFLOW_FACT_NAMES = [
   'dispatchable',
   'notMerged',
   'autoMerge',
+  'recoverableExecution',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [

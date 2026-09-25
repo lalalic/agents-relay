@@ -14,20 +14,26 @@ stateDiagram-v2
     QUEUED --> BLOCKED: block
     QUEUED --> FAILED: fail
     QUEUED --> FAILED: effect.launchTask.failed
+    QUEUED --> FAILED: watchdog.failed
+    QUEUED --> FAILED: worker.delivery_failed
+    QUEUED --> FAILED: worker.start_ack_failed
     QUEUED --> CANCELLED: cancel
 
     RUNNING --> BLOCKED: task.blocked
     RUNNING --> SUCCEEDED: task.completed / mutation.clearError,mutation.clearFailureReason
     RUNNING --> FAILED: task.failed
+    RUNNING --> FAILED: watchdog.failed
     RUNNING --> CANCELLED: task.cancelled
 
     BLOCKED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
     BLOCKED --> CANCELLED: cancel
 
     FAILED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
-    FAILED --> RUNNING: reconcile.started / mutation.clearError,mutation.clearFailureReason
-    FAILED --> SUCCEEDED: reconcile.completed / mutation.clearError,mutation.clearFailureReason
-    FAILED --> BLOCKED: reconcile.blocked
+    FAILED --> RUNNING: task.started [recoverableExecution] / mutation.clearError,mutation.clearFailureReason
+    FAILED --> SUCCEEDED: task.completed [recoverableExecution] / mutation.clearError,mutation.clearFailureReason
+    FAILED --> BLOCKED: task.blocked [recoverableExecution]
+    FAILED --> FAILED: task.failed [recoverableExecution]
+    FAILED --> CANCELLED: task.cancelled [recoverableExecution]
     FAILED --> CANCELLED: cancel
 
     SUCCEEDED --> [*]

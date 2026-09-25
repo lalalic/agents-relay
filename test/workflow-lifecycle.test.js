@@ -39,17 +39,23 @@ const taskCases = [
   ['QUEUED','task.started',{},'RUNNING'],
   ['QUEUED','block',{},'BLOCKED'],
   ['QUEUED','fail',{},'FAILED'],
+  ['QUEUED','watchdog.failed',{},'FAILED'],
+  ['QUEUED','worker.delivery_failed',{},'FAILED'],
+  ['QUEUED','worker.start_ack_failed',{},'FAILED'],
   ['QUEUED','cancel',{},'CANCELLED'],
   ['RUNNING','task.blocked',{},'BLOCKED'],
   ['RUNNING','task.completed',{},'SUCCEEDED'],
   ['RUNNING','task.failed',{},'FAILED'],
+  ['RUNNING','watchdog.failed',{},'FAILED'],
   ['RUNNING','task.cancelled',{},'CANCELLED'],
   ['BLOCKED','retry',{},'QUEUED'],
   ['BLOCKED','cancel',{},'CANCELLED'],
   ['FAILED','retry',{},'QUEUED'],
-  ['FAILED','reconcile.started',{},'RUNNING'],
-  ['FAILED','reconcile.completed',{},'SUCCEEDED'],
-  ['FAILED','reconcile.blocked',{},'BLOCKED'],
+  ['FAILED','task.started',{recoverableExecution:true},'RUNNING'],
+  ['FAILED','task.completed',{recoverableExecution:true},'SUCCEEDED'],
+  ['FAILED','task.blocked',{recoverableExecution:true},'BLOCKED'],
+  ['FAILED','task.failed',{recoverableExecution:true},'FAILED'],
+  ['FAILED','task.cancelled',{recoverableExecution:true},'CANCELLED'],
   ['FAILED','cancel',{},'CANCELLED'],
 ];
 
@@ -78,6 +84,9 @@ test('Graph Engine is authoritative for the lifecycle transition corpus', () => 
   for (const [from,event,facts] of [
     ['RUNNING','hold',{}],
     ['SUCCEEDED','retry',{}],
+    ['SUCCEEDED','watchdog.failed',{}],
+    ['FAILED','task.completed',{recoverableExecution:false}],
+    ['RUNNING','worker.delivery_failed',{}],
     ['DRAFT','reconcile',{dependenciesSatisfied:false}],
   ]) assert.equal(decideTaskLifecycle(task(from),event,facts).accepted,false);
 });

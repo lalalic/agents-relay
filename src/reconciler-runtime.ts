@@ -2,6 +2,7 @@ import { DurableStore } from './store.js';
 import { Job, Task, EventRecord, ChatGptTabClosePolicy } from './types.js';
 import type { WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js';
 import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js';
@@ -38,27 +39,14 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>();
-  // Serialize competing semantic handlers per task. Each handler re-reads
-  // durable state after the preceding graph transition has been persisted.
-  private readonly taskLifecycleLocks = new Map<string, Promise<void>>();
+  private readonly taskTransitions: DurableTaskTransitionRuntime;
   protected readonly workflowEffects = new WorkflowEffectExecutor();
   protected reconciling = false;
-  constructor(protected readonly store: DurableStore, protected readonly options: ReconcileOptions) {}
+  constructor(protected readonly store: DurableStore, protected readonly options: ReconcileOptions) {
+    this.taskTransitions = new DurableTaskTransitionRuntime(store);
+  }
   abstract reconcile(jobId: string): Promise<Job>;
   protected abstract applyReviewEvent(event: EventRecord): Promise<void>;
-
-  private async withTaskLifecycleLock<T>(taskId: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.taskLifecycleLocks.get(taskId);
-    let release!: () => void;
-    const current = new Promise<void>(resolve => { release = resolve; });
-    this.taskLifecycleLocks.set(taskId, current);
-    if (previous) await previous;
-    try { return await work(); }
-    finally {
-      release();
-      if (this.taskLifecycleLocks.get(taskId) === current) this.taskLifecycleLocks.delete(taskId);
-    }
-  }
 
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
     for (const outcome of outcomes.filter(item => item.status === 'failed')) {
@@ -185,34 +173,26 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async markWorkerStarted(event: EventRecord): Promise<void> {
-    await this.withTaskLifecycleLock(event.task_id, () => this.markWorkerStartedUnlocked(event));
-  }
-
-  private async markWorkerStartedUnlocked(event: EventRecord): Promise<void> {
     const live = this.live.get(event.task_id);
     if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
-    const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return;
-    const claimedExecution = task.state === 'QUEUED' && task.executionId !== null && task.leaseOwner !== null;
-    const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
-    if ((exactLiveExecution || claimedExecution) && task.state === 'QUEUED') {
-      await transitionTaskEvent(task, 'task.started');
-      task.failureReason = undefined;
-      task.error = null;
-      task.updatedAt = event.timestamp || new Date().toISOString();
-      await this.store.saveTask(task);
-      if (live) live.workerStarted = true;
-      return;
-    }
-    if (task.state !== 'FAILED' || !this.isRecoverableWatchdogFailure(task)) return;
-    if (event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-    await transitionTaskEvent(task, 'reconcile.started');
-    task.failureReason = undefined;
-    task.error = null;
-    task.updatedAt = event.timestamp || new Date().toISOString();
-    await this.store.saveTask(task);
-    this.detach(this.reconcile(job.id), job.id, task.id, 'late worker-start reconciliation');
+    const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
+      eligible: (job, task) => {
+        if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
+        const claimedExecution = task.executionId !== null && task.leaseOwner !== null;
+        const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
+        return Boolean(exactLiveExecution || claimedExecution || this.isRecoverableWatchdogFailure(task));
+      },
+      facts: (_job, task) => ({
+        recoverableExecution: this.isRecoverableWatchdogFailure(task)
+          && (!event.timestamp || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime()),
+      }),
+      mutate: (_job, task) => {
+        task.updatedAt = event.timestamp || new Date().toISOString();
+      },
+    });
+    if (!transition?.decision.accepted) return;
+    if (live?.executionId === transition.task.executionId) live.workerStarted = true;
+    if (transition.from === 'FAILED') this.detach(this.reconcile(event.job_id), event.job_id, event.task_id, 'late worker-start reconciliation');
   }
 
   protected isRecoverableWatchdogFailure(task: Task): boolean {
@@ -235,33 +215,44 @@ export abstract class ReconcilerRuntimeBase {
     this.launchFailureClaims.add(claim);
     const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000);
     cleanup.unref();
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) return;
-    if (task.state === 'RUNNING') {
+    const workflowEvent = phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
+    const transition = await this.taskTransitions.apply(jobId, taskId, workflowEvent, {
+      eligible: (_job, task) => task.executionId === executionId,
+      mutate: (_job, task) => {
+        this.clearExecution(task.id, executionId);
+        task.error = `Worker ${phase} failed: ${message}`;
+        task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
+        task.leaseOwner = null;
+        task.leaseExpiresAt = null;
+      },
+    });
+    if (!transition) return;
+    if (!transition.decision.accepted) {
       await this.emit(eventFor(
         jobId,
         taskId,
-        task.parentTaskId,
+        transition.task.parentTaskId,
         'task.process.delivery_failed',
         'failed',
-        `Worker ${phase} reported after task.started: ${message}`,
+        `Worker ${phase} reported after lifecycle moved to ${transition.from}: ${message}`,
         'orchestrator',
-        { phase, authoritative: false, executionId },
+        { phase, authoritative: false, executionId, workflowEvent },
         { agent: 'relay', component: 'agents-relay' },
       ));
       return;
     }
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Worker ${phase} failed: ${message}`, 'user', { phase, reason: phase === 'start-ack' ? 'worker_start_timeout' : undefined }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    this.clearExecution(task.id, executionId);
-    task.error = event.message;
-    task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
-    task.leaseOwner = null; task.leaseExpiresAt = null;
-    await transitionTaskEvent(task, 'fail');
-    await this.store.saveTask(task);
-    // Do not publish while holding the task lock: the event bus may deliver
-    // the diagnostic event back to this reconciler synchronously.
-    this.detach(this.emit(event), jobId, taskId, 'watchdog failure event');
+    const event = eventFor(
+      jobId,
+      taskId,
+      transition.task.parentTaskId,
+      'task.failed',
+      'failed',
+      transition.task.error ?? `Worker ${phase} failed: ${message}`,
+      'user',
+      { phase, reason: transition.task.failureReason, workflowEvent },
+      { agent: 'relay', component: 'agents-relay', watchdog: true },
+    );
+    this.detach(this.emit(event), jobId, taskId, 'worker failure event');
   }
 
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
@@ -281,7 +272,7 @@ export abstract class ReconcilerRuntimeBase {
       { authoritative: false, waitingForTerminalEvent: true, processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
-    if (['QUEUED', 'RUNNING'].includes(task.state) && task.adapter === 'codex' && !terminalExecutionClaimed(jobId, taskId, executionId)) this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
+    if (task.adapter === 'codex' && !terminalExecutionClaimed(jobId, taskId, executionId)) this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
   }
 
   protected scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
@@ -294,117 +285,113 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
-    await this.withTaskLifecycleLock(taskId, () => this.failUnexpectedExitUnlocked(jobId, taskId, executionId, workerStarted));
-  }
-
-  private async failUnexpectedExitUnlocked(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
     if (terminalExecutionClaimed(jobId, taskId, executionId)) return;
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state) || terminalExecutionClaimed(jobId, taskId, executionId)) return;
     const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
     const message = workerStarted
       ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
       : `Worker ${taskId} exited before publishing task.started`;
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', message, 'user', { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000 }, { agent: 'relay', component: 'agents-relay', watchdog: true });
-    if (task.state === 'QUEUED') {
-      this.clearExecution(task.id, executionId);
-      task.error = message;
-      task.failureReason = reason;
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-    } else {
-      await this.applyTerminalEventUnlocked(event, true);
-    }
-    // Do not publish while holding the task lock; MemoryEventBus delivery is
-    // synchronous and would otherwise wait on this same lock.
-    this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
+    const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
+      eligible: (_job, task) => task.executionId === executionId && !terminalExecutionClaimed(jobId, taskId, executionId),
+      mutate: (_job, task) => {
+        this.clearExecution(task.id, executionId);
+        task.error = message;
+        task.failureReason = reason;
+        task.leaseOwner = null;
+        task.leaseExpiresAt = null;
+      },
+    });
+    if (!transition?.decision.accepted) return;
+    const event = eventFor(
+      jobId,
+      taskId,
+      transition.task.parentTaskId,
+      'task.failed',
+      'failed',
+      message,
+      'user',
+      { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000, workflowEvent: 'watchdog.failed' },
+      { agent: 'relay', component: 'agents-relay', watchdog: true },
+    );
+    this.detach(this.emit(event), jobId, taskId, 'watchdog failure event');
   }
 
   protected async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {
-    await this.withTaskLifecycleLock(taskId, () => this.timeoutTaskUnlocked(jobId, taskId, executionId));
-  }
-
-  private async timeoutTaskUnlocked(jobId: string, taskId: string, executionId: string): Promise<void> {
     const live = this.live.get(taskId);
     if (live?.executionId === executionId) {
       live.controller.abort();
       live.execution.cancel();
     }
-    const job = await this.store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state)) {
+    const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
+      eligible: (_job, task) => task.executionId === executionId,
+      mutate: (_job, task) => {
+        this.clearExecution(task.id, executionId);
+        task.error = `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
+        task.failureReason = 'terminal_event_timeout';
+        task.leaseOwner = null;
+        task.leaseExpiresAt = null;
+      },
+    });
+    if (!transition?.decision.accepted) {
       this.clearExecution(taskId, executionId);
       return;
     }
-    const event = eventFor(jobId, taskId, task.parentTaskId, 'task.failed', 'failed', `Task ${taskId} timed out waiting for the mandatory terminal worker event`, 'user', { reason: 'terminal_event_timeout', timeoutMs: task.timeoutMs });
-    if (task.state === 'QUEUED') {
-      task.error = event.message;
-      task.failureReason = 'terminal_event_timeout';
-      task.leaseOwner = null; task.leaseExpiresAt = null;
-      await transitionTaskEvent(task, 'fail');
-      await this.store.saveTask(task);
-      this.clearExecution(task.id, executionId);
-    } else {
-      await this.applyTerminalEventUnlocked(event, true);
-    }
-    // Do not publish while holding the task lock; MemoryEventBus delivery is
-    // synchronous and would otherwise wait on this same lock.
+    const event = eventFor(
+      jobId,
+      taskId,
+      transition.task.parentTaskId,
+      'task.failed',
+      'failed',
+      transition.task.error ?? `Task ${taskId} timed out waiting for the mandatory terminal worker event`,
+      'user',
+      { reason: 'terminal_event_timeout', timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed' },
+      { agent: 'relay', component: 'agents-relay', watchdog: true },
+    );
     this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
   }
 
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<void> {
-    await this.withTaskLifecycleLock(event.task_id, () => this.applyTerminalEventUnlocked(event, trustedInternal));
-  }
-
-  private async applyTerminalEventUnlocked(event: EventRecord, trustedInternal = false): Promise<void> {
-    const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id);
-    if (!task || !['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return;
-    const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
-    if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return;
-    if (task.state === 'FAILED' && this.isRecoverableWatchdogFailure(task) && (trustedInternal || !modelBacked || this.isCorrelatedWorkerEvent(task, event))) {
-      const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
-      if (!processExitedAfterPublishedTerminal && event.timestamp && new Date(event.timestamp).getTime() < new Date(task.updatedAt).getTime()) return;
-      await transitionTaskEvent(task, 'reconcile.started');
-      task.failureReason = undefined;
-      task.error = null;
-    }
-    if (task.state !== 'RUNNING') return;
-    const terminalWaiter = this.terminalWaiters.get(task.id);
-    if (terminalWaiter && (!event.timestamp || new Date(event.timestamp).getTime() < terminalWaiter.launchBarrier)) return;
-    const acceptedExecutionId = task.executionId;
-    if (modelBacked && acceptedExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, acceptedExecutionId));
-    this.clearExecution(task.id, acceptedExecutionId);
-    task.leaseOwner = null;
-    task.leaseExpiresAt = null;
-    task.updatedAt = event.timestamp || new Date().toISOString();
-    this.terminalWaiters.get(task.id)?.resolve();
-    this.terminalWaiters.delete(task.id);
-    if (event.type === 'task.completed') {
-      task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
-      task.error = null;
-      task.failureReason = undefined;
-      await transitionTaskEvent(task, 'task.completed');
-      await this.store.saveTask(task);
-      await this.deliverContinuation(job, task);
-    } else if (event.type === 'task.failed') {
-      task.error = event.message || `Task ${task.id} failed`;
-      task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
-      await transitionTaskEvent(task, 'task.failed');
-      await this.store.saveTask(task);
-    } else if (event.type === 'task.blocked') {
-      task.error = event.message || `Task ${task.id} blocked`;
-      await transitionTaskEvent(task, 'task.blocked');
-      await this.store.saveTask(task);
-    } else if (event.type === 'task.cancelled') {
-      task.error = event.message || `Task ${task.id} cancelled`;
-      await transitionTaskEvent(task, 'task.cancelled');
-      await this.store.saveTask(task);
-    }
-    this.detach(this.reconcile(job.id), job.id, task.id, 'terminal-event reconciliation');
+    const transition = await this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
+      eligible: (_job, task) => {
+        if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
+        const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
+        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return false;
+        const terminalWaiter = this.terminalWaiters.get(task.id);
+        return !terminalWaiter || Boolean(event.timestamp && new Date(event.timestamp).getTime() >= terminalWaiter.launchBarrier);
+      },
+      facts: (_job, task) => {
+        const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
+        const freshEnough = processExitedAfterPublishedTerminal
+          || !event.timestamp
+          || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime();
+        return { recoverableExecution: this.isRecoverableWatchdogFailure(task) && freshEnough };
+      },
+      mutate: (job, task) => {
+        const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
+        const acceptedExecutionId = task.executionId;
+        if (modelBacked && acceptedExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, acceptedExecutionId));
+        this.clearExecution(task.id, acceptedExecutionId);
+        task.leaseOwner = null;
+        task.leaseExpiresAt = null;
+        task.updatedAt = event.timestamp || new Date().toISOString();
+        this.terminalWaiters.get(task.id)?.resolve();
+        this.terminalWaiters.delete(task.id);
+        if (event.type === 'task.completed') {
+          task.result = { summary: event.message || `Task ${task.id} completed`, data: event.data };
+          task.error = null;
+          task.failureReason = undefined;
+        } else if (event.type === 'task.failed') {
+          task.error = event.message || `Task ${task.id} failed`;
+          task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
+        } else if (event.type === 'task.blocked') {
+          task.error = event.message || `Task ${task.id} blocked`;
+        } else if (event.type === 'task.cancelled') {
+          task.error = event.message || `Task ${task.id} cancelled`;
+        }
+      },
+    });
+    if (!transition?.decision.accepted) return;
+    if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
+    this.detach(this.reconcile(transition.job.id), transition.job.id, transition.task.id, 'terminal-event reconciliation');
   }
   protected terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;

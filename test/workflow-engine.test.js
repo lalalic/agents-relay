@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parseExecutableMermaid, WorkflowEngine } from '../dist/workflow/mermaid.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow, validateCanonicalWorkflowGraph } from '../dist/workflow/definitions.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
@@ -75,7 +77,9 @@ test('canonical lifecycle graphs expose the integrated runtime event contract', 
 
   assert.equal(await taskLifecycleWorkflow.transition('QUEUED','task.started'),'RUNNING');
   assert.equal(await taskLifecycleWorkflow.transition('RUNNING','task.completed'),'SUCCEEDED');
-  assert.equal(await taskLifecycleWorkflow.transition('FAILED','reconcile.completed'),'SUCCEEDED');
+  assert.equal(await taskLifecycleWorkflow.transition('FAILED','task.completed',{recoverableExecution:true}),'SUCCEEDED');
+  await assert.rejects(taskLifecycleWorkflow.transition('FAILED','task.completed',{recoverableExecution:false}),/No enabled workflow transition/);
+  await assert.rejects(taskLifecycleWorkflow.transition('SUCCEEDED','watchdog.failed'),/No enabled workflow transition/);
   assert.equal(await taskLifecycleWorkflow.transition('DRAFT','reconcile',{dependenciesSatisfied:true}),'QUEUED');
   assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{dependenciesUnsatisfied:true}),'DRAFT');
   assert.equal(await taskLifecycleWorkflow.transition('QUEUED','reconcile',{runnable:true}),'QUEUED');
@@ -105,4 +109,32 @@ test('every canonical graph transition uses the shared event, fact, and action c
   for (const workflow of [jobLifecycleWorkflow, taskLifecycleWorkflow]) {
     assert.doesNotThrow(() => validateCanonicalWorkflowGraph(workflow.graph));
   }
+});
+
+
+async function sourceFiles(directory) {
+  const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+  const files = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await sourceFiles(path));
+    else if (entry.isFile() && entry.name.endsWith('.ts')) files.push(path);
+  }
+  return files;
+}
+
+test('production lifecycle state assignments stay inside graph application boundaries', async () => {
+  const root = new URL('../src', import.meta.url).pathname;
+  const assignments = [];
+  for (const path of await sourceFiles(root)) {
+    const content = await readFile(path, 'utf8');
+    for (const match of content.matchAll(/\b(task|job)\.state\s*=(?!=)/g)) {
+      assignments.push({ path: path.slice(root.length + 1), text: content.slice(match.index, match.index + 80).split('\n')[0] });
+    }
+  }
+  assert.deepEqual(assignments, [
+    { path: 'workflow/runtime.ts', text: 'task.state = decision.target;' },
+    { path: 'workflow/runtime.ts', text: 'job.state = decision.target;' },
+    { path: 'workflow/runtime.ts', text: 'job.state = target;' },
+  ]);
 });

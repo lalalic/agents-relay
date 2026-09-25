@@ -33,12 +33,17 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   const usedOrBudgeted = Math.max(task.maxAttempts, task.attempt);
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
-export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Task['state']>> {
+export function tryTransitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): WorkflowDecision<Task['state']> {
   const decision = decideTaskLifecycle(task, event, context);
+  if (decision.accepted && decision.target) applyTaskWorkflowDecision(task, decision);
+  return decision;
+}
+export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Task['state']>> {
+  const from = task.state;
+  const decision = tryTransitionTaskEvent(task, event, context);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
-    ? `Ambiguous workflow transition from ${task.state} on ${event}`
-    : `No enabled workflow transition from ${task.state} on ${event}`);
-  applyTaskWorkflowDecision(task, decision);
+    ? `Ambiguous workflow transition from ${from} on ${event}`
+    : `No enabled workflow transition from ${from} on ${event}`);
   return decision;
 }
 export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Job['state']>> {

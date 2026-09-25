@@ -32,9 +32,9 @@ Guards and actions are **names**, not embedded JavaScript. Runtime code register
 
 ## Engine boundary
 
-The generic engine parses and validates the Mermaid graph, checks whether a state-to-state transition is legal, resolves transitions by event, evaluates named guards, and invokes named actions. Callers remain responsible for durable persistence, locking/claims, event delivery, and external side effects.
+The generic engine parses and validates the Mermaid graph, checks whether a state-to-state transition is legal, resolves transitions by event, evaluates named guards, and invokes named actions. Callers remain responsible for durable persistence, locking/claims, event delivery, and external side effects. Those primitives must not duplicate transition legality.
 
-The canonical graphs are the lifecycle authority. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same graph lifecycle event seam. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
+The canonical graphs are the lifecycle authority. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same graph lifecycle event seam. Runtime-owned Task inputs use `DurableTaskTransitionRuntime` to serialize one Task, load fresh durable state, ask the graph about the event plus facts, and persist only an accepted graph decision. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
 
 ## Non-goals
 
@@ -55,6 +55,8 @@ The graph owns lifecycle policy: legal source/target states, event names, named 
 - leases, execution IDs, and the lightweight atomic launch claim;
 - GitHub/NATS/process/browser I/O and scheduler clock handling;
 - concrete guard/action implementations and external side effects;
+- factual execution context used by graph guards, such as exact execution correlation and `recoverableExecution`;
+- serialization/fresh-read primitives used to apply one graph decision safely;
 - initial Task creation choice (`DRAFT` vs `QUEUED`) before any transition occurs;
 - runtime-status projection across Job/Task/Review/PR/schedule facts;
 - explicit compatibility repair of legacy records that persisted invalid derived Job states.
@@ -68,6 +70,8 @@ These boundaries keep the executable Mermaid profile small while preventing life
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.
 - Canonical terminal worker events own normal Task completion/failure/block/cancel transitions.
+- Watchdog/delivery failures are explicit graph events; they are not direct state assignments.
+- Late correlated worker recovery keeps the original `task.*` event and uses the graph's `recoverableExecution` guard; runtime code does not invent recovery transitions.
 - Dependency release/hold and runnable normalization are graph-driven `reconcile` transitions with named guards/actions.
 - PR merge/close drives Job lifecycle through graph events; review state remains orthogonal.
 - Planner lifecycle uses the same Task graph.
