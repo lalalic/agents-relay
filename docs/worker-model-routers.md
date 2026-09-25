@@ -104,3 +104,33 @@ This keeps model selection after worker selection and removes the previous worke
 ## Failure behavior
 
 Routing does not depend on Laya availability. Non-zero exit, timeout, malformed JSON, contract violation, or unavailable CLI all return to the existing deterministic ranking. No task should fail solely because the optional decision engine is unavailable.
+
+## Environment policy and decision audit
+
+The model router loads one current, human-maintained JSON policy at decision time. Set
+`AGENTS_RELAY_ROUTING_POLICY` or place `.agents-relay-routing-policy.json` in the
+current project directory. Supported fields are `disabledProviders`,
+`disabledProfiles`, `preferredProviders`, `preferredProfiles`,
+`qualityByTaskKind`, and `recovery.penalizePriorRoute`. The policy refines legal
+choices; it cannot override capability, privacy, task, continuity, or health hard
+gates. No policy registry or policy-version lifecycle is created. Each audit record
+stores the sanitized policy snapshot and SHA-256 content hash.
+
+Every routed model decision can be persisted as JSONL through
+`JsonlDecisionAuditStore`. Relay uses `AGENTS_RELAY_DECISION_AUDIT_PATH` when set,
+otherwise `~/.agents-relay/decision-audit.jsonl`. Records use schema version 1 and
+contain the correlation identifiers, task classification, worker, contract, policy,
+all discovered candidates, gate-filtered candidates, resource windows, engine
+evidence, fallback, selected route, and optional prior failure. Outcome records are
+append-only and reference a decision ID, so historical decision facts are never
+mutated. Secret-like fields are redacted before writing. The JSONL stream can be
+replayed directly for evaluation or training fixtures without schema translation.
+
+Troubleshooter recovery uses `redecideFailedTask`: it first requires durable event
+and log evidence classified as `model_provider_runtime`, then takes a fresh usage
+snapshot, rediscovers candidates, reloads the current policy, and invokes the same
+worker-to-model router with structured prior-failure evidence. The action updates
+the exact failed Task's routing and writes a linked audit record; it never retries
+the Task. Troubleshooter separately reactivates/retries the original Task. Worker,
+tool, infrastructure, semantic, and evidence-insufficient failures do not trigger
+model re-decision automatically.

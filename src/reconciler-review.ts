@@ -110,7 +110,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       const routedWorker = await routeWorker(candidates, requirements, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts });
       const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
-      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts, constraints: routingConstraints });
+      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts, constraints: routingConstraints, auditStore: this.options.decisionAuditStore, auditTask: task });
       task.workerSelection = routedWorker.selection;
       task.adapter = routedWorker.candidate.adapter;
       task.routing = routedModel.routing;
