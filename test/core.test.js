@@ -248,6 +248,19 @@ test('CLI task create and retry keep ACTIVE lifecycle while runtime changes', as
   [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
+test('manual planner retry preserves the previous planner error as retry feedback', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-planner-retry-')); const file=join(directory,'job.json');
+  const failedTask={...task('planner-1','FAILED'),kind:'planner',adapter:'orchestrator',error:'Planner next_tasks[0].output is required',attempt:3,maxAttempts:3};
+  await writeFile(file, JSON.stringify(job([failedTask])));
+  const child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','planner-1'],{cwd:process.cwd()});
+  const [code]=await once(child,'exit'); assert.equal(code,0);
+  const saved=JSON.parse(await readFile(file,'utf8')); const planner=saved.tasks.find(t=>t.id==='planner-1');
+  assert.equal(planner.state,'QUEUED');
+  assert.equal(planner.error,null);
+  assert.equal(planner.plannerRetryFeedback,'Planner next_tasks[0].output is required');
+  await rm(directory,{recursive:true,force:true});
+});
+
 test('active replacement work derives QUEUED despite historical failed tasks', () => {
   const old=task('old','FAILED'); const replacement=task('replacement','QUEUED');
   const value=schedule(job([old,replacement])); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED');

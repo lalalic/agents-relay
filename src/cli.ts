@@ -164,7 +164,10 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     return;
   }
   if (action === 'retry' || action === 'cancel') {
-    if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
+    if (action === 'retry') {
+      task.maxAttempts = extendRetryBudget(task);
+      if (task.kind === 'planner' && task.error) task.plannerRetryFeedback = task.error;
+    }
     await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
     task.error = action === 'retry' ? null : 'Cancelled by user';
     task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
