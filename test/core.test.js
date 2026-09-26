@@ -351,6 +351,29 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await stop();
 });
 
+test('repository pool serializes same-job targeted reconcile with discovered reconcile', async () => {
+  const queued=task('serialize-task','QUEUED');
+  const root={...job([queued]),id:'serialize-job',repository:'owner/repo',prNumber:44};
+  const overview={job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null};
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  let active=0, maxActive=0; const calls=[]; let releaseFirst;
+  const firstGate=new Promise(resolve=>{releaseFirst=resolve;});
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{
+    calls.push({id,maxConcurrent}); active+=1; maxActive=Math.max(maxActive,active);
+    if(calls.length===1) await firstGate;
+    active-=1;
+  }}));
+  const discovered=pool.reconcileKnown([overview]);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const targeted=pool.reconcileTarget('owner/repo',44,'serialize-job');
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(calls.length,1);
+  releaseFirst();
+  await Promise.all([discovered,targeted]);
+  assert.equal(maxActive,1);
+  assert.equal(calls.length,2);
+});
+
 test('repository pool emits package.published from a correlated publication webhook without service actions', async () => {
   const bus=new MemoryEventBus();
   const events=[];

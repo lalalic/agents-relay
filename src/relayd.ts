@@ -104,6 +104,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    if (action === 'reconcile') {
+      await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId);
+      return await store.load(jobId);
+    }
     return await dashboardJobAction(store, makeReconciler(store, concurrency), action)(jobId);
   };
   const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {

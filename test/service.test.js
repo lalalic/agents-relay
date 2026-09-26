@@ -83,7 +83,7 @@ test('service defaults and package bins use stable package entrypoints', async (
   assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd.js' });
   assert.equal(SERVICE_DEFAULTS.port, 8787);
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
-  assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 1800000);
+  assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
 });
 
