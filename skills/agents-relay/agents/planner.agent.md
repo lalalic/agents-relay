@@ -87,3 +87,36 @@ For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 For `objective_status: "satisfied"`, `assessment` may be a concise evidence-based completion assessment without a graph.
 
 Each item in next_tasks contains id, input, output, and storySize. It may also contain priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
+
+### Exact `next_tasks` serialization
+
+Use these exact serialized forms:
+
+- `output` is always an object, never a string:
+  - PR-backed work: `{"kind":"task_pr"}`
+  - File artifact: `{"kind":"file","path":"runs/2026-09-26/example/output.md"}`
+- `agentGraph`, when present, is one Mermaid graph **string**, for example `"graph LR\n  build-log-editor --> build-log-producer"`. Do not emit an object with `nodes` or `edges`.
+- `priority`, when present, is exactly `"P0"`, `"P1"`, `"P2"`, or `"P3"`; otherwise omit it.
+- `storySize` is exactly `"S"`, `"M"`, or `"L"`.
+
+A valid non-satisfied response:
+
+```json
+{
+  "objective_status": "in_progress",
+  "assessment": "```mermaid\nflowchart LR\n  A[Evidence] --> B[Content package]\n```\nOne daily package is the durable Task boundary.",
+  "next_tasks": [
+    {
+      "id": "episode-2026-09-26",
+      "input": "Produce and verify the dated content package.",
+      "output": {"kind": "file", "path": "runs/2026-09-26/package.md"},
+      "storySize": "L",
+      "priority": "P1",
+      "agentName": "build-log-editor",
+      "agentGraph": "graph LR\n  build-log-editor --> build-log-producer"
+    }
+  ]
+}
+```
+
+Return this JSON object directly. Do not wrap the whole result in another JSON string.

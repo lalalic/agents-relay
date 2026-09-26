@@ -35,8 +35,8 @@ export function planningSpec(task: Task): PlannerTaskSpec {
 }
 
 
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Planner result must be an object');
+function record(value: unknown, field = 'result'): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Planner ${field} must be an object`);
   return value as Record<string, unknown>;
 }
 function optionalString(value: unknown, field: string): string | undefined {
@@ -51,7 +51,7 @@ function stringArray(value: unknown, field: string, fallback: string[] = []): st
 }
 function workerRequirements(value: unknown, field: string): WorkerRequirements | undefined {
   if (value === undefined || value === null) return undefined;
-  const root = record(value);
+  const root = record(value, field);
   const capabilities = stringArray(root.capabilities, `${field}.capabilities`);
   const optional = (name: string): string | undefined => optionalString(root[name], `${field}.${name}`);
   const labelsValue = root.labels;
@@ -82,20 +82,20 @@ export function normalizePlannerPriority(value: unknown, field: string): Priorit
 }
 function routing(value: unknown, field: string): RoutingDecision | undefined {
   if (value === undefined || value === null) return undefined;
-  const route = record(value);
+  const route = record(value, field);
   for (const key of ['provider', 'model', 'decidedBy', 'decidedAt']) if (typeof route[key] !== 'string' || String(route[key]).length === 0) throw new Error(`Planner ${field}.${key} is required`);
   return { provider: route.provider as string, model: route.model as string, profile: optionalString(route.profile, `${field}.profile`), reasoning: optionalString(route.reasoning, `${field}.reasoning`), cwd: optionalString(route.cwd, `${field}.cwd`), projectId: optionalString(route.projectId, `${field}.projectId`), decidedBy: route.decidedBy as string, decidedAt: route.decidedAt as string };
 }
 
 export function parsePlannerResult(value: unknown): PlannerResult {
-  const root = record(value);
+  const root = record(value, 'result');
   const status = root.objective_status;
   if (status !== 'in_progress' && status !== 'satisfied') throw new Error('Planner objective_status must be in_progress or satisfied');
   if (typeof root.assessment !== 'string') throw new Error('Planner assessment must be a string');
   if (!Array.isArray(root.next_tasks)) throw new Error('Planner next_tasks must be an array');
   const ids = new Set<string>();
   const next_tasks = root.next_tasks.map((item, index): PlannerTaskSpec => {
-    const task = record(item);
+    const task = record(item, `next_tasks[${index}]`);
     const id = task.id;
     if (typeof id !== 'string' || id.length === 0) throw new Error(`Planner next_tasks[${index}].id is required`);
     if (ids.has(id)) throw new Error(`Planner next_tasks contains duplicate id ${id}`);
@@ -103,7 +103,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof task.input !== 'string' || task.input.length === 0) throw new Error(`Planner next_tasks[${index}].input is required`);
     const adapter = task.adapter;
     if (adapter !== undefined && !['codex', 'chatgpt'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter must be codex or chatgpt when provided`);
-    const output = task.output === undefined ? undefined : record(task.output);
+    const output = task.output === undefined ? undefined : record(task.output, `next_tasks[${index}].output`);
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);
     const priority = task.priority === undefined ? undefined : normalizePlannerPriority(task.priority, `next_tasks[${index}].priority`);
