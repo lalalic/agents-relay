@@ -4,8 +4,26 @@ import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, ren
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
 import { resolveBlockerDependencies } from './blockers.js';
 
+const TASK_WRITE_OVERLAY = new Map<string, Comment>();
+
 export class GitHubStore implements DurableStore {
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
+  private taskKey(task: Pick<Task, 'jobId' | 'id'>): string { return `${this.repository}#${this.prNumber}:${task.jobId ?? ''}/${task.id}`; }
+  private taskKeyFromBody(body: string): string | null { const task = parseTask(body); return task ? this.taskKey(task) : null; }
+  private overlayTaskWrites(comments: Comment[]): Comment[] {
+    if (TASK_WRITE_OVERLAY.size === 0) return comments;
+    const result = [...comments];
+    for (const [key, overlay] of [...TASK_WRITE_OVERLAY]) {
+      const index = result.findIndex(comment => this.taskKeyFromBody(comment.body) === key);
+      if (index >= 0) {
+        const remote = result[index];
+        if (remote.updatedAt && overlay.updatedAt && remote.updatedAt >= overlay.updatedAt) { TASK_WRITE_OVERLAY.delete(key); continue; }
+        result[index] = { ...remote, ...overlay, id: remote.id || overlay.id, nodeId: remote.nodeId ?? overlay.nodeId, url: remote.url ?? overlay.url, authorLogin: remote.authorLogin ?? overlay.authorLogin };
+      } else { TASK_WRITE_OVERLAY.delete(key); }
+    }
+    return result;
+  }
+  private rememberTaskWrite(task: Task, comment: Comment, body: string): void { TASK_WRITE_OVERLAY.set(this.taskKey(task), { ...comment, body }); }
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
   private repoParts(): { owner: string; name: string } {
     const [owner, name] = this.repository.split('/', 2);
@@ -58,7 +76,7 @@ export class GitHubStore implements DurableStore {
       const pageInfo = comments?.pageInfo as Record<string, unknown> | undefined;
       cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
     } while (cursor);
-    return all;
+    return this.overlayTaskWrites(all);
   }
   async comments(): Promise<Comment[]> { return this.list(); }
   async pullRequestState(): Promise<PullRequestState> {
@@ -135,19 +153,38 @@ export class GitHubStore implements DurableStore {
     if (jobs.length > 1) throw new Error(`JOB_BINDING_CONFLICT: PR #${this.prNumber} contains trusted ${JOB_MARKER} markers for multiple job ids`);
   }
   async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
-  private async comment(body: string): Promise<void> {
+  private async comment(body: string): Promise<Comment> {
     const pr = await this.prNode();
-    await this.graphql(
-      'mutation($subjectId:ID!,$body:String!){addComment(input:{subjectId:$subjectId,body:$body}){commentEdge{node{id}}}}',
+    const data = await this.graphql(
+      'mutation($subjectId:ID!,$body:String!){addComment(input:{subjectId:$subjectId,body:$body}){commentEdge{node{id databaseId url body updatedAt author{login}}}}}',
       { subjectId: pr.id, body }
     );
+    const edge = (data.addComment as Record<string, unknown> | undefined)?.commentEdge as Record<string, unknown> | undefined;
+    const node = edge?.node as Record<string, unknown> | undefined;
+    return {
+      id: Number(node?.databaseId ?? 0),
+      nodeId: typeof node?.id === 'string' ? node.id : undefined,
+      url: typeof node?.url === 'string' ? node.url : undefined,
+      body: typeof node?.body === 'string' ? node.body : body,
+      updatedAt: typeof node?.updatedAt === 'string' ? node.updatedAt : new Date().toISOString(),
+      authorLogin: typeof (node?.author as Record<string, unknown> | undefined)?.login === 'string' ? String((node?.author as Record<string, unknown>).login) : [...this.trustedAuthors][0] ?? null,
+    };
   }
-  private async updateComment(comment: Comment, body: string): Promise<void> {
+  private async updateComment(comment: Comment, body: string): Promise<Comment> {
     if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL update');
-    await this.graphql(
-      'mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}',
+    const data = await this.graphql(
+      'mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id databaseId url body updatedAt author{login}}}}',
       { id: comment.nodeId, body }
     );
+    const node = (data.updateIssueComment as Record<string, unknown> | undefined)?.issueComment as Record<string, unknown> | undefined;
+    return {
+      id: Number(node?.databaseId ?? comment.id),
+      nodeId: typeof node?.id === 'string' ? node.id : comment.nodeId,
+      url: typeof node?.url === 'string' ? node.url : comment.url,
+      body: typeof node?.body === 'string' ? node.body : body,
+      updatedAt: typeof node?.updatedAt === 'string' ? node.updatedAt : new Date().toISOString(),
+      authorLogin: typeof (node?.author as Record<string, unknown> | undefined)?.login === 'string' ? String((node?.author as Record<string, unknown>).login) : comment.authorLogin,
+    };
   }
   private async deleteComment(comment: Comment): Promise<void> {
     if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL delete');
@@ -181,7 +218,7 @@ export class GitHubStore implements DurableStore {
       const existing = parseTask(comment.body);
       return existing !== null && existing.jobId === task.jobId && existing.id === task.id;
     });
-    if (matches.length === 0) { await this.comment(renderTaskComment(task)); return; }
+    if (matches.length === 0) { const body = renderTaskComment(task); const persisted = await this.comment(body); this.rememberTaskWrite(task, persisted, body); return; }
     const parsed = matches.map(comment => ({ comment, task: parseTask(comment.body) as Task }));
     if (parsed.some(item => !sameTaskDefinition(item.task, task))) throw new Error(`Task ${task.id} already exists with a different definition`);
     for (const duplicate of parsed.slice(1)) await this.deleteComment(duplicate.comment);
@@ -190,7 +227,9 @@ export class GitHubStore implements DurableStore {
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const existing = comments.filter(comment => { const markerTask = parseTask(comment.body); return markerTask !== null && markerTask.jobId === task.jobId && markerTask.id === task.id; });
     if (existing.length > 0) {
-      await this.updateComment(existing[0], renderTaskComment(task));
+      const body = renderTaskComment(task);
+      const persisted = await this.updateComment(existing[0], body);
+      this.rememberTaskWrite(task, persisted, body);
       for (const duplicate of existing.slice(1)) await this.deleteComment(duplicate);
     } else await this.appendTask(task);
   }

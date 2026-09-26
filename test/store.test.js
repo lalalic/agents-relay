@@ -483,3 +483,57 @@ test('GitHubStore exposes exact pull request head ref and sha for execution isol
   assert.deepEqual(await store.pullRequestHead(), { ref: 'feat/test', sha: 'abc123' });
   assert.equal(await store.headSha(), 'abc123');
 });
+
+test('GitHubStore read-your-writes survives stale GraphQL across store instances', async () => {
+  const baseJob = job('job-read-your-writes');
+  const baseTask = task('job-read-your-writes', 'route-me');
+  const jobBody = marker(JOB_MARKER, baseJob);
+  const staleTaskBody = marker(TASK_MARKER, baseTask);
+  let remoteTaskBody = staleTaskBody;
+  let remoteUpdatedAt = '2026-09-26T22:00:00.000Z';
+  let stale = true;
+  const client = {
+    request: async () => { throw new Error('REST should not be used by GitHubStore'); },
+    graphql: async (query, variables = {}) => {
+      if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) {
+        return { repository:{ pullRequest:{ id:'PR_RW', state:'OPEN', merged:false, mergedAt:null, closedAt:null, body:jobBody, headRefName:'feat/rw', headRefOid:'abc123' } } };
+      }
+      if (query.includes('comments(first:100')) {
+        return { repository:{ pullRequest:{ comments:{ nodes:[
+          {id:'IC_1',databaseId:1,body:jobBody,updatedAt:'2026-09-26T21:59:00.000Z',author:{login:'bot'}},
+          {id:'IC_2',databaseId:2,body:stale ? staleTaskBody : remoteTaskBody,updatedAt:stale ? '2026-09-26T22:00:00.000Z' : remoteUpdatedAt,author:{login:'bot'}},
+        ], pageInfo:{hasNextPage:false,endCursor:null} } } } };
+      }
+      if (query.includes('updateIssueComment')) {
+        remoteTaskBody = variables.body;
+        remoteUpdatedAt = '2026-09-26T22:01:00.000Z';
+        return { updateIssueComment:{ issueComment:{ id:'IC_2', databaseId:2, url:'https://example.test/comment/2', body:variables.body, updatedAt:remoteUpdatedAt, author:{login:'bot'} } } };
+      }
+      throw new Error('Unhandled fake GraphQL query: '+query);
+    },
+  };
+
+  const first = new GitHubStore(client, 'owner/repo', 1, new Set(['bot']));
+  const loaded = await first.load('job-read-your-writes');
+  loaded.tasks[0].workerSelection = { workerId:'codex', adapter:'codex', capabilities:['model','codex'], selectedBy:'test', selectedAt:'2026-09-26T22:00:30.000Z' };
+  loaded.tasks[0].routing = { provider:'openai', model:'gpt-5.6-luna', reasoning:'medium', decidedBy:'test', decidedAt:'2026-09-26T22:00:31.000Z' };
+  loaded.tasks[0].updatedAt = '2026-09-26T22:00:31.000Z';
+  await first.saveTask(loaded.tasks[0]);
+
+  const second = new GitHubStore(client, 'owner/repo', 1, new Set(['bot']));
+  const immediate = await second.load('job-read-your-writes');
+  assert.equal(immediate.tasks[0].workerSelection?.workerId, 'codex');
+  assert.equal(immediate.tasks[0].routing?.model, 'gpt-5.6-luna');
+
+  stale = false;
+  const caughtUp = await second.load('job-read-your-writes');
+  assert.equal(caughtUp.tasks[0].routing?.model, 'gpt-5.6-luna');
+
+  const newer = parseTask(remoteTaskBody);
+  newer.state = 'RUNNING';
+  newer.updatedAt = '2026-09-26T22:02:00.000Z';
+  remoteTaskBody = marker(TASK_MARKER, newer);
+  remoteUpdatedAt = '2026-09-26T22:02:00.000Z';
+  const external = await new GitHubStore(client, 'owner/repo', 1, new Set(['bot'])).load('job-read-your-writes');
+  assert.equal(external.tasks[0].state, 'RUNNING');
+});
