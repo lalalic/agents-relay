@@ -386,7 +386,7 @@ test('dashboard exposes reviewer approval, changes-required, stale, and merge-re
 
 
 test('dashboard exposes free-text model router rules editor', () => {
-  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Model Router Rules</);
+  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Model Rules</);
   assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
   assert.match(dashboardHtml, /Free-text guidance loaded by the model decider/);
   assert.match(dashboardHtml, /fetch\('\/api\/model-router-rules'/);
@@ -395,7 +395,7 @@ test('dashboard exposes free-text model router rules editor', () => {
 });
 
 test('dashboard exposes free-text worker router rules editor', () => {
-  assert.match(dashboardHtml, /id="worker-rules-tab"[^>]*>Worker Router Rules</);
+  assert.match(dashboardHtml, /id="worker-rules-tab"[^>]*>Worker Rules</);
   assert.match(dashboardHtml, /id="worker-rules-text"[^>]*class="rules-textarea"/);
   assert.match(dashboardHtml, /Free-text guidance loaded by the worker decider/);
   assert.match(dashboardHtml, /fetch\('\/api\/worker-router-rules'/);
