@@ -16,6 +16,9 @@ export const dashboardHtml = `<!doctype html>
     header { position:sticky; top:0; z-index:3; background:var(--surface); border-bottom:1px solid var(--border); padding:.8rem 1rem; }
     .brand { display:flex; align-items:baseline; gap:.65rem; min-width:0; }
     .version { margin-left:auto; color:var(--muted); font-size:.72rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:nowrap; }
+    .runtime-summary { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-top:.55rem; }
+    .runtime-stat { padding:.18rem .45rem; border:1px solid var(--border); border-radius:999px; background:var(--surface2); color:var(--muted); font-size:.72rem; white-space:nowrap; }
+    .runtime-stat strong { color:var(--text); }
     h1 { margin:0; font-size:1.08rem; letter-spacing:-.02em; }
     .tagline,.subtle { color:var(--muted); font-size:.78rem; }
     .warning-banner { margin:.65rem 0 0; padding:.5rem .65rem; border:1px solid #e6bf62; border-radius:.4rem; background:#fff4d6; color:#6f4b00; font-size:.78rem; font-weight:700; }
@@ -115,6 +118,7 @@ export const dashboardHtml = `<!doctype html>
 <body>
 <header>
   <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${packageVersion}</span></div>
+  <div id="runtime-summary" class="runtime-summary" aria-label="Runtime summary"></div>
   <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
@@ -226,6 +230,7 @@ const workerRulesMeta=document.querySelector('#worker-rules-meta');
 const workerRulesStatus=document.querySelector('#worker-rules-status');
 const workerRulesSave=document.querySelector('#worker-rules-save');
 const rateLimitWarning=document.querySelector('#rate-limit-warning');
+const runtimeSummary=document.querySelector('#runtime-summary');
 let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
@@ -304,8 +309,10 @@ function renderRateLimitStatus(status){
   rateLimitWarning.textContent='GitHub API rate limit reached. Showing cached job data.'+suffix;
   rateLimitWarning.hidden=false;
 }
+function runtimePill(label,value){const pill=element('span','runtime-stat');pill.append(document.createTextNode(label+' '),element('strong','',text(value)));return pill;}
+async function drawRuntimeSummary(){try{const summary=await loadJSON('/api/runtime-summary');runtimeSummary.replaceChildren(runtimePill('Active Jobs',summary.activeJobs||0),runtimePill('Running Tasks',summary.runningTasks||0),runtimePill('ChatGPT',summary.workers?.chatgpt||0),runtimePill('Codex',summary.workers?.codex||0));for(const item of Array.isArray(summary.models)?summary.models:[])runtimeSummary.append(runtimePill(item.model,item.count));}catch{runtimeSummary.replaceChildren();}}
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();void loadEventHistory();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
+async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=Array.isArray(discovered)?discovered:[];void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobs.some(job=>job.id===selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;selectedJob=jobs.some(job=>job.id===fromHash)?fromHash:(jobs[0]?.id||null);}rememberSelection();renderAll();void loadEventHistory();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
 function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
 function addEvent(event,level){if(!event||selectedJob&&event.job_id&&event.job_id!==selectedJob||eventTaskId&&event.task_id!==eventTaskId)return;if(event.event_id&&displayedEventIds.has(event.event_id))return;if(event.event_id)displayedEventIds.add(event.event_id);const item=element('li','event-item');const meta=element('div','event-meta');meta.append(element('span','event-kind',text(eventLabel(event.type))),element('span','event-type',text(event.type||'event')),element('span','',text(relativeTime(event.timestamp))),element('span','',text('task: '+value(event.task_id))));item.append(meta);const message=element('p','event-message',text(event.message||'Event received'));if(level==='error'||event.level==='error')message.classList.add('error-text');item.append(message);eventFeed.querySelector('.empty')?.remove();eventFeed.prepend(item);while(eventFeed.children.length>MAX_EVENTS)eventFeed.lastElementChild?.remove();}
@@ -339,8 +346,8 @@ function parseMessage(message){try{return JSON.parse(message.data);}catch{return
 const stream=new EventSource('/events');
 stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
-stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();}};
-stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();});
+stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();void drawRuntimeSummary();}};
+stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
 if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/model-router-rules')showView('rules');else if(location.hash==='#/worker-router-rules')showView('worker-rules');else showView('jobs');
 setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/model-router-rules'&&location.hash!=='#/worker-router-rules')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);

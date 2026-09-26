@@ -381,3 +381,10 @@ test('dashboard exposes free-text worker router rules editor', () => {
   assert.match(dashboardHtml, /fetch\('\/api\/worker-router-rules'/);
   assert.match(dashboardHtml, /New worker decisions will load these rules/);
 });
+
+test('dashboard header exposes in-memory runtime summary', () => {
+  assert.match(dashboardHtml, /id="runtime-summary"[^>]*aria-label="Runtime summary"/);
+  assert.match(dashboardHtml, /api\/runtime-summary/);
+  assert.match(dashboardHtml, /runtimePill\('ChatGPT'/);
+  assert.match(dashboardHtml, /runtimePill\('Codex'/);
+});
