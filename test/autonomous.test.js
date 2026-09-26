@@ -91,6 +91,25 @@ test('planner priority normalization preserves canonical values and accepts safe
   assert.throws(() => normalizePlannerPriority(4, 'next_tasks[0].priority'), /priority is invalid.*4/);
 });
 
+test('automatic planner retry carries prior failure and persists launch-time planner input', async () => {
+  const store = new InMemoryStore(startedAutonomousJob());
+  const seen = [];
+  const planner = { plan: async context => {
+    seen.push(context);
+    if (seen.length === 1) throw new Error('Planner next_tasks[0].output is required');
+    return { objective_status:'satisfied', assessment:'done', next_tasks:[] };
+  } };
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[], planner });
+  await settle(reconciler, 6);
+  const result = await store.load('auto');
+  const round = result.tasks.find(item => item.kind === 'planner');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].retryFeedback, 'Planner next_tasks[0].output is required');
+  assert.equal(JSON.parse(round.input).retry_feedback, 'Planner next_tasks[0].output is required');
+  assert.equal(round.plannerRetryFeedback, undefined);
+  assert.equal(round.state, 'SUCCEEDED');
+});
+
 test('planner result with a formatting-only priority variation creates a child task', async () => {
   const bus = new MemoryEventBus();
   const store = new InMemoryStore(startedAutonomousJob());

@@ -426,7 +426,10 @@ export class Reconciler extends ReconcilerReviewBase {
     let promise: Promise<import('./planner.js').PlannerResult>;
     try {
       const executionContext = await this.resolvedContext(job, task, 'planner');
-      promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.error ?? undefined }, controller.signal);
+      const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.plannerRetryFeedback };
+      task.input = plannerInput(context);
+      await this.store.saveTask(task);
+      promise = planner.plan(context, controller.signal);
     }
     catch (error) { await this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))); return; }
     this.detach(promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error)))), job.id, task.id, 'planner completion');
@@ -438,6 +441,7 @@ export class Reconciler extends ReconcilerReviewBase {
     if (!task || (executionId !== null && task.executionId !== executionId)) return;
     if (task.state === 'CANCELLED') return;
     if (error) {
+      task.plannerRetryFeedback = error.message;
       task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
       await transitionTaskEvent(task, 'task.failed');
       if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry');
@@ -453,7 +457,7 @@ export class Reconciler extends ReconcilerReviewBase {
         if (!existing) continue;
       }
       // Persist the completed decision before exposing executable children.
-      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
+      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.plannerRetryFeedback = undefined; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await this.store.appendTask(child);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.completed', 'succeeded', `Planner ${task.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
     } catch (caught) {
@@ -463,6 +467,7 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
       } else {
+        task.plannerRetryFeedback = message;
         task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
       }
     }
