@@ -133,13 +133,13 @@ test('reviewer routing prefers an eligible worker not used by implementation', (
   assert.match(decision.selection.selectedBy, /reviewer-diversity/);
 });
 
-test('reviewer diversity never bypasses hard availability and capability gates', () => {
+test('reviewer routing only hard-gates authoritative offline/runtime constraints', () => {
   const decision = selectReviewer([
     { workerId: 'different-but-degraded', adapter: 'chatgpt', capabilities: ['model', 'review'], availability: 'degraded', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
     { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], availability: 'available', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } },
   ], [{ adapter: 'codex', workerSelection: { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, agentName: 'builder', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } }], { capabilities: ['model'] });
-  assert.equal(decision.selection.workerId, 'same-but-eligible');
-  assert.equal(decision.reason, 'eligible-fallback');
+  assert.equal(decision.selection.workerId, 'different-but-degraded');
+  assert.equal(decision.reason, 'worker-diversity');
 });
 
 test('worker routing avoids an otherwise eligible worker under resource pressure', () => {
@@ -275,4 +275,13 @@ test('usage facts expose remaining capacity and the nearest reset horizon for mo
   assert.equal(resource.windows.fiveHour.resetInMinutes, 30);
   assert.equal(resource.windows.weekly.remainingPercent, 90);
   assert.equal(resource.windows.weekly.resetInMinutes, 3 * 24 * 60);
+});
+
+test('Codex remains worker-eligible when its OpenAI resource snapshot is exhausted', () => {
+  const decision = selectWorker([
+    { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'], resourceHealthy: false, resourceProvider: 'openai', resourceUsedPercent: 100 },
+    { workerId: 'chatgpt', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], availability: 'offline' },
+  ], { capabilities: ['imagined'], runtime: 'codex' });
+  assert.equal(decision.selection.workerId, 'codex');
+  assert.equal(decision.selection.resourceHealthy, false);
 });

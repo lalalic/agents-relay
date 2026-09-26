@@ -48,12 +48,9 @@ export function policyPath(explicit?: string): string {
   return explicit ?? process.env.AGENTS_RELAY_ROUTING_POLICY ?? join(process.cwd(), '.agents-relay-routing-policy.json');
 }
 
-export function modelRouterRulesPath(explicit?: string): string {
-  return explicit ?? process.env.AGENTS_RELAY_MODEL_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-model-router-rules.md');
-}
+type RouterRules = { path: string; hash: string; text: string };
 
-export async function loadModelRouterRules(explicit?: string): Promise<{ path: string; hash: string; text: string }> {
-  const path = modelRouterRulesPath(explicit);
+async function loadRouterRules(path: string): Promise<RouterRules> {
   try {
     const text = await readFile(path, 'utf8');
     return { path, hash: createHash('sha256').update(text).digest('hex'), text };
@@ -62,11 +59,34 @@ export async function loadModelRouterRules(explicit?: string): Promise<{ path: s
   }
 }
 
-export async function saveModelRouterRules(text: string, explicit?: string): Promise<{ path: string; hash: string; text: string }> {
-  const path = modelRouterRulesPath(explicit);
+async function saveRouterRules(path: string, text: string): Promise<RouterRules> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, text, 'utf8');
   return { path, hash: createHash('sha256').update(text).digest('hex'), text };
+}
+
+export function modelRouterRulesPath(explicit?: string): string {
+  return explicit ?? process.env.AGENTS_RELAY_MODEL_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-model-router-rules.md');
+}
+
+export function workerRouterRulesPath(explicit?: string): string {
+  return explicit ?? process.env.AGENTS_RELAY_WORKER_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-worker-router-rules.md');
+}
+
+export async function loadModelRouterRules(explicit?: string): Promise<RouterRules> {
+  return await loadRouterRules(modelRouterRulesPath(explicit));
+}
+
+export async function saveModelRouterRules(text: string, explicit?: string): Promise<RouterRules> {
+  return await saveRouterRules(modelRouterRulesPath(explicit), text);
+}
+
+export async function loadWorkerRouterRules(explicit?: string): Promise<RouterRules> {
+  return await loadRouterRules(workerRouterRulesPath(explicit));
+}
+
+export async function saveWorkerRouterRules(text: string, explicit?: string): Promise<RouterRules> {
+  return await saveRouterRules(workerRouterRulesPath(explicit), text);
 }
 
 export async function loadRoutingPolicy(explicit?: string, explicitRules?: string): Promise<LoadedRoutingPolicy> {

@@ -21,15 +21,8 @@ export type ReviewerRoutingDecision = {
 };
 
 function satisfies(candidate: ReviewerCandidate, requirements?: WorkerRequirements): boolean {
-  if (candidate.availability && candidate.availability !== 'available') return false;
-  if (candidate.resourceHealthy === false) return false;
-  if (!requirements) return true;
-  if (!requirements.capabilities.every(capability => candidate.capabilities.includes(capability))) return false;
-  if (requirements.runtime && candidate.runtime !== requirements.runtime) return false;
-  if (requirements.taskKind && candidate.taskKind !== requirements.taskKind) return false;
-  if (requirements.trustDomain && !candidate.trustDomains?.includes(requirements.trustDomain)) return false;
-  if (requirements.region && candidate.region !== requirements.region) return false;
-  if (requirements.labels && Object.entries(requirements.labels).some(([key, value]) => candidate.labels?.[key] !== value)) return false;
+  if (candidate.availability === 'offline') return false;
+  if (requirements?.runtime && candidate.runtime !== requirements.runtime) return false;
   return true;
 }
 
@@ -45,7 +38,7 @@ function producedRoutes(tasks: readonly Task[]): Set<string> {
     .map(task => `${task.routing?.provider}\0${task.routing?.model}`));
 }
 
-/** Select a review worker only after hard gates, then prefer execution diversity. */
+/** Select a reviewer after authoritative worker constraints, then prefer execution diversity. */
 export function selectReviewer(
   candidates: readonly ReviewerCandidate[],
   implementationTasks: readonly Task[],

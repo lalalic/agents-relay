@@ -105,9 +105,22 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
     for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
-      const requirements = task.workerRequirements ?? { capabilities: task.capabilities.length > 0 ? task.capabilities : ['model'] };
-      const taskFacts = { id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M', capabilities: task.capabilities };
-      const routedWorker = await routeWorker(candidates, requirements, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts });
+      const requirements = task.workerRequirements ?? { capabilities: [] };
+      const taskFacts = {
+        id: task.id,
+        kind: task.kind ?? 'work',
+        storySize: task.storySize ?? 'M',
+        agentName: task.agentName ?? null,
+        input: task.input,
+        attachments: task.attachments ?? [],
+        output: task.output ?? null,
+      };
+      const routedWorker = await routeWorker(candidates, requirements, {
+        decisionEngine: this.options.decisionEngine,
+        decisionMode: this.options.decisionMode,
+        taskFacts,
+        usage,
+      });
       const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
       const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts, constraints: routingConstraints, auditStore: this.options.decisionAuditStore, auditTask: task });

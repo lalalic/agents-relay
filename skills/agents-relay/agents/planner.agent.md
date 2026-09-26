@@ -68,8 +68,8 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 - Prefer independently verifiable Tasks with stable IDs, but do not split work solely to make Tasks smaller.
 - A Task describes what an agent must accomplish; never emit a shell command as a worker Task.
 - Use dependencies only when execution order actually matters.
-- Every child Task must declare `workerRequirements`; worker-router selects the worker and model-router selects provider/model/reasoning afterward.
-- Do not choose `codex`/`chatgpt`, provider/model, or usage probes.
+- Describe each child Task precisely enough for worker-router to decide from the Task itself. Do not invent Codex/ChatGPT capability labels. workerRequirements is optional and should normally be omitted; use an explicit runtime only when the objective already requires that runtime.
+- Do not choose codex/chatgpt, provider/model, or usage probes.
 - Every child Task must declare exactly one output: `task_pr` or `file`.
 - Every child Task must include `storySize` (`S`, `M`, or `L`); use `M` when uncertain.
 - Do not create bookkeeping, waiting, status-checking, wrapper, or planning Tasks. Your response itself is the planning round.
@@ -86,4 +86,4 @@ For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
 For `objective_status: "satisfied"`, `assessment` may be a concise evidence-based completion assessment without a graph.
 
-Each item in `next_tasks` contains `id`, `input`, `workerRequirements`, `output`, and `storySize`. It may also contain priority, projectName, agentName, dependencies, capabilities, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
+Each item in next_tasks contains id, input, output, and storySize. It may also contain priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.

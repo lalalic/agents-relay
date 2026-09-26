@@ -54,13 +54,14 @@ Keep these concepts distinct: observation is not root cause; hypothesis is not r
 
 Every new model-backed executable task follows this order:
 
-1. The planner declares `workerRequirements` (capabilities and optional runtime, task-kind, trust-domain, region, and label constraints).
-2. `worker-router` is code-driven: it gathers authoritative worker/resource facts, applies capability/availability and other hard gates, then may call the generic typed `decide(request, contract)` primitive only among eligible workers.
-3. `model-router` runs after worker selection, discovers model/profile facts usable by that worker, applies model hard gates, then may use the same typed `decide()` primitive among eligible profiles. Router judgment is not a free-form agent invocation.
-4. `decide()` owns no routing facts or legality policy. Its optional Laya implementation is a transient CLI subprocess per decision; unavailable/invalid decisions fall back to deterministic routing. `src/usage.ts` remains the shared resource-fact source.
-5. Relay persists the selected worker and model routing on the durable task before launch.
+1. The planner describes the executable Task precisely. It does not invent a capability matrix for Codex versus ChatGPT. workerRequirements is optional compatibility metadata; an explicit runtime may be used only when the caller already knows the Task must use that runtime.
+2. worker-router gathers factual Task context, discovered worker availability, the current shared usage snapshot, built-in routing principles, and optional local free-text rules. Only authoritative legality facts such as an explicitly offline worker or an explicit caller-owned runtime constraint are hard gates. Descriptive capability labels, region/trust labels, and provider quota are decision facts rather than ordinary worker hard gates.
+3. When more than one legal model-backed worker exists, worker-router calls the generic typed decide(request, contract) primitive to choose the execution worker. Its default principles prefer ChatGPT when both workers can execute the Task, prefer Codex when native/local execution is necessary, and treat Codex/OpenAI quota pressure as a preference rather than proof that the Codex worker is unusable.
+4. model-router runs only after worker selection and independently chooses provider/model/profile for that worker. In particular, an exhausted OpenAI quota must not eliminate the Codex worker before Model Router has a chance to choose another Codex provider/profile.
+5. decide() owns no routing facts or legality policy. Its optional Laya implementation is a transient CLI subprocess per decision; unavailable/invalid decisions fall back deterministically. src/usage.ts remains the shared resource-fact source.
+6. Relay persists the selected worker and model routing on the durable task before launch.
 
-Planner output must not hard-code `codex`/`chatgpt`, provider preference, or usage probes. The worker-router and model-router are separate responsibilities; usage readers remain owned by `src/usage.ts` and are not duplicated in either router. Legacy task records that already contain adapter/routing metadata remain readable, but newly produced planner tasks must carry worker requirements.
+Planner output must not hard-code codex/chatgpt, provider preference, inferred worker capabilities, or usage probes. Worker Router and Model Router are separate responsibilities. Legacy task records that already contain adapter/routing/worker-requirement metadata remain readable.
 
 ## Story size
 
@@ -131,7 +132,7 @@ Job runtime status is derived, not persisted. Relay computes it from lifecycle p
 
 A normal task never merges a PR. After all non-superseded work gates pass, Relay creates a SHA-bound final review task. The reviewer emits exactly one of `review.approved`, `review.changes_required`, or `review.blocked`. When `autoMerge` is enabled (default), Relay merges only after `review.approved`, pinned to the exact reviewed head SHA. A new task or new PR head makes earlier final-review evidence stale and requires a fresh review.
 
-Final-review routing follows the same worker-selection boundary as executable work. Capability, availability, explicit reviewer constraints, and resource health are hard gates. Among eligible workers, Relay prefers a reviewer with a different worker identity from the implementation tasks; when that is unavailable it prefers a different provider/model, then falls back to the first eligible worker. The selected worker, `selectedBy` reason, and `reviewerRouting` event data are durable evidence. No provider is a universal reviewer default.
+Final-review routing follows the same factual worker-selection boundary as executable work. Explicitly offline workers and explicit reviewer runtime constraints are hard gates; provider quota and descriptive capability labels do not by themselves make a worker illegal. Among eligible workers, Relay prefers a reviewer with a different worker identity from the implementation tasks; when that is unavailable it prefers a different provider/model, then falls back to the first eligible worker. The selected worker, selectedBy reason, and reviewerRouting event data are durable evidence. No provider is a universal reviewer default.
 
 ## Job, Task, and planner ownership
 
