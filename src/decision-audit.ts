@@ -56,6 +56,8 @@ export function makeDecisionAudit(input: { task?: Pick<Task, 'jobId' | 'id' | 'a
     const reasons: string[] = [];
     if (item.resourceHealthy === false) reasons.push('resource_unhealthy');
     const constraints = input.contract.constraints as Record<string, unknown> | undefined;
+    const excludedRoutes = Array.isArray(input.contract.excludedRoutes) ? input.contract.excludedRoutes as Array<Record<string, unknown>> : [];
+    if (excludedRoutes.some(route => (!route.provider || route.provider === item.provider) && (!route.model || route.model === item.model) && (route.profile === undefined || route.profile === item.profile))) reasons.push('prior_failed_route');
     if (typeof constraints?.provider === 'string' && constraints.provider !== item.provider) reasons.push('provider_constraint');
     if (typeof constraints?.model === 'string' && constraints.model !== item.model) reasons.push('model_constraint');
     if (typeof constraints?.profile === 'string' && constraints.profile !== item.profile) reasons.push('profile_constraint');

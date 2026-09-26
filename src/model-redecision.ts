@@ -33,6 +33,7 @@ export type ModelRedecisionOptions = {
   decisionEngine?: DecisionEngine;
   decisionMode?: DecisionMode;
   policyPath?: string;
+  rulesPath?: string;
   evidence: FailureEvidence;
   updateRouting: (task: Task, routing: RoutingDecision) => Promise<void>;
 };
@@ -43,16 +44,18 @@ export type ModelRedecisionResult = ModelRoutingDecision & { freshUsageGenerated
 export async function redecideFailedTask(options: ModelRedecisionOptions): Promise<ModelRedecisionResult> {
   if (options.evidence.classification !== 'model_provider_runtime') throw new Error('Model re-decision requires model/provider/runtime evidence');
   const usage = await readUsageSnapshot(options.usage);
-  const candidates = await discoverModelCandidates(options.worker, options.registered, usage);
+  const candidates = await discoverModelCandidates(options.worker, options.registered, usage, undefined, options.rulesPath);
   const result = await routeModel(options.worker, candidates, {
     decisionEngine: options.decisionEngine,
     decisionMode: options.decisionMode,
     policyPath: options.policyPath,
+    rulesPath: options.rulesPath,
     auditStore: options.auditStore,
     auditTask: options.task,
     taskFacts: { kind: options.task.kind ?? 'work', capabilities: options.task.capabilities, prior_routing: options.task.routing ?? null, fresh_usage_generated_at: usage.generatedAt },
     priorDecisionId: options.task.routing?.decisionId,
     priorFailure: options.evidence,
+    excludedRoutes: options.task.routing ? [{ provider: options.task.routing.provider, model: options.task.routing.model, profile: options.task.routing.profile }] : [],
   });
   await options.updateRouting(options.task, result.routing);
   if (options.auditStore && options.task.routing?.decisionId) await options.auditStore.append(outcomeForDecision(options.task.routing.decisionId, 'provider_failure', options.evidence.summary, { classification: options.evidence.classification, fresh_usage_generated_at: usage.generatedAt }));

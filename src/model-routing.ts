@@ -6,7 +6,7 @@ import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, ResourceUsageWindow, RoutingDecision } from './types.js';
 import { usageForProvider, WorkerCandidate } from './worker-routing.js';
 import { DecisionAuditStore, DecisionAuditRecord, makeDecisionAudit } from './decision-audit.js';
-import { loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
+import { loadModelRouterRules, loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
 
 export type ModelCandidate = {
   id: string;
@@ -35,6 +35,7 @@ export type ModelRoutingOptions = {
   rulesPath?: string;
   priorDecisionId?: string;
   priorFailure?: import('./decision-audit.js').AuditFailureEvidence;
+  excludedRoutes?: Array<Partial<Pick<RoutingDecision, 'provider' | 'model' | 'profile'>>>;
 };
 
 type CodexConfig = { model?: string; provider?: string; reasoning?: string };
@@ -60,6 +61,24 @@ async function readConfig(path: string): Promise<CodexConfig | null> {
   try { return topLevelCodexConfig(await readFile(path, 'utf8')); } catch { return null; }
 }
 
+function compact(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function modelAliases(model: string): string[] {
+  const aliases = new Set<string>([compact(model)]);
+  const firstDigit = model.search(/\d/);
+  if (firstDigit >= 0) aliases.add(compact(model.slice(firstDigit)));
+  return [...aliases].filter(Boolean);
+}
+
+export function nonOpenAiModelAuthorized(provider: string, model: string, rulesText: string): boolean {
+  if (provider === 'openai') return true;
+  const rules = compact(rulesText);
+  if (!rules.includes(compact(provider))) return false;
+  return modelAliases(model).some(alias => alias.length >= 3 && rules.includes(alias));
+}
+
 function withResource(candidate: ModelCandidate, usage?: AccountUsageOverview): ModelCandidate {
   const resource = usageForProvider(usage, candidate.provider);
   return { ...candidate, resourceHealthy: resource.healthy, resourceUsedPercent: resource.usedPercent, resourceRemainingPercent: resource.remainingPercent, resourceResetAt: resource.resetAt, resourceResetInMinutes: resource.resetInMinutes, resourceWindows: resource.windows };
@@ -70,9 +89,12 @@ export async function discoverModelCandidates(
   registered: readonly AgentRegistration[],
   usage?: AccountUsageOverview,
   codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex'),
+  rulesPath?: string,
 ): Promise<ModelCandidate[]> {
   const registration = registered.find(item => item.id === worker.workerId);
   if (registration?.runtime.provider && registration.runtime.model) {
+    const rules = await loadModelRouterRules(rulesPath);
+    if (!nonOpenAiModelAuthorized(registration.runtime.provider, registration.runtime.model, rules.text)) return [];
     return [withResource({
       id: `${registration.runtime.provider}/${registration.runtime.model}`,
       provider: registration.runtime.provider,
@@ -84,8 +106,12 @@ export async function discoverModelCandidates(
   }
 
   const base = await readConfig(join(codexHome, 'config.toml')) ?? {};
+  const rules = await loadModelRouterRules(rulesPath);
   const candidates: ModelCandidate[] = [];
-  if (base.model) candidates.push(withResource({ id: `default:${base.provider ?? 'openai'}/${base.model}`, provider: base.provider ?? 'openai', model: base.model, reasoning: base.reasoning }, usage));
+  if (base.model) {
+    const provider = base.provider ?? 'openai';
+    if (nonOpenAiModelAuthorized(provider, base.model, rules.text)) candidates.push(withResource({ id: `default:${provider}/${base.model}`, provider, model: base.model, reasoning: base.reasoning }, usage));
+  }
   let files: string[] = [];
   try { files = (await readdir(codexHome)).filter(name => name.endsWith('.config.toml')).sort(); } catch { /* no profiles */ }
   for (const file of files) {
@@ -93,15 +119,23 @@ export async function discoverModelCandidates(
     if (!config?.model) continue;
     const profile = basename(file, '.config.toml');
     const provider = config.provider ?? base.provider ?? 'openai';
+    if (!nonOpenAiModelAuthorized(provider, config.model, rules.text)) continue;
     candidates.push(withResource({ id: `${profile}:${provider}/${config.model}`, provider, model: config.model, profile, reasoning: config.reasoning ?? base.reasoning }, usage));
   }
   if (candidates.length === 0) candidates.push(withResource({ id: 'default:openai/gpt-5.6-luna', provider: 'openai', model: 'gpt-5.6-luna' }, usage));
   return candidates.filter((candidate, index, all) => all.findIndex(item => item.id === candidate.id) === index);
 }
 
-function eligibleModels(candidates: readonly ModelCandidate[], constraints?: ModelRoutingOptions['constraints'], policy?: LoadedRoutingPolicy): ModelCandidate[] {
+function sameRoute(candidate: ModelCandidate, route: Partial<Pick<RoutingDecision, 'provider' | 'model' | 'profile'>>): boolean {
+  return (!route.provider || candidate.provider === route.provider)
+    && (!route.model || candidate.model === route.model)
+    && (route.profile === undefined || candidate.profile === route.profile);
+}
+
+function eligibleModels(candidates: readonly ModelCandidate[], constraints?: ModelRoutingOptions['constraints'], policy?: LoadedRoutingPolicy, excludedRoutes: ModelRoutingOptions['excludedRoutes'] = []): ModelCandidate[] {
   return candidates.filter(candidate => {
     if (candidate.resourceHealthy === false) return false;
+    if (excludedRoutes.some(route => sameRoute(candidate, route))) return false;
     if (policy && !policyAllows(candidate, policy.policy)) return false;
     if (constraints?.provider && candidate.provider !== constraints.provider) return false;
     if (constraints?.model && candidate.model !== constraints.model) return false;
@@ -124,7 +158,7 @@ export async function routeModel(
   options: ModelRoutingOptions = {},
 ): Promise<ModelRoutingDecision> {
   const policy = await loadRoutingPolicy(options.policyPath, options.rulesPath);
-  const eligible = eligibleModels(candidates, options.constraints, policy);
+  const eligible = eligibleModels(candidates, options.constraints, policy, options.excludedRoutes);
   if (eligible.length === 0) throw new Error(`No eligible model profile is usable by worker ${worker.workerId}`);
   const taskKind = typeof options.taskFacts?.kind === 'string' ? options.taskFacts.kind : undefined;
   const deterministic = deterministicModel(eligible, taskKind, policy);
@@ -159,7 +193,7 @@ export async function routeModel(
   const audit = makeDecisionAudit({
     task: options.auditTask,
     worker: { id: worker.workerId, adapter: worker.adapter, capabilities: [...worker.capabilities] },
-    contract: { question: 'model-profile-selection', task: options.taskFacts ?? {}, constraints: options.constraints ?? {} },
+    contract: { question: 'model-profile-selection', task: options.taskFacts ?? {}, constraints: options.constraints ?? {}, excludedRoutes: options.excludedRoutes ?? [] },
     policy,
     candidates,
     eligibleCandidates: eligible,

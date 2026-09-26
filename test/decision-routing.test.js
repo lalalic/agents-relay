@@ -94,48 +94,56 @@ test('worker discovery no longer preselects model routing', () => {
   assert.equal('routing' in candidate, false);
 });
 
-test('model router discovers configured Codex profiles then calls decide after worker selection', async () => {
+test('free-text rules never create an unconfigured non-OpenAI provider or model', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-codex-'));
   try {
-    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_reasoning_effort = "medium"\n');
-    await writeFile(join(home, 'zai.config.toml'), 'model_provider = "zai"\nmodel = "glm-test"\nmodel_reasoning_effort = "high"\n');
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(rulesPath, 'zai只用 5.3 flash high thinking\ndeepseek只用 deepseek-flash');
     const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
-    const candidates = await discoverModelCandidates(worker, [], undefined, home);
-    assert.deepEqual(candidates.map(item => item.id), ['default:openai/gpt-main', 'zai:zai/glm-test']);
-    const engine = new FakeDecisionEngine('zai:zai/glm-test');
-    const routed = await routeModel(worker, candidates, { decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'implementation' } });
-    assert.equal(routed.routing.provider, 'zai');
-    assert.equal(routed.routing.model, 'glm-test');
-    assert.equal(routed.routing.profile, 'zai');
-    assert.equal(routed.routing.decidedBy, 'model-router:laya');
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+    const candidates = await discoverModelCandidates(worker, [], undefined, home, rulesPath);
+    assert.deepEqual(candidates.map(item => ({ provider: item.provider, model: item.model })), [{ provider: 'openai', model: 'gpt-main' }]);
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
 
-test('model router excludes a configured credit profile with known zero remaining balance before decide', async () => {
+test('configured non-OpenAI profile requires concrete model authorization in free-text rules', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-codex-'));
   try {
-    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'zai.config.toml'), 'model_provider = "zai"\nmodel = "glm-5.3-flash"\nmodel_reasoning_effort = "high"\n');
+    const genericRules = join(home, 'generic-rules.md');
+    await writeFile(genericRules, 'Prefer ZAI while quota is abundant.');
+    const explicitRules = join(home, 'explicit-rules.md');
+    await writeFile(explicitRules, 'zai只用 5.3 flash high thinking');
+    const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
+    assert.deepEqual((await discoverModelCandidates(worker, [], undefined, home, genericRules)).map(item => item.id), ['default:openai/gpt-main']);
+    const candidates = await discoverModelCandidates(worker, [], undefined, home, explicitRules);
+    assert.deepEqual(candidates.map(item => item.id), ['default:openai/gpt-main', 'zai:zai/glm-5.3-flash']);
+    const engine = new FakeDecisionEngine('zai:zai/glm-5.3-flash');
+    const routed = await routeModel(worker, candidates, { rulesPath: explicitRules, decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'implementation' } });
+    assert.equal(routed.routing.provider, 'zai');
+    assert.equal(routed.routing.model, 'glm-5.3-flash');
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('authorized non-OpenAI profile still obeys zero-credit hard gate', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-codex-'));
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
     await writeFile(join(home, 'deepseek.config.toml'), 'model_provider = "deepseek"\nmodel = "deepseek-flash"\nmodel_reasoning_effort = "high"\n');
     await writeFile(join(home, 'zai.config.toml'), 'model_provider = "zai"\nmodel = "glm-test"\nmodel_reasoning_effort = "high"\n');
-    const usage = {
-      generatedAt: '2026-09-26T13:00:00.000Z',
-      providers: [],
-      credits: [{ id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt: '2026-09-26T13:00:00.000Z', balances: [{ currency: 'USD', total: 0, used: null, remaining: 0 }], reason: null } }],
-    };
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(rulesPath, 'zai只用 glm-test high thinking\ndeepseek只用 deepseek-flash high thinking');
+    const usage = { generatedAt: '2026-09-26T13:00:00.000Z', providers: [], credits: [{ id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt: '2026-09-26T13:00:00.000Z', balances: [{ currency: 'USD', total: 0, used: null, remaining: 0 }], reason: null } }] };
     const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
-    const candidates = await discoverModelCandidates(worker, [], usage, home);
+    const candidates = await discoverModelCandidates(worker, [], usage, home, rulesPath);
     assert.equal(candidates.find(item => item.provider === 'deepseek').resourceHealthy, false);
     const engine = new FakeDecisionEngine('zai:zai/glm-test');
-    const routed = await routeModel(worker, candidates, { decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'review' } });
+    const routed = await routeModel(worker, candidates, { rulesPath, decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'review' } });
     assert.equal(routed.routing.provider, 'zai');
     assert.ok(!engine.calls[0].contract.choices.includes('deepseek:deepseek/deepseek-flash'));
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
-
 
 test('model router passes reset-aware resource facts and burn guidance to the decision engine', async () => {
   const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
