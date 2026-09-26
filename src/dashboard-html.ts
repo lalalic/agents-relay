@@ -269,7 +269,7 @@ function element(name,className,child){const node=document.createElement(name);i
 function field(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),element('p','detail-value',text(input)));return box;}
 function markdownField(label,input){const box=element('div','detail-group');box.append(element('p','detail-label',text(label)),markdownValue(input));return box;}
 function rememberSelection(){if(selectedJob)sessionStorage.setItem('agents-relay:selected-job',selectedJob);else sessionStorage.removeItem('agents-relay:selected-job');if(selectedTaskId)sessionStorage.setItem('agents-relay:selected-task',selectedTaskId);else sessionStorage.removeItem('agents-relay:selected-task');}
-function syncMobileJobsView(){const detail=mobileJobs.matches&&Boolean(selectedJob)&&/^#\/jobs\/.+/.test(location.hash);document.body.dataset.mobileJobsView=detail?'detail':'list';}
+function syncMobileJobsView(){const detail=mobileJobs.matches&&Boolean(selectedJob)&&location.hash.startsWith('#/jobs/');document.body.dataset.mobileJobsView=detail?'detail':'list';}
 function selected(){return jobs.find(job=>job.id===selectedJob)||jobs[0]||null;}
 function counts(tasks){const out={};for(const task of Array.isArray(tasks)?tasks:[])out[task.state]=(out[task.state]||0)+1;return out;}
 function compactCounts(input){const order=['RUNNING','BLOCKED','FAILED','QUEUED','DRAFT','SUCCEEDED','CANCELLED'];return order.filter(state=>input[state]).map(state=>input[state]+' '+state).join(', ')||'No tasks';}
