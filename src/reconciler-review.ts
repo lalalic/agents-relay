@@ -104,6 +104,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
+    const runtimeSummary = this.options.runtimeSummaryProvider?.();
     for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
       const requirements = task.workerRequirements ?? { capabilities: [] };
       const taskFacts = {
@@ -120,6 +121,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         decisionMode: this.options.decisionMode,
         taskFacts,
         usage,
+        chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
       });
       const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;

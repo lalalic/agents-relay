@@ -18,6 +18,7 @@ import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
+import { summarizeRuntime } from './runtime-summary.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export const daemonHelp = `Agents Relay daemon runs the dashboard and worker pool.
@@ -64,12 +65,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const explicitProjectPath = value(argv,'--project-path');
   const usageRegistry = codexAndZaiUsageRegistry();
   const decisionAuditStore = new JsonlDecisionAuditStore(process.env.AGENTS_RELAY_DECISION_AUDIT_PATH ?? join(homedir(), '.agents-relay', 'decision-audit.jsonl'));
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot) });
+  let cachedOverviews: ManagedJobOverview[] = [];
+  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: job => repositoryPaths.get(job.repository) ?? resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler);
   const cacheDirectory = join(homedir(), '.agents-relay');
   const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
-  let cachedOverviews: ManagedJobOverview[] = [];
   try {
     const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as ManagedJobOverview[];
     if (Array.isArray(parsed)) cachedOverviews = parsed;
