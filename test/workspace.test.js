@@ -192,3 +192,13 @@ test('managed PR execution worktree fails closed when expected head is stale', a
     );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('workspace discovery ignores every hidden directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-hidden-scan-'));
+  const visible = join(root, 'visible-repo');
+  const hidden = join(root, '.hidden', 'nested-repo');
+  await mkdir(join(visible, '.git'), { recursive: true });
+  await mkdir(join(hidden, '.git'), { recursive: true });
+  assert.deepEqual(await discoverGitRepositories(root), [visible]);
+});
