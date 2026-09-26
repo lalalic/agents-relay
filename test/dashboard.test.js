@@ -5,6 +5,14 @@ import { createHmac } from 'node:crypto';
 import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 
+test('dashboard switches jobs list and detail into a mobile drill-down flow', () => {
+  assert.match(dashboardHtml, /id="mobile-jobs-back"/);
+  assert.match(dashboardHtml, /body\[data-mobile-jobs-view="list"\] #jobs-workspace/);
+  assert.match(dashboardHtml, /body\[data-mobile-jobs-view="detail"\] #jobs-view/);
+  assert.match(dashboardHtml, /function syncMobileJobsView\(\)/);
+  assert.match(dashboardHtml, /location\.hash='#\/jobs';syncMobileJobsView\(\)/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
