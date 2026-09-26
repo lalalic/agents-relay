@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult } from '../dist/planner.js';
+import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -40,6 +40,19 @@ function executionHarness(bus) {
   };
 }
 async function settle(reconciler, count = 8) { for (let index = 0; index < count; index += 1) { await reconciler.reconcile('auto'); await reconciler.idle(); await new Promise(resolve => setTimeout(resolve, 0)); } }
+
+
+
+test('planner input carries explicit retry feedback for corrective retries', () => {
+  const payload = JSON.parse(plannerInput({
+    job: { id:'j', title:'j', executionMode:'autonomous', prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[] },
+    tasks: [],
+    objective: 'make content',
+    previousPlannerTaskId: null,
+    retryFeedback: 'Planner next_tasks[0].output is required',
+  }));
+  assert.equal(payload.retry_feedback, 'Planner next_tasks[0].output is required');
+});
 
 test('execution mode and planner result markers round-trip', () => {
   const autonomous = job();

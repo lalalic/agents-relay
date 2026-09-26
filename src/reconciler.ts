@@ -426,7 +426,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let promise: Promise<import('./planner.js').PlannerResult>;
     try {
       const executionContext = await this.resolvedContext(job, task, 'planner');
-      promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext }, controller.signal);
+      promise = planner.plan({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.error ?? undefined }, controller.signal);
     }
     catch (error) { await this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error))); return; }
     this.detach(promise.then(result => this.finishPlanner(job.id, task.id, executionId, null, result), error => this.finishPlanner(job.id, task.id, executionId, error instanceof Error ? error : new Error(String(error)))), job.id, task.id, 'planner completion');

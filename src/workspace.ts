@@ -1,5 +1,5 @@
 import { mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -65,6 +65,16 @@ export async function resolveManagedProjectPath(repository: string | undefined, 
   return repository ? resolveWorkspaceRepositoryPath(repository, root) : resolve(cwd);
 }
 
+export function resolveRepositoryProjectPath(repositoryRoot: string, projectPath?: string): string {
+  const root = resolve(repositoryRoot);
+  if (!projectPath) return root;
+  if (isAbsolute(projectPath)) throw new Error('Job projectPath must be repository-relative');
+  const target = resolve(root, projectPath);
+  const rel = relative(root, target);
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Job projectPath escapes repository root');
+  return target;
+}
+
 async function git(path: string, args: string[]): Promise<string> {
   return (await execFileAsync('git', ['-C', path, ...args])).stdout.trim();
 }
@@ -79,6 +89,7 @@ export async function prepareManagedExecutionWorktree(
   executionId: string,
 ): Promise<string> {
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
+  const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
   const remote = await git(primary, ['config', '--get', 'remote.origin.url']);
   if (githubRepositoryFromRemote(remote) !== repository) throw new Error(`Primary checkout ${primary} does not match ${repository}`);
   await git(primary, ['fetch', 'origin', `refs/heads/${head.ref}:refs/remotes/origin/${head.ref}`]);
@@ -93,11 +104,11 @@ export async function prepareManagedExecutionWorktree(
     const existingRoot = await git(worktree, ['rev-parse', '--show-toplevel']);
     const existingHead = await git(worktree, ['rev-parse', 'HEAD']);
     if (resolve(existingRoot) !== resolve(worktree) || existingHead !== head.sha) throw new Error(`Existing execution worktree ${worktree} is not the expected PR head`);
-    return worktree;
+    return projectRelative ? join(worktree, projectRelative) : worktree;
   } catch (error) {
     try { await stat(worktree); } catch {
       await git(primary, ['worktree', 'add', '--detach', worktree, head.sha]);
-      return worktree;
+      return projectRelative ? join(worktree, projectRelative) : worktree;
     }
     throw error;
   }
