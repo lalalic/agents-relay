@@ -1,6 +1,15 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
+import { loadWorkerRouterRules } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
 import { AdapterName, AgentAvailability, AgentRegistration, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
+
+export const DEFAULT_WORKER_ROUTER_PRINCIPLES = [
+  'Worker Router chooses only the execution worker. Model Router chooses provider/model/profile after worker selection.',
+  'Prefer ChatGPT when both workers can execute the task because it does not consume Codex coding-plan tokens and normally has access to a stronger ChatGPT Sol model.',
+  'Prefer Codex when the task requires native/local execution or computer-use abilities that are unavailable through ChatGPT plus MacBridge.',
+  'Treat coding-plan/provider quota as decision context, not worker legality. Codex may still use another provider selected later by Model Router.',
+  'When Codex/OpenAI coding quota is scarce, prefer ChatGPT unless the Codex execution environment is necessary.',
+].join('\n');
 
 export type WorkerCandidate = {
   workerId: string;
@@ -26,6 +35,8 @@ export type WorkerRoutingOptions = {
   decisionEngine?: DecisionEngine;
   decisionMode?: DecisionMode;
   taskFacts?: Record<string, unknown>;
+  usage?: AccountUsageOverview;
+  rulesPath?: string;
 };
 
 export function usageForProvider(snapshot: AccountUsageOverview | undefined, provider: string, now = Date.now()): { healthy?: boolean; usedPercent?: number; remainingPercent?: number; resetAt?: number; resetInMinutes?: number; windows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow } } {
@@ -71,15 +82,12 @@ export function workerCandidates(
   return adapters.filter(adapter => adapter.name !== 'orchestrator').flatMap(adapter => {
     const workers = registered.filter(worker => worker.runtime.adapter === adapter.name);
     return (workers.length > 0 ? workers : [undefined]).map(worker => {
-      const provider = worker?.runtime.provider ?? (adapter.name === 'chatgpt' ? 'chatgpt' : 'openai');
-      const resource = usageForProvider(snapshot, provider);
+      const provider = worker?.runtime.provider ?? (adapter.name === 'chatgpt' ? 'chatgpt' : undefined);
+      const resource = provider ? usageForProvider(snapshot, provider) : {};
       return {
         workerId: worker?.id ?? adapter.id,
         adapter: adapter.name as Exclude<AdapterName, 'orchestrator'>,
-        capabilities: worker?.capabilities ?? [
-          ...adapter.capabilities,
-          ...(adapter.name === 'codex' ? ['local_repo', 'iterative_tools', 'long_running'] : ['web_session', 'attachments', 'interactive_ui', 'one_shot']),
-        ],
+        capabilities: worker?.capabilities ?? [...adapter.capabilities],
         runtime: worker?.runtime.adapter ?? adapter.name,
         trustDomains: worker?.routing.trustDomains,
         region: worker?.routing.regions?.[0],
@@ -97,15 +105,14 @@ export function workerCandidates(
   });
 }
 
+/**
+ * Worker legality is intentionally narrow. Descriptive capability labels and provider
+ * quota are facts for decide(), not hard gates. An explicit runtime is retained as a
+ * compatibility/caller-owned constraint, and an explicitly offline worker is illegal.
+ */
 export function satisfiesWorker(candidate: WorkerCandidate, requirements: WorkerRequirements): boolean {
-  if (candidate.availability && candidate.availability !== 'available') return false;
-  if (candidate.resourceHealthy === false) return false;
-  if (!requirements.capabilities.every(capability => candidate.capabilities.includes(capability))) return false;
+  if (candidate.availability === 'offline') return false;
   if (requirements.runtime && candidate.runtime !== requirements.runtime) return false;
-  if (requirements.taskKind && candidate.taskKind !== requirements.taskKind) return false;
-  if (requirements.trustDomain && !candidate.trustDomains?.includes(requirements.trustDomain)) return false;
-  if (requirements.region && candidate.region !== requirements.region) return false;
-  if (requirements.labels && Object.entries(requirements.labels).some(([key, value]) => candidate.labels?.[key] !== value)) return false;
   return true;
 }
 
@@ -115,8 +122,8 @@ export function eligibleWorkerCandidates(candidates: readonly WorkerCandidate[],
 
 function deterministicWorker(eligible: readonly WorkerCandidate[]): WorkerCandidate {
   return [...eligible].map((candidate, index) => ({ candidate, index })).sort((left, right) => {
-    const pressure = (item: WorkerCandidate): number => item.resourceUsedPercent === undefined ? 1 : item.resourceUsedPercent >= 90 ? 2 : 0;
-    return pressure(left.candidate) - pressure(right.candidate) || left.index - right.index;
+    const preference = (item: WorkerCandidate): number => item.adapter === 'chatgpt' ? 0 : 1;
+    return preference(left.candidate) - preference(right.candidate) || left.index - right.index;
   })[0].candidate;
 }
 
@@ -141,34 +148,40 @@ function selection(selected: WorkerCandidate, selectedBy: string, decisionEviden
 /** Deterministic fallback and backwards-compatible direct selector. */
 export function selectWorker(candidates: readonly WorkerCandidate[], requirements: WorkerRequirements): WorkerRoutingDecision {
   const eligible = eligibleWorkerCandidates(candidates, requirements);
-  if (eligible.length === 0) throw new Error('No eligible worker satisfies the declared requirements');
+  if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
   const selected = deterministicWorker(eligible);
-  return { candidate: selected, selection: selection(selected, 'worker-router:requirements') };
+  return { candidate: selected, selection: selection(selected, 'worker-router:fallback') };
 }
 
-/** Gathered facts and hard gates stay in code; Laya only judges among legal choices. */
+/** Gather factual worker/task/resource context, then let decide() choose among legal workers. */
 export async function routeWorker(
   candidates: readonly WorkerCandidate[],
   requirements: WorkerRequirements,
   options: WorkerRoutingOptions = {},
 ): Promise<WorkerRoutingDecision> {
   const eligible = eligibleWorkerCandidates(candidates, requirements);
-  if (eligible.length === 0) throw new Error('No eligible worker satisfies the declared requirements');
+  if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
   const deterministic = deterministicWorker(eligible);
   if (eligible.length === 1) {
     const evidence = { mode: options.decisionMode ?? 'off', fallback: true } as const;
-    return { candidate: deterministic, selection: selection(deterministic, 'worker-router:requirements', evidence) };
+    return { candidate: deterministic, selection: selection(deterministic, 'worker-router:constraint', evidence) };
   }
+
+  const rules = await loadWorkerRouterRules(options.rulesPath);
   const facts = JSON.parse(JSON.stringify({
     task: options.taskFacts ?? {},
-    requirements,
+    explicit_constraints: { runtime: requirements.runtime ?? null },
+    routing_principles: DEFAULT_WORKER_ROUTER_PRINCIPLES,
+    environment_rules: rules.text,
+    usage_snapshot: options.usage ?? null,
     candidates: eligible.map(item => ({
       id: item.workerId,
       adapter: item.adapter,
-      capabilities: [...item.capabilities],
       runtime: item.runtime ?? null,
-      resourceHealthy: item.resourceHealthy ?? null,
+      availability: item.availability ?? null,
+      declaredCapabilities: [...item.capabilities],
       resourceProvider: item.resourceProvider ?? null,
+      resourceHealthy: item.resourceHealthy ?? null,
       resourceUsedPercent: item.resourceUsedPercent ?? null,
       resourceRemainingPercent: item.resourceRemainingPercent ?? null,
       resourceResetAt: item.resourceResetAt ?? null,
@@ -176,14 +189,19 @@ export async function routeWorker(
       resourceWindows: item.resourceWindows ?? null,
     })),
   })) as JsonValue;
+
   const choice = await chooseWithDecision(
     options.decisionEngine,
     options.decisionMode ?? 'off',
     { facts },
-    { type: 'choice', question: 'Which eligible worker is best suited to execute this task?', choices: eligible.map(item => item.workerId) },
+    {
+      type: 'choice',
+      question: 'Choose the best execution worker for this task. Use the task description, current usage, routing principles, and environment rules. Prefer ChatGPT when both can do the work; choose Codex when native/local execution is necessary. Do not choose a provider or model here.',
+      choices: eligible.map(item => item.workerId),
+    },
     () => deterministic.workerId,
   );
   const selected = eligible.find(item => item.workerId === choice.choice) ?? deterministic;
-  const selectedBy = choice.evidence.engine && !choice.evidence.fallback ? 'worker-router:laya' : 'worker-router:requirements';
+  const selectedBy = choice.evidence.engine && !choice.evidence.fallback ? 'worker-router:laya' : 'worker-router:fallback';
   return { candidate: selected, selection: selection(selected, selectedBy, choice.evidence) };
 }

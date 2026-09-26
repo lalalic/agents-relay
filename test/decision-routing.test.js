@@ -82,7 +82,7 @@ test('single eligible worker bypasses decide and shadow mode does not change det
     { workerId: 'codex', adapter: 'codex', capabilities: ['model'] },
     { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'] },
   ], { capabilities: ['model'] }, { decisionEngine: shadowEngine, decisionMode: 'shadow' });
-  assert.equal(shadow.selection.workerId, 'codex');
+  assert.equal(shadow.selection.workerId, 'chatgpt');
   assert.equal(shadow.selection.decisionEvidence.proposed, 'chatgpt');
   assert.equal(shadow.selection.decisionEvidence.fallback, true);
 });
@@ -90,6 +90,7 @@ test('single eligible worker bypasses decide and shadow mode does not change det
 test('worker discovery no longer preselects model routing', () => {
   const [candidate] = workerCandidates([{ name: 'codex', id: 'codex', capabilities: ['model'] }], [], undefined);
   assert.equal(candidate.workerId, 'codex');
+  assert.deepEqual(candidate.capabilities, ['model']);
   assert.equal('routing' in candidate, false);
 });
 
@@ -174,5 +175,42 @@ test('reconciler emits worker.selected before model.selected after code routing'
   } finally {
     if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('worker decide receives task, usage, principles, and local rules without quota or capability hard gates', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-worker-rules-'));
+  try {
+    const rulesPath = join(dir, 'rules.md');
+    await writeFile(rulesPath, 'Prefer Codex for native app work when ChatGPT cannot operate the local UI.\n');
+    const engine = new FakeDecisionEngine('codex');
+    const usage = {
+      generatedAt: '2026-09-26T01:00:00.000Z',
+      providers: [
+        { id: 'openai', usage: { available: true, generatedAt: 'x', fiveHour: { usedPercent: 100, windowMinutes: 300, resetsAt: null }, weekly: { usedPercent: 100, windowMinutes: 10080, resetsAt: null }, reason: null } },
+      ],
+      credits: [],
+    };
+    const routed = await routeWorker([
+      { workerId: 'codex', adapter: 'codex', capabilities: ['model'], resourceHealthy: false, resourceProvider: 'openai', resourceUsedPercent: 100 },
+      { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'] },
+    ], { capabilities: ['invented-capability'] }, {
+      decisionEngine: engine,
+      decisionMode: 'active',
+      rulesPath,
+      usage,
+      taskFacts: { input: 'Open System Settings and change the local app configuration.' },
+    });
+
+    assert.equal(routed.selection.workerId, 'codex');
+    assert.deepEqual(engine.calls[0].contract.choices, ['codex', 'chatgpt']);
+    assert.equal(engine.calls[0].request.facts.task.input, 'Open System Settings and change the local app configuration.');
+    assert.equal(engine.calls[0].request.facts.usage_snapshot.generatedAt, usage.generatedAt);
+    assert.match(engine.calls[0].request.facts.routing_principles, /Prefer ChatGPT/);
+    assert.match(engine.calls[0].request.facts.routing_principles, /native\/local execution/);
+    assert.match(engine.calls[0].request.facts.environment_rules, /Prefer Codex for native app work/);
+    assert.equal(engine.calls[0].request.facts.candidates[0].resourceHealthy, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
