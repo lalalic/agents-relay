@@ -566,13 +566,17 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   await stop(); await stopEvents();
 });
 
-test('late correlated terminal event recovers an exit watchdog failure', async () => {
+test('late correlated terminal event recovers an exit watchdog failure', async (context) => {
   const t = task('late-terminal-recovery');
   const store = new InMemoryStore(job([t]));
   const adapter = new FakeAdapter();
   const bus = new MemoryEventBus();
   const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, terminalExitGraceMs: 10 });
   const stop = await reconciler.watch('j');
+  context.after(async () => {
+    await reconciler.close();
+    await stop();
+  });
   await reconciler.reconcile('j');
 
   const source = await activeEventSource(store, 'late-terminal-recovery');
@@ -595,7 +599,6 @@ test('late correlated terminal event recovers an exit watchdog failure', async (
   assert.equal(recovered.state, 'SUCCEEDED');
   assert.equal(recovered.result?.summary, 'durable output');
   assert.equal(recovered.failureReason, undefined);
-  await stop();
 });
 
 test('accepted terminal event protects against process-exit watchdog while persistence is in flight', async () => {
