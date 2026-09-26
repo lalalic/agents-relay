@@ -113,6 +113,29 @@ test('model router discovers configured Codex profiles then calls decide after w
   }
 });
 
+test('model router excludes a configured credit profile with known zero remaining balance before decide', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-codex-'));
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'deepseek.config.toml'), 'model_provider = "deepseek"\nmodel = "deepseek-flash"\nmodel_reasoning_effort = "high"\n');
+    await writeFile(join(home, 'zai.config.toml'), 'model_provider = "zai"\nmodel = "glm-test"\nmodel_reasoning_effort = "high"\n');
+    const usage = {
+      generatedAt: '2026-09-26T13:00:00.000Z',
+      providers: [],
+      credits: [{ id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt: '2026-09-26T13:00:00.000Z', balances: [{ currency: 'USD', total: 0, used: null, remaining: 0 }], reason: null } }],
+    };
+    const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
+    const candidates = await discoverModelCandidates(worker, [], usage, home);
+    assert.equal(candidates.find(item => item.provider === 'deepseek').resourceHealthy, false);
+    const engine = new FakeDecisionEngine('zai:zai/glm-test');
+    const routed = await routeModel(worker, candidates, { decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'review' } });
+    assert.equal(routed.routing.provider, 'zai');
+    assert.ok(!engine.calls[0].contract.choices.includes('deepseek:deepseek/deepseek-flash'));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 
 test('model router passes reset-aware resource facts and burn guidance to the decision engine', async () => {
   const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };

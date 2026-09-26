@@ -122,6 +122,21 @@ test('fresh usage snapshots are not cached by the shared usage surface', async (
   assert.equal(snapshots, 2);
 });
 
+test('credit health preserves known exhaustion while leaving unknown balances unknown', () => {
+  const snapshot = {
+    generatedAt,
+    providers: [],
+    credits: [
+      { id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt, balances: [{ currency: 'USD', total: 0, used: null, remaining: 0 }], reason: null } },
+      { id: 'openrouter', label: 'OpenRouter', credits: { available: true, generatedAt, balances: [{ currency: 'USD', total: 10, used: 4, remaining: 6 }], reason: null } },
+    ],
+  };
+
+  assert.equal(usageForProvider(snapshot, 'deepseek').healthy, false);
+  assert.equal(usageForProvider(snapshot, 'openrouter').healthy, true);
+  assert.equal(usageForProvider({ generatedAt, providers: [], credits: [{ id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt, balances: [], reason: 'request failed' } }] }, 'deepseek').healthy, undefined);
+});
+
 test('reviewer routing prefers an eligible worker not used by implementation', () => {
   const implementation = [{ adapter: 'codex', workerSelection: { workerId: 'codex', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt }, agentName: 'builder' }];
   const decision = selectReviewer([

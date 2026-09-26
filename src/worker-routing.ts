@@ -72,7 +72,7 @@ export function usageForProvider(snapshot: AccountUsageOverview | undefined, pro
     };
   }
   const credits = snapshot?.credits.find(item => item.id === provider)?.credits;
-  if (credits?.available) {
+  if (credits) {
     const knownRemaining = credits.balances.map(item => item.remaining).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     if (knownRemaining.length > 0) return { healthy: knownRemaining.some(value => value > 0) };
   }
