@@ -9,6 +9,7 @@ import { Job } from './types.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 import { loadModelRouterRules, loadWorkerRouterRules, saveModelRouterRules, saveWorkerRouterRules } from './routing-policy.js';
+import { summarizeRuntime } from './runtime-summary.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
@@ -290,6 +291,11 @@ export function serveDashboard(
       }
       res.writeHead(405, { allow: 'GET, PUT' });
       res.end('Method not allowed');
+      return;
+    }
+    if (req.url === '/api/runtime-summary') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(summarizeRuntime(lastKnownJobs ?? [])));
       return;
     }
     if (req.url === '/api/status') {
