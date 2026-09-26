@@ -23,6 +23,7 @@ export async function aggregateManagedGitHubJobs(client: GitHubClient, repositor
 export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
+  private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   constructor(
     private readonly client: GitHubClient,
@@ -32,13 +33,26 @@ export class RepositoryWorkerPool {
     private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
   ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
+  private async reconcileExclusive(jobId: string, work: () => Promise<void>): Promise<void> {
+    while (this.reconcileLocks.has(jobId)) await this.reconcileLocks.get(jobId);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    this.reconcileLocks.set(jobId, gate);
+    try { await work(); }
+    finally {
+      if (this.reconcileLocks.get(jobId) === gate) this.reconcileLocks.delete(jobId);
+      release();
+    }
+  }
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
     for (const item of discovered) this.jobTargets.set(item.job.id, { repository: item.job.repository, prNumber: item.job.prNumber });
     // Terminal PRs must be reconciled before OPEN-job scheduling. Otherwise the
     // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
     for (const job of terminalManagedJobs(discovered)) {
-      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-      await this.makeReconciler(store, 0).reconcile(job.id);
+      await this.reconcileExclusive(job.id, async () => {
+        const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+        await this.makeReconciler(store, 0).reconcile(job.id);
+      });
     }
     const jobs = runnableManagedJobs(discovered);
     let capacity = Math.max(1, this.concurrency);
@@ -49,7 +63,9 @@ export class RepositoryWorkerPool {
       const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
-      await this.makeReconciler(store, allowance).reconcile(job.id);
+      await this.reconcileExclusive(job.id, async () => {
+        await this.makeReconciler(store, allowance).reconcile(job.id);
+      });
       capacity -= allowance;
     }
   }
@@ -67,8 +83,10 @@ export class RepositoryWorkerPool {
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (!this.repositories.includes(repository)) return;
     this.jobTargets.set(jobId, { repository, prNumber });
-    const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
-    await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
+    await this.reconcileExclusive(jobId, async () => {
+      const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
+      await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
+    });
   }
   private async handleLifecycleEvent(event: import('./types.js').EventRecord): Promise<void> {
     const target = this.jobTargets.get(event.job_id);
