@@ -21,7 +21,7 @@ import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
-import { defaultWorkspaceRoot, resolveManagedProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 export { helpText } from './cli-help.js';
@@ -35,7 +35,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -52,6 +52,7 @@ export async function ensureManagedGitHubJob(
     id: options.id,
     title: options.title || pr.title || 'Agents Relay job',
     objective: options.objective || pr.body || undefined,
+    projectPath: options.projectPath,
     description: pr.body || undefined,
     priority: options.priority ?? 'P2',
     executionMode: options.executionMode ?? 'fixed',
@@ -270,6 +271,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       id,
       title: arg(args, '--title') || undefined,
       objective: objective || undefined,
+      projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args),
       executionMode: requestedExecutionMode(args),
       schedule: scheduleFromArgs(args),
@@ -307,6 +309,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
   if (hasArg(args, '--objective') || hasArg(args, '--objective-file')) { const objective = await textOption(args, '--objective', '--objective-file'); if (!objective.trim()) throw new Error('Job objective cannot be empty'); job.objective = objective; }
+  if (hasArg(args, '--project-path')) job.projectPath = arg(args, '--project-path') || undefined;
   if (hasArg(args, '--priority')) job.priority = priority(args, job.priority ?? 'P2');
   if (hasArg(args, '--mode') || hasArg(args, '--execution-mode')) job.executionMode = executionMode(args, job.executionMode ?? 'fixed');
   if (hasArg(args, '--schedule')) job.schedule = scheduleFromArgs(args);
@@ -329,7 +332,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtimeReviewer() { return { requirements: { capabilities: ['model'] } }; }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: new LayaCliDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: job => resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()) }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: new LayaCliDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => resolveRepositoryProjectPath(await resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()), job.projectPath) }); }
 export function dashboardTaskAction(store: DurableStore, reconciler: Reconciler, action: 'retry' | 'cancel'): (jobId: string, taskId: string) => Promise<Job> {
   return async (jobId: string, taskId: string): Promise<Job> => {
     const job = await store.load(jobId);

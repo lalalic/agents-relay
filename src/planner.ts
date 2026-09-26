@@ -25,7 +25,7 @@ export type PlannerTaskSpec = {
   timeoutMs?: number;
 };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext };
+export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext; retryFeedback?: string };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
@@ -141,7 +141,7 @@ export function plannerInput(context: PlannerContext): string {
     boundaries: agent.restrictions,
     runtime: agent.runtime,
   }));
-  return JSON.stringify({ objective: context.objective, previous_planner_task_id: context.previousPlannerTaskId, visible_agents: visibleAgents ?? [], execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
+  return JSON.stringify({ objective: context.objective, retry_feedback: context.retryFeedback, previous_planner_task_id: context.previousPlannerTaskId, visible_agents: visibleAgents ?? [], execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
 }
 
 export class CommandObjectivePlanner implements ObjectivePlanner {

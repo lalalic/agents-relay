@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import test from './test-runtime.js';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
-import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
+import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -40,6 +40,15 @@ test('repository path resolution uses managed repository identity instead of lau
     assert.notEqual(await resolveManagedProjectPath('lalalic/agents-relay', '', root, join(root, 'launcher')), join(root, 'launcher'));
     await assert.rejects(resolveWorkspaceRepositoryPath('lalalic/missing', root), /pass --project-path explicitly/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+
+test('job project paths are repository-relative and cannot escape the repository', () => {
+  assert.equal(resolveRepositoryProjectPath('/tmp/repo', undefined), '/tmp/repo');
+  assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'neo-build-log'), '/tmp/repo/neo-build-log');
+  assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '/etc'), /repository-relative/);
+  assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '../outside'), /escapes repository root/);
 });
 
 test('workspace repository parsing ignores non-GitHub remotes', () => {
@@ -132,7 +141,9 @@ test('managed PR execution worktrees isolate concurrent jobs from the primary ch
     await exec('git', ['-C', primary, 'config', 'user.name', 'Test']);
     await exec('git', ['-C', primary, 'checkout', '-q', '-b', 'main']);
     await writeFile(join(primary, 'base.txt'), 'base\n');
-    await exec('git', ['-C', primary, 'add', 'base.txt']);
+    await mkdir(join(primary, 'neo-build-log'), { recursive: true });
+    await writeFile(join(primary, 'neo-build-log', 'README.md'), 'content project\n');
+    await exec('git', ['-C', primary, 'add', 'base.txt', 'neo-build-log/README.md']);
     await exec('git', ['-C', primary, 'commit', '-qm', 'base']);
     await exec('git', ['-C', primary, 'remote', 'add', 'origin', bare]);
     await exec('git', ['-C', primary, 'push', '-q', '-u', 'origin', 'main']);
@@ -156,8 +167,11 @@ test('managed PR execution worktrees isolate concurrent jobs from the primary ch
 
     const first = await prepareManagedExecutionWorktree(primary, 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-a');
     const second = await prepareManagedExecutionWorktree(primary, 'owner/repo', 8, { ref: 'feature-b', sha: heads['feature-b'] }, 'exec-b');
+    const nested = await prepareManagedExecutionWorktree(join(primary, 'neo-build-log'), 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-nested');
 
     assert.notEqual(first, second);
+    assert.equal(nested.endsWith('/neo-build-log'), true);
+    assert.equal((await exec('git', ['-C', nested, 'rev-parse', 'HEAD'])).stdout.trim(), heads['feature-a']);
     assert.equal((await exec('git', ['-C', first, 'rev-parse', 'HEAD'])).stdout.trim(), heads['feature-a']);
     assert.equal((await exec('git', ['-C', second, 'rev-parse', 'HEAD'])).stdout.trim(), heads['feature-b']);
     assert.equal((await exec('git', ['-C', first, 'branch', '--show-current'])).stdout.trim(), '');
