@@ -214,3 +214,28 @@ test('worker decide receives task, usage, principles, and local rules without qu
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('worker router exposes ChatGPT load preference and fallback prefers Codex at the preferred limit', async () => {
+  const engine = new FakeDecisionEngine('codex');
+  const routed = await routeWorker([
+    { workerId: 'codex', adapter: 'codex', capabilities: ['model'] },
+    { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'] },
+  ], { capabilities: [] }, {
+    decisionEngine: engine,
+    decisionMode: 'active',
+    chatgptRunning: 10,
+  });
+  assert.equal(routed.selection.workerId, 'codex');
+  assert.equal(engine.calls[0].request.facts.runtime_load.chatgpt_running, 10);
+  assert.equal(engine.calls[0].request.facts.runtime_load.preferred_chatgpt_concurrency, 10);
+
+  const fallback = await routeWorker([
+    { workerId: 'codex', adapter: 'codex', capabilities: ['model'] },
+    { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'] },
+  ], { capabilities: [] }, {
+    decisionMode: 'off',
+    chatgptRunning: 10,
+  });
+  assert.equal(fallback.selection.workerId, 'codex');
+});

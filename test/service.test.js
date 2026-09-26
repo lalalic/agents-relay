@@ -239,3 +239,10 @@ test('completed Task comments preserve Markdown Work and render Result separatel
   assert.match(rendered, /```mermaid/);
   assert.match(rendered, /### Result\n\nCompleted successfully\./);
 });
+
+
+test('repository daemon wires ChatGPT runtime load into worker routing', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /runtimeSummaryProvider:\s*\(\)\s*=>\s*\(\{ chatgptRunning:/);
+  assert.match(source, /summarizeRuntime\(cachedOverviews\.map/);
+});

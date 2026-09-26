@@ -3,12 +3,15 @@ import { loadWorkerRouterRules } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
 import { AdapterName, AgentAvailability, AgentRegistration, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
 
+export const DEFAULT_CHATGPT_PREFERRED_CONCURRENCY = 10;
+
 export const DEFAULT_WORKER_ROUTER_PRINCIPLES = [
   'Worker Router chooses only the execution worker. Model Router chooses provider/model/profile after worker selection.',
   'Prefer ChatGPT when both workers can execute the task because it does not consume Codex coding-plan tokens and normally has access to a stronger ChatGPT Sol model.',
   'Prefer Codex when the task requires native/local execution or computer-use abilities that are unavailable through ChatGPT plus MacBridge.',
   'Treat coding-plan/provider quota as decision context, not worker legality. Codex may still use another provider selected later by Model Router.',
   'When Codex/OpenAI coding quota is scarce, prefer ChatGPT unless the Codex execution environment is necessary.',
+  'When current ChatGPT running load reaches the preferred ChatGPT concurrency, strongly prefer Codex unless ChatGPT is materially required or better suited for the task.',
 ].join('\n');
 
 export type WorkerCandidate = {
@@ -37,6 +40,8 @@ export type WorkerRoutingOptions = {
   taskFacts?: Record<string, unknown>;
   usage?: AccountUsageOverview;
   rulesPath?: string;
+  chatgptRunning?: number;
+  preferredChatgptConcurrency?: number;
 };
 
 export function usageForProvider(snapshot: AccountUsageOverview | undefined, provider: string, now = Date.now()): { healthy?: boolean; usedPercent?: number; remainingPercent?: number; resetAt?: number; resetInMinutes?: number; windows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow } } {
@@ -120,9 +125,10 @@ export function eligibleWorkerCandidates(candidates: readonly WorkerCandidate[],
   return candidates.filter(candidate => satisfiesWorker(candidate, requirements));
 }
 
-function deterministicWorker(eligible: readonly WorkerCandidate[]): WorkerCandidate {
+function deterministicWorker(eligible: readonly WorkerCandidate[], chatgptRunning = 0, preferredChatgptConcurrency = DEFAULT_CHATGPT_PREFERRED_CONCURRENCY): WorkerCandidate {
+  const chatgptAtPreferenceLimit = chatgptRunning >= preferredChatgptConcurrency;
   return [...eligible].map((candidate, index) => ({ candidate, index })).sort((left, right) => {
-    const preference = (item: WorkerCandidate): number => item.adapter === 'chatgpt' ? 0 : 1;
+    const preference = (item: WorkerCandidate): number => chatgptAtPreferenceLimit ? (item.adapter === 'codex' ? 0 : 1) : (item.adapter === 'chatgpt' ? 0 : 1);
     return preference(left.candidate) - preference(right.candidate) || left.index - right.index;
   })[0].candidate;
 }
@@ -161,7 +167,9 @@ export async function routeWorker(
 ): Promise<WorkerRoutingDecision> {
   const eligible = eligibleWorkerCandidates(candidates, requirements);
   if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
-  const deterministic = deterministicWorker(eligible);
+  const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
+  const chatgptRunning = options.chatgptRunning ?? 0;
+  const deterministic = deterministicWorker(eligible, chatgptRunning, preferredChatgptConcurrency);
   if (eligible.length === 1) {
     const evidence = { mode: options.decisionMode ?? 'off', fallback: true } as const;
     return { candidate: deterministic, selection: selection(deterministic, 'worker-router:constraint', evidence) };
@@ -174,6 +182,10 @@ export async function routeWorker(
     routing_principles: DEFAULT_WORKER_ROUTER_PRINCIPLES,
     environment_rules: rules.text,
     usage_snapshot: options.usage ?? null,
+    runtime_load: {
+      chatgpt_running: chatgptRunning,
+      preferred_chatgpt_concurrency: preferredChatgptConcurrency,
+    },
     candidates: eligible.map(item => ({
       id: item.workerId,
       adapter: item.adapter,
