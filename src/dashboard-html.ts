@@ -122,8 +122,12 @@ export const dashboardHtml = `<!doctype html>
       .mobile-only { display:inline-flex; }
       #jobs-view .panel-head { display:grid; align-items:start; }
       #jobs-view .panel-actions { width:100%; flex-wrap:wrap; }
-      #jobs-view .job-filters { width:100%; }
-      #jobs-view .job-search { width:100%; max-width:none; flex:1 1 100%; }
+      .runtime-summary { display:none; }
+      #jobs-view .job-filters { width:auto; }
+      #jobs-view .job-search,
+      #jobs-view #quick-status,
+      #jobs-view #quick-autonomous,
+      #jobs-view #quick-draft { display:none; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }

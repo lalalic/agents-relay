@@ -13,6 +13,12 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
   assert.match(dashboardHtml, /location\.hash='#\/jobs';syncMobileJobsView\(\)/);
 });
 
+test('mobile jobs view keeps only the repository filter and hides runtime summary', () => {
+  assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
+  assert.match(dashboardHtml, /#jobs-view \.job-search,[\s\S]*#jobs-view #quick-status,[\s\S]*#jobs-view #quick-autonomous,[\s\S]*#jobs-view #quick-draft \{ display:none; \}/);
+  assert.match(dashboardHtml, /id="repo-filter"/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
