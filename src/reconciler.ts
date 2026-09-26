@@ -282,7 +282,7 @@ export class Reconciler extends ReconcilerReviewBase {
   private async recoverPlannerChildren(job: Job): Promise<void> {
     const contextTask = job.tasks.find(task => task.kind === 'planner') ?? job.tasks[0];
     if (!contextTask) return;
-    const executionContext = await this.resolvedContext(job, contextTask, 'planner');
+    const executionContext = await this.plannerContext(job, contextTask);
     for (const planner of job.tasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)) {
       const children = planner.plannerResult?.next_tasks.map(spec => this.plannerChild(job, planner, spec, executionContext)) ?? [];
       for (const child of children) {
@@ -302,6 +302,17 @@ export class Reconciler extends ReconcilerReviewBase {
       registeredAgents: await this.store.listAgents(),
       runtimes: this.options.adapters.map(adapter => ({ name: adapter.name, id: adapter.id, capabilities: [...adapter.capabilities] })),
     });
+  }
+
+  private async plannerContext(job: Job, task: Task): Promise<ExecutionContext> {
+    let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
+    if (this.store.pullRequestHead) {
+      const head = await this.store.pullRequestHead();
+      if (!head) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
+      const key = `planner-${task.id}-${head.sha.slice(0, 12)}`;
+      projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, head, key);
+    }
+    return this.resolvedContext(job, task, 'planner', projectPath);
   }
 
   protected async launch(job: Job, task: Task): Promise<void> {
@@ -425,7 +436,7 @@ export class Reconciler extends ReconcilerReviewBase {
     this.plannerLive.set(task.id, { executionId: executionId as string, controller, timer });
     let promise: Promise<import('./planner.js').PlannerResult>;
     try {
-      const executionContext = await this.resolvedContext(job, task, 'planner');
+      const executionContext = await this.plannerContext(job, task);
       const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.plannerRetryFeedback };
       task.input = plannerInput(context);
       await this.store.saveTask(task);
@@ -450,7 +461,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     try {
       const result = parsePlannerResult(raw);
-      const executionContext = await this.resolvedContext(job, task, 'planner');
+      const executionContext = await this.plannerContext(job, task);
       const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
