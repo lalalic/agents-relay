@@ -373,3 +373,11 @@ test('dashboard exposes free-text model router rules editor', () => {
   assert.match(dashboardHtml, /method:'PUT'/);
   assert.match(dashboardHtml, /New routing decisions will load these rules/);
 });
+
+test('dashboard exposes free-text worker router rules editor', () => {
+  assert.match(dashboardHtml, /id="worker-rules-tab"[^>]*>Worker Router Rules</);
+  assert.match(dashboardHtml, /id="worker-rules-text"[^>]*class="rules-textarea"/);
+  assert.match(dashboardHtml, /Free-text guidance loaded by the worker decider/);
+  assert.match(dashboardHtml, /fetch\('\/api\/worker-router-rules'/);
+  assert.match(dashboardHtml, /New worker decisions will load these rules/);
+});

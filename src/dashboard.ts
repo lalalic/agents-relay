@@ -8,7 +8,7 @@ import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
 import { Job } from './types.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
-import { loadModelRouterRules, saveModelRouterRules } from './routing-policy.js';
+import { loadModelRouterRules, loadWorkerRouterRules, saveModelRouterRules, saveWorkerRouterRules } from './routing-policy.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
@@ -245,6 +245,41 @@ export function serveDashboard(
         }
         try {
           const rules = await saveModelRouterRules(Buffer.concat(chunks).toString('utf8'));
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(rules));
+        } catch (error) {
+          res.writeHead(500);
+          res.end(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
+      res.writeHead(405, { allow: 'GET, PUT' });
+      res.end('Method not allowed');
+      return;
+    }
+    if (req.url === '/api/worker-router-rules') {
+      if (req.method === 'GET') {
+        try {
+          const rules = await loadWorkerRouterRules();
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(rules));
+        } catch (error) {
+          res.writeHead(500);
+          res.end(error instanceof Error ? error.message : String(error));
+        }
+        return;
+      }
+      if (req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          size += buffer.length;
+          if (size > 64 * 1024) { res.writeHead(413); res.end('Worker router rules exceed 64 KiB'); return; }
+          chunks.push(buffer);
+        }
+        try {
+          const rules = await saveWorkerRouterRules(Buffer.concat(chunks).toString('utf8'));
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify(rules));
         } catch (error) {
