@@ -166,8 +166,8 @@ export const dashboardHtml = `<!doctype html>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
-    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Model Router Rules</button>
-    <button id="worker-rules-tab" type="button" role="tab" aria-selected="false" aria-controls="worker-rules-view">Worker Router Rules</button>
+    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Model Rules</button>
+    <button id="worker-rules-tab" type="button" role="tab" aria-selected="false" aria-controls="worker-rules-view">Worker Rules</button>
   </nav>
 </header>
 <main>
