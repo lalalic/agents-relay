@@ -54,6 +54,29 @@ test('planner input carries explicit retry feedback for corrective retries', () 
   assert.equal(payload.retry_feedback, 'Planner next_tasks[0].output is required');
 });
 
+test('planner input stays compact with a large execution context and planner history', () => {
+  const huge = 'x'.repeat(70000);
+  const context = {
+    project: { name:'neo-build-log', path:'/tmp/neo/neo-build-log', workspaceRoot:'/tmp/neo', neoRoot:'/tmp/neo', globalRoot:'/tmp' },
+    role:'planner',
+    instructions:[{path:'/tmp/huge',content:huge}],
+    skills:[{name:'huge-skill',description:huge,path:'/tmp/skill'}],
+    agents:[{name:'build-log-editor',description:huge,capabilities:['content'],restrictions:[],runtime:'codex',path:'/tmp/editor'}],
+    runtimes:[],
+    delegation:{mode:'relay-child-task',parentTaskIdRequired:false},
+  };
+  const priorPlanner={...task('planner-old','FAILED'),kind:'planner',input:huge,error:huge,plannerResult:{objective_status:'in_progress',assessment:huge,next_tasks:[spec('episode')]}};
+  const payloadText=plannerInput({job:job([priorPlanner]),tasks:[priorPlanner],objective:'make content',previousPlannerTaskId:'planner-old',executionContext:context,retryFeedback:'bad output'});
+  const payload=JSON.parse(payloadText);
+  assert.equal(payload.execution_context, undefined);
+  assert.equal(payload.project.name, 'neo-build-log');
+  assert.deepEqual(payload.visible_agents.map(agent => agent.name), ['build-log-editor']);
+  assert.equal(payload.tasks[0].input, undefined);
+  assert.deepEqual(payload.tasks[0].planner_result.next_task_ids, ['episode']);
+  assert.equal(payloadText.includes(huge), false);
+  assert.ok(payloadText.length < 20000, `planner input too large: ${payloadText.length}`);
+});
+
 test('execution mode and planner result markers round-trip', () => {
   const autonomous = job();
   assert.equal(parseJob(renderJobComment(autonomous)).executionMode, 'autonomous');

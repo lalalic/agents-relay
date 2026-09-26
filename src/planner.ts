@@ -133,15 +133,41 @@ export function parsePlannerOutput(output: string): PlannerResult {
   return parsePlannerResult(JSON.parse(candidate) as unknown);
 }
 
+function boundedText(value: string | null | undefined, max = 4000): string | null | undefined {
+  if (value === null || value === undefined || value.length <= max) return value;
+  return value.slice(0, max) + `\n...[truncated ${value.length - max} chars]`;
+}
+
 export function plannerInput(context: PlannerContext): string {
   const visibleAgents = context.executionContext?.agents.map(agent => ({
     name: agent.name,
-    description: agent.description,
+    description: boundedText(agent.description, 1000),
     capabilities: agent.capabilities,
     boundaries: agent.restrictions,
     runtime: agent.runtime,
   }));
-  return JSON.stringify({ objective: context.objective, retry_feedback: context.retryFeedback, previous_planner_task_id: context.previousPlannerTaskId, visible_agents: visibleAgents ?? [], execution_context: context.executionContext, tasks: context.tasks.map(task => ({ id: task.id, kind: task.kind ?? 'work', parent_task_id: task.parentTaskId, state: task.state, input: task.input, result: task.result, planner_result: task.plannerResult, error: task.error })) });
+  const project = context.executionContext?.project;
+  return JSON.stringify({
+    objective: context.objective,
+    retry_feedback: context.retryFeedback,
+    previous_planner_task_id: context.previousPlannerTaskId,
+    project: project ? { name: project.name, path: project.path } : undefined,
+    visible_agents: visibleAgents ?? [],
+    tasks: context.tasks.map(task => ({
+      id: task.id,
+      kind: task.kind ?? 'work',
+      parent_task_id: task.parentTaskId,
+      state: task.state,
+      input: task.kind === 'planner' ? undefined : boundedText(task.input),
+      result_summary: boundedText(task.result?.summary),
+      planner_result: task.plannerResult ? {
+        objective_status: task.plannerResult.objective_status,
+        assessment: boundedText(task.plannerResult.assessment),
+        next_task_ids: task.plannerResult.next_tasks.map(item => item.id),
+      } : undefined,
+      error: boundedText(task.error, 2000),
+    })),
+  });
 }
 
 export class CommandObjectivePlanner implements ObjectivePlanner {
