@@ -73,6 +73,10 @@ test('planner rejects command-like shell tasks and requires output', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',adapter:'codex'}] }), /output is required/);
 });
 
+test('planner reports malformed nested output precisely', () => {
+  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',output:'file'}] }), /output must be an object/);
+});
+
 test('planner preserves worker requirements for worker-router selection', () => {
   const result = parsePlannerResult({ objective_status: 'in_progress', assessment: 'work', next_tasks: [{
     id: 'resource-aware', input: 'do work', adapter: 'codex', output,
