@@ -202,3 +202,27 @@ test('workspace discovery ignores every hidden directory', async () => {
   await mkdir(join(hidden, '.git'), { recursive: true });
   assert.deepEqual(await discoverGitRepositories(root), [visible]);
 });
+
+
+test('workspace discovery skips every dot-prefixed directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-workspace-dotdirs-'));
+  try {
+    const visible = join(root, 'group', 'visible-repo');
+    const hiddenRepos = [
+      join(root, '.worktrees', 'hidden-a'),
+      join(root, '.xchat-worktrees', 'hidden-b'),
+      join(root, '.cache', 'hidden-c'),
+      join(root, 'group', '.nested-hidden', 'hidden-d'),
+    ];
+    await mkdir(visible, { recursive: true });
+    await exec('git', ['init', '-q', visible]);
+    await exec('git', ['-C', visible, 'remote', 'add', 'origin', 'git@github.com:lalalic/visible.git']);
+    for (const repo of hiddenRepos) {
+      await mkdir(repo, { recursive: true });
+      await exec('git', ['init', '-q', repo]);
+      await exec('git', ['-C', repo, 'remote', 'add', 'origin', 'git@github.com:lalalic/hidden.git']);
+    }
+    assert.deepEqual(await discoverGitRepositories(root), [visible]);
+    assert.deepEqual(await discoverWorkspaceRepositories(root), [{ path: visible, repository: 'lalalic/visible' }]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
