@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { managedReconciler } from './test-runtime.js';
 import { parsePlannerResult } from '../dist/planner.js';
 import { discoverAgents } from '../dist/registry.js';
 import { readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
@@ -245,7 +245,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
     providers: [{ id: 'openai', label: 'OpenAI', usage: usage(10) }],
     credits: [],
   });
-  const reconciler = new Reconciler(store, {
+  const reconciler = managedReconciler(store, {
     owner: 'test',
     adapters: [adapter],
     eventBus: bus,

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { InMemoryStore } from '../dist/store.js';
 import { registerBlockerDependency, resolveBlockerDependencies } from '../dist/blockers.js';

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';

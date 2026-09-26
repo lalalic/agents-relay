@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { managedReconciler } from './test-runtime.js';
 import { mkdtemp, writeFile, readFile, realpath, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -83,7 +83,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const store = new InMemoryStore(startedAutonomousJob());
   let calls = 0;
   const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{ ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
-  const reconciler = new Reconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
   const stop = await reconciler.watch('auto');
   await settle(reconciler, 8);
   const result = await store.load('auto');
@@ -134,7 +134,7 @@ test('fixed and autonomous work reaches runtime review after terminal events, no
     const store = new InMemoryStore(mode === 'fixed' ? job([task('fixed-work')], mode) : startedAutonomousJob());
     let calls = 0;
     const planner = { plan: async () => { calls += 1; return calls === 1 ? { objective_status:'in_progress', assessment:'work', next_tasks:[spec('work-1')] } : { objective_status:'satisfied', assessment:'done', next_tasks:[] }; } };
-    const reconciler = new Reconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
+    const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
     const stop = await reconciler.watch('auto');
     await settle(reconciler);
     const result = await store.load('auto');

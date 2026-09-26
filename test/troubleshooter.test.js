@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { pendingTroubleshooterTasks, troubleshooterTaskId } from '../dist/troubleshooter.js';
 import { InMemoryStore } from '../dist/store.js';
@@ -144,7 +144,7 @@ test('reconcile automatically creates and routes one troubleshooter for failed w
     capabilities: ['model', 'codex'],
     launch() { throw new Error('maxConcurrent=0 should prevent launch'); },
   };
-  const reconciler = new Reconciler(store, {
+  const reconciler = managedReconciler(store, {
     owner: 'test',
     adapters: [adapter],
     eventBus: new MemoryEventBus(),
@@ -197,7 +197,7 @@ test('auto-routed troubleshooter avoids parent route that failed before task.sta
     failed.error = 'Worker original exited before publishing task.started';
     const store = new InMemoryStore(job([failed]));
     const adapter = { name:'codex', id:'codex', capabilities:['model','codex','local_repo','iterative_tools'], launch(){ throw new Error('not launched'); } };
-    const reconciler = new Reconciler(store, { owner:'test', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:0 });
+    const reconciler = managedReconciler(store, { owner:'test', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:0 });
     await reconciler.reconcile('neo-pr40');
     const durable = await store.load('neo-pr40');
     const recovery = durable.tasks.find(task => task.agentName === 'troubleshooter');

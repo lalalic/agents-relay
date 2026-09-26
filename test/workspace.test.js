@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import test from 'node:test';
+import test from './test-runtime.js';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
 import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test from './test-runtime.js';
 import { CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
 
 function jsonl(value) { return JSON.stringify(value) + '\n'; }

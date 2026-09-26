@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { managedReconciler } from './test-runtime.js';
 import { decisionMode, LayaCliDecisionEngine, parseChoiceDecision, validateDecisionRequest } from '../dist/decision.js';
 import { discoverModelCandidates, routeModel } from '../dist/model-routing.js';
 import { routeWorker, workerCandidates } from '../dist/worker-routing.js';
@@ -196,7 +196,7 @@ test('reconciler emits worker.selected before model.selected after code routing'
     const store = new InMemoryStore(job);
     const events = [];
     const adapter = { name: 'codex', id: 'codex', capabilities: ['model'], launch() { throw new Error('must not launch'); } };
-    const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], maxConcurrent: 0, emit: event => events.push(event) });
+    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], maxConcurrent: 0, emit: event => events.push(event) });
     await reconciler.reconcile('route-events');
     const routingEvents = events.filter(event => event.type === 'worker.selected' || event.type === 'model.selected');
     assert.deepEqual(routingEvents.map(event => event.type), ['worker.selected', 'model.selected']);

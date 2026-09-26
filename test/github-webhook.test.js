@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook, PACKAGE_PUBLISHED_MARKER } from '../dist/github-webhook.js';

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { managedDashboard } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
@@ -190,7 +190,7 @@ test('job row selection covers the row while action controls stop propagation', 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
   const job = { id: 'action-job', title: 'Actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let invoked = '';
-  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     reconcile: async jobId => { invoked = jobId; return job; }
   });
   await once(server, 'listening');
@@ -215,7 +215,7 @@ test('dashboard task actions invoke the supplied runtime handler', async () => {
   const task = { id: 'failed-task', jobId: 'task-action-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
   const job = { id: 'task-action-job', title: 'Task actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
   let invoked = '';
-  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     taskRetry: async (jobId, taskId) => { invoked = jobId + '/' + taskId; return job; }
   });
   await once(server, 'listening');
@@ -335,7 +335,7 @@ test('dashboard SSE sends short keepalive comments independent of durable snapsh
 
 test('webhook refresh broadcasts the targeted snapshot before wake errors', async () => {
   const job = { id: 'webhook-job', title: 'Fresh webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
-  const server = serveDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
     secret: 'test-secret',
     repositories: new Set(['owner/repo']),
     refresh: async () => [job.id],

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test from './test-runtime.js';
 import { summarizeRuntime } from '../dist/runtime-summary.js';
 
 function task(id, state, adapter, model) {

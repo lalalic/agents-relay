@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createVerify } from 'node:crypto';
-import test from 'node:test';
+import test from './test-runtime.js';
 import { githubAppConfig } from '../dist/github-auth.js';
 import { createGitHubAppJwt, GhApiClient } from '../dist/store.js';
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { managedReconciler } from './test-runtime.js';
 import { InMemoryStore } from '../dist/store.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
@@ -23,7 +23,7 @@ test('orchestrator-supplied autonomous initial work runs before any model planne
   const bus = new MemoryEventBus();
   let plannerCalls = 0;
   const planner = { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } };
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await reconciler.reconcile('planning');
   assert.equal(plannerCalls, 0);
@@ -38,7 +38,7 @@ test('zero-task autonomous jobs remain idle until the orchestrator creates the f
   const bus = new MemoryEventBus();
   let plannerCalls = 0;
   const planner = { plan: async () => { plannerCalls += 1; return { objective_status: 'in_progress', assessment: 'unexpected', next_tasks: [] }; } };
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');
@@ -52,7 +52,7 @@ test('reconcile preserves an existing durable task when a planner repeats its id
   const plannerTask = { ...work('planner-1'), kind: 'planner', state: 'SUCCEEDED', plannerResult: { objective_status: 'in_progress', assessment: 'repeat', next_tasks: [{ id: 'planned', input: 'changed planner wording', adapter: 'codex', output: { kind: 'task_pr' } }] }, result: { summary: 'repeat' } };
   const store = new InMemoryStore(job([plannerTask, existing]));
   const bus = new MemoryEventBus();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'done', next_tasks: [] }) }, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'done', next_tasks: [] }) }, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await reconciler.reconcile('planning');
   await reconciler.idle();
@@ -67,7 +67,7 @@ test('fixed jobs stop after the orchestrator-created task batch', async () => {
   const store = new InMemoryStore(initial);
   const bus = new MemoryEventBus();
   let plannerCalls = 0;
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } }, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } }, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   assert.equal(plannerCalls, 0);
@@ -82,7 +82,7 @@ test('cancelled planner history does not freeze an active autonomous job', async
   const bus = new MemoryEventBus();
   let plannerCalls = 0;
   const planner = { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } };
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');
@@ -95,7 +95,7 @@ test('planner failure after an orchestrator-started batch does not invent execut
   const { job: initial } = plannedJob();
   const store = new InMemoryStore(initial);
   const bus = new MemoryEventBus();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { throw new Error('planner unavailable'); } }, eventBus: bus });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { throw new Error('planner unavailable'); } }, eventBus: bus });
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');

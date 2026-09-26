@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { managedDashboard, managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -159,7 +159,7 @@ test('reconciler leaves orchestrator self work queued for its creating orchestra
   const self = task('self'); self.adapter='orchestrator'; self.routing=undefined; self.timeoutMs=0;
   const root = {...job([self]), executionMode:'fixed'};
   const store = new InMemoryStore(root); const events=[];
-  const reconciler = new Reconciler(store,{owner:'test',adapters:[],emit:event=>events.push(event)});
+  const reconciler = managedReconciler(store,{owner:'test',adapters:[],emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks.find(item=>item.id==='self');
   assert.equal(durable.state,'QUEUED');
@@ -303,7 +303,7 @@ test('relay owner change does not reclaim an unexpired durable execution lease',
   running.leaseExpiresAt='2026-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([running]));
   const adapter=new FakeAdapter();
-  const reconciler=new Reconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.reconcile('j');
   const saved=(await store.load('j')).tasks.find(item=>item.id==='owner-still-live');
   assert.equal(saved.state,'RUNNING');
@@ -322,7 +322,7 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   running.leaseExpiresAt='2026-09-25T16:30:00.000Z';
   const store=new InMemoryStore(job([running]));
   const adapter=new FakeAdapter();
-  const reconciler=new Reconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],projectPathForJob:()=>process.cwd()});
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],projectPathForJob:()=>process.cwd()});
   await reconciler.reconcile('j');
   const saved=(await store.load('j')).tasks.find(item=>item.id==='expired-owner');
   assert.equal(saved.state,'BLOCKED');
@@ -428,7 +428,7 @@ test('repository pool reconciles merged PRs even though they are not runnable', 
   const root={...job([]),id:'merged-pool',state:'ACTIVE',prNumber:14};
   const comments=[{id:1,body:marker('agents-relay:job:v1',{...root,tasks:undefined}),updated_at:now(),user:{login:'bot'}}];
   const client=graphCommentClient(comments,14,'MERGED');
-  const pool=new RepositoryWorkerPool(client,'owner/repo',new Set(['bot']),2,store=>new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]}));
+  const pool=new RepositoryWorkerPool(client,'owner/repo',new Set(['bot']),2,store=>managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]}));
   await pool.reconcile();
   assert.equal(comments.some(c=>c.body.includes('agents-relay:job:v1')),false);
   assert.match(client.body,/\"state\":\"COMPLETED\"/);
@@ -436,7 +436,7 @@ test('repository pool reconciles merged PRs even though they are not runnable', 
 test('task priority orders ready work and inherits job priority', () => { const a=task('a'), b=task('b'), c=task('c'); a.priority='P3'; b.priority='P0'; a.createdAt='2026-01-01T00:00:00.000Z'; b.createdAt='2026-01-02T00:00:00.000Z'; c.createdAt='2025-01-01T00:00:00.000Z'; assert.deepEqual([a,b,c].sort((x,y)=>compareTaskPriority(x,y,'P1')).map(x=>x.id), ['b','c','a']); });
 test('model task requires an event bus before launch', async () => {
   const t=task('no-events'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter]});
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks[0];
   assert.equal(adapter.launches,0);
@@ -447,7 +447,7 @@ test('model task requires an event bus before launch', async () => {
 test('Relay publishes process launched and accepts only a worker-owned post-launch start acknowledgement', async () => {
   const t=task('chat-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event));
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
@@ -468,7 +468,7 @@ test('Relay publishes process launched and accepts only a worker-owned post-laun
 test('after-start ChatGPT policy does not install a terminal close barrier', async () => {
   const t=task('chat-after-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let terminalBarrier;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){terminalBarrier=context.waitForTerminal; return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-start'});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-start'});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
   assert.equal(terminalBarrier,undefined);
   await bus.publish(eventFor('j','chat-after-start',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'chat-after-start')));
@@ -480,7 +480,7 @@ test('after-start ChatGPT policy does not install a terminal close barrier', asy
 test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async () => {
   const t=task('chat-timeout'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,50));
   const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
@@ -490,7 +490,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-timeout'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,await activeEventSource(store,created.id)));
@@ -501,7 +501,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
 test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal events', async () => {
   const t=task('chat-terminal'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let released=false;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(async()=>{await context.waitForWorkerStart; await context.waitForTerminal; released=true; return {summary:'submitted'};})(),cancel(){}};}};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-terminal'});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-terminal'});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
   await bus.publish(eventFor('j','other',null,'task.completed','succeeded','wrong task','user'));
   await bus.publish({...eventFor('j','chat-terminal',null,'task.completed','succeeded','stale','user'),timestamp:new Date(0).toISOString()});
@@ -532,7 +532,7 @@ test('ChatGPT after-terminal close waits for a fresh exact terminal event', asyn
         cancel() {},
       }),
     });
-    const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
+    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
     const stop = await reconciler.watch('j');
     await reconciler.reconcile('j');
     const stale = new Date(0).toISOString();
@@ -563,7 +563,7 @@ test('ChatGPT cancelled terminal event closes after-terminal tab and preserves r
     const t = task('chat-cancelled'); t.adapter = 'chatgpt';
     const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus();
     const adapter = new ChatGptAdapter({ agentPath, tabClosePolicy: 'after-terminal', agentRunner: () => ({ promise: Promise.resolve('done'), submitted: Promise.resolve(JSON.stringify({ operation: 'submit', status: 'submitted', verified: true })), release: () => { released = true; }, cancel() {} }) });
-    const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
+    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, startAckTimeoutMs: 100 });
     const stop = await reconciler.watch('j'); await reconciler.reconcile('j');
     await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.started', 'running', 'worker began', 'user', undefined, await activeEventSource(store, 'chat-cancelled')));
     await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.cancelled', 'cancelled', 'cancelled by worker', 'user', undefined, await activeEventSource(store, 'chat-cancelled')));
@@ -576,7 +576,7 @@ test('ChatGPT cancelled terminal event closes after-terminal tab and preserves r
 
 test('adapter runtime exit is not task completion', async () => {
   const t=task('runtime-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','runtime-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'runtime-exit')));
@@ -589,7 +589,7 @@ test('adapter runtime exit is not task completion', async () => {
 
 test('normal terminal event remains authoritative when Codex exits afterward', async () => {
   const t=task('success-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','success-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'success-then-exit')));
@@ -607,7 +607,7 @@ test('late correlated terminal event recovers an exit watchdog failure', async (
   const store = new InMemoryStore(job([t]));
   const adapter = new FakeAdapter();
   const bus = new MemoryEventBus();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, terminalExitGraceMs: 10 });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, terminalExitGraceMs: 10 });
   const stop = await reconciler.watch('j');
   context.after(async () => {
     await reconciler.close();
@@ -643,8 +643,8 @@ test('accepted terminal event protects against process-exit watchdog while persi
   const adapter=new FakeAdapter();
   const bus=new MemoryEventBus();
   const events=[];
-  const launchReconciler=new Reconciler(store,{owner:'launcher',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
-  const lifecycleReconciler=new Reconciler(store,{owner:'lifecycle',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
+  const launchReconciler=managedReconciler(store,{owner:'launcher',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
+  const lifecycleReconciler=managedReconciler(store,{owner:'lifecycle',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event));
   await launchReconciler.reconcile('j');
   const source=await activeEventSource(store,'terminal-persist-race');
@@ -664,7 +664,7 @@ test('accepted terminal event protects against process-exit watchdog while persi
 
 test('worker failure before Codex nonzero exit is not duplicated by the watchdog', async () => {
   const t=task('failed-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','failed-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'failed-then-exit')));
@@ -679,7 +679,7 @@ test('worker failure before Codex nonzero exit is not duplicated by the watchdog
 
 test('unexpected Codex exit after task.started fails after a short terminal grace window', async () => {
   const t=task('exit-without-terminal'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','exit-without-terminal',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'exit-without-terminal')));
@@ -695,7 +695,7 @@ test('unexpected Codex exit after task.started fails after a short terminal grac
 
 test('Codex exit before task.started fails the lifecycle contract without waiting for task timeout', async () => {
   const t=task('exit-before-start'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'process exited'});
   await new Promise(resolve=>setTimeout(resolve,30));
   const durable=(await store.load('j')).tasks[0];
@@ -712,7 +712,7 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
     name:'codex',id:'delivery-test',capabilities:['model','codex'],
     launch:()=>({id:'exec-delivery',promise:Promise.reject(new LaunchFailure('submit was not accepted')),cancel(){}})
   };
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   await reconciler.reconcile('j');
   await reconciler.idle();
   const durable=(await store.load('j')).tasks[0];
@@ -736,7 +736,7 @@ test('delivery failure after correlated task.started is diagnostic only and term
       return {id:'chat-run',launched:Promise.resolve(),promise,cancel(){}};
     }
   };
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>events.push(event)});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>events.push(event)});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await new Promise(resolve=>setTimeout(resolve,20));
@@ -759,7 +759,7 @@ test('late completed recovers legacy delivery-after-start failure', async () => 
   t.error='Worker delivery failed after task.started: DOM receipt missed user turn';
   t.failureReason='worker_delivery_after_start';
   t.updatedAt='2026-09-20T20:00:00.000Z';
-  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j',t.id,null,'task.completed','succeeded','late valid completion','user',undefined,eventSource('j',t.id,t.executionId)),timestamp:'2026-09-20T20:00:03.000Z'});
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.state,'SUCCEEDED');
@@ -771,7 +771,7 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
   const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
   const store=new InMemoryStore(root);
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   const fresh=saved.tasks.find(item=>item.id==='planner-2');
@@ -786,7 +786,7 @@ test('scheduled autonomous cycle keeps ACTIVE lifecycle and derives WAITING betw
   const current=task('planner-1','SUCCEEDED'); current.kind='planner'; current.adapter='orchestrator'; current.routing=undefined; current.agentName='planner'; current.createdAt='2026-09-21T16:21:00.000Z'; current.updatedAt=current.createdAt; current.plannerResult={objective_status:'satisfied',assessment:'this slot done',next_tasks:[]};
   const root={...job([current]),executionMode:'autonomous',state:'ACTIVE',headSha:'scheduled-sha',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:null}};
   const store=new InMemoryStore(root); let merges=0; store.mergePullRequest=async()=>{merges+=1;};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   assert.equal(saved.state,'ACTIVE');
@@ -801,7 +801,7 @@ test('final review ignores explicitly superseded cancelled history', async () =>
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
   const store=new InMemoryStore({...job([succeeded,superseded]),state:'ACTIVE',headSha:'abc1234567890'});
   const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
@@ -813,14 +813,14 @@ test('async launch and delivery rejection emits exactly one task.failed', async 
   const t=task('dedupe-launch'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const error=new LaunchFailure('same failure');
   const adapter={name:'chatgpt',id:'dedupe-chatgpt',capabilities:['model','chatgpt'],launch:()=>({id:'x',launched:Promise.reject(error),promise:Promise.reject(error),cancel(){}})};
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>{events.push(event);}});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>{events.push(event);}});
   await reconciler.reconcile('j'); await reconciler.idle(); await new Promise(resolve=>setTimeout(resolve,50));
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
   assert.equal((await store.load('j')).tasks[0].state,'FAILED');
 });
 test('late worker events recover a watchdog timeout failure', async () => {
   const t=task('late-worker','FAILED'); t.adapter='chatgpt'; t.executionId='late-worker-exec'; t.error='Worker start-ack failed: worker_start_timeout'; t.failureReason='worker_start_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
-  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.started','running','worker really started','user',undefined,eventSource('j','late-worker','late-worker-exec')),timestamp:'2026-09-20T20:00:01.000Z'});
   assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
   await reconciler.handleEvent({...eventFor('j','late-worker',null,'task.completed','succeeded','worker really completed','user',undefined,eventSource('j','late-worker','late-worker-exec')),timestamp:'2026-09-20T20:00:02.000Z'});
@@ -829,7 +829,7 @@ test('late worker events recover a watchdog timeout failure', async () => {
 
 test('late completed event directly recovers terminal timeout failure', async () => {
   const t=task('late-complete','FAILED'); t.adapter='chatgpt'; t.executionId='late-complete-exec'; t.error='Task late-complete timed out waiting for the mandatory terminal worker event'; t.failureReason='terminal_event_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';
-  const store=new InMemoryStore(job([t])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j','late-complete',null,'task.completed','succeeded','done after timeout','user',undefined,eventSource('j','late-complete','late-complete-exec')),timestamp:'2026-09-20T20:00:03.000Z'});
   assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
 });
@@ -837,7 +837,7 @@ test('late completed event directly recovers terminal timeout failure', async ()
 test('late events do not revive genuine failures or stale watchdog events', async () => {
   const genuine=task('genuine','FAILED'); genuine.adapter='chatgpt'; genuine.executionId='genuine-exec'; genuine.error='worker reported failure'; genuine.updatedAt='2026-09-20T20:00:00.000Z';
   const stale=task('stale','FAILED'); stale.adapter='chatgpt'; stale.executionId='stale-exec'; stale.error='Task stale timed out waiting for the mandatory terminal worker event'; stale.failureReason='terminal_event_timeout'; stale.updatedAt='2026-09-20T20:00:05.000Z';
-  const store=new InMemoryStore(job([genuine,stale])); const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const store=new InMemoryStore(job([genuine,stale])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j','genuine',null,'task.started','running','late','user',undefined,eventSource('j','genuine','genuine-exec')),timestamp:'2026-09-20T20:00:01.000Z'});
   await reconciler.handleEvent({...eventFor('j','stale',null,'task.completed','succeeded','old completion','user',undefined,eventSource('j','stale','stale-exec')),timestamp:'2026-09-20T20:00:04.000Z'});
   const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'FAILED');
@@ -845,7 +845,7 @@ test('late events do not revive genuine failures or stale watchdog events', asyn
 
 test('correlated terminal completed event is authoritative', async () => {
   const t=task('event-complete'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','event-complete',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'event-complete')));
@@ -870,7 +870,7 @@ test('terminal event published during launch cannot be overwritten back to runni
       return {id:'runtime-id',promise:Promise.resolve({summary:'runtime exited'}),cancel(){}};
     }
   };
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await new Promise(resolve=>setTimeout(resolve,20));
@@ -883,7 +883,7 @@ test('terminal event published during launch cannot be overwritten back to runni
 test('correlated failed and blocked events set terminal durable states', async () => {
   for (const [type,state] of [['task.failed','FAILED'],['task.blocked','BLOCKED']]) {
     const t=task(type); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-    const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+    const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
     const stop=await reconciler.watch('j');
     await reconciler.reconcile('j');
     await bus.publish(eventFor('j',type,null,'task.started','running','worker began','user',undefined,await activeEventSource(store,type)));
@@ -897,7 +897,7 @@ test('correlated failed and blocked events set terminal durable states', async (
 
 test('terminal event for another task cannot complete running work', async () => {
   const t=task('target'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','target',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'target')));
@@ -912,7 +912,7 @@ test('terminal event for another task cannot complete running work', async () =>
 
 test('timeout produces explicit terminal-event failure when worker never reports terminal state', async () => {
   const t=task('timeout'); t.timeoutMs=20; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await new Promise(resolve=>setTimeout(resolve,60));
@@ -924,7 +924,7 @@ test('timeout produces explicit terminal-event failure when worker never reports
 
 test('continuation runs only after completed terminal event', async () => {
   const t=task('child'); t.continuation={kind:'command',target:'echo'}; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const calls=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,continuations:[{kind:'command',continue:async input=>calls.push(input)}]});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,continuations:[{kind:'command',continue:async input=>calls.push(input)}]});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','child',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'child')));
@@ -945,8 +945,8 @@ test('Codex launch requires routing metadata and applies command contract', () =
 test('dashboard uses safe DOM rendering and named live events', () => { assert.equal(dashboardHtml.includes('innerHTML'),false); assert.equal(dashboardHtml.includes("addEventListener('relay'"),true); });
 test('dashboard omits job objective from selected-job summary', () => { assert.equal(dashboardHtml.includes("field('Objective',job.objective"), false); });
 test('dashboard connection status is color-only without visible status text', () => { for (const label of ['Connecting…','Live · durable state connected','Live · event stream connected','Degraded · event stream reconnecting','Error · durable state unavailable']) assert.equal(dashboardHtml.includes(label),false); assert.match(dashboardHtml,/aria-label=\"Connecting\"/); });
-test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=serveDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
-test('dashboard selected-job refresh serves the requested durable overview without a page reload', async () => { const selected={...job([task('selected','SUCCEEDED')]),id:'selected'}; const refreshed={...selected,tasks:[...selected.tasks,task('new-durable-task','QUEUED')]}; const store=new InMemoryStore(selected); const server=serveDashboard(store,0,undefined,10000,'selected',undefined,async()=>[{job:selected,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}],undefined,undefined,async id=>id==='selected'?refreshed:null); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job?id=selected`); assert.equal(response.status,200); const body=await response.text(); assert.match(body,/selected/); assert.match(body,/new-durable-task/); const missing=await fetch(`http://127.0.0.1:${port}/api/job?id=missing`); assert.equal(missing.status,404); server.close(); });
+test('event bus wakes reconciliation and dashboard serves durable state', async () => { const store=new InMemoryStore(job([task('dash','SUCCEEDED')])); const bus=new MemoryEventBus(); const server=managedDashboard(store,0,bus,10000,'j'); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,200); assert.match(await response.text(),/dash/); server.close(); });
+test('dashboard selected-job refresh serves the requested durable overview without a page reload', async () => { const selected={...job([task('selected','SUCCEEDED')]),id:'selected'}; const refreshed={...selected,tasks:[...selected.tasks,task('new-durable-task','QUEUED')]}; const store=new InMemoryStore(selected); const server=managedDashboard(store,0,undefined,10000,'selected',undefined,async()=>[{job:selected,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}],undefined,undefined,async id=>id==='selected'?refreshed:null); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job?id=selected`); assert.equal(response.status,200); const body=await response.text(); assert.match(body,/selected/); assert.match(body,/new-durable-task/); const missing=await fetch(`http://127.0.0.1:${port}/api/job?id=missing`); assert.equal(missing.status,404); server.close(); });
 
 
 test('workspace webhook accepts configured repositories and forwards exact PR identity', async () => {
@@ -954,7 +954,7 @@ test('workspace webhook accepts configured repositories and forwards exact PR id
   const store=new InMemoryStore(selected);
   const received=[];
   const secret='workspace-secret';
-  const server=serveDashboard(store,0,undefined,10000,'webhook-job',undefined,async()=>[{job:selected,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay','lalalic/neo']),wake:async event=>{received.push(event);}});
+  const server=managedDashboard(store,0,undefined,10000,'webhook-job',undefined,async()=>[{job:selected,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay','lalalic/neo']),wake:async event=>{received.push(event);}});
   await new Promise(resolve=>server.once('listening',resolve));
   const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
   const body=JSON.stringify({action:'created',repository:{full_name:'lalalic/agents-relay'},issue:{number:9,pull_request:{url:'x'}}});
@@ -973,7 +973,7 @@ test('webhook refresh immediately pushes the refreshed dashboard snapshot even w
   const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','QUEUED')]};
   const secret='workspace-secret'; let reconciliationFailed=false; let current=selected; let wakeResolve;
   const wakeDone=new Promise(resolve=>{wakeResolve=resolve;});
-  const server=serveDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:current,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),refresh:async()=>{current=refreshed; return ['webhook-job'];},wake:async()=>{
+  const server=managedDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:current,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),refresh:async()=>{current=refreshed; return ['webhook-job'];},wake:async()=>{
     try { throw new Error('reconciliation failed'); } catch { reconciliationFailed=true; throw new Error('reconciliation failed'); } finally { wakeResolve(); }
   }});
   await new Promise(resolve=>server.once('listening',resolve));
@@ -997,7 +997,7 @@ test('memory event bus supports explicit all-job subscriptions without weakening
 
 test('dashboard returns an error without sending success headers first when durable snapshot fails', async () => {
   const store={load:async()=>{throw new Error('durable unavailable');},saveJob:async()=>{throw new Error('unused');},appendEvent:async()=>{throw new Error('unused');}};
-  const server=serveDashboard(store,0,undefined,10000,'j'); await new Promise(resolve=>server.once('listening',resolve));
+  const server=managedDashboard(store,0,undefined,10000,'j'); await new Promise(resolve=>server.once('listening',resolve));
   const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
   const response=await fetch(`http://127.0.0.1:${port}/api/job`); assert.equal(response.status,404); assert.match(await response.text(),/durable unavailable/);
   server.close();
@@ -1005,7 +1005,7 @@ test('dashboard returns an error without sending success headers first when dura
 
 test('dashboard usage failure returns 503 without double-sending headers', async () => {
   const store=new InMemoryStore(job()); const usageRegistry={snapshot:async()=>{throw new Error('usage unavailable');}};
-  const server=serveDashboard(store,0,undefined,10000,'j',usageRegistry); await new Promise(resolve=>server.once('listening',resolve));
+  const server=managedDashboard(store,0,undefined,10000,'j',usageRegistry); await new Promise(resolve=>server.once('listening',resolve));
   const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
   const response=await fetch(`http://127.0.0.1:${port}/api/usage`); assert.equal(response.status,503); assert.match(await response.text(),/usage unavailable/);
   server.close();
@@ -1034,7 +1034,7 @@ test('ChatGPT tasks do not carry durable resumable thread lifecycle', () => {
 
 test('merged zero-task PR becomes COMPLETED even when scheduler would leave it OPEN', async () => {
   const root=job([]); const store=new InMemoryStore(root); store.pullRequestState=async()=> 'MERGED';
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   const result=await reconciler.reconcile('j');
   assert.equal(result.state,'COMPLETED');
 });
@@ -1044,7 +1044,7 @@ test('merged PR authoritatively completes jobs stuck in failed, blocked, or canc
     const root={...job([]),state};
     const store=new InMemoryStore(root);
     store.pullRequestState=async()=> 'MERGED';
-    const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+    const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
     const result=await reconciler.reconcile('j');
     assert.equal(result.state,'COMPLETED', state);
   }
@@ -1056,7 +1056,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } } });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } } });
   await reconciler.reconcile('j');
   let saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
@@ -1076,7 +1076,7 @@ test('no-review jobs stay ACTIVE and become merge-pending without creating a rev
   const work=task('work','SUCCEEDED');
   const root={...job([work]),executionMode:'fixed',state:'ACTIVE',headSha:'sha-no-review',reviewEnabled:false};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-no-review';
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[]});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[]});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   assert.equal(saved.state,'ACTIVE');
@@ -1098,7 +1098,7 @@ test('CLI init persists no-review independently from auto-merge', async () => {
 test('review changes-required creates exactly one Codex Luna fix task containing all findings', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-fix-12345678'};
   const store=new InMemoryStore(reviewJob); const events=[];
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0,emit:event=>events.push(event)});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0,emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
   assert.ok(reviewer);
@@ -1126,7 +1126,7 @@ test('review changes-required creates exactly one Codex Luna fix task containing
 test('review changes-required falls back to one fix task from the review message', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
   const store=new InMemoryStore(reviewJob);
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.ok(reviewer);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
@@ -1140,7 +1140,7 @@ test('approved review auto-merges by default and respects opt-out', async () => 
     const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-auto',autoMerge};
     const store=new InMemoryStore(reviewJob); let merges=0; let mergedSha=null;
     store.mergePullRequest=async sha=>{ merges+=1; mergedSha=sha; };
-    const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+    const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
     await reconciler.reconcile('j');
     const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
     assert.ok(created);
@@ -1154,7 +1154,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   const reviewJob = { ...job([task('work', 'SUCCEEDED')]), headSha: 'sha-review-1' };
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
-  const reconciler = new Reconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
   await reconciler.reconcile('j');
   const created = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
   assert.ok(created);
@@ -1187,7 +1187,7 @@ test('open zero-task jobs remain create-only and do not consume reconciliation c
 test('merged PR cancels running work with task.cancelled lifecycle event', async () => {
   const t=task('running-on-merge','RUNNING'); t.executionId='run-merge'; t.leaseOwner='worker'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
   const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED';
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   const result=await reconciler.reconcile('j');
   const durable=result.tasks.find(item=>item.id===t.id);
   assert.equal(result.state,'COMPLETED');
@@ -1197,7 +1197,7 @@ test('merged PR cancels running work with task.cancelled lifecycle event', async
 
 test('closed unmerged PR cancels queued work and job without launching', async () => {
   const t=task('closed-queued'); const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'CLOSED'; const adapter=new FakeAdapter();
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
   assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
 });
 
@@ -1205,7 +1205,7 @@ test('reconciler durably persists Graph dependency release transitions', async (
   const dep=task('dep','SUCCEEDED');
   const child=task('child','DRAFT',['dep']);
   const store=new InMemoryStore(job([dep,child]));
-  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
   assert.equal((await store.load('j')).tasks.find(item=>item.id==='child').state,'QUEUED');
 });
@@ -1215,8 +1215,8 @@ test('concurrent reconciler instances atomically claim one queued task only once
   const store=new InMemoryStore(job([t]));
   const bus=new MemoryEventBus();
   const adapter=new FakeAdapter();
-  const a=new Reconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
-  const b=new Reconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
+  const a=managedReconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
   await Promise.all([a.reconcile('j'),b.reconcile('j')]);
   const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-launch');
   assert.equal(adapter.launches,1);
