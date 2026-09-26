@@ -75,11 +75,13 @@ export const dashboardHtml = `<!doctype html>
     .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
     .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
     .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
-    ul.tree { display:grid; gap:.25rem; }
-    ul.tree ul { list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
-    .task-row { width:100%; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+    ul.tree { display:grid; gap:.25rem; min-width:0; max-width:100%; }
+    ul.tree li { min-width:0; max-width:100%; }
+    ul.tree ul { width:calc(100% - .6rem); min-width:0; max-width:calc(100% - .6rem); list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
+    .task-row { width:100%; max-width:100%; overflow:hidden; display:flex; align-items:center; gap:.4rem; min-width:0; padding:.32rem .38rem; border:0; border-radius:.35rem; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; }
     .task-row[aria-current="true"] { background:var(--accent2); }
-    .task-id { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .task-row .badge { flex:0 0 auto; }
+    .task-id { min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font: .77rem ui-monospace,SFMono-Regular,Menlo,monospace; }
     .task-actions { display:flex; justify-content:flex-end; gap:.25rem; margin-bottom:.5rem; }
     .task-link { color:var(--accent); font-weight:700; }
     .agent-graph { display:grid; gap:.45rem; margin-top:.55rem; padding:.55rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); overflow:auto; }

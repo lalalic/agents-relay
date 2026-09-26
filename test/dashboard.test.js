@@ -25,6 +25,13 @@ test('mobile usage view uses compact single-column cards', () => {
   assert.match(dashboardHtml, /#usage-view \.panel-head \.subtle \{ display:none; \}/);
 });
 
+test('task tree rows stay within the mobile viewport and ellipsize long ids', () => {
+  assert.match(dashboardHtml, /ul\.tree li \{ min-width:0; max-width:100%; \}/);
+  assert.match(dashboardHtml, /\.task-row \{ width:100%; max-width:100%; overflow:hidden;/);
+  assert.match(dashboardHtml, /\.task-row \.badge \{ flex:0 0 auto; \}/);
+  assert.match(dashboardHtml, /\.task-id \{ min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis;/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
