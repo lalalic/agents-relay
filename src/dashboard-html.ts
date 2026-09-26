@@ -131,6 +131,25 @@ export const dashboardHtml = `<!doctype html>
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }
+      #usage-view .panel-head { padding:.6rem .7rem .35rem; }
+      #usage-view .panel-head .subtle { display:none; }
+      #usage-view .panel-body { padding:.45rem .5rem .65rem; max-height:none; }
+      #usage-view .usage-providers { gap:.45rem; }
+      #usage-view .usage-provider {
+        grid-template-columns:1fr;
+        gap:.55rem;
+        padding:.65rem .7rem;
+        border-radius:.55rem;
+        background:var(--surface);
+      }
+      #usage-view .usage-provider h3 { font-size:.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+      #usage-view .usage-bars { gap:.7rem; }
+      #usage-view .usage-row { gap:.25rem; }
+      #usage-view .usage-label { align-items:baseline; gap:.5rem; font-size:.78rem; }
+      #usage-view .usage-label span:last-child { font-size:1.05rem; font-weight:800; color:var(--text); }
+      #usage-view .usage-track { height:.48rem; border:0; background:var(--border); }
+      #usage-view .usage-row .subtle { font-size:.68rem; line-height:1.25; }
+      #usage-view .usage-provider > .detail-value { font-size:1.2rem; font-weight:800; }
       .job-summary,.detail-groups { grid-template-columns:1fr; }
       .panel-head { padding:.55rem .6rem; }
       .panel-body { padding:.6rem; }

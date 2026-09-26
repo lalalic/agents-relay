@@ -19,6 +19,12 @@ test('mobile jobs view keeps only the repository filter and hides runtime summar
   assert.match(dashboardHtml, /id="repo-filter"/);
 });
 
+test('mobile usage view uses compact single-column cards', () => {
+  assert.match(dashboardHtml, /#usage-view \.usage-provider \{[\s\S]*grid-template-columns:1fr;/);
+  assert.match(dashboardHtml, /#usage-view \.usage-track \{ height:\.48rem;/);
+  assert.match(dashboardHtml, /#usage-view \.panel-head \.subtle \{ display:none; \}/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
