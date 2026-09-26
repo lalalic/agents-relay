@@ -30,8 +30,8 @@ test('agent selection rejects invisible named and graph agents but allows an unn
     const context=await resolveExecutionContext(project,'planner',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
     assert.doesNotThrow(() => validateAgentSelection(context));
     assert.doesNotThrow(() => validateAgentSelection(context, 'reviewer'));
-    assert.throws(() => validateAgentSelection(context, 'implementation'), /Agent implementation is not visible in the resolved planning\/execution context/);
-    assert.throws(() => validateAgentSelection(context, undefined, 'flowchart TD\nreviewer --> implementation'), /Agent implementation referenced by agentGraph node implementation is not visible/);
+    assert.throws(() => validateAgentSelection(context, 'missing-agent'), /Agent missing-agent is not visible in the resolved planning\/execution context/);
+    assert.throws(() => validateAgentSelection(context, undefined, 'flowchart TD\nreviewer --> missing-agent'), /Agent missing-agent referenced by agentGraph node missing-agent is not visible/);
   } finally { await rm(root,{recursive:true,force:true}); }
 });
 
