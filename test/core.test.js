@@ -79,6 +79,19 @@ test('dashboard task action retries failed work and cancels queued work durably'
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
 });
 
+test('dashboard cancel transitions RUNNING through task.cancelled and clears execution identity', async () => {
+  const running=task('running-cancel','RUNNING'); running.executionId='exec-running'; running.leaseOwner='relay'; running.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  const store=new InMemoryStore(job([running]));
+  const reconciler={wake:async jobId=>store.load(jobId)};
+  const durable=await dashboardTaskAction(store,reconciler,'cancel')('j','running-cancel');
+  const cancelled=durable.tasks[0];
+  assert.equal(cancelled.state,'CANCELLED');
+  assert.equal(cancelled.executionId,null);
+  assert.equal(cancelled.leaseOwner,null);
+  assert.equal(cancelled.leaseExpiresAt,null);
+  assert.equal(cancelled.error,'Cancelled by user');
+});
+
 test('parses task marker JSON', () => { const t=task('a'); assert.equal(parseTask(marker(TASK_MARKER,t)).id,'a'); });
 test('discovers by hard requirements and keeps evidence explainable', () => {
   const base = { id:'a', name:'A', responsibility:'research', role:'researcher', capabilities:['research'], boundaries:['no credentials'], endpoint:{kind:'adapter',target:'codex'}, runtime:{adapter:'codex'}, availability:'available', routing:{trustDomains:['public']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null}, registeredAt:now(), updatedAt:now() };

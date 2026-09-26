@@ -15,7 +15,7 @@ test('model decisions persist replayable sanitized audit records and policy snap
   const policyPath = join(root, 'policy.json');
   const rulesPath = join(root, 'model-router-rules.md');
   await writeFile(policyPath, JSON.stringify({ disabledProfiles: ['disabled'], preferredProfiles: ['zai'] }));
-  await writeFile(rulesPath, 'Prefer ZAI while its paid quota remains abundant.');
+  await writeFile(rulesPath, 'ZAI only zai-model while its paid quota remains abundant.');
   const store = new JsonlDecisionAuditStore(join(root, 'decisions.jsonl'));
   const routed = await routeModel(worker, [candidate('openai-model', 'openai', 'openai'), candidate('zai-model', 'zai', 'zai'), candidate('disabled-model', 'openai', 'disabled')], { policyPath, rulesPath, auditStore: store, taskFacts: { kind: 'implementation', secretToken: 'do-not-store' } });
   assert.equal(routed.candidate.profile, 'zai');
@@ -23,7 +23,7 @@ test('model decisions persist replayable sanitized audit records and policy snap
   assert.equal(records.length, 1);
   assert.equal(records[0].record_type, 'decision');
   assert.equal(records[0].policy.snapshot.disabledProfiles[0], 'disabled');
-  assert.equal(records[0].policy.rules.text, 'Prefer ZAI while its paid quota remains abundant.');
+  assert.equal(records[0].policy.rules.text, 'ZAI only zai-model while its paid quota remains abundant.');
   assert.notEqual(records[0].policy.rules.hash, 'none');
   assert.equal(JSON.stringify(records[0]).includes('do-not-store'), false);
   assert.equal(records[0].eligible_candidates.some(item => item.profile === 'disabled'), false);
@@ -79,4 +79,39 @@ test('free-text model router rules are passed verbatim to the decision engine', 
     taskFacts: { kind: 'implementation' },
   });
   assert.equal(seen.environment_policy.rules, rules);
+});
+
+
+test('failed route is a hard negative during model re-decision and is visible in audit gates', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-redecide-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  try {
+    await writeFile(join(root, 'config.toml'), 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(root, 'zai.config.toml'), 'model = "glm-5.3-flash"\nmodel_provider = "zai"\nmodel_reasoning_effort = "high"\n');
+    const rulesPath = join(root, 'rules.md');
+    await writeFile(rulesPath, 'zai只用 5.3 flash high thinking');
+    const store = new JsonlDecisionAuditStore(join(root, 'audit.jsonl'));
+    const task = { id:'recover', jobId:'job', kind:'work', capabilities:['model'], input:'recover', attempt:1, executionId:null, routing:{ provider:'zai', model:'glm-5.3-flash', profile:'zai', decisionId:'prior' } };
+    let updated;
+    const result = await redecideFailedTask({
+      task,
+      worker,
+      registered: [],
+      usage: { snapshot: async () => ({ generatedAt:'fresh', providers:[], credits:[] }) },
+      auditStore: store,
+      rulesPath,
+      evidence: { classification:'model_provider_runtime', summary:'provider launch failed', sources:['events'] },
+      updateRouting: async (_task, routing) => { updated = routing; },
+    });
+    assert.equal(result.routing.provider, 'openai');
+    assert.equal(updated.provider, 'openai');
+    const records = await store.read();
+    const decision = records.find(item => item.record_type === 'decision');
+    const failedGate = decision.gate_results.find(item => item.candidate_id.includes('zai'));
+    assert.equal(failedGate.eligible, false);
+    assert.ok(failedGate.rejection_reasons.includes('prior_failed_route'));
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+  }
 });

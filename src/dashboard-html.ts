@@ -205,7 +205,7 @@ export const dashboardHtml = `<!doctype html>
       <div class="panel-body">
         <div class="rules-editor">
           <p class="rules-help">Free-text guidance loaded by the model decider for every routing decision. Hard capability and health gates remain enforced by code.</p>
-          <textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Model router rules" placeholder="Example: Prefer ZAI when paid quota is abundant and task quality is sufficient. If a provider/runtime path just failed, reconsider using the failure evidence and fresh usage."></textarea>
+          <textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Model router rules" placeholder="Example: ZAI only glm-5.3-flash high thinking. Prefer it while paid quota is abundant. Non-OpenAI models enter the candidate set only when the provider is configured and the concrete model is named here."></textarea>
           <div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><button id="rules-save" class="rules-save" type="button">Save rules</button></div>
         </div>
       </div>

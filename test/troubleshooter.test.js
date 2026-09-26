@@ -179,3 +179,31 @@ test('troubleshooter is a discoverable orchestrator-side execution role', async 
   assert.match(agentContract, /api\/events\?job=<job_id>&task=<task_id>&limit=200/);
   assert.match(agentContract, /event history cannot be retrieved/);
 });
+
+
+test('auto-routed troubleshooter avoids parent route that failed before task.started', async () => {
+  const root = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/relay-troubleshooter-route-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  try {
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(`${root}/config.toml`, 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await fs.writeFile(`${root}/zai.config.toml`, 'model = "glm-5.3-flash"\nmodel_provider = "zai"\nmodel_reasoning_effort = "high"\n');
+    const failed = failedReview();
+    failed.agentName = null;
+    failed.adapter = 'codex';
+    failed.workerSelection = undefined;
+    failed.routing = { provider:'zai', model:'glm-5.3-flash', profile:'zai', reasoning:'high', decidedBy:'test', decidedAt:now() };
+    failed.error = 'Worker original exited before publishing task.started';
+    const store = new InMemoryStore(job([failed]));
+    const adapter = { name:'codex', id:'codex', capabilities:['model','codex','local_repo','iterative_tools'], launch(){ throw new Error('not launched'); } };
+    const reconciler = new Reconciler(store, { owner:'test', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:0 });
+    await reconciler.reconcile('neo-pr40');
+    const durable = await store.load('neo-pr40');
+    const recovery = durable.tasks.find(task => task.agentName === 'troubleshooter');
+    assert.equal(recovery.routing.provider, 'openai');
+    assert.notEqual(`${recovery.routing.provider}/${recovery.routing.model}`, 'zai/glm-5.3-flash');
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+  }
+});

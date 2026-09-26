@@ -164,7 +164,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') task.maxAttempts = extendRetryBudget(task);
-    await transitionTaskEvent(task, action === 'retry' ? 'retry' : 'cancel');
+    await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
     task.error = action === 'retry' ? null : 'Cancelled by user';
     task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
     await store.saveTask(task);
@@ -341,8 +341,8 @@ export function dashboardTaskAction(store: DurableStore, reconciler: Reconciler,
       await transitionTaskEvent(task, 'retry');
       task.error = null;
     } else {
-      if (!['DRAFT','QUEUED','BLOCKED','FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
-      await transitionTaskEvent(task, 'cancel');
+      if (!['DRAFT','QUEUED','RUNNING','BLOCKED','FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
+      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
       task.error = 'Cancelled by user';
     }
     task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;

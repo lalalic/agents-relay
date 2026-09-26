@@ -125,7 +125,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       });
       const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
-      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts, constraints: routingConstraints, auditStore: this.options.decisionAuditStore, auditTask: task });
+      const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? job.tasks.find(item => item.id === task.parentTaskId) : undefined;
+      const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
+      const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
+        ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
+        : [];
+      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null }, constraints: routingConstraints, excludedRoutes, auditStore: this.options.decisionAuditStore, auditTask: task });
       task.workerSelection = routedWorker.selection;
       task.adapter = routedWorker.candidate.adapter;
       task.routing = routedModel.routing;
