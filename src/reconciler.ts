@@ -58,7 +58,7 @@ For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provi
 As your FIRST execution action, before reading files, editing code, running commands, or doing other work,
 you MUST publish exactly one canonical task.started event for this exact Job/Task.
 
-You MAY publish progress events while working.
+${task.adapter === 'chatgpt' ? `Because ChatGPT execution continues asynchronously after the submit process exits, you MUST keep reporting liveness while the task is active. Publish meaningful progress/milestone events when there is real progress to report. If no meaningful milestone has been published for 30 seconds during active work, publish a non-terminal task.heartbeat event with status running, visibility orchestrator, this exact source.id, and a concise description of the current operation. Continue heartbeats after each further 30 seconds of active silence until a terminal task event is published. Do not invent percentage progress.` : `You MAY publish progress events while working. For long silent active work, follow the events-bus heartbeat policy.`}
 Before returning or allowing the worker process to exit, you MUST publish exactly one canonical terminal event:
 - task.completed only after the declared output is durable;
 - task.failed for implementation, tool, command, test, patch, commit, push, runtime, or other execution failure that prevents completion;
