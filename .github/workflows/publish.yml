@@ -8,6 +8,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  id-token: write
 
 concurrency:
   group: npm-publish-main
@@ -18,10 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify npm OIDC support
+        run: |
+          npm_version="$(npm --version)"
+          echo "npm $npm_version"
+          node -e 'const [major, minor] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) process.exit(1)' "$npm_version"
       - run: npm ci
       - name: Run test suite
         timeout-minutes: 10
@@ -80,8 +87,6 @@ jobs:
             exit 0
           fi
           exit 1
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Wait until exact published version is pullable
         shell: bash
         run: |

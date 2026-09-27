@@ -71,7 +71,6 @@ export async function ensureManagedGitHubJob(
   if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
 }
-
 async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
   const model = arg(args, '--model');
   const adapterValue = arg(args, '--adapter');
@@ -123,7 +122,6 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     updatedAt: now
   };
 }
-
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
@@ -227,7 +225,6 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   await saveLocal(localFile, job);
   console.log(JSON.stringify(task, null, 2));
 }
-
 async function runContextCommand(action: string, args: string[]): Promise<void> {
   if (action !== 'resolve') throw new Error(usage);
   const projectPath = arg(args, '--project-path');
@@ -443,6 +440,17 @@ async function main(): Promise<void> {
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: scheduleFromArgs(args) ? 'ACTIVE' : 'DRAFT', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const bus = eventBus(args);
+  if (command === 'status') {
+    const host = arg(args, '--host', '127.0.0.1');
+    const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
+    let response: Response;
+    try { response = await fetch(`http://${host}:${port}/api/runtime-summary`); }
+    catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+    if (!response.ok) throw new Error(`Agents Relay status request failed: HTTP ${response.status}`);
+    console.log(JSON.stringify(await response.json(), null, 2));
+    return;
+  }
   if (command === 'tick') {
     const repo = repository(args);
     const auth = await githubAuthContext(args);
@@ -480,7 +488,6 @@ async function main(): Promise<void> {
     const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
     await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
   }
-  if (command === 'status') { console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (command === 'reconcile' && !localFile) {
     try {
       await requestManagedReconciliation(bus, job);

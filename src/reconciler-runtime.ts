@@ -14,8 +14,8 @@ import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
 
-export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; terminalExitGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
-type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean };
+export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
+type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
@@ -23,6 +23,7 @@ export function executionEventSource(jobId: string, taskId: string, executionId:
 function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
 
 const terminalExecutionClaims = new Set<string>();
+const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
 function claimTerminalExecution(sourceId: string): void {
   terminalExecutionClaims.add(sourceId);
   const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
@@ -36,7 +37,6 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly live = new Map<string, LiveExecution>();
   protected readonly plannerLive = new Map<string, LivePlanner>();
   protected readonly terminalTimers = new Map<string, NodeJS.Timeout>();
-  protected readonly terminalExitGraceTimers = new Map<string, NodeJS.Timeout>();
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>();
@@ -96,6 +96,12 @@ export abstract class ReconcilerRuntimeBase {
     }
   }
   async handleEvent(event: EventRecord): Promise<void> {
+    const sourceId = eventSourceId(event);
+    const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
+    if (activeOwner && activeOwner !== this) {
+      await activeOwner.handleEvent(event);
+      return;
+    }
     if (event.type === 'task.started') {
       await this.markWorkerStarted(event);
       return;
@@ -116,17 +122,17 @@ export abstract class ReconcilerRuntimeBase {
       return async () => {};
     }
   }
-  async idle(): Promise<void> { while (this.live.size > 0 || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
+  async idle(): Promise<void> { while ([...this.live.values()].some(item => !item.processSettled) || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async close(): Promise<void> {
     for (const live of this.live.values()) {
+      const sourceId = executionEventSource(live.jobId, live.taskId, live.executionId);
+      if (activeExecutionOwners.get(sourceId) === this) activeExecutionOwners.delete(sourceId);
       live.controller.abort();
       live.execution.cancel();
     }
     this.live.clear();
     for (const timer of this.terminalTimers.values()) clearTimeout(timer);
     this.terminalTimers.clear();
-    for (const timer of this.terminalExitGraceTimers.values()) clearTimeout(timer);
-    this.terminalExitGraceTimers.clear();
     for (const planner of this.plannerLive.values()) {
       clearTimeout(planner.timer);
       planner.controller.abort();
@@ -162,15 +168,22 @@ export abstract class ReconcilerRuntimeBase {
     return { ack, stop };
   }
 
+  protected registerExecutionOwner(jobId: string, taskId: string, executionId: string): void {
+    activeExecutionOwners.set(executionEventSource(jobId, taskId, executionId), this);
+  }
+
   protected clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
-    if (!executionId || live?.executionId === executionId) this.live.delete(taskId);
+    if (!executionId || live?.executionId === executionId) {
+      if (live) {
+        const sourceId = executionEventSource(live.jobId, live.taskId, live.executionId);
+        if (activeExecutionOwners.get(sourceId) === this) activeExecutionOwners.delete(sourceId);
+      }
+      this.live.delete(taskId);
+    }
     const timer = this.terminalTimers.get(taskId);
     if (timer) clearTimeout(timer);
     this.terminalTimers.delete(taskId);
-    const graceTimer = this.terminalExitGraceTimers.get(taskId);
-    if (graceTimer) clearTimeout(graceTimer);
-    this.terminalExitGraceTimers.delete(taskId);
   }
 
   protected async markWorkerStarted(event: EventRecord): Promise<void> {
@@ -258,11 +271,9 @@ export abstract class ReconcilerRuntimeBase {
 
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
-    const liveWorkerStarted = live?.executionId === executionId && live.workerStarted;
-    if (live?.executionId === executionId) this.live.delete(taskId);
+    if (live?.executionId === executionId) live.processSettled = true;
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    const workerStarted = liveWorkerStarted || task?.state === 'RUNNING';
     if (!task || task.executionId !== executionId) return;
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
@@ -273,47 +284,6 @@ export abstract class ReconcilerRuntimeBase {
       { authoritative: false, waitingForTerminalEvent: true, processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
-    if (task.adapter === 'codex' && !terminalExecutionClaimed(jobId, taskId, executionId)) this.scheduleUnexpectedExit(jobId, taskId, executionId, workerStarted === true);
-  }
-
-  protected scheduleUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): void {
-    const graceMs = Math.max(1, this.options.terminalExitGraceMs ?? 1000);
-    const timer = setTimeout(() => {
-      this.terminalExitGraceTimers.delete(taskId);
-      this.detach(this.failUnexpectedExit(jobId, taskId, executionId, workerStarted), jobId, taskId, 'unexpected worker process exit');
-    }, graceMs);
-    this.terminalExitGraceTimers.set(taskId, timer);
-  }
-
-  protected async failUnexpectedExit(jobId: string, taskId: string, executionId: string, workerStarted: boolean): Promise<void> {
-    if (terminalExecutionClaimed(jobId, taskId, executionId)) return;
-    const reason = workerStarted ? 'worker_exit_without_terminal_event' : 'worker_exit_before_start';
-    const message = workerStarted
-      ? `Worker ${taskId} exited after task.started without publishing a terminal task event`
-      : `Worker ${taskId} exited before publishing task.started`;
-    const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
-      eligible: (_job, task) => task.executionId === executionId && !terminalExecutionClaimed(jobId, taskId, executionId),
-      mutate: (_job, task) => {
-        this.clearExecution(task.id, executionId);
-        task.error = message;
-        task.failureReason = reason;
-        task.leaseOwner = null;
-        task.leaseExpiresAt = null;
-      },
-    });
-    if (!transition?.decision.accepted) return;
-    const event = eventFor(
-      jobId,
-      taskId,
-      transition.task.parentTaskId,
-      'task.failed',
-      'failed',
-      message,
-      'user',
-      { reason, terminalGraceMs: this.options.terminalExitGraceMs ?? 1000, workflowEvent: 'watchdog.failed' },
-      { agent: 'relay', component: 'agents-relay', watchdog: true },
-    );
-    this.detach(this.emit(event), jobId, taskId, 'watchdog failure event');
   }
 
   protected async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {

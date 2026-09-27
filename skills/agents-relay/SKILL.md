@@ -51,7 +51,7 @@ Agents Relay maps those terminal events to durable state:
 
 A model-backed task must not launch without an event bus. If no terminal event arrives before the task timeout, Relay records an explicit timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
 
-For Codex, an unexpected process exit after the worker's `task.started` is given only a short bounded terminal grace window. If no exact correlated worker terminal event arrives in that window, Relay records `task.failed` with `worker_exit_without_terminal_event` as an explicit lifecycle-contract failure. This watchdog failure is still distinct from `task.process.exited`; it never treats process exit as task success and never duplicates an already-applied terminal event. An exit before `task.started` is likewise recorded as `worker_exit_before_start`.
+Worker process exit is observational only. Relay does not perform an exit-time terminal check or synthesize task failure from process exit; semantic terminal state comes from the worker event contract or the normal task timeout.
 
 ## Managed GitHub jobs
 

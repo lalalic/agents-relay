@@ -73,7 +73,7 @@ Every worker task has one of three story sizes:
 
 Relay derives the overall execution timeout from `storySize`. If `routing.reasoning` is `high`, Relay doubles the overall execution timeout. Other reasoning levels do not change it.
 
-Raw `timeoutMs` is a compatibility/debug/hotfix override, not the normal task-production interface.
+Raw `timeoutMs` is a compatibility/debug override, not the normal task-production interface.
 
 ## Task readiness states
 
@@ -107,7 +107,7 @@ Blocker resolution is generation-safe and idempotent: Relay retries a dependent 
 
 ## Worker lifecycle
 
-Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events.
+Relay owns process lifecycle. Workers own semantic task lifecycle. A worker must publish canonical `task.started` as its first execution action, then exactly one of `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. Process launch/exit events do not substitute for worker semantic events. Because the ChatGPT worker continues asynchronously after its submit process exits, its managed execution prompt must also require the shared events-bus liveness rule: publish meaningful progress when available, and publish non-terminal `task.heartbeat` after each 30 seconds of otherwise silent active work until a terminal task event is emitted.
 
 Relay allocates the durable `executionId` before launching model-backed work and gives that worker one exact event source identity: `job/<job-id>/task/<task-id>/execution/<execution-id>`. Every semantic lifecycle event from that execution must copy the identity verbatim in `source.id`. Relay correlates model-worker lifecycle only by this execution identity; `source.agent`, `source.component`, provider/adapter names, and `data.worker_owned` are diagnostic/legacy metadata and MUST NOT authorize or correlate lifecycle state. A retry receives a new execution identity, so events from an older execution are ignored.
 
