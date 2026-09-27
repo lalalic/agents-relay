@@ -23,11 +23,10 @@ cat > task.md <<'EOF'
 Implement this phase using the Job objective as context.
 EOF
 npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
-  --task-id initial --adapter codex --provider openai --model MODEL --output task-pr \
-  --input-file task.md
+  --task-id initial --output task-pr --input-file task.md
 
 npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
-  --task-id child --adapter codex --provider openai --model MODEL --output task-pr \
+  --task-id child --output task-pr \
   --input "Implement the described child task and publish a terminal event."
 
 npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1
@@ -132,7 +131,7 @@ For explicit local demo/test mode:
 npm install
 npm run build
 node dist/cli.js init --file .agents-relay.json --title "Dogfood" --id demo
-node dist/cli.js task create --file .agents-relay.json --task-id hello --adapter codex --provider openai --model MODEL --output task-pr --input "Complete the described task"
+node dist/cli.js task create --file .agents-relay.json --task-id hello --output task-pr --input "Complete the described task"
 node dist/cli.js reconcile --file .agents-relay.json
 npx agents-relay serve --file .agents-relay.json
 ~~~
@@ -163,7 +162,7 @@ For automation, Agents Relay can use GitHub App installation authentication via 
 
 V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in the PR-body Job marker or PR-comment Task markers; store only summaries and artifact references.
 
-Codex/model-backed tasks require --provider and --model (or equivalent routing metadata) before launch. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
+Model-backed tasks are routed by Relay before launch. Normal task producers omit adapter/provider/model; explicit routing flags remain compatibility/debug constraints. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
 
 XChat and other orchestrators can consume Relay's exact shared discovery implementation without duplicating filesystem search logic:
 
