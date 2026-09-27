@@ -121,7 +121,7 @@ export function workerCandidates(
 export function satisfiesWorker(candidate: WorkerCandidate, requirements: WorkerRequirements): boolean {
   if (candidate.availability === 'offline') return false;
   if (requirements.runtime && candidate.runtime !== requirements.runtime) return false;
-  if (candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.idle === 0) return false;
+  if (candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.available === 0) return false;
   return true;
 }
 
@@ -161,8 +161,8 @@ export function selectWorker(candidates: readonly WorkerCandidate[], requirement
 }
 
 function noEligibleWorkerReason(candidates: readonly WorkerCandidate[]): string {
-  if (candidates.some(candidate => candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.idle === 0)) {
-    return 'No eligible worker: ChatGPT Browser Workspace has no idle capacity.';
+  if (candidates.some(candidate => candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.available === 0)) {
+    return 'No eligible worker: ChatGPT Browser Workspace has no allocatable capacity.';
   }
   return 'No eligible worker satisfies the authoritative worker constraints';
 }

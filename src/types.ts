@@ -60,7 +60,7 @@ export type WorkerRequirements = {
 };
 /** The worker-router's selection; model routing happens only after this exists. */
 export type ResourceUsageWindow = { remainingPercent: number; resetAt: number | null; resetInMinutes: number | null };
-export type BrowserWorkspaceCapacity = { name: string; poolSize: number | null; idle: number | null; leased: number | null; available: boolean | null; observedAt: string; reason: string | null };
+export type BrowserWorkspaceCapacity = { name: string; poolSize: number | null; idle: number | null; leased: number | null; available: number | null; observedAt: string; reason: string | null };
 export type WorkerSelection = {
   workerId: string;
   adapter: Exclude<AdapterName, 'orchestrator'>;

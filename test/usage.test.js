@@ -88,7 +88,7 @@ test('usage registry includes credit providers only when readers are configured'
 });
 
 test('usage registry exposes Browser Workspace capacity as a shared resource fact', async () => {
-  const capacity = { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: false, observedAt: '2026-09-27T16:00:00.000Z', reason: null };
+  const capacity = { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: 0, observedAt: '2026-09-27T16:00:00.000Z', reason: null };
   const overview = await new UsageRegistry(
     { read: async () => ({ available: false, generatedAt: 'x', fiveHour: null, weekly: null, reason: 'unused' }) },
     { read: async () => ({ available: false, generatedAt: 'x', fiveHour: null, weekly: null, reason: 'unused' }) },
