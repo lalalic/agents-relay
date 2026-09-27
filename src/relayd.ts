@@ -157,7 +157,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return null;
     }
   };
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),exactJob, {
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),()=>client.rateLimitSnapshot(),exactJob, {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
     cancel: workspaceJobAction('cancel'),

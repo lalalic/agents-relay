@@ -385,7 +385,7 @@ export async function createService(args: string[]): Promise<Service> {
   }
   const webhookSecret = arg(args, '--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || '';
   const webhook = repo && webhookSecret ? { secret: webhookSecret, repositories: new Set([repo]), pullRequest: loaded.job.prNumber, wake: (event: import('./github-webhook.js').GitHubWebhookWake): void => { const wakeEvent = eventFor(loaded.job.id, 'github', null, 'github.webhook', 'queued', 'GitHub webhook ' + event.event + (event.action ? ':' + event.action : ''), 'orchestrator', { deliveryId: event.deliveryId, event: event.event, action: event.action, repository: event.repository, prNumber: event.pullRequest }); if (bus) void bus.publish(wakeEvent); else void reconciler.reconcile(loaded.job.id); } } : undefined;
-  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider, webhook, undefined, undefined, {
+  const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider, webhook, undefined, undefined, undefined, {
     start: dashboardJobAction(loaded.store, reconciler, 'start'),
     reconcile: dashboardJobAction(loaded.store, reconciler, 'reconcile'),
     cancel: dashboardJobAction(loaded.store, reconciler, 'cancel'),

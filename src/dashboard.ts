@@ -65,6 +65,7 @@ export function serveDashboard(
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
+  githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
   actions?: { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job> },
 ): Server {
@@ -135,7 +136,10 @@ export function serveDashboard(
 
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
-    return JSON.stringify(await readUsageSnapshot(usageRegistry));
+    const account = await readUsageSnapshot(usageRegistry);
+    const github = githubUsageProvider ? await githubUsageProvider() : null;
+    const githubStatus = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
+    return JSON.stringify({ ...account, github, githubStatus });
   };
 
   const server = createServer(async (req, res) => {

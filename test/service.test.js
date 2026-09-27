@@ -31,7 +31,7 @@ test('repository daemon wires account usage telemetry and the default planner in
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
-  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),exactJob/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),\(\)=>client\.rateLimitSnapshot\(\),exactJob/);
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);

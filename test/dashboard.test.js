@@ -415,3 +415,15 @@ test('dashboard header exposes in-memory runtime summary', () => {
   assert.match(dashboardHtml, /runtimePill\('ChatGPT'/);
   assert.match(dashboardHtml, /runtimePill\('Codex'/);
 });
+
+
+test('dashboard Usage renders GitHub REST, GraphQL, Search and cooldown telemetry', () => {
+  assert.match(dashboardHtml, /GitHub API/);
+  assert.match(dashboardHtml, /REST core/);
+  assert.match(dashboardHtml, /GraphQL/);
+  assert.match(dashboardHtml, /Search/);
+  assert.match(dashboardHtml, /remaining/);
+  assert.match(dashboardHtml, /used \/ /);
+  assert.match(dashboardHtml, /Relay cooldown active/);
+  assert.match(dashboardHtml, /Resets /);
+});
