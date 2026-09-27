@@ -2,6 +2,7 @@ import { Job, Task } from './types.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { spawn } from 'node:child_process';
 import { createSign } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
@@ -96,7 +97,9 @@ export class InMemoryStore implements DurableStore {
     return [...this.values.values()].map(parseTask).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, jobs.length === 1));
   }
 }
-export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown>; graphql?(query: string, variables?: Record<string, unknown>): Promise<unknown> };
+export type GitHubGraphqlDiagnostics = { operations: Record<string, number>; contexts: Record<string, number> };
+export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown>; graphql?(query: string, variables?: Record<string, unknown>): Promise<unknown>; withRequestContext?<T>(context: string, work: () => Promise<T>): Promise<T> };
+export async function withGitHubRequestContext<T>(client: GitHubClient, context: string, work: () => Promise<T>): Promise<T> { return client.withRequestContext ? client.withRequestContext(context, work) : work(); }
 export type GitHubRateLimitBucket = { limit: number; used: number; remaining: number; reset: number };
 export type GitHubRateLimitSnapshot = { observedAt: string; resources: { core?: GitHubRateLimitBucket; graphql?: GitHubRateLimitBucket; search?: GitHubRateLimitBucket } };
 export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
@@ -256,10 +259,25 @@ export class GhApiClient implements GitHubClient {
   private rateLimitFlight: Promise<GitHubRateLimitSnapshot> | null = null;
   private readonly rateLimitCacheTtlMs = 5 * 60_000;
   private readonly apiDiagnostics = { rest: 0, graphql: 0, rateLimit: 0 };
+  private readonly graphqlDiagnostics: GitHubGraphqlDiagnostics = { operations: {}, contexts: {} };
+  private readonly requestContext = new AsyncLocalStorage<string>();
   constructor(private readonly appAuth: GitHubAppAuthOptions | null = null) {}
-  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null; calls: { rest: number; graphql: number; rateLimit: number } } {
+  async withRequestContext<T>(context: string, work: () => Promise<T>): Promise<T> { return await this.requestContext.run(context, work); }
+  private graphqlOperation(query: string): string {
+    if (/mutation\s*\([^)]*\)\s*\{addComment\(/.test(query)) return 'comment.add';
+    if (/updateIssueComment\(/.test(query)) return 'comment.update';
+    if (/deleteIssueComment\(/.test(query)) return 'comment.delete';
+    if (/viewer\s*\{login/.test(query)) return 'viewer.login';
+    if (/comments\(first:100,after:\$cursor\)/.test(query)) return 'pr.comments';
+    if (/comments\(last:100\)/.test(query)) return 'pr.snapshot';
+    if (/headRefName/.test(query) && /headRefOid/.test(query)) return 'pr.node';
+    if (/repository\(owner:\$owner,name:\$name\)\{id\}/.test(query)) return 'repository.id';
+    if (/pullRequests\(/.test(query)) return 'repository.pull-requests';
+    return /^\s*mutation/.test(query) ? 'mutation.other' : 'query.other';
+  }
+  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null; calls: { rest: number; graphql: number; rateLimit: number }; graphql: GitHubGraphqlDiagnostics } {
     const limited = Date.now() < this.cooldownUntil;
-    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null, calls: { ...this.apiDiagnostics } };
+    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null, calls: { ...this.apiDiagnostics }, graphql: { operations: { ...this.graphqlDiagnostics.operations }, contexts: { ...this.graphqlDiagnostics.contexts } } };
   }
   async rateLimitSnapshot(force = false): Promise<GitHubRateLimitSnapshot> {
     const now = Date.now();
@@ -343,6 +361,10 @@ export class GhApiClient implements GitHubClient {
   async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
     this.assertAvailable();
     this.apiDiagnostics.graphql += 1;
+    const operation = this.graphqlOperation(query);
+    const context = this.requestContext.getStore() ?? 'unscoped';
+    this.graphqlDiagnostics.operations[operation] = (this.graphqlDiagnostics.operations[operation] ?? 0) + 1;
+    this.graphqlDiagnostics.contexts[context] = (this.graphqlDiagnostics.contexts[context] ?? 0) + 1;
     const payload = JSON.stringify({ query, variables });
     const stdout = await this.spawnGh(['api', 'graphql', '--input', '-'], payload, await this.commandEnv());
     const parsed = JSON.parse(stdout) as Record<string, unknown>;

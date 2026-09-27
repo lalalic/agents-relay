@@ -9,7 +9,7 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql, withGitHubRequestContext } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -100,7 +100,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (scanRepositories.length === 0) return cachedOverviews;
     try {
       githubReadPaths.workspaceScans += 1;
-      const refreshed = await aggregateManagedGitHubJobs(client, scanRepositories, trusted);
+      const refreshed = await withGitHubRequestContext(client, 'relayd.workspace-refresh', () => aggregateManagedGitHubJobs(client, scanRepositories, trusted));
       const scanned = new Set(scanRepositories);
       cachedOverviews = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
       try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
@@ -122,7 +122,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (existing) return existing;
     const flight = (async (): Promise<ManagedJobOverview[]> => {
       githubReadPaths.prRefreshes += 1;
-      const refreshed = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted);
+      const refreshed = await withGitHubRequestContext(client, 'relayd.pr-refresh', () => loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted));
       cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
       cachedOverviews.push(...refreshed);
       cachedOverviews = dashboardManagedJobs(cachedOverviews);

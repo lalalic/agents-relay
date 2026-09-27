@@ -603,3 +603,49 @@ test('managed Job list hydrates publication from GraphQL github-actions author',
   assert.equal(rows.length, 1);
   assert.equal(rows[0].publication?.version, '1.0.133');
 });
+
+test('GitHubStore reuses one PR snapshot per reconciliation-style store instance', async () => {
+  const durableJob = job('snapshot-budget');
+  const durableTask = task('snapshot-budget', 'work', 'QUEUED');
+  const taskBody = marker(TASK_MARKER, durableTask);
+  let graphqlCalls = 0;
+  let currentTaskBody = taskBody;
+  const client = {
+    request: async () => null,
+    graphql: async (query, variables = {}) => {
+      graphqlCalls += 1;
+      if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) {
+        return { repository:{ pullRequest:{ id:'PR_1', state:'OPEN', merged:false, mergedAt:null, closedAt:null, body:renderJobBody(durableJob), headRefName:'feat/test', headRefOid:'abc123' } } };
+      }
+      if (query.includes('comments(first:100')) {
+        return { repository:{ pullRequest:{ comments:{ nodes:[{id:'IC_1',databaseId:1,url:'https://example/1',body:currentTaskBody,updatedAt:now(),author:{login:'bot'}}], pageInfo:{hasNextPage:false,endCursor:null} } } } };
+      }
+      if (query.includes('updateIssueComment')) {
+        currentTaskBody = variables.body;
+        return { updateIssueComment:{ issueComment:{ id:'IC_1', databaseId:1, url:'https://example/1', body:currentTaskBody, updatedAt:now(), author:{login:'bot'} } } };
+      }
+      throw new Error('Unhandled fake GraphQL query: '+query);
+    }
+  };
+  const store = new GitHubStore(client, 'owner/repo', 1, new Set(['bot']));
+  const first = await store.load('snapshot-budget');
+  await store.pullRequestState();
+  await store.pullRequestHead();
+  await store.load('snapshot-budget');
+  first.tasks[0].state = 'RUNNING';
+  first.tasks[0].updatedAt = now();
+  await store.saveTask(first.tasks[0]);
+  const afterWrite = await store.load('snapshot-budget');
+  assert.equal(afterWrite.tasks[0].state, 'RUNNING');
+  assert.equal(graphqlCalls, 3, 'one comments read + one PR node read + one task mutation; repeated reads must reuse snapshot');
+});
+
+test('GitHub GraphQL diagnostics expose operation and request-context attribution', async () => {
+  const source = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+  assert.match(source, /graphqlDiagnostics: GitHubGraphqlDiagnostics/);
+  assert.match(source, /requestContext = new AsyncLocalStorage<string>\(\)/);
+  assert.match(source, /graphqlDiagnostics\.operations\[operation\]/);
+  assert.match(source, /graphqlDiagnostics\.contexts\[context\]/);
+  assert.match(source, /'pr\.comments'/);
+  assert.match(source, /'pr\.node'/);
+});
