@@ -2,8 +2,16 @@ import test, { managedDashboard } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
+import { Script } from 'node:vm';
 import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
+
+
+test('dashboard inline JavaScript parses before publication', () => {
+  const scripts = [...dashboardHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(Boolean);
+  assert.ok(scripts.length > 0);
+  for (const source of scripts) assert.doesNotThrow(() => new Script(source));
+});
 
 test('dashboard switches jobs list and detail into a mobile drill-down flow', () => {
   assert.match(dashboardHtml, /id="mobile-jobs-back"/);
