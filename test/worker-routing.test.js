@@ -3,7 +3,6 @@ import test, { managedReconciler } from './test-runtime.js';
 import { parsePlannerResult } from '../dist/planner.js';
 import { discoverAgents } from '../dist/registry.js';
 import { readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
-import { selectReviewer } from '../dist/reviewer-routing.js';
 import { selectWorker, usageForProvider } from '../dist/worker-routing.js';
 
 const generatedAt = '2026-09-21T16:00:00.000Z';
@@ -137,34 +136,14 @@ test('credit health preserves known exhaustion while leaving unknown balances un
   assert.equal(usageForProvider({ generatedAt, providers: [], credits: [{ id: 'deepseek', label: 'DeepSeek', credits: { available: false, generatedAt, balances: [], reason: 'request failed' } }] }, 'deepseek').healthy, undefined);
 });
 
-test('reviewer routing prefers an eligible worker not used by implementation', () => {
-  const implementation = [{ adapter: 'codex', workerSelection: { workerId: 'codex', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt }, agentName: 'builder' }];
-  const decision = selectReviewer([
-    { workerId: 'codex', adapter: 'codex', capabilities: ['model'], routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } },
-    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', capabilities: ['model', 'browser-harness'], routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
-  ], implementation, { capabilities: ['model'] });
-  assert.equal(decision.selection.workerId, 'chatgpt/browser-worker');
-  assert.equal(decision.reason, 'worker-diversity');
-  assert.match(decision.selection.selectedBy, /reviewer-diversity/);
-});
-
-test('reviewer routing only hard-gates authoritative offline/runtime constraints', () => {
-  const decision = selectReviewer([
-    { workerId: 'different-but-degraded', adapter: 'chatgpt', capabilities: ['model', 'review'], availability: 'degraded', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
-    { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], availability: 'available', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } },
-  ], [{ adapter: 'codex', workerSelection: { workerId: 'same-but-eligible', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router', selectedAt: generatedAt }, agentName: 'builder', routing: { provider: 'openai', model: 'gpt-5', decidedBy: 'model-router', decidedAt: generatedAt } }], { capabilities: ['model'] });
-  assert.equal(decision.selection.workerId, 'different-but-degraded');
-  assert.equal(decision.reason, 'worker-diversity');
-});
-
-test('worker routing avoids an otherwise eligible worker under resource pressure', () => {
+test('deterministic worker fallback prefers Codex whenever Codex is eligible', () => {
   const candidates = [
     { workerId: 'busy', adapter: 'codex', capabilities: ['model'], resourceHealthy: false, resourceProvider: 'openai', resourceUsedPercent: 100, routing: { provider: 'openai', model: 'busy-model', decidedBy: 'model-router', decidedAt: generatedAt } },
     { workerId: 'healthy', adapter: 'chatgpt', capabilities: ['model'], resourceHealthy: true, resourceProvider: 'chatgpt', routing: { provider: 'chatgpt', model: 'healthy-model', decidedBy: 'model-router', decidedAt: generatedAt } },
   ];
   const decision = selectWorker(candidates, { capabilities: ['model'] });
-  assert.equal(decision.selection.workerId, 'healthy');
-  assert.equal(decision.selection.resourceHealthy, true);
+  assert.equal(decision.selection.workerId, 'busy');
+  assert.equal(decision.selection.adapter, 'codex');
 });
 
 test('planner accepts executable tasks without adapter or model routing', () => {
@@ -260,12 +239,12 @@ test('reconciler materializes an unrouted planner child through worker-router be
   assert.equal(routed?.routing?.decidedBy, 'model-router');
 });
 
-test('known near-exhausted quota yields to an otherwise eligible worker with unknown quota', () => {
+test('deterministic fallback keeps Codex eligible despite quota pressure', () => {
   const decision = selectWorker([
     { workerId: 'codex', adapter: 'codex', capabilities: ['model'], resourceHealthy: true, resourceProvider: 'openai', resourceUsedPercent: 95, routing: { provider: 'openai', model: 'gpt-5.6-luna', decidedBy: 'model-router', decidedAt: generatedAt } },
     { workerId: 'chatgpt', adapter: 'chatgpt', capabilities: ['model'], routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'model-router', decidedAt: generatedAt } },
   ], { capabilities: ['model'] });
-  assert.equal(decision.selection.workerId, 'chatgpt');
+  assert.equal(decision.selection.workerId, 'codex');
 });
 
 test('usage facts expose remaining capacity and the nearest reset horizon for model routing', () => {
