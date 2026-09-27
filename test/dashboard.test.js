@@ -438,7 +438,8 @@ test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
 
 test('dashboard usage remains available when GitHub quota telemetry fails', async () => {
   const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
-  const server=await serveDashboardForTest(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
+  const server=serveDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
+  await once(server,'listening');
   const address=server.address();
   const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
   assert.equal(response.status,200);
