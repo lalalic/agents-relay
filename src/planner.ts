@@ -24,7 +24,8 @@ export type PlannerTaskSpec = {
   maxAttempts?: number;
   timeoutMs?: number;
 };
-export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
+export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
+export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
 export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
@@ -128,6 +129,26 @@ export function parsePlannerResult(value: unknown): PlannerResult {
   if (status !== 'in_progress' && status !== 'satisfied') throw new Error('Planner objective_status must be in_progress or satisfied');
   if (typeof root.assessment !== 'string') throw new Error('Planner assessment must be a string');
   if (!Array.isArray(root.next_tasks)) throw new Error('Planner next_tasks must be an array');
+  const unblockKeys = new Set<string>();
+  const unblocksRaw = root.unblocks === undefined ? [] : root.unblocks;
+  if (!Array.isArray(unblocksRaw)) throw new Error('Planner unblocks must be an array when provided');
+  const unblocks = unblocksRaw.map((item, index): PlannerUnblockSpec => {
+    const unblock = record(item, `unblocks[${index}]`);
+    const repository = optionalString(unblock.repository, `unblocks[${index}].repository`);
+    const jobId = optionalString(unblock.jobId, `unblocks[${index}].jobId`);
+    const taskId = optionalString(unblock.taskId, `unblocks[${index}].taskId`);
+    if (!repository || !/^[^/\s]+\/[^/\s]+$/.test(repository)) throw new Error(`Planner unblocks[${index}].repository must be OWNER/REPO`);
+    if (!jobId) throw new Error(`Planner unblocks[${index}].jobId is required`);
+    if (!taskId) throw new Error(`Planner unblocks[${index}].taskId is required`);
+    const prNumber = unblock.prNumber;
+    if (!Number.isInteger(prNumber) || Number(prNumber) <= 0) throw new Error(`Planner unblocks[${index}].prNumber must be a positive integer`);
+    const resolutionMode = unblock.resolutionMode === undefined ? undefined : String(unblock.resolutionMode);
+    if (resolutionMode !== undefined && resolutionMode !== 'merge' && resolutionMode !== 'verified') throw new Error(`Planner unblocks[${index}].resolutionMode must be merge or verified`);
+    const key = `${repository}#${prNumber}:${jobId}:${taskId}`;
+    if (unblockKeys.has(key)) throw new Error(`Planner unblocks contains duplicate dependent ${key}`);
+    unblockKeys.add(key);
+    return { repository, prNumber: Number(prNumber), jobId, taskId, resolutionMode: resolutionMode as 'merge' | 'verified' | undefined };
+  });
   const ids = new Set<string>();
   const next_tasks = root.next_tasks.map((item, index): PlannerTaskSpec => {
     const task = record(item, `next_tasks[${index}]`);
@@ -159,7 +180,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };
   });
-  return { objective_status: status, assessment: root.assessment, next_tasks };
+  return { objective_status: status, assessment: root.assessment, next_tasks, unblocks };
 }
 
 export function parsePlannerOutput(output: string): PlannerResult {

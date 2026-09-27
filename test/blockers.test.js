@@ -50,3 +50,22 @@ test('verified blocker does not wake on merge but wakes after explicit verificat
   assert.deepEqual(verified,{resumed:1,obsolete:0,waiting:0});
   assert.equal((await dependentStore.load('dependent')).tasks[0].state,'QUEUED');
 });
+
+
+test('draft dependent is durably registered and released from blocker-side authority without blockedBy', async()=>{
+  const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
+  const draft={...task('draft','DRAFT',0),error:null};
+  const dependentStore=new InMemoryStore(job('dependent','org/app',20,[draft]));
+  await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore,dependentJobId:'dependent',dependentTaskId:'draft',resolutionMode:'merge',now});
+  const blocker=await blockerStore.load('blocker');
+  assert.equal(blocker.unblocks.length,1);
+  assert.equal(blocker.unblocks[0].blockedAttempt,0);
+  const dependent=await dependentStore.load('dependent');
+  delete dependent.tasks[0].blockedBy;
+  await dependentStore.saveTask(dependent.tasks[0]);
+  const resolved=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:()=>dependentStore,resolution:'merge',now:'2026-09-25T19:00:00.000Z'});
+  assert.deepEqual(resolved,{resumed:1,obsolete:0,waiting:0});
+  const released=(await dependentStore.load('dependent')).tasks[0];
+  assert.equal(released.state,'QUEUED');
+  assert.equal(released.attempt,0);
+});

@@ -4,6 +4,7 @@ import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
 export type BlockerResolutionSummary = { resumed: number; obsolete: number; waiting: number };
+export type BlockerDependentTarget = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: BlockerResolutionMode };
 
 function dependentKey(value: Pick<BlockerDependent, 'repository' | 'prNumber' | 'jobId' | 'taskId' | 'blockedAttempt'>): string {
   return `${value.repository}#${value.prNumber}:${value.jobId}:${value.taskId}:a${value.blockedAttempt}`;
@@ -26,7 +27,7 @@ export async function registerBlockerDependency(options: {
   const dependentJob = await options.dependentStore.load(options.dependentJobId);
   const task = dependentJob.tasks.find(item => item.id === options.dependentTaskId);
   if (!task) throw new Error(`Dependent task ${options.dependentTaskId} not found`);
-  if (!['FAILED', 'BLOCKED'].includes(task.state)) throw new Error(`Dependent task ${task.id} is not blocked/failed (${task.state})`);
+  if (!['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state)) throw new Error(`Dependent task ${task.id} is not waiting/blocked/failed (${task.state})`);
   const now = options.now ?? new Date().toISOString();
   const relation: BlockerDependent = {
     repository: dependentJob.repository,
@@ -61,7 +62,7 @@ export async function registerBlockerDependency(options: {
 
 function obsoleteReason(task: Task | undefined, relation: BlockerDependent): string {
   if (!task) return 'dependent task no longer exists';
-  if (!['FAILED', 'BLOCKED'].includes(task.state)) return `dependent task advanced to ${task.state}`;
+  if (!['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state)) return `dependent task advanced to ${task.state}`;
   if (task.attempt !== relation.blockedAttempt) return `dependent task advanced from attempt ${relation.blockedAttempt} to ${task.attempt}`;
   return 'dependent task no longer matches blocker registration';
 }
@@ -92,13 +93,16 @@ export async function resolveBlockerDependencies(options: {
       relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = error instanceof Error ? error.message : String(error); obsolete += 1; continue;
     }
     const task = targetJob.tasks.find(item => item.id === relation.taskId);
-    const blockerRef: BlockerReference = { repository: blocker.repository, prNumber: blocker.prNumber, jobId: blocker.id };
-    const matches = !!task && ['FAILED', 'BLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt && sameBlocker(task.blockedBy, blockerRef);
+    const matches = !!task && ['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt;
     if (!matches) {
       relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = obsoleteReason(task, relation); obsolete += 1; continue;
     }
-    task.maxAttempts = extendRetryBudget(task);
-    await transitionTaskEvent(task, 'retry');
+    if (task.state === 'DRAFT') {
+      await transitionTaskEvent(task, 'release');
+    } else {
+      task.maxAttempts = extendRetryBudget(task);
+      await transitionTaskEvent(task, 'retry');
+    }
     task.error = null;
     task.leaseOwner = null;
     task.leaseExpiresAt = null;

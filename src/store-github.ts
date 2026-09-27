@@ -2,7 +2,7 @@ import type { DurableStore, GitHubClient, Comment, PullRequestState } from './st
 import { Job, Task, AgentRegistration } from './types.js';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderTaskComment, JOB_MARKER } from './markers.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
-import { resolveBlockerDependencies } from './blockers.js';
+import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget } from './blockers.js';
 
 const TASK_WRITE_OVERLAY = new Map<string, Comment>();
 
@@ -106,6 +106,16 @@ export class GitHubStore implements DurableStore {
     return ref && sha ? { ref, sha } : null;
   }
   async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
+  async registerBlockerDependent(jobId: string, dependent: BlockerDependentTarget): Promise<void> {
+    await registerBlockerDependency({
+      blockerStore: this,
+      blockerJobId: jobId,
+      dependentStore: new GitHubStore(this.client, dependent.repository, dependent.prNumber, this.trustedAuthors),
+      dependentJobId: dependent.jobId,
+      dependentTaskId: dependent.taskId,
+      resolutionMode: dependent.resolutionMode,
+    });
+  }
   async resolveBlockerDependents(jobId: string, resolution: 'merge' | 'verified') {
     return await resolveBlockerDependencies({ blockerStore: this, blockerJobId: jobId, resolution, dependentStore: (repository, prNumber) => new GitHubStore(this.client, repository, prNumber, this.trustedAuthors) });
   }
