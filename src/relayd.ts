@@ -11,7 +11,8 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { dashboardJobAction, dashboardTaskAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
+import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
+import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -150,6 +151,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
     return await dashboardTaskAction(store, makeReconciler(store, concurrency), action)(jobId, taskId);
   };
+  const workspaceTaskSetState = async (jobId: string, taskId: string, state: import('./types.js').TaskState) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const result = await dashboardTaskSetState(store)(jobId, taskId, state);
+    await refreshPullRequest(overview.job.repository, overview.job.prNumber);
+    return result;
+  };
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
   const webhook = secret ? {
@@ -173,12 +182,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const exactJob = async (jobId: string) => {
     const cached = cachedOverviews.find(item => item.job.id === jobId);
     if (!cached) return null;
-    const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft });
+    const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft, publication: cached.publication });
     if (client.rateLimitStatus().limited) return cachedJob();
     try {
       const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber)).find(item => item.job.id === jobId);
       if (!refreshed) return null;
-      return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
+      return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft, publication: refreshed.publication };
     } catch (error) {
       process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       return cachedJob();
@@ -190,6 +199,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     cancel: workspaceJobAction('cancel'),
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),
+    taskSetState: workspaceTaskSetState,
   });
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {

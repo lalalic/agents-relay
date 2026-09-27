@@ -16,7 +16,7 @@ import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
-import { dashboardTaskAction } from '../dist/cli.js';
+import { dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -77,6 +77,26 @@ test('dashboard task action retries failed work and cancels queued work durably'
   durable=await dashboardTaskAction(store,reconciler,'cancel')('j','cancel-me');
   const cancelled=durable.tasks.find(item=>item.id==='cancel-me'); assert.equal(cancelled.state,'CANCELLED'); assert.equal(cancelled.error,'Cancelled by user');
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
+});
+
+test('dashboard direct task state override is durable, audited, and does not reconcile', async () => {
+  const manual = task('manual', 'FAILED');
+  manual.error = 'historical failure';
+  manual.executionId = 'old-execution';
+  manual.leaseOwner = 'old-owner';
+  manual.leaseExpiresAt = new Date(Date.now() + 10000).toISOString();
+  const store = new InMemoryStore(job([manual]));
+  const durable = await dashboardTaskSetState(store)('j', 'manual', 'SUCCEEDED');
+  const updatedTask = durable.tasks.find(item => item.id === 'manual');
+  assert.equal(updatedTask.state, 'SUCCEEDED');
+  assert.equal(updatedTask.executionId, null);
+  assert.equal(updatedTask.leaseOwner, null);
+  assert.equal(updatedTask.leaseExpiresAt, null);
+  assert.equal(updatedTask.manualStateOverrides.length, 1);
+  assert.equal(updatedTask.manualStateOverrides[0].from, 'FAILED');
+  assert.equal(updatedTask.manualStateOverrides[0].to, 'SUCCEEDED');
+  assert.equal(updatedTask.manualStateOverrides[0].actor, 'dashboard-user');
+  assert.equal(updatedTask.error, 'historical failure');
 });
 
 test('dashboard cancel transitions RUNNING through task.cancelled and clears execution identity', async () => {

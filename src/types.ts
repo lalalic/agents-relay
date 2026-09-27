@@ -84,6 +84,7 @@ export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; 
 export type BlockerDependentState = 'waiting' | 'resumed' | 'obsolete';
 export type BlockerDependent = { repository: string; prNumber: number; jobId: string; taskId: string; blockedAttempt: number; registeredAt: string; state: BlockerDependentState; resolvedAt?: string; resolution?: 'merge' | 'verified'; note?: string };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
+export type ManualTaskStateOverride = { from: TaskState; to: TaskState; at: string; actor: 'dashboard-user' };
 export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_required' | 'blocked' | 'stale';
 export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
 export type Task = {
@@ -93,6 +94,7 @@ export type Task = {
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
+  manualStateOverrides?: ManualTaskStateOverride[];
   failureReason?: string;
   blockedBy?: TaskBlockerReference;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;

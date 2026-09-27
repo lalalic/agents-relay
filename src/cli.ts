@@ -8,6 +8,8 @@ import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHub
 import { githubAuthContext } from './github-auth.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
 import { Reconciler } from './reconciler.js';
+import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
+export { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
@@ -330,26 +332,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtimeReviewer() { return { requirements: { capabilities: ['model'] } }; }
 export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: new LayaCliDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => resolveRepositoryProjectPath(await resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()), job.projectPath) }); }
-export function dashboardTaskAction(store: DurableStore, reconciler: Reconciler, action: 'retry' | 'cancel'): (jobId: string, taskId: string) => Promise<Job> {
-  return async (jobId: string, taskId: string): Promise<Job> => {
-    const job = await store.load(jobId);
-    const task = job.tasks.find(item => item.id === taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
-    if (action === 'retry') {
-      if (!['FAILED','BLOCKED'].includes(task.state)) throw new Error(`Task ${task.id} is not restartable (${task.state})`);
-      task.maxAttempts = extendRetryBudget(task);
-      await transitionTaskEvent(task, 'retry');
-      task.error = null;
-    } else {
-      if (!['DRAFT','QUEUED','RUNNING','BLOCKED','FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
-      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
-      task.error = 'Cancelled by user';
-    }
-    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-    await store.saveTask(task);
-    return await reconciler.wake(job.id);
-  };
-}
 export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, action: 'start' | 'reconcile' | 'cancel'): (jobId: string) => Promise<Job> {
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);
@@ -386,6 +368,7 @@ export async function createService(args: string[]): Promise<Service> {
     cancel: dashboardJobAction(loaded.store, reconciler, 'cancel'),
     taskRetry: dashboardTaskAction(loaded.store, reconciler, 'retry'),
     taskCancel: dashboardTaskAction(loaded.store, reconciler, 'cancel'),
+    taskSetState: dashboardTaskSetState(loaded.store),
   });
   await once(dashboardServer, 'listening');
   const stopWatcher = await reconciler.watch(loaded.job.id);
