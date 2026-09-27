@@ -2,8 +2,7 @@ import { Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallT
 import { schedule, transitionTaskEvent, transitionJobEvent } from './scheduler.js';
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
-import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
-import { WorkerSelection } from './types.js';
+import { RoutingDecision, WorkerSelection } from './types.js';
 import { routeWorker, workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { discoverModelCandidates, routeModel } from './model-routing.js';
 import { ReconcilerRuntimeBase } from './reconciler-runtime.js';
@@ -46,58 +45,60 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const ready = schedule(await this.store.load(job.id));
     await this.store.saveJob(ready);
   }
-  protected async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: ReviewerCandidate; selection: WorkerSelection; reason: 'worker-diversity' | 'provider-model-diversity' | 'eligible-fallback' }> {
+  protected async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
     const configured = this.options.reviewer;
     const registered = await this.store.listAgents();
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
-    const workers = workerCandidates(this.options.adapters, registered, usage).filter(candidate => {
+    let workers = workerCandidates(this.options.adapters, registered, usage).filter(candidate => {
       if (configured?.workerId && configured.workerId !== candidate.workerId) return false;
       if (configured?.adapter && configured.adapter !== candidate.adapter) return false;
       return true;
     });
-    // Explicit reviewer routing is a caller-owned hard constraint and remains
-    // readable in isolated/test runtimes that do not instantiate that adapter.
+    // Explicit reviewer runtime/routing is a caller-owned hard constraint and remains
+    // usable in isolated/test runtimes that do not instantiate that adapter. It still
+    // flows through the same Worker Router path as every other executable task.
     if (workers.length === 0 && configured?.adapter && configured.routing) {
-      const candidate: ReviewerCandidate = {
+      workers = [{
         workerId: configured.workerId ?? configured.adapter,
         adapter: configured.adapter,
         capabilities: ['model'],
         runtime: configured.adapter,
-        routing: configured.routing,
-      };
-      return {
-        candidate,
-        selection: { workerId: candidate.workerId, adapter: candidate.adapter, capabilities: [...candidate.capabilities], selectedBy: 'worker-router:reviewer-diversity:eligible-fallback', selectedAt: new Date().toISOString() },
-        reason: 'eligible-fallback',
-      };
+      }];
     }
 
-    const previews = new Map<string, ReviewerCandidate>();
-    for (const worker of workers) {
-      try {
-        const models = await discoverModelCandidates(worker, registered, usage);
-        const preview = await routeModel(worker, models, { decisionMode: 'off', constraints: configured?.routing });
-        previews.set(worker.workerId, { ...worker, routing: preview.routing });
-      } catch {
-        continue;
-      }
-    }
-    const result = selectReviewer([...previews.values()], implementationTasks, configured?.requirements ?? { capabilities: ['model'] });
-    const selectedWorker = workers.find(worker => worker.workerId === result.selection.workerId) as WorkerCandidate | undefined;
-    if (selectedWorker) {
-      result.selection.resourceHealthy = selectedWorker.resourceHealthy;
-      result.selection.resourceProvider = selectedWorker.resourceProvider;
-      result.selection.resourceUsedPercent = selectedWorker.resourceUsedPercent;
-      const models = await discoverModelCandidates(selectedWorker, registered, usage);
-      const routedModel = await routeModel(selectedWorker, models, {
-        decisionEngine: this.options.decisionEngine,
-        decisionMode: this.options.decisionMode,
-        constraints: configured?.routing,
-        taskFacts: { role: 'reviewer', implementationWorkers: implementationTasks.map(task => task.workerSelection?.workerId ?? task.adapter) },
-      });
-      result.candidate.routing = routedModel.routing;
-    }
-    return result;
+    const implementationWorkers = implementationTasks.map(task => task.workerSelection?.workerId ?? task.adapter);
+    const implementationRoutes = implementationTasks.filter(task => task.routing).map(task => ({
+      provider: task.routing!.provider,
+      model: task.routing!.model,
+    }));
+    const taskFacts = {
+      role: 'reviewer',
+      reviewer_diversity: {
+        preference: 'Prefer a worker/provider-model identity different from implementation when otherwise suitable; this is a soft preference below user environment rules.',
+        implementation_workers: implementationWorkers,
+        implementation_routes: implementationRoutes,
+      },
+    };
+    const runtimeSummary = this.options.runtimeSummaryProvider?.();
+    const routedWorker = await routeWorker(workers, configured?.requirements ?? { capabilities: ['model'] }, {
+      decisionEngine: this.options.decisionEngine,
+      decisionMode: this.options.decisionMode,
+      taskFacts,
+      usage,
+      chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
+    });
+    const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
+    const routedModel = await routeModel(routedWorker.candidate, models, {
+      decisionEngine: this.options.decisionEngine,
+      decisionMode: this.options.decisionMode,
+      constraints: configured?.routing,
+      taskFacts,
+    });
+    return {
+      candidate: { ...routedWorker.candidate, routing: routedModel.routing },
+      selection: routedWorker.selection,
+      reason: 'worker-router',
+    };
   }
   protected async routeExecutableTasks(job: Job): Promise<void> {
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;

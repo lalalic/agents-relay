@@ -6,6 +6,7 @@ import { AdapterName, AgentAvailability, AgentRegistration, ResourceUsageWindow,
 export const DEFAULT_CHATGPT_PREFERRED_CONCURRENCY = 10;
 
 export const DEFAULT_WORKER_ROUTER_PRINCIPLES = [
+  'User-provided environment_rules are higher-priority routing guidance than these built-in defaults. Follow user guidance when it conflicts with a default unless doing so would violate an authoritative hard constraint.',
   'Worker Router chooses only the execution worker. Model Router chooses provider/model/profile after worker selection.',
   'Prefer ChatGPT when both workers can execute the task because it does not consume Codex coding-plan tokens and normally has access to a stronger ChatGPT Sol model.',
   'Prefer Codex when the task requires native/local execution or computer-use abilities that are unavailable through ChatGPT plus MacBridge.',
@@ -125,12 +126,8 @@ export function eligibleWorkerCandidates(candidates: readonly WorkerCandidate[],
   return candidates.filter(candidate => satisfiesWorker(candidate, requirements));
 }
 
-function deterministicWorker(eligible: readonly WorkerCandidate[], chatgptRunning = 0, preferredChatgptConcurrency = DEFAULT_CHATGPT_PREFERRED_CONCURRENCY): WorkerCandidate {
-  const chatgptAtPreferenceLimit = chatgptRunning >= preferredChatgptConcurrency;
-  return [...eligible].map((candidate, index) => ({ candidate, index })).sort((left, right) => {
-    const preference = (item: WorkerCandidate): number => chatgptAtPreferenceLimit ? (item.adapter === 'codex' ? 0 : 1) : (item.adapter === 'chatgpt' ? 0 : 1);
-    return preference(left.candidate) - preference(right.candidate) || left.index - right.index;
-  })[0].candidate;
+function deterministicWorker(eligible: readonly WorkerCandidate[]): WorkerCandidate {
+  return eligible.find(candidate => candidate.adapter === 'codex') ?? eligible[0];
 }
 
 function selection(selected: WorkerCandidate, selectedBy: string, decisionEvidence?: WorkerSelection['decisionEvidence']): WorkerSelection {
@@ -169,7 +166,7 @@ export async function routeWorker(
   if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
-  const deterministic = deterministicWorker(eligible, chatgptRunning, preferredChatgptConcurrency);
+  const deterministic = deterministicWorker(eligible);
   if (eligible.length === 1) {
     const evidence = { mode: options.decisionMode ?? 'off', fallback: true } as const;
     return { candidate: deterministic, selection: selection(deterministic, 'worker-router:constraint', evidence) };
@@ -179,8 +176,9 @@ export async function routeWorker(
   const facts = JSON.parse(JSON.stringify({
     task: options.taskFacts ?? {},
     explicit_constraints: { runtime: requirements.runtime ?? null },
-    routing_principles: DEFAULT_WORKER_ROUTER_PRINCIPLES,
+    decision_precedence: ['authoritative_hard_constraints', 'environment_rules', 'routing_principles', 'resource_and_runtime_preferences'],
     environment_rules: rules.text,
+    routing_principles: DEFAULT_WORKER_ROUTER_PRINCIPLES,
     usage_snapshot: options.usage ?? null,
     runtime_load: {
       chatgpt_running: chatgptRunning,
@@ -208,7 +206,7 @@ export async function routeWorker(
     { facts },
     {
       type: 'choice',
-      question: 'Choose the best execution worker for this task. Use the task description, current usage, routing principles, and environment rules. Prefer ChatGPT when both can do the work; choose Codex when native/local execution is necessary. Do not choose a provider or model here.',
+      question: 'Choose the best execution worker for this task. Authoritative hard constraints come first. Then follow user-provided environment rules ahead of built-in routing principles when they conflict. Use task facts, reviewer-diversity context when present, current usage, and runtime load as supporting evidence. Do not choose a provider or model here.',
       choices: eligible.map(item => item.workerId),
     },
     () => deterministic.workerId,
