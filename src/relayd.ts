@@ -9,7 +9,7 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestGraphql, withGitHubRequestContext } from './store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -114,25 +114,26 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const persistCache = async (): Promise<void> => {
     try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };
-  const pullRequestRefreshFlights = new Map<string, Promise<ManagedJobOverview[]>>();
-  const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => {
-    if (client.rateLimitStatus().limited) return cachedOverviews.filter(item => item.job.repository === repository && item.job.prNumber === prNumber);
+  const pullRequestRefreshFlights = new Map<string, Promise<ManagedGitHubPullRequestSnapshot>>();
+  const refreshPullRequestSnapshot = async (repository: string, prNumber: number): Promise<ManagedGitHubPullRequestSnapshot> => {
+    if (client.rateLimitStatus().limited) return { overviews: cachedOverviews.filter(item => item.job.repository === repository && item.job.prNumber === prNumber), seed: { prNode: {}, comments: null } };
     const key = `${repository}#${prNumber}`;
     const existing = pullRequestRefreshFlights.get(key);
     if (existing) return existing;
-    const flight = (async (): Promise<ManagedJobOverview[]> => {
+    const flight = (async (): Promise<ManagedGitHubPullRequestSnapshot> => {
       githubReadPaths.prRefreshes += 1;
-      const refreshed = await withGitHubRequestContext(client, 'relayd.pr-refresh', () => loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted));
+      const snapshot = await withGitHubRequestContext(client, 'relayd.pr-refresh', () => loadManagedGitHubPullRequestSnapshotGraphql(client, repository, prNumber, trusted));
       cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
-      cachedOverviews.push(...refreshed);
+      cachedOverviews.push(...snapshot.overviews);
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
       await persistCache();
-      return refreshed;
+      return snapshot;
     })();
     pullRequestRefreshFlights.set(key, flight);
     try { return await flight; }
     finally { if (pullRequestRefreshFlights.get(key) === flight) pullRequestRefreshFlights.delete(key); }
   };
+  const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => (await refreshPullRequestSnapshot(repository, prNumber)).overviews;
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
@@ -166,8 +167,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     repositories: new Set(repositories),
     refresh: async (event: GitHubWebhookWake): Promise<readonly string[]> => {
       if (!event.repository || !event.pullRequest) return [];
-      const refreshed = await refreshPullRequest(event.repository, event.pullRequest);
-      return refreshed.map(item => item.job.id);
+      const snapshot = await refreshPullRequestSnapshot(event.repository, event.pullRequest);
+      for (const item of snapshot.overviews) pool.seedTargetSnapshot(event.repository, event.pullRequest, item.job.id, snapshot.seed);
+      return snapshot.overviews.map(item => item.job.id);
     },
     wake: async (event: GitHubWebhookWake): Promise<void> => {
       if (!event.repository || !event.pullRequest) return;

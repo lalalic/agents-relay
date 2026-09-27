@@ -18,25 +18,39 @@ function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAu
   return allowed.map(item => parsePackagePublicationMarker(String(item.body ?? ''))).filter((item): item is PackagePublication => item !== null).at(-1) ?? null;
 }
 export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null; publication?: PackagePublication | null };
-export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
+export type GitHubPullRequestSeed = { prNode: Record<string, unknown>; comments: Comment[] | null };
+export type ManagedGitHubPullRequestSnapshot = { overviews: ManagedJobOverview[]; seed: GitHubPullRequestSeed };
+export async function loadManagedGitHubPullRequestSnapshotGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedGitHubPullRequestSnapshot> {
   const [owner, name] = repository.split('/', 2);
-  if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0 || !client.graphql) return [];
-  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergedAt closedAt body comments(last:100){nodes{databaseId url author{login} body}}}}}';
+  if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0 || !client.graphql) return { overviews: [], seed: { prNode: {}, comments: null } };
+  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state isDraft merged mergedAt closedAt body headRefName headRefOid comments(last:100){totalCount nodes{id databaseId url updatedAt author{login} body}}}}}';
   const data = await client.graphql(query, { owner, name, number: prNumber }) as Record<string, unknown>;
   const repo = data.repository as Record<string, unknown> | undefined;
   const pr = repo?.pullRequest as Record<string, unknown> | undefined;
-  if (!pr) return [];
-  const comments = (pr.comments as Record<string, unknown> | undefined)?.nodes;
-  const trusted = (Array.isArray(comments) ? comments : []).filter(item => {
-    const row = item as Record<string, unknown>; const author = row.author as Record<string, unknown> | undefined;
+  if (!pr) return { overviews: [], seed: { prNode: {}, comments: null } };
+  const commentConnection = pr.comments as Record<string, unknown> | undefined;
+  const commentRows = (Array.isArray(commentConnection?.nodes) ? commentConnection.nodes : []) as Array<Record<string, unknown>>;
+  const totalCount = Number(commentConnection?.totalCount ?? commentRows.length);
+  const seedComments: Comment[] | null = Number.isFinite(totalCount) && totalCount <= commentRows.length ? commentRows.map(row => {
+    const author = row.author as Record<string, unknown> | undefined;
+    return {
+      id: Number(row.databaseId ?? 0),
+      nodeId: typeof row.id === 'string' ? row.id : undefined,
+      url: typeof row.url === 'string' ? row.url : undefined,
+      body: String(row.body ?? ''),
+      updatedAt: String(row.updatedAt ?? ''),
+      authorLogin: typeof author?.login === 'string' ? author.login : null,
+    };
+  }) : null;
+  const trusted = commentRows.filter(item => {
+    const author = item.author as Record<string, unknown> | undefined;
     return typeof author?.login === 'string' && trustedAuthors.has(author.login);
   });
   const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
-  const commentJobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
+  const commentJobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
   const jobs = bodyJob ? [bodyJob] : commentJobs;
-  const publication = publicationFromComments((Array.isArray(comments) ? comments : []) as Array<Record<string, unknown>>, trustedAuthors);
-  const tasks = trusted.map(item => {
-    const row = item as Record<string, unknown>;
+  const publication = publicationFromComments(commentRows, trustedAuthors);
+  const tasks = trusted.map(row => {
     const task = parseTask(String(row.body ?? ''));
     if (!task) return null;
     const taskUrl = typeof row.url === 'string' ? row.url : Number.isInteger(row.databaseId) ? `https://github.com/${repository}/pull/${prNumber}#issuecomment-${row.databaseId}` : undefined;
@@ -44,11 +58,16 @@ export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, 
   }).filter((item): item is Task => item !== null);
   const state = String(pr.state ?? '').toUpperCase();
   const githubState: PullRequestState = pr.merged === true ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
-  return jobs.map(job => {
+  const overviews = jobs.map(job => {
     job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
     if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
+    if (typeof pr.headRefOid === 'string' && pr.headRefOid) job.headSha = pr.headRefOid;
     return { job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null, publication };
   });
+  return { overviews, seed: { prNode: pr, comments: seedComments } };
+}
+export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
+  return (await loadManagedGitHubPullRequestSnapshotGraphql(client, repository, prNumber, trustedAuthors)).overviews;
 }
 export async function loadManagedGitHubJobGraphql(client: GitHubClient, repository: string, prNumber: number, jobId: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview | null> {
   return (await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors)).find(item => item.job.id === jobId) ?? null;

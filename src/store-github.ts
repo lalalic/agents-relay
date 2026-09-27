@@ -1,4 +1,4 @@
-import type { DurableStore, GitHubClient, Comment, PullRequestState } from './store.js';
+import type { DurableStore, GitHubClient, Comment, PullRequestState, GitHubPullRequestSeed } from './store.js';
 import { Job, Task, AgentRegistration } from './types.js';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderTaskComment, JOB_MARKER } from './markers.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
@@ -11,7 +11,12 @@ export class GitHubStore implements DurableStore {
   private commentsCache: Comment[] | null = null;
   private commentsFlight: Promise<Comment[]> | null = null;
   private clearReadSnapshot(): void { this.prNodeCache = null; this.commentsCache = null; this.commentsFlight = null; }
-  constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
+  constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set(), seed: GitHubPullRequestSeed | null = null) {
+    if (seed) {
+      if (Object.keys(seed.prNode).length > 0) this.prNodeCache = Promise.resolve(seed.prNode);
+      if (seed.comments) this.commentsCache = [...seed.comments];
+    }
+  }
   private taskKey(task: Pick<Task, 'jobId' | 'id'>): string { return `${this.repository}#${this.prNumber}:${task.jobId ?? ''}/${task.id}`; }
   private taskKeyFromBody(body: string): string | null { const task = parseTask(body); return task ? this.taskKey(task) : null; }
   private overlayTaskWrites(comments: Comment[]): Comment[] {

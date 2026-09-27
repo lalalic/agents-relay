@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore, listManagedGitHubJobs, loadManagedGitHubPullRequestGraphql } from '../dist/store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, listManagedGitHubJobs, loadManagedGitHubPullRequestGraphql, loadManagedGitHubPullRequestSnapshotGraphql } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, renderJobBody, TASK_MARKER } from '../dist/markers.js';
 
 test('rendered job/task markers do not duplicate human markdown content', async () => {
@@ -602,6 +602,26 @@ test('managed Job list hydrates publication from GraphQL github-actions author',
   const rows = await listManagedGitHubJobs(client, 'owner/repo', new Set(['bot']));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].publication?.version, '1.0.133');
+});
+
+test('GraphQL PR snapshot is complete enough to seed GitHubStore reads', async () => {
+  const durableJob=job('webhook-seed');
+  const durableTask=task('webhook-seed','work');
+  const body=marker(TASK_MARKER,durableTask);
+  let graphqlCalls=0;
+  const client={request:async()=>null,graphql:async query=>{
+    graphqlCalls+=1;
+    assert.match(query,/headRefName headRefOid comments\(last:100\)\{totalCount/);
+    return {repository:{pullRequest:{id:'PR_seed',state:'OPEN',isDraft:false,merged:false,mergedAt:null,closedAt:null,body:renderJobBody(durableJob),headRefName:'feat/seed',headRefOid:'seed-sha',comments:{totalCount:1,nodes:[{id:'IC_seed',databaseId:9,url:'https://example/9',updatedAt:now(),author:{login:'bot'},body}]}}}};
+  }};
+  const snapshot=await loadManagedGitHubPullRequestSnapshotGraphql(client,'owner/repo',9,new Set(['bot']));
+  assert.equal(graphqlCalls,1);
+  assert.equal(snapshot.overviews[0].job.id,'webhook-seed');
+  const store=new GitHubStore({request:async()=>null,graphql:async()=>{throw new Error('seeded store re-read GraphQL');}},'owner/repo',9,new Set(['bot']),snapshot.seed);
+  const loaded=await store.load('webhook-seed');
+  assert.equal(loaded.tasks[0].id,'work');
+  assert.equal(await store.pullRequestState(),'OPEN');
+  assert.deepEqual(await store.pullRequestHead(),{ref:'feat/seed',sha:'seed-sha'});
 });
 
 test('GitHubStore reuses one PR snapshot per reconciliation-style store instance', async () => {
