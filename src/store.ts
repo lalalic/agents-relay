@@ -12,7 +12,7 @@ function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAu
   const allowed = rows.filter(item => {
     const author = item.author as Record<string, unknown> | undefined;
     const login = typeof author?.login === 'string' ? author.login : '';
-    return trustedAuthors.has(login) || login === 'github-actions[bot]';
+    return trustedAuthors.has(login) || login === 'github-actions[bot]' || login === 'github-actions';
   });
   return allowed.map(item => parsePackagePublicationMarker(String(item.body ?? ''))).filter((item): item is PackagePublication => item !== null).at(-1) ?? null;
 }

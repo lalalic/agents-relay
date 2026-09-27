@@ -1,8 +1,8 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.js';
-import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, listManagedGitHubJobs, loadManagedGitHubPullRequestGraphql } from '../dist/store.js';
+import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, renderJobBody, TASK_MARKER } from '../dist/markers.js';
 
 test('rendered job/task markers do not duplicate human markdown content', async () => {
   const { renderJobBody, renderJobComment, renderTaskComment } = await import('../dist/markers.js');
@@ -557,4 +557,49 @@ test('GitHub client exposes in-memory API call counters in rate-limit status', a
   assert.match(source, /this\.apiDiagnostics\.graphql \+= 1/);
   assert.match(source, /this\.apiDiagnostics\.rest \+= 1/);
   assert.match(source, /this\.apiDiagnostics\.rateLimit \+= 1/);
+});
+
+test('GraphQL publication hydration accepts github-actions bot identity without trusting it for Job markers', async () => {
+  const durable = job('published-job');
+  durable.state = 'COMPLETED';
+  const publicationBody = '<!-- agents-relay:package-published:v1 {"package":"agents-relay","version":"1.0.133","registry":"https://registry.npmjs.org","sha":"abc123"} -->';
+  const forged = job('forged-by-actions');
+  const client = {
+    request: async () => { throw new Error('REST unavailable'); },
+    graphql: async query => {
+      if (!query.includes('pullRequest(number:$number)')) throw new Error('unexpected query');
+      return { repository: { pullRequest: {
+        state:'MERGED', isDraft:false, merged:true, mergedAt:now(), closedAt:now(), body:renderJobBody(durable),
+        comments:{nodes:[
+          {databaseId:1,url:'https://example/1',author:{login:'github-actions'},body:publicationBody},
+          {databaseId:2,url:'https://example/2',author:{login:'github-actions'},body:marker(JOB_MARKER, forged)}
+        ]}
+      } } };
+    }
+  };
+  const rows = await loadManagedGitHubPullRequestGraphql(client, 'owner/repo', 141, new Set(['bot']));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].job.id, 'published-job');
+  assert.equal(rows[0].publication?.version, '1.0.133');
+});
+
+test('managed Job list hydrates publication from GraphQL github-actions author', async () => {
+  const durable = job('published-list-job');
+  durable.state = 'COMPLETED';
+  durable.prNumber = 141;
+  const publicationBody = '<!-- agents-relay:package-published:v1 {"package":"agents-relay","version":"1.0.133","registry":"https://registry.npmjs.org","sha":"abc123"} -->';
+  const client = {
+    request: async () => { throw new Error('REST unavailable'); },
+    graphql: async query => {
+      if (!query.includes('recentMerged:pullRequests')) throw new Error('unexpected query');
+      return { repository:{
+        open:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},
+        recentMerged:{nodes:[{number:141,body:renderJobBody(durable),state:'MERGED',isDraft:false,merged:true,mergedAt:now(),closedAt:now(),comments:{nodes:[{author:{login:'github-actions'},body:publicationBody}]}}]},
+        recentClosed:{nodes:[]}
+      }};
+    }
+  };
+  const rows = await listManagedGitHubJobs(client, 'owner/repo', new Set(['bot']));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].publication?.version, '1.0.133');
 });
