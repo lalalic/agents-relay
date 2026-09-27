@@ -1,5 +1,5 @@
 import { Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
-import { schedule, transitionTaskEvent, transitionJobEvent } from './scheduler.js';
+import { schedule, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
@@ -150,6 +150,16 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const outcome: ReviewOutcome = event.type === 'review.started' ? 'started' : event.type === 'review.approved' ? 'approved' : event.type === 'review.changes_required' ? 'changes_required' : 'blocked';
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
+    const taskDecision = tryTransitionTaskEvent(task, event.type);
+    if (!taskDecision.accepted || !taskDecision.target) return;
+    task.error = null;
+    if (taskDecision.target !== 'RUNNING') {
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.executionId = null;
+    }
+    await this.store.saveTask(task);
+
     const evidence = { summary: event.message || `Review ${outcome}`, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
 

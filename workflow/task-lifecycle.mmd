@@ -11,6 +11,10 @@ stateDiagram-v2
     QUEUED --> QUEUED: reconcile [runnable] / mutation.clearError,mutation.clearFailureReason
     QUEUED --> QUEUED: dispatch [dispatchable] / effect.launchTask
     QUEUED --> RUNNING: task.started / mutation.clearError,mutation.clearFailureReason
+    QUEUED --> RUNNING: review.started / mutation.clearError,mutation.clearFailureReason
+    QUEUED --> SUCCEEDED: review.approved / mutation.clearError,mutation.clearFailureReason
+    QUEUED --> SUCCEEDED: review.changes_required / mutation.clearError,mutation.clearFailureReason
+    QUEUED --> BLOCKED: review.blocked
     QUEUED --> BLOCKED: block
     QUEUED --> FAILED: fail
     QUEUED --> FAILED: effect.launchTask.failed
@@ -20,6 +24,9 @@ stateDiagram-v2
     QUEUED --> CANCELLED: cancel
 
     RUNNING --> BLOCKED: task.blocked
+    RUNNING --> SUCCEEDED: review.approved / mutation.clearError,mutation.clearFailureReason
+    RUNNING --> SUCCEEDED: review.changes_required / mutation.clearError,mutation.clearFailureReason
+    RUNNING --> BLOCKED: review.blocked
     RUNNING --> SUCCEEDED: task.completed / mutation.clearError,mutation.clearFailureReason
     RUNNING --> FAILED: task.failed
     RUNNING --> FAILED: watchdog.failed

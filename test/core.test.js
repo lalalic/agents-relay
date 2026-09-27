@@ -1174,8 +1174,9 @@ test('review changes-required creates exactly one Codex Luna fix task containing
   assert.match(fixes[0].input,/1\. first bug/);
   assert.match(fixes[0].input,/2\. second bug/);
   assert.match(fixes[0].input,/3\. third bug/);
+  assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
   assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'WAITING');
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
@@ -1219,10 +1220,11 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   assert.ok(created);
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.started', 'running', 'started', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'gates passed', evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'started');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'RUNNING');
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', { review: { headSha: 'sha-review-1', summary: 'approved', blockingFindings: [], evidence: ['tests'] } }));
   assert.equal((await store.load('j')).review?.outcome, 'approved');
   assert.equal((await store.load('j')).review?.evidence?.data?.review?.summary, 'approved');
-  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'QUEUED');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === created.id)?.state, 'SUCCEEDED');
   const changed = await store.load('j');
   changed.headSha = 'sha-review-2';
   await store.saveJob(changed);
@@ -1232,6 +1234,38 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   const refreshed = await store.load('j');
   assert.equal(refreshed.review?.headSha, 'sha-review-2');
   assert.equal(refreshed.tasks.filter(item => item.agentName === 'reviewer').length, 2);
+});
+
+
+test('blocked review transitions reviewer task to BLOCKED', async () => {
+  const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-blocked'};
+  const store=new InMemoryStore(reviewJob);
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(reviewer);
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.started','running','started','orchestrator',{review:{headSha:'sha-blocked'}}));
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.blocked','blocked','external blocker','orchestrator',{review:{headSha:'sha-blocked'}}));
+  const saved=await store.load('j');
+  assert.equal(saved.review?.outcome,'blocked');
+  assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'BLOCKED');
+});
+
+test('approved reviewer remains SUCCEEDED after merged PR reconciliation', async () => {
+  const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-merged-review',autoMerge:false};
+  const store=new InMemoryStore(reviewJob); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-merged-review';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(reviewer);
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.started','running','started','orchestrator',{review:{headSha:'sha-merged-review'}}));
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.approved','succeeded','approved','orchestrator',{review:{headSha:'sha-merged-review'}}));
+  assert.equal((await store.load('j')).tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
+  store.pullRequestState=async()=> 'MERGED';
+  const merged=await reconciler.reconcile('j');
+  assert.equal(merged.state,'COMPLETED');
+  assert.equal(merged.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
+  assert.equal(merged.tasks.find(item=>item.id===reviewer.id)?.error,null);
 });
 
 test('open zero-task jobs remain create-only and do not consume reconciliation capacity', () => {
