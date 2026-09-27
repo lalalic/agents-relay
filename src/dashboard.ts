@@ -65,7 +65,7 @@ export function serveDashboard(
   usageRegistry?: UsageSnapshotProvider,
   overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
-  statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
+  statusProvider?: () => { limited: boolean; cooldownUntil: string | null; [key: string]: unknown },
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
   actions?: DashboardActions,

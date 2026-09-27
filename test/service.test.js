@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments } from '../dist/relayd.js';
+import { normalizeDaemonArguments, recoveryScanRepositories } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -259,4 +259,20 @@ test('relayd serves cached PR state and gates worker pool while GitHub cooldown 
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedOverviews\.filter/);
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
   assert.match(source, /return cachedJob\(\);\n    }\n  };/);
+});
+
+
+test('recovery scan skips repositories whose cached jobs are already terminal', () => {
+  const now = new Date().toISOString();
+  const terminal = { job: { id:'done', title:'done', repository:'owner/done', prNumber:1, state:'COMPLETED', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null };
+  const active = { job: { id:'active', title:'active', repository:'owner/active', prNumber:2, state:'ACTIVE', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'OPEN', draft:false, mergedAt:null, closedAt:null };
+  assert.deepEqual(recoveryScanRepositories(['owner/done','owner/active','owner/unknown'], [terminal, active]), ['owner/active','owner/unknown']);
+});
+
+test('relayd exposes bounded GitHub read-path counters', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /githubReadPaths = \{ workspaceScans: 0, prRefreshes: 0 \}/);
+  assert.match(source, /githubReadPaths\.workspaceScans \+= 1/);
+  assert.match(source, /githubReadPaths\.prRefreshes \+= 1/);
+  assert.match(source, /readPaths: \{ \.\.\.githubReadPaths \}/);
 });

@@ -427,3 +427,11 @@ test('dashboard Usage renders GitHub REST, GraphQL, Search and cooldown telemetr
   assert.match(dashboardHtml, /Relay cooldown active/);
   assert.match(dashboardHtml, /Resets /);
 });
+
+
+test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
+  assert.match(dashboardHtml, /Calls since start/);
+  assert.match(dashboardHtml, /Read paths/);
+  assert.match(dashboardHtml, /workspace scans/);
+  assert.match(dashboardHtml, /PR refreshes/);
+});

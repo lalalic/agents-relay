@@ -245,10 +245,11 @@ export class GhApiClient implements GitHubClient {
   private rateLimitCache: { cachedAt: number; snapshot: GitHubRateLimitSnapshot } | null = null;
   private rateLimitFlight: Promise<GitHubRateLimitSnapshot> | null = null;
   private readonly rateLimitCacheTtlMs = 5 * 60_000;
+  private readonly apiDiagnostics = { rest: 0, graphql: 0, rateLimit: 0 };
   constructor(private readonly appAuth: GitHubAppAuthOptions | null = null) {}
-  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null } {
+  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null; calls: { rest: number; graphql: number; rateLimit: number } } {
     const limited = Date.now() < this.cooldownUntil;
-    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null };
+    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null, calls: { ...this.apiDiagnostics } };
   }
   async rateLimitSnapshot(force = false): Promise<GitHubRateLimitSnapshot> {
     const now = Date.now();
@@ -256,6 +257,7 @@ export class GhApiClient implements GitHubClient {
     if (this.rateLimitFlight) return this.rateLimitFlight;
     if (this.rateLimitStatus().limited && this.rateLimitCache) return this.rateLimitCache.snapshot;
     const flight = (async (): Promise<GitHubRateLimitSnapshot> => {
+      this.apiDiagnostics.rateLimit += 1;
       const stdout = await this.spawnGh(['api', 'rate_limit'], undefined, await this.commandEnv());
       const parsed = JSON.parse(stdout) as Record<string, unknown>;
       const resources = parsed.resources as Record<string, unknown> | undefined;
@@ -330,6 +332,7 @@ export class GhApiClient implements GitHubClient {
   }
   async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
     this.assertAvailable();
+    this.apiDiagnostics.graphql += 1;
     const payload = JSON.stringify({ query, variables });
     const stdout = await this.spawnGh(['api', 'graphql', '--input', '-'], payload, await this.commandEnv());
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
@@ -340,6 +343,7 @@ export class GhApiClient implements GitHubClient {
   }
   async request(path: string, init: RequestInit = {}): Promise<unknown> {
     this.assertAvailable();
+    this.apiDiagnostics.rest += 1;
     const args = ['api', path]; const method = String(init.method ?? 'GET');
     if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-');
     const stdout = await this.spawnGh(args, init.body ? String(init.body) : undefined, await this.commandEnv());

@@ -548,3 +548,13 @@ test('GitHub rate limit snapshot is lazy cached and single-flight by constructio
   assert.match(source, /\['api', 'rate_limit'\]/);
   assert.match(source, /resources: \{ core: bucket\(resources\?\.core\), graphql: bucket\(resources\?\.graphql\), search: bucket\(resources\?\.search\) \}/);
 });
+
+
+test('GitHub client exposes in-memory API call counters in rate-limit status', async () => {
+  const source = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+  assert.match(source, /apiDiagnostics = \{ rest: 0, graphql: 0, rateLimit: 0 \}/);
+  assert.match(source, /calls: \{ \.\.\.this\.apiDiagnostics \}/);
+  assert.match(source, /this\.apiDiagnostics\.graphql \+= 1/);
+  assert.match(source, /this\.apiDiagnostics\.rest \+= 1/);
+  assert.match(source, /this\.apiDiagnostics\.rateLimit \+= 1/);
+});
