@@ -213,10 +213,14 @@ test('ChatGptAdapter passes the close policy to the browser worker', async () =>
   }
 });
 
-test('buildCodexArgs applies provider, model, reasoning, cwd, and profile in order', () => {
+test('buildCodexArgs prefers explicit profile and otherwise maps provider to Codex profile', () => {
   assert.deepEqual(
     buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash', reasoning: 'medium', cwd: '/workspace/project', profile: 'relay' }, 'inspect runtime'),
-    ['exec', '--json', '-p', 'relay', '-m', 'glm-5.3-flash', '-c', 'model_provider=zai', '-c', 'model_reasoning_effort=medium', '-C', '/workspace/project', '--', 'inspect runtime'],
+    ['exec', '--json', '-p', 'relay', '-m', 'glm-5.3-flash', '-c', 'model_reasoning_effort=medium', '-C', '/workspace/project', '--', 'inspect runtime'],
+  );
+  assert.deepEqual(
+    buildCodexArgs({ provider: 'zai', model: 'glm-5.3-flash', reasoning: 'high' }, 'inspect runtime'),
+    ['exec', '--json', '-p', 'zai', '-m', 'glm-5.3-flash', '-c', 'model_reasoning_effort=high', '--', 'inspect runtime'],
   );
 });
 

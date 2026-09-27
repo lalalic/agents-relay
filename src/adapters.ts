@@ -28,8 +28,8 @@ export function buildCodexArgs(
 ): readonly string[] {
   const args: string[] = ['exec', '--json'];
   if (route.profile) args.push('-p', route.profile);
+  else if (route.provider) args.push('-p', route.provider);
   if (route.model) args.push('-m', route.model);
-  if (route.provider) args.push('-c', `model_provider=${route.provider}`);
   if (route.reasoning) args.push('-c', `model_reasoning_effort=${route.reasoning}`);
   if (route.cwd) args.push('-C', route.cwd);
   args.push('--', input);
