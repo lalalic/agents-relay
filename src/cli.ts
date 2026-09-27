@@ -71,7 +71,6 @@ export async function ensureManagedGitHubJob(
   if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
 }
-
 async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
   const model = arg(args, '--model');
   const adapterValue = arg(args, '--adapter');
@@ -123,7 +122,6 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     updatedAt: now
   };
 }
-
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
@@ -227,7 +225,6 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   await saveLocal(localFile, job);
   console.log(JSON.stringify(task, null, 2));
 }
-
 async function runContextCommand(action: string, args: string[]): Promise<void> {
   if (action !== 'resolve') throw new Error(usage);
   const projectPath = arg(args, '--project-path');
