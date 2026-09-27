@@ -104,6 +104,34 @@ graph guard (`recoverableExecution`) rather than a Reconciler-created
 `watchdog.failed` because no such edge exists. Process lifecycle events remain
 evidence and never authorize a semantic transition on their own.
 
+## Review Chair pattern
+
+Review Chair is an optional normal Task/Agent Graph pattern. It discovers
+visible agents at runtime, records panel selection rationale, fans out sibling
+specialist Tasks against one immutable `{ artifact, version }`, and gathers
+structured findings into one attributed revision plan. It does not edit the
+artifact or replace final review.
+
+```mermaid
+flowchart TD
+  target[Exact artifact/version] --> chair[review-chair]
+  chair --> director[video-director]
+  chair --> market[market]
+  chair --> style[style specialist]
+  director --> synthesis[Unified revision plan]
+  market --> synthesis
+  style --> synthesis
+  synthesis --> executor[Revision Task]
+```
+
+The example is illustrative rather than a fixed reviewer list: a landing page
+may select copy and visual design, while architecture may select security and
+maintainability. The chair chooses agent roles from the resolved visible-agent
+catalog; Relay independently routes each durable Task to an available worker
+and model. If synthesis exposes a missing dimension, the chair creates another
+specialist Task with the same target/version before handing the unified plan to
+the executor. Existing SHA-bound final review still gates completion.
+
 ## Stability contract
 
 The Mermaid Graph Engine is the only authoritative Job/Task lifecycle decision path. There is no alternate lifecycle evaluator or runtime mode switch.

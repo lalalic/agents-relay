@@ -84,13 +84,21 @@ export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; 
 export type BlockerDependentState = 'waiting' | 'resumed' | 'obsolete';
 export type BlockerDependent = { repository: string; prNumber: number; jobId: string; taskId: string; blockedAttempt: number; registeredAt: string; state: BlockerDependentState; resolvedAt?: string; resolution?: 'merge' | 'verified'; note?: string };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
+export type ReviewTarget = { artifact: string; version: string };
+export type ReviewTaskMetadata = {
+  role: 'chair' | 'specialist';
+  target: ReviewTarget;
+  dimension?: string;
+  selectionReason?: string;
+  round?: number;
+};
 export type ManualTaskStateOverride = { from: TaskState; to: TaskState; at: string; actor: 'dashboard-user' };
 export type ReviewOutcome = 'pending' | 'started' | 'approved' | 'changes_required' | 'blocked' | 'stale';
 export type ReviewState = { outcome: ReviewOutcome; headSha: string; taskId: string | null; evidence: Result | null; updatedAt: string };
 export type Task = {
   jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
-  input: string; attachments?: string[]; output?: TaskOutput; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
+  input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
