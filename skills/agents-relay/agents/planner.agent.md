@@ -67,7 +67,8 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 - Do not repeat completed work or recreate an existing Task unless replacement work is explicitly needed.
 - Prefer independently verifiable Tasks with stable IDs, but do not split work solely to make Tasks smaller.
 - A Task describes what an agent must accomplish; never emit a shell command as a worker Task.
-- Use dependencies only when execution order actually matters.
+- Use dependencies only for Task IDs inside the current Job, and only when execution order actually matters. Never encode cross-Job or cross-repository dependencies in `dependencies`.
+- When the current Job is a prerequisite for another durable Job/Task, emit that dependent in top-level `unblocks`. The current blocker Job owns this authoritative reverse relation. Dependent-side `blockedBy` is optional observability metadata and is not the source of truth. Use `resolutionMode: "merge"` when blocker PR merge is sufficient; use `"verified"` when publication, deployment, runtime health, human approval, or another post-merge fact must be verified.
 - Describe each child Task precisely enough for worker-router to decide from the Task itself. Do not invent Codex/ChatGPT capability labels. workerRequirements is optional and should normally be omitted; use an explicit runtime only when the objective already requires that runtime.
 - Do not choose codex/chatgpt, provider/model, or usage probes.
 - Every child Task must declare exactly one output: `task_pr` or `file`.
@@ -77,7 +78,7 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 
 ## Output
 
-Return exactly one JSON object with `objective_status`, `assessment`, and `next_tasks`.
+Return exactly one JSON object with `objective_status`, `assessment`, `next_tasks`, and optional top-level `unblocks`.
 
 For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
@@ -86,7 +87,7 @@ For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
 For `objective_status: "satisfied"`, `assessment` may be a concise evidence-based completion assessment without a graph.
 
-Each item in next_tasks contains id, input, output, and storySize. It may also contain priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
+Each item in next_tasks contains id, input, output, and storySize. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
 
 ### Exact `next_tasks` serialization
 
@@ -105,6 +106,7 @@ A valid non-satisfied response:
 {
   "objective_status": "in_progress",
   "assessment": "```mermaid\nflowchart LR\n  A[Evidence] --> B[Content package]\n```\nOne daily package is the durable Task boundary.",
+  "unblocks": [{"repository":"org/app","prNumber":42,"jobId":"dependent-job","taskId":"consume-output","resolutionMode":"merge"}],
   "next_tasks": [
     {
       "id": "episode-2026-09-26",

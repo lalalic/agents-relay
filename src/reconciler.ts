@@ -461,13 +461,15 @@ export class Reconciler extends ReconcilerReviewBase {
     try {
       const result = parsePlannerResult(raw);
       const executionContext = await this.plannerContext(job, task);
+      if (result.unblocks.length > 0 && !this.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
+      for (const unblock of result.unblocks) await this.store.registerBlockerDependent?.(job.id, unblock);
       const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing && !samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
       }
       // Persist the completed decision before exposing executable children.
-      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.plannerRetryFeedback = undefined; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
+      task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks, unblocks: result.unblocks } }; task.error = null; task.plannerRetryFeedback = undefined; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await this.store.appendTask(child);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.completed', 'succeeded', `Planner ${task.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
     } catch (caught) {

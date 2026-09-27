@@ -150,6 +150,23 @@ test('execution mode and planner result markers round-trip', () => {
   assert.match(dashboardHtml, /Execution mode/);
 });
 
+test('planner parses authoritative reverse cross-job unblocks and rejects malformed declarations', () => {
+  const result=parsePlannerResult({objective_status:'in_progress',assessment:'wait',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[]});
+  assert.deepEqual(result.unblocks,[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}]);
+  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'bad',prNumber:42,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/repository must be OWNER\/REPO/);
+  assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'org/app',prNumber:0,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/positive integer/);
+});
+
+test('planner persistence delegates reverse unblock registration to durable store', async () => {
+  const store=new InMemoryStore({...job([], 'fixed'),state:'DRAFT'});
+  const seen=[];
+  store.registerBlockerDependent=async (jobId, dependent)=>{ seen.push({jobId,dependent}); };
+  const planner={plan:async()=>({objective_status:'satisfied',assessment:'blocked relation only',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[]})};
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner});
+  await reconciler.planJob('auto');
+  assert.deepEqual(seen,[{jobId:'auto',dependent:{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}}]);
+});
+
 test('planner rejects command-like shell tasks and requires output', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',adapter:'codex'}] }), /output is required/);
