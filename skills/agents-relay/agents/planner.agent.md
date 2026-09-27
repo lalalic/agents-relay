@@ -96,7 +96,7 @@ Use these exact serialized forms:
 - `output` is always an object, never a string:
   - PR-backed work: `{"kind":"task_pr"}`
   - File artifact: `{"kind":"file","path":"runs/2026-09-26/example/output.md"}`
-- `agentGraph`, when present, is one Mermaid graph **string**, for example `"graph LR\n  build-log-editor --> build-log-producer"`. Do not emit an object with `nodes` or `edges`.
+- `agentGraph`, when present, is one executable Mermaid Agent Graph **string** using `flowchart TD|TB|LR|RL`, for example `"flowchart LR\n  build-log-editor --> build-log-producer"`. Do not emit `graph LR`, and do not emit an object with `nodes` or `edges`.
 - `priority`, when present, is exactly `"P0"`, `"P1"`, `"P2"`, or `"P3"`; otherwise omit it.
 - `storySize` is exactly `"S"`, `"M"`, or `"L"`.
 
@@ -115,7 +115,7 @@ A valid non-satisfied response:
       "storySize": "L",
       "priority": "P1",
       "agentName": "build-log-editor",
-      "agentGraph": "graph LR\n  build-log-editor --> build-log-producer"
+      "agentGraph": "flowchart LR\n  build-log-editor --> build-log-producer"
     }
   ]
 }

@@ -1397,3 +1397,29 @@ test('repository pool performs no GitHub-backed reconciliation while rate limite
   await pool.reconcileTarget('owner/repo',44,'limited-job');
   assert.deepEqual(calls,[]);
 });
+
+
+test('CLI task create rejects malformed Agent Graph before persistence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-invalid-create-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','bad-graph','--output','task-pr','--input','execute graph','--agent-graph','graph LR\na --> b'], {cwd:process.cwd()});
+  assert.notEqual(await new Promise(resolve=>child.on('close',resolve)),0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  assert.equal(saved.tasks.length,0);
+  await rm(directory,{recursive:true,force:true});
+});
+
+
+test('CLI task update rejects malformed Agent Graph before replacing durable graph', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-invalid-update-'));
+  const file = join(directory, 'job.json');
+  const existing = task('graph-task', 'QUEUED');
+  existing.agentGraph = 'flowchart LR\nreviewer --> planner';
+  await writeFile(file, JSON.stringify(job([existing])));
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','update','--file',file,'--task-id','graph-task','--agent-graph','graph LR\nreviewer --> planner'], {cwd:process.cwd()});
+  assert.notEqual(await new Promise(resolve=>child.on('close',resolve)),0);
+  const saved=JSON.parse(await readFile(file,'utf8'));
+  assert.equal(saved.tasks[0].agentGraph,'flowchart LR\nreviewer --> planner');
+  await rm(directory,{recursive:true,force:true});
+});

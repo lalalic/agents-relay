@@ -111,6 +111,20 @@ test('every canonical graph transition uses the shared event, fact, and action c
   }
 });
 
+test('every repository lifecycle graph file parses and validates with the production contract', async () => {
+  const directory = new URL('../workflow/', import.meta.url);
+  const files = (await readdir(directory, { withFileTypes: true }))
+    .filter(entry => entry.isFile() && entry.name.endsWith('.mmd'))
+    .map(entry => entry.name)
+    .sort();
+  assert.ok(files.length > 0, 'expected at least one workflow .mmd file');
+  for (const file of files) {
+    const source = await readFile(new URL(file, directory), 'utf8');
+    const graph = parseExecutableMermaid(source);
+    assert.doesNotThrow(() => validateCanonicalWorkflowGraph(graph), file);
+  }
+});
+
 
 async function sourceFiles(directory) {
   const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));

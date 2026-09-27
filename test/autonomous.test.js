@@ -318,3 +318,12 @@ test('planner doubles story-size timeout only for high reasoning', () => {
   const normal=parsePlannerResult({objective_status:'in_progress',assessment:'normal',next_tasks:[{id:'normal',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'medium',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
   assert.equal(normal.next_tasks[0].timeoutMs,900000);
 });
+
+
+test('planner parser rejects malformed Agent Graph before child materialization', () => {
+  assert.throws(() => parsePlannerResult({
+    objective_status: 'in_progress',
+    assessment: 'work',
+    next_tasks: [{ id: 'bad-graph', input: 'work', output: { kind: 'task_pr' }, agentGraph: 'graph LR\na --> b' }],
+  }), /next_tasks\[0\]\.agentGraph is invalid: Agent Graph must start with Mermaid flowchart/);
+});

@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAgentGraph, agentGraphPrompt, validateAgentSelection } from '../dist/agent-graph.js';
@@ -67,4 +67,16 @@ test('business-loop can feed the canonical bundled planner in an external projec
     assert.match(prompt,/business-loop CONTRACT/);
     assert.match(prompt,/# Planner Agent/);
   } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+
+test('agent graph rejects non-production Mermaid graph headers', () => {
+  assert.throws(() => parseAgentGraph(`graph LR\na --> b`), /must start with Mermaid flowchart/);
+});
+
+test('bundled Planner Agent Graph example uses the production grammar', async () => {
+  const source = await readFile(new URL('../skills/agents-relay/agents/planner.agent.md', import.meta.url), 'utf8');
+  assert.equal(source.includes('"agentGraph": "graph LR'), false);
+  assert.equal(source.includes('"agentGraph": "flowchart LR\\n  build-log-editor --> build-log-producer"'), true);
+  assert.doesNotThrow(() => parseAgentGraph('flowchart LR\nbuild-log-editor --> build-log-producer'));
 });
