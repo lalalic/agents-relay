@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|blocker|context|init|record|agent-register|agent-discover|reconcile|tick|serve> [options]';
+export const usage = 'agents-relay <job|task|blocker|context|init|record|agent-register|agent-discover|status|reconcile|tick|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -14,6 +14,7 @@ Commands:
   record                   Backfill a completed task into durable history
   agent-register           Register an agent role and its capabilities
   agent-discover           Find registered agents matching hard filters
+  status                   Show live aggregate runtime status from agents-relayd
   reconcile                Run reconciliation once
   tick                     Run the indexed autonomous scheduler heartbeat
   serve                    Run the dashboard and reconciliation service
@@ -75,6 +76,12 @@ Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head S
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
+  status: `Show live aggregate runtime status from the running Agents Relay service.
+
+Usage:
+  npx agents-relay status [--host HOST] [--port PORT]
+
+Returns the same summary used by the dashboard header plus a running array with concrete RUNNING task and execution identities. Defaults to 127.0.0.1:8787.`,
   task: `Manage durable tasks.
 
 Usage:

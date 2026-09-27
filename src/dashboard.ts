@@ -294,8 +294,14 @@ export function serveDashboard(
       return;
     }
     if (req.url === '/api/runtime-summary') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(summarizeRuntime(lastKnownJobs ?? [])));
+      try {
+        const jobs = await discoveredJobs();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(summarizeRuntime(jobs)));
+      } catch (error) {
+        res.writeHead(502);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (req.url === '/api/status') {
