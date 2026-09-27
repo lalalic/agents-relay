@@ -1,10 +1,25 @@
 import { Job, Task } from './types.js';
 
+export type RunningTaskSummary = {
+  repository: string;
+  prNumber: number;
+  jobId: string;
+  jobTitle: string;
+  taskId: string;
+  agentName: string | null;
+  worker: string;
+  provider: string | null;
+  model: string | null;
+  executionId: string | null;
+  leaseExpiresAt: string | null;
+};
+
 export type RuntimeSummary = {
   activeJobs: number;
   runningTasks: number;
   workers: { chatgpt: number; codex: number };
   models: Array<{ model: string; count: number }>;
+  running: RunningTaskSummary[];
 };
 
 function runningWorker(task: Task): 'chatgpt' | 'codex' | null {
@@ -19,6 +34,7 @@ export function summarizeRuntime(jobs: readonly Job[]): RuntimeSummary {
   let chatgpt = 0;
   let codex = 0;
   const models = new Map<string, number>();
+  const running: RunningTaskSummary[] = [];
 
   for (const job of jobs) {
     if (job.state === 'ACTIVE') activeJobs += 1;
@@ -30,6 +46,19 @@ export function summarizeRuntime(jobs: readonly Job[]): RuntimeSummary {
       if (worker === 'codex') codex += 1;
       const model = task.routing?.model;
       if (model) models.set(model, (models.get(model) ?? 0) + 1);
+      running.push({
+        repository: job.repository,
+        prNumber: job.prNumber,
+        jobId: job.id,
+        jobTitle: job.title,
+        taskId: task.id,
+        agentName: task.agentName ?? null,
+        worker: task.workerSelection?.adapter ?? task.adapter,
+        provider: task.routing?.provider ?? null,
+        model: model ?? null,
+        executionId: task.executionId,
+        leaseExpiresAt: task.leaseExpiresAt,
+      });
     }
   }
 
@@ -40,5 +69,6 @@ export function summarizeRuntime(jobs: readonly Job[]): RuntimeSummary {
     models: [...models.entries()]
       .map(([model, count]) => ({ model, count }))
       .sort((left, right) => right.count - left.count || left.model.localeCompare(right.model)),
+    running,
   };
 }
