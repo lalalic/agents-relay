@@ -321,7 +321,7 @@ test('job list supports title and PR-number wildcard search', () => {
 
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
-  assert.match(source, /forceRefresh && requestedJobId && exactJobProvider/);
+  assert.match(source, /forceRefresh && requestedJobId && resolvedExactJobProvider/);
   assert.match(source, /snapshot\(requestedJobId, true\)/);
   assert.match(source, /if \(clients\.size === 0\) return;/);
 });
@@ -438,7 +438,7 @@ test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
 
 test('dashboard usage remains available when GitHub quota telemetry fails', async () => {
   const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
-  const server=serveDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
+  const server=managedDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
   await once(server,'listening');
   const address=server.address();
   const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
@@ -446,5 +446,4 @@ test('dashboard usage remains available when GitHub quota telemetry fails', asyn
   const body=await response.json();
   assert.equal(body.github,null);
   assert.equal(body.githubStatus.limited,true);
-  await new Promise(resolve=>server.close(resolve));
 });

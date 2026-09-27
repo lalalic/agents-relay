@@ -31,7 +31,8 @@ test('repository daemon wires account usage telemetry and the default planner in
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
-  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),\(\)=>client\.rateLimitSnapshot\(\),exactJob/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>\(\{ \.\.\.client\.rateLimitStatus\(\), readPaths:/);
+  assert.match(source, /\(\)=>client\.rateLimitSnapshot\(\),exactJob/);
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
@@ -55,7 +56,7 @@ test('workspace daemon establishes dashboard and event watch before remote refre
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const cached = source.indexOf('const initial = cachedOverviews');
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
-  const refresh = source.indexOf('void refreshAll()', watch);
+  const refresh = source.indexOf('void refreshAll(true)', watch);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
   assert.ok(refresh > watch);

@@ -242,7 +242,6 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   });
   console.log(JSON.stringify(context, null, 2));
 }
-
 async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'merge', 'cancel'].includes(action)) throw new Error(usage);
   const repo = repository(args);
@@ -306,7 +305,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
-
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
   if (hasArg(args, '--objective') || hasArg(args, '--objective-file')) { const objective = await textOption(args, '--objective', '--objective-file'); if (!objective.trim()) throw new Error('Job objective cannot be empty'); job.objective = objective; }
   if (hasArg(args, '--project-path')) job.projectPath = arg(args, '--project-path') || undefined;
@@ -329,7 +327,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--schedule') && job.schedule) await syncScheduleLabels(auth.client, repo, job);
   console.log(JSON.stringify(await store.load(id), null, 2));
 }
-
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtimeReviewer() { return { requirements: { capabilities: ['model'] } }; }
 export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: new LayaCliDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => resolveRepositoryProjectPath(await resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()), job.projectPath) }); }
@@ -353,7 +350,6 @@ export function dashboardTaskAction(store: DurableStore, reconciler: Reconciler,
     return await reconciler.wake(job.id);
   };
 }
-
 export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, action: 'start' | 'reconcile' | 'cancel'): (jobId: string) => Promise<Job> {
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);
@@ -373,8 +369,7 @@ export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, 
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
   const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined;
-  const requestedUsageDays = Number(arg(args, '--usage-window-days', '1'));
-  const usageWindowDays = Number.isInteger(requestedUsageDays) && requestedUsageDays > 0 ? requestedUsageDays : 1;
+  const requestedUsageDays = Number(arg(args, '--usage-window-days', '1')); const usageWindowDays = Number.isInteger(requestedUsageDays) && requestedUsageDays > 0 ? requestedUsageDays : 1;
   const usageRegistry = codexAndZaiUsageRegistry(undefined, usageWindowDays);
   const reconciler = runtime(loaded.store, args, bus, usageRegistry);
   const repo = arg(args, '--repo');
@@ -499,7 +494,6 @@ async function main(): Promise<void> {
   }
   const reconciler = runtime(store, args, bus);
   if (command === 'reconcile') { await reconciler.reconcile(job.id); await reconciler.idle(); const finalState = await store.load(job.id); await saveLocal(localFile, finalState); console.log(JSON.stringify(finalState, null, 2)); return; }
-  if (command === 'serve') { await startService(args); return; }
-  throw new Error(usage);
+  if (command === 'serve') { await startService(args); return; } throw new Error(usage);
 }
 if (isEntrypoint(import.meta.url)) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
