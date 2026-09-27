@@ -14,6 +14,7 @@ import { summarizeRuntime } from './runtime-summary.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job> };
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -67,8 +68,13 @@ export function serveDashboard(
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null },
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
-  actions?: { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job> },
+  actions?: DashboardActions,
 ): Server {
+  const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
+  const legacyExactJobProvider = !exactJobProvider && githubUsageProvider ? githubUsageProvider as unknown as ((jobId: string) => Promise<Job | null>) : undefined;
+  const resolvedExactJobProvider = typeof exactJobProvider === 'function' ? exactJobProvider : legacyExactJobProvider;
+  const resolvedGithubUsageProvider = legacyExactJobProvider ? undefined : githubUsageProvider;
+  const resolvedActions = actions ?? legacyActions;
   const webhookDeliveries = new DeliveryDeduper();
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
@@ -115,8 +121,8 @@ export function serveDashboard(
   const snapshot = async (requestedJobId = jobId, forceRefresh = false): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
-      if (forceRefresh && requestedJobId && exactJobProvider) {
-        const exact = await exactJobProvider(requestedJobId);
+      if ((forceRefresh && requestedJobId && exactJobProvider) || (forceRefresh && requestedJobId && resolvedExactJobProvider)) {
+        const exact = await resolvedExactJobProvider(requestedJobId);
         if (exact) return { id: exact.id, json: JSON.stringify(exact) };
       }
       const candidates = await discoveredJobs();
@@ -137,7 +143,7 @@ export function serveDashboard(
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
     const account = await readUsageSnapshot(usageRegistry);
-    const github = githubUsageProvider ? await githubUsageProvider() : null;
+    const github = resolvedGithubUsageProvider ? await resolvedGithubUsageProvider() : null;
     const githubStatus = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
     return JSON.stringify({ ...account, github, githubStatus });
   };
@@ -185,10 +191,16 @@ export function serveDashboard(
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       const requestedJobId = url.searchParams.get('id') ?? '';
       const action = url.searchParams.get('action') ?? '';
-      const handler = action === 'start' ? actions?.start : action === 'reconcile' ? actions?.reconcile : action === 'cancel' ? actions?.cancel : undefined;
+      const handler = action === 'start' ? resolvedActions?.start : action === 'reconcile' ? resolvedActions?.reconcile : action === 'cancel' ? resolvedActions?.cancel : undefined;
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
-      try { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(await handler(requestedJobId))); }
-      catch (error) { res.writeHead(409); res.end(error instanceof Error ? error.message : String(error)); }
+      try {
+        const result = await handler(requestedJobId);
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(result));
+      } catch (error) {
+        if (!res.headersSent) res.writeHead(409);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/task-action') {
@@ -196,10 +208,16 @@ export function serveDashboard(
       const requestedJobId = url.searchParams.get('id') ?? '';
       const requestedTaskId = url.searchParams.get('task') ?? '';
       const action = url.searchParams.get('action') ?? '';
-      const handler = action === 'retry' ? actions?.taskRetry : action === 'cancel' ? actions?.taskCancel : undefined;
+      const handler = action === 'retry' ? resolvedActions?.taskRetry : action === 'cancel' ? resolvedActions?.taskCancel : undefined;
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !/^[A-Za-z0-9_-]+$/.test(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
-      try { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(await handler(requestedJobId, requestedTaskId))); }
-      catch (error) { res.writeHead(409); res.end(error instanceof Error ? error.message : String(error)); }
+      try {
+        const result = await handler(requestedJobId, requestedTaskId);
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(result));
+      } catch (error) {
+        if (!res.headersSent) res.writeHead(409);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {
