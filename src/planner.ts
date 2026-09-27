@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
@@ -25,8 +25,43 @@ export type PlannerTaskSpec = {
   timeoutMs?: number;
 };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext; retryFeedback?: string };
+export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
+export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
+
+export function plannerRoundNumber(task: Task): number | null {
+  if (task.kind !== 'planner') return null;
+  if (Number.isInteger(task.planningRound) && (task.planningRound ?? 0) > 0) return task.planningRound as number;
+  const match = /^(?:plan|planner)-(\d+)$/.exec(task.id);
+  return match ? Number(match[1]) : null;
+}
+
+export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = {}): Task {
+  const planners = job.tasks.filter(task => task.kind === 'planner')
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const used = new Set(job.tasks.map(task => task.id));
+  let round = Math.max(0, ...planners.map(task => plannerRoundNumber(task) ?? 0)) + 1;
+  let id = `plan-${round}`;
+  while (used.has(id)) { round += 1; id = `plan-${round}`; }
+  const previousPlanner = planners.at(-1);
+  const now = options.now ?? new Date().toISOString();
+  const context: PlannerContext = {
+    job,
+    tasks: job.tasks,
+    objective: job.objective ?? job.description ?? job.title,
+    previousPlannerTaskId: previousPlanner?.id ?? null,
+    guidance: options.guidance,
+  };
+  return {
+    jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner',
+    parentTaskId: previousPlanner?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator',
+    input: plannerInput(context), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0,
+    maxAttempts: options.manual ? 1 : 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
+    result: null, plannerResult: null, error: null, timeoutMs: options.timeoutMs ?? storySizeTimeoutMs('M'),
+    createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: round,
+    plannerGuidance: options.guidance, manualPlanning: options.manual === true,
+  };
+}
 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
@@ -150,6 +185,7 @@ export function plannerInput(context: PlannerContext): string {
   return JSON.stringify({
     objective: context.objective,
     retry_feedback: context.retryFeedback,
+    caller_prompt: context.guidance,
     previous_planner_task_id: context.previousPlannerTaskId,
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],

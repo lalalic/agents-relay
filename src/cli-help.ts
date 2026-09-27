@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|blocker|context|init|record|agent-register|agent-discover|status|reconcile|tick|serve> [options]';
+export const usage = 'agents-relay <job|task|plan|blocker|context|init|record|agent-register|agent-discover|status|reconcile|tick|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -8,6 +8,7 @@ Usage:
 Commands:
   job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
   task create|update|show|list|complete|retry|cancel  Manage durable tasks
+  plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
@@ -126,6 +127,15 @@ Required: --task-id ID and the normal Job storage options.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  plan: `Invoke the Planner against the current durable Job state.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
+Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt is additional guidance for this planning round and never replaces the durable Job objective.
+
+The command persists one real plan-N round, materializes validated next_tasks with planner provenance, and wakes normal reconciliation. It works for zero-task DRAFT Jobs. Historical planner-N rounds remain readable, but new rounds use plan-N.
+
+Example:
+  npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt "Plan the full implementation now; keep independent work parallel."`,
   blocker: `Manage durable cross-Job blocker dependencies.
 
 Usage:

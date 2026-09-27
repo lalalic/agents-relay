@@ -27,9 +27,9 @@ The registry does not yet execute remote agents or expose a public marketplace. 
 ## Execution modes
 
 Jobs persist `executionMode` as `fixed` or `autonomous`; missing mode in legacy
-markers is read as `fixed`. Fixed remains the default. Direct orchestrator work is created with `task create`; autonomous continuation uses planner rounds only when Relay actually invokes the planner. Autonomous jobs use the existing task records and parent hierarchy:
+markers is read as `fixed`. Fixed remains the default. Direct orchestrator work is created with `task create`; explicit planner-driven decomposition uses `plan`, and autonomous continuation uses the same planner-round implementation when Relay invokes the planner. Autonomous jobs use the existing task records and parent hierarchy:
 when all currently runnable work is settled and no planner task is active,
-reconciliation appends one durable `kind: "planner"` task. The planner returns
+reconciliation appends one durable `kind: "planner"` `plan-N` task. Historical `planner-N` task IDs remain readable. The planner returns
 typed `objective_status`, `assessment`, and `next_tasks` values. Each
 `next_tasks` item becomes a normal child task of that planner task.
 

@@ -19,15 +19,15 @@ Existing jobs remain `fixed` by default. An `autonomous` job may grow its own du
 
 ## Initial planning contract
 
-An orchestrator may create the initial executable batch directly with `task create`. Those Tasks are real top-level work and do not require a synthetic planning decision, `planner-0`, or planner provenance. A zero-task autonomous Job remains idle.
+An orchestrator may create the initial executable batch directly with `task create`. Those Tasks are real top-level work and do not require a synthetic planning decision, `plan-0`, or planner provenance. A zero-task autonomous Job remains idle.
 
-After the direct initial batch settles successfully, Relay may create the first real planner round. Relay invokes the planner agent with durable Job/Task state and prior planner rounds. The planner returns structured `objective_status`, `assessment`, and `next_tasks`; it does not call the Relay CLI or persist anything itself. Relay persists the planner result and then materializes its returned Tasks under that planner round.
+An explicit `agents-relay plan` may also create the first real planning round immediately on a zero-task DRAFT Job, using the durable objective plus optional caller guidance. After the direct initial batch settles successfully, Relay may create the first real planner round. Relay invokes the planner agent with durable Job/Task state and prior planner rounds. The planner returns structured `objective_status`, `assessment`, and `next_tasks`; it does not call the Relay CLI or persist anything itself. Relay persists the planner result and then materializes its returned Tasks under that planner round.
 
 The lifecycle is therefore:
 
 ```text
 fixed:      direct orchestrator Tasks -> review/completion
-autonomous: direct orchestrator Tasks -> planner-1 -> planner Tasks -> planner-2 -> ...
+autonomous: direct orchestrator Tasks -> plan-1 -> planner Tasks -> plan-2 -> ...
 ```
 
 Only Tasks created from an actual planner invocation carry planner provenance (`planningDecisionId`, `planningSource`, `planningRound`). Direct orchestrator Tasks do not.
@@ -63,12 +63,12 @@ Planning causality is visible directly in the existing task tree. Direct orchest
 ```mermaid
 graph TD
     J[Autonomous Job] --> T0[direct initial task]
-    J --> P1[planner-1]
+    J --> P1[plan-1]
     P1 --> T1[implementation task]
     P1 --> T2[test task]
-    P1 --> P2[planner-2]
+    P1 --> P2[plan-2]
     P2 --> T3[remediation task]
-    P2 --> P3[planner-3: satisfied]
+    P2 --> P3[plan-3: satisfied]
 ```
 
 Each planner result is persisted with its assessment and generated work. Stable generated task IDs plus durable append semantics make replay safe.
@@ -109,7 +109,7 @@ Planner satisfaction is evidence about the objective, not authority to complete 
 
 ## Compatibility and surfaces
 
-Fixed jobs retain their scheduling behavior. Execution mode and real planner-round state are serialized in durable markers and surfaced through Job/Task CLI data and the dashboard. Legacy markers without an execution mode are interpreted as `fixed`.
+Fixed jobs retain their scheduling behavior. Execution mode and real planner-round state are serialized in durable markers and surfaced through Job/Task CLI data and the dashboard. Legacy markers without an execution mode are interpreted as `fixed`. New planning invocations use `plan-N`; historical `planner-N` IDs remain valid durable history and are considered when selecting the next round number.
 
 ## Implementation sequence
 
