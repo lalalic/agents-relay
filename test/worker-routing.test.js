@@ -280,17 +280,17 @@ test('Codex remains worker-eligible when its OpenAI resource snapshot is exhaust
   assert.equal(decision.selection.resourceHealthy, false);
 });
 
-test('Browser Workspace idle capacity keeps ChatGPT Browser Worker eligible', () => {
+test('Browser Workspace allocatable capacity keeps ChatGPT Browser Worker eligible when no tabs are idle', () => {
   const decision = selectWorker([
-    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 2, leased: 3, available: true, observedAt: generatedAt, reason: null } },
+    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 0, leased: 3, available: 2, observedAt: generatedAt, reason: null } },
   ], { capabilities: ['model'] });
   assert.equal(decision.selection.workerId, 'chatgpt/browser-worker');
-  assert.equal(decision.selection.browserWorkspaceCapacity?.idle, 2);
+  assert.equal(decision.selection.browserWorkspaceCapacity?.available, 2);
 });
 
-test('exhausted Browser Workspace prevents ChatGPT selection and explains no route', () => {
-  const candidate = { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: false, observedAt: generatedAt, reason: null } };
-  assert.throws(() => selectWorker([candidate], { capabilities: ['model'] }), /no idle capacity/);
+test('zero allocatable Browser Workspace capacity prevents ChatGPT selection and explains no route', () => {
+  const candidate = { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: 0, observedAt: generatedAt, reason: null } };
+  assert.throws(() => selectWorker([candidate], { capabilities: ['model'] }), /no allocatable capacity/);
   const decision = selectWorker([
     candidate,
     { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] },

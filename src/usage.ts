@@ -104,7 +104,11 @@ export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityRead
             const idle = numberOrNull(raw.idle);
             const leased = numberOrNull(raw.leased);
             const poolSize = numberOrNull(raw.poolSize);
-            const available = typeof raw.available === 'boolean' ? raw.available : idle === null ? null : idle > 0;
+            // `available` is allocatable capacity, not the number of currently idle tabs.
+            // Keep accepting the old boolean probe shape while callers transition.
+            const available = typeof raw.available === 'number' && Number.isFinite(raw.available) && raw.available >= 0
+              ? raw.available
+              : typeof raw.available === 'boolean' ? (raw.available ? 1 : 0) : null;
             if (idle !== null || leased !== null || poolSize !== null || available !== null) {
               finish({ name, poolSize, idle, leased, available, observedAt: rawObservedAt, reason: null });
               return;
