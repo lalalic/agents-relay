@@ -24,6 +24,7 @@ export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
   private readonly reconcileLocks = new Map<string, Promise<void>>();
+  private readonly targetedReconcileFlights = new Map<string, Promise<void>>();
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   constructor(
     private readonly client: GitHubClient,
@@ -83,10 +84,16 @@ export class RepositoryWorkerPool {
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (!this.repositories.includes(repository)) return;
     this.jobTargets.set(jobId, { repository, prNumber });
-    await this.reconcileExclusive(jobId, async () => {
+    const key = `${repository}#${prNumber}:${jobId}`;
+    const existing = this.targetedReconcileFlights.get(key);
+    if (existing) return existing;
+    const flight = this.reconcileExclusive(jobId, async () => {
       const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
       await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
     });
+    this.targetedReconcileFlights.set(key, flight);
+    try { await flight; }
+    finally { if (this.targetedReconcileFlights.get(key) === flight) this.targetedReconcileFlights.delete(key); }
   }
   private async handleLifecycleEvent(event: import('./types.js').EventRecord): Promise<void> {
     const target = this.jobTargets.get(event.job_id);

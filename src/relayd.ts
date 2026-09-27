@@ -90,13 +90,22 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const persistCache = async (): Promise<void> => {
     try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };
+  const pullRequestRefreshFlights = new Map<string, Promise<ManagedJobOverview[]>>();
   const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => {
-    const refreshed = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted);
-    cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
-    cachedOverviews.push(...refreshed);
-    cachedOverviews = dashboardManagedJobs(cachedOverviews);
-    await persistCache();
-    return refreshed;
+    const key = `${repository}#${prNumber}`;
+    const existing = pullRequestRefreshFlights.get(key);
+    if (existing) return existing;
+    const flight = (async (): Promise<ManagedJobOverview[]> => {
+      const refreshed = await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trusted);
+      cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
+      cachedOverviews.push(...refreshed);
+      cachedOverviews = dashboardManagedJobs(cachedOverviews);
+      await persistCache();
+      return refreshed;
+    })();
+    pullRequestRefreshFlights.set(key, flight);
+    try { return await flight; }
+    finally { if (pullRequestRefreshFlights.get(key) === flight) pullRequestRefreshFlights.delete(key); }
   };
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();

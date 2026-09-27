@@ -246,3 +246,9 @@ test('repository daemon wires ChatGPT runtime load into worker routing', async (
   assert.match(source, /runtimeSummaryProvider:\s*\(\)\s*=>\s*\(\{ chatgptRunning:/);
   assert.match(source, /summarizeRuntime\(cachedOverviews\.map/);
 });
+
+test('relayd single-flights concurrent pull-request refreshes', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /pullRequestRefreshFlights/);
+  assert.match(source, /if \(existing\) return existing/);
+});
