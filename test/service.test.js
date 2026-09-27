@@ -252,3 +252,11 @@ test('relayd single-flights concurrent pull-request refreshes', async () => {
   assert.match(source, /pullRequestRefreshFlights/);
   assert.match(source, /if \(existing\) return existing/);
 });
+
+test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /new RepositoryWorkerPool\(client, repositories, trusted, concurrency, makeReconciler, \(\) => client\.rateLimitStatus\(\)\.limited\)/);
+  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedOverviews\.filter/);
+  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
+  assert.match(source, /return cachedJob\(\);\n    }\n  };/);
+});

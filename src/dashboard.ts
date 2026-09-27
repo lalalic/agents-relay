@@ -121,7 +121,7 @@ export function serveDashboard(
   const snapshot = async (requestedJobId = jobId, forceRefresh = false): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
-      if ((forceRefresh && requestedJobId && exactJobProvider) || (forceRefresh && requestedJobId && resolvedExactJobProvider)) {
+      if (forceRefresh && requestedJobId && resolvedExactJobProvider) {
         const exact = await resolvedExactJobProvider(requestedJobId);
         if (exact) return { id: exact.id, json: JSON.stringify(exact) };
       }

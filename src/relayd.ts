@@ -68,7 +68,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let cachedOverviews: ManagedJobOverview[] = [];
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
-  const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler);
+  const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler, () => client.rateLimitStatus().limited);
   const cacheDirectory = join(homedir(), '.agents-relay');
   const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
   try {
@@ -92,6 +92,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const pullRequestRefreshFlights = new Map<string, Promise<ManagedJobOverview[]>>();
   const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => {
+    if (client.rateLimitStatus().limited) return cachedOverviews.filter(item => item.job.repository === repository && item.job.prNumber === prNumber);
     const key = `${repository}#${prNumber}`;
     const existing = pullRequestRefreshFlights.get(key);
     if (existing) return existing;
@@ -148,13 +149,15 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const exactJob = async (jobId: string) => {
     const cached = cachedOverviews.find(item => item.job.id === jobId);
     if (!cached) return null;
+    const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft });
+    if (client.rateLimitStatus().limited) return cachedJob();
     try {
       const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber)).find(item => item.job.id === jobId);
       if (!refreshed) return null;
       return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft };
     } catch (error) {
       process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
-      return null;
+      return cachedJob();
     }
   };
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>client.rateLimitStatus(),()=>client.rateLimitSnapshot(),exactJob, {
