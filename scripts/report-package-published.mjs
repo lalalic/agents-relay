@@ -41,12 +41,10 @@ async function main() {
   if (typeof pkg.name !== 'string' || !pkg.name) throw new Error('package.json must contain a package name');
 
   const pulls = await github(`/repos/${repository}/commits/${sha}/pulls`);
-  let pr = Array.isArray(pulls) ? pulls.find(item => item && typeof item === 'object' && item.merged_at) : null;
+  const pr = Array.isArray(pulls) ? pulls.find(item => item && typeof item === 'object' && item.merged_at) : null;
   if (!pr || !Number.isInteger(pr.number)) {
-    const recent = await github(`/repos/${repository}/pulls?state=closed&sort=updated&direction=desc&per_page=100`);
-    pr = Array.isArray(recent) ? recent.find(item => item && typeof item === 'object' && item.merged_at && Number.isInteger(item.number)) : null;
-    if (!pr || !Number.isInteger(pr.number)) throw new Error(`No merged pull request available to carry publication event for ${sha}`);
-    process.stdout.write(`No merged pull request found for ${sha}; using PR #${pr.number} as publication event carrier.\n`);
+    process.stdout.write(`No merged pull request found for ${sha}; publication event will not be correlated to a Job.\n`);
+    return;
   }
 
   const body = publicationComment({ packageName: pkg.name, version, registry, sha });
