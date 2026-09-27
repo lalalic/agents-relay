@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
+import { parseTask, marker, renderJobBody, TASK_MARKER } from '../dist/markers.js';
 import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTaskEvent } from '../dist/scheduler.js';
 import { CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
@@ -483,6 +483,26 @@ test('repository pool serializes same-job targeted reconcile with discovered rec
   await Promise.all([discovered,targeted]);
   assert.equal(maxActive,1);
   assert.equal(calls.length,2);
+});
+
+test('repository pool consumes a webhook PR snapshot for targeted reconciliation without duplicate reads', async () => {
+  const root={...job([]),id:'seeded-job',repository:'owner/repo',prNumber:46};
+  let graphqlCalls=0;
+  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{graphqlCalls+=1;throw new Error('seeded reconcile must not re-read GraphQL');}};
+  const seen=[];
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(store,maxConcurrent)=>({reconcile:async id=>{
+    const loaded=await store.load(id);
+    const state=await store.pullRequestState();
+    const head=await store.pullRequestHead();
+    seen.push({id,maxConcurrent,title:loaded.title,state,head});
+  }}));
+  pool.seedTargetSnapshot('owner/repo',46,'seeded-job',{
+    prNode:{id:'PR_seed',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/seed',headRefOid:'seed-sha'},
+    comments:[],
+  });
+  await pool.reconcileTarget('owner/repo',46,'seeded-job');
+  assert.equal(graphqlCalls,0);
+  assert.deepEqual(seen,[{id:'seeded-job',maxConcurrent:4,title:'x',state:'OPEN',head:{ref:'feat/seed',sha:'seed-sha'}}]);
 });
 
 test('repository pool coalesces concurrent targeted reconciles for the same job', async () => {

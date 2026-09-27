@@ -1,4 +1,4 @@
-import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext } from './store.js';
+import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext, type GitHubPullRequestSeed } from './store.js';
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
@@ -26,6 +26,7 @@ export class RepositoryWorkerPool {
   private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly targetedReconcileFlights = new Map<string, Promise<void>>();
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
+  private readonly targetSeeds = new Map<string, GitHubPullRequestSeed>();
   constructor(
     private readonly client: GitHubClient,
     repository: string | readonly string[],
@@ -83,6 +84,10 @@ export class RepositoryWorkerPool {
       } while (this.pending);
     } finally { this.running = false; }
   }
+  seedTargetSnapshot(repository: string, prNumber: number, jobId: string, seed: GitHubPullRequestSeed): void {
+    if (!this.repositories.includes(repository)) return;
+    this.targetSeeds.set(`${repository}#${prNumber}:${jobId}`, seed);
+  }
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
     if (this.isRateLimited() || !this.repositories.includes(repository)) return;
     this.jobTargets.set(jobId, { repository, prNumber });
@@ -90,8 +95,11 @@ export class RepositoryWorkerPool {
     const existing = this.targetedReconcileFlights.get(key);
     if (existing) return existing;
     const flight = this.reconcileExclusive(jobId, async () => {
-      const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
-      await withGitHubRequestContext(this.client, 'pool.targeted-reconcile', () => this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId));
+      const seedKey = `${repository}#${prNumber}:${jobId}`;
+      const seed = this.targetSeeds.get(seedKey) ?? null;
+      this.targetSeeds.delete(seedKey);
+      const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors, seed);
+      await withGitHubRequestContext(this.client, seed ? 'pool.targeted-reconcile.seeded' : 'pool.targeted-reconcile', () => this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId));
     });
     this.targetedReconcileFlights.set(key, flight);
     try { await flight; }
