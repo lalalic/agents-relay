@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
+import { BrowserWorkspaceUsageReader, CodexApiUsageReader, CodexSessionUsageReader, DeepSeekCreditReader, OpenRouterCreditReader, readUsageSnapshot, UsageRegistry } from '../dist/usage.js';
 
 function jsonl(value) { return JSON.stringify(value) + '\n'; }
 
@@ -85,6 +85,25 @@ test('usage registry includes credit providers only when readers are configured'
   assert.deepEqual(withoutCredits.credits, []);
   const withCredits = await new UsageRegistry(usage, usage, credit, credit).snapshot();
   assert.deepEqual(withCredits.credits.map(item => item.id), ['deepseek', 'openrouter']);
+});
+
+test('usage registry exposes Browser Workspace capacity as a shared resource fact', async () => {
+  const capacity = { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: false, observedAt: '2026-09-27T16:00:00.000Z', reason: null };
+  const overview = await new UsageRegistry(
+    { read: async () => ({ available: false, generatedAt: 'x', fiveHour: null, weekly: null, reason: 'unused' }) },
+    { read: async () => ({ available: false, generatedAt: 'x', fiveHour: null, weekly: null, reason: 'unused' }) },
+    null,
+    null,
+    { read: async () => capacity },
+  ).snapshot();
+  assert.deepEqual(overview.browserWorkspace, capacity);
+});
+
+test('Browser Workspace probe failures remain unknown', async () => {
+  const reader = new BrowserWorkspaceUsageReader('definitely-not-a-browser-harness-command', 50, () => new Date('2026-09-27T16:00:00.000Z'));
+  const capacity = await reader.read();
+  assert.equal(capacity.idle, null);
+  assert.equal(capacity.available, null);
 });
 
 test('shared usage snapshot API reads on demand without caching the registry result', async () => {

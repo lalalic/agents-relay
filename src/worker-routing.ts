@@ -1,7 +1,7 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
 import { loadWorkerRouterRules } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
-import { AdapterName, AgentAvailability, AgentRegistration, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
+import { AdapterName, AgentAvailability, AgentRegistration, BrowserWorkspaceCapacity, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
 
 export const DEFAULT_CHATGPT_PREFERRED_CONCURRENCY = 10;
 
@@ -32,6 +32,7 @@ export type WorkerCandidate = {
   resourceResetAt?: number;
   resourceResetInMinutes?: number;
   resourceWindows?: { fiveHour?: ResourceUsageWindow; weekly?: ResourceUsageWindow };
+  browserWorkspaceCapacity?: BrowserWorkspaceCapacity;
 };
 
 export type WorkerRoutingDecision = { candidate: WorkerCandidate; selection: WorkerSelection };
@@ -106,6 +107,7 @@ export function workerCandidates(
         resourceResetAt: resource.resetAt,
         resourceResetInMinutes: resource.resetInMinutes,
         resourceWindows: resource.windows,
+        browserWorkspaceCapacity: adapter.name === 'chatgpt' ? snapshot?.browserWorkspace : undefined,
       };
     });
   });
@@ -119,6 +121,7 @@ export function workerCandidates(
 export function satisfiesWorker(candidate: WorkerCandidate, requirements: WorkerRequirements): boolean {
   if (candidate.availability === 'offline') return false;
   if (requirements.runtime && candidate.runtime !== requirements.runtime) return false;
+  if (candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.idle === 0) return false;
   return true;
 }
 
@@ -144,6 +147,7 @@ function selection(selected: WorkerCandidate, selectedBy: string, decisionEviden
     resourceResetAt: selected.resourceResetAt,
     resourceResetInMinutes: selected.resourceResetInMinutes,
     resourceWindows: selected.resourceWindows,
+    browserWorkspaceCapacity: selected.browserWorkspaceCapacity,
     decisionEvidence,
   };
 }
@@ -151,9 +155,16 @@ function selection(selected: WorkerCandidate, selectedBy: string, decisionEviden
 /** Deterministic fallback and backwards-compatible direct selector. */
 export function selectWorker(candidates: readonly WorkerCandidate[], requirements: WorkerRequirements): WorkerRoutingDecision {
   const eligible = eligibleWorkerCandidates(candidates, requirements);
-  if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
+  if (eligible.length === 0) throw new Error(noEligibleWorkerReason(candidates));
   const selected = deterministicWorker(eligible);
   return { candidate: selected, selection: selection(selected, 'worker-router:fallback') };
+}
+
+function noEligibleWorkerReason(candidates: readonly WorkerCandidate[]): string {
+  if (candidates.some(candidate => candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.idle === 0)) {
+    return 'No eligible worker: ChatGPT Browser Workspace has no idle capacity.';
+  }
+  return 'No eligible worker satisfies the authoritative worker constraints';
 }
 
 /** Gather factual worker/task/resource context, then let decide() choose among legal workers. */
@@ -163,7 +174,7 @@ export async function routeWorker(
   options: WorkerRoutingOptions = {},
 ): Promise<WorkerRoutingDecision> {
   const eligible = eligibleWorkerCandidates(candidates, requirements);
-  if (eligible.length === 0) throw new Error('No eligible worker satisfies the authoritative worker constraints');
+  if (eligible.length === 0) throw new Error(noEligibleWorkerReason(candidates));
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
   const deterministic = deterministicWorker(eligible);
@@ -197,6 +208,7 @@ export async function routeWorker(
       resourceResetAt: item.resourceResetAt ?? null,
       resourceResetInMinutes: item.resourceResetInMinutes ?? null,
       resourceWindows: item.resourceWindows ?? null,
+      browserWorkspaceCapacity: item.browserWorkspaceCapacity ?? null,
     })),
   })) as JsonValue;
 
