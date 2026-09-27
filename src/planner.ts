@@ -114,6 +114,9 @@ function reviewMetadata(value: unknown, field: string): ReviewTaskMetadata | und
   if (!artifact || !version) throw new Error(`Planner ${field}.target requires artifact and version`);
   const dimension = optionalString(root.dimension, `${field}.dimension`);
   const selectionReason = optionalString(root.selectionReason, `${field}.selectionReason`);
+  if (root.role === 'specialist' && (!dimension || !selectionReason)) {
+    throw new Error(`Planner ${field} specialist tasks require dimension and selectionReason`);
+  }
   const round = root.round === undefined ? undefined : root.round;
   if (round !== undefined && (!Number.isInteger(round) || Number(round) < 1)) throw new Error(`Planner ${field}.round must be a positive integer`);
   return { role: root.role, target: { artifact, version }, dimension, selectionReason, round: round === undefined ? undefined : Number(round) };

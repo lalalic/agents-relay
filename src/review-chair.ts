@@ -22,6 +22,7 @@ export type ReviewFinding = {
   location?: string;
   recommendation?: string;
   evidence?: string;
+  attributions?: Array<{ reviewer: string; dimension: string; findingId?: string }>;
 };
 export type SpecialistReview = {
   reviewer: string;
@@ -45,6 +46,11 @@ export type ReviewSynthesis = {
   unresolved: ReviewFinding[];
   needsAdditionalSpecialist: boolean;
   missingDimensions: string[];
+};
+export type ReviewChairExecutionPlan = {
+  target: ReviewTarget;
+  panel: ReviewPanelMember[];
+  specialistTasks: ReviewTaskMetadata[];
 };
 
 function text(value: unknown, field: string): string {
@@ -132,6 +138,15 @@ export function createSpecialistReviewTasks(tasks: readonly Task[], targetValue:
     .map(member => specialistReviewTaskMetadata(targetValue, member, round));
 }
 
+/** Builds the durable-task inputs used by the live Review Chair worker path. */
+export function createReviewChairExecutionPlan(agents: readonly ResolvedAgent[], targetValue: ReviewTarget, max = 5): ReviewChairExecutionPlan {
+  const dimensions = [...new Set(agents.flatMap(agent => agent.capabilities))]
+    .map(name => ({ name }))
+    .filter(dimension => dimension.name !== 'model');
+  const panel = selectReviewPanel(agents, dimensions, max);
+  return { target: { ...targetValue }, panel, specialistTasks: createSpecialistReviewTasks([], targetValue, panel) };
+}
+
 function findingKey(finding: ReviewFinding): string { return `${finding.location ?? ''}|${finding.summary.toLowerCase().replace(/\s+/g, ' ').trim()}`; }
 function priority(finding: ReviewFinding): 'P0' | 'P1' | 'P2' | 'P3' { return finding.severity ?? (finding.verdict === 'blocked' ? 'P0' : finding.verdict === 'fail' ? 'P1' : 'P2'); }
 
@@ -146,8 +161,21 @@ export function synthesizeReview(targetValue: ReviewTarget, panel: readonly Revi
     group.push(finding);
     byKey.set(key, group);
   }
-  const findings = [...byKey.values()].map(group => ({ ...group[0], id: group[0].id ?? `finding-${findingsIndex(group)}` }));
-  const conflicts = [...byKey.values()].filter(group => new Set(group.map(item => item.verdict)).size > 1).map(group => ({ findingIds: group.map(item => item.id ?? findingKey(item)), resolution: `Prioritize the more severe disposition and preserve all specialist attribution: ${group.map(item => `${item.reviewer}=${item.verdict}`).join(', ')}.` }));
+  const usedIds = new Set<string>();
+  const mergedGroups = [...byKey.values()].map((group, index) => {
+    const preferredId = group[0].id ?? `finding-${index + 1}`;
+    let id = preferredId;
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${preferredId}-${suffix++}`;
+    usedIds.add(id);
+    return { group, id };
+  });
+  const findings = mergedGroups.map(({ group, id }) => ({
+    ...group[0],
+    id,
+    attributions: group.map(item => ({ reviewer: item.reviewer, dimension: item.dimension, ...(item.id ? { findingId: item.id } : {}) })),
+  }));
+  const conflicts = mergedGroups.filter(({ group }) => new Set(group.map(item => item.verdict)).size > 1).map(({ group, id }) => ({ findingIds: [id], resolution: `Prioritize the more severe disposition and preserve all specialist attribution: ${group.map(item => `${item.reviewer}=${item.verdict}`).join(', ')}.` }));
   const actions = findings.filter(finding => finding.verdict !== 'pass').map(finding => ({ priority: priority(finding), action: finding.recommendation ?? `Address: ${finding.summary}`, findingIds: [finding.id ?? findingKey(finding)], rationale: finding.evidence ?? `Raised by ${finding.reviewer} for ${finding.dimension}.` })).sort((a, b) => a.priority.localeCompare(b.priority) || a.action.localeCompare(b.action));
   const covered = new Set(reviews.map(review => review.dimension));
   const missingDimensions = panel.map(member => member.dimension).filter(dimension => !covered.has(dimension));

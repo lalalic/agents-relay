@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { parseSpecialistReview, selectReviewPanel, createSpecialistReviewTasks, synthesizeReview } from '../dist/review-chair.js';
+import { parseSpecialistReview, selectReviewPanel, createSpecialistReviewTasks, createReviewChairExecutionPlan, synthesizeReview } from '../dist/review-chair.js';
 
 const target = { artifact: 'demo.mp4', version: 'sha-123' };
 
@@ -43,4 +43,22 @@ test('Review Chair parses structured findings and synthesizes deduplicated actio
 
 test('Review Chair rejects specialist output for a different immutable version', () => {
   assert.throws(() => synthesizeReview(target, [], [{ reviewer: 'market', dimension: 'marketing', target: { artifact: 'demo.mp4', version: 'sha-old' }, verdict: 'pass', findings: [] }]), /expected demo\.mp4@sha-123/);
+});
+
+test('Review Chair runtime plan discovers panel roles and emits specialist metadata', () => {
+  const plan = createReviewChairExecutionPlan([
+    { name: 'market', capabilities: ['marketing'], description: 'audience review' },
+    { name: 'style', capabilities: ['visual'], description: 'visual review' },
+  ], target);
+  assert.deepEqual(plan.panel.map(item => item.agent), ['market', 'style']);
+  assert.equal(plan.specialistTasks[0].role, 'specialist');
+  assert.equal(plan.specialistTasks[0].selectionReason.length > 0, true);
+});
+
+test('Review Chair synthesis preserves every merged finding attribution', () => {
+  const first = { reviewer: 'market', dimension: 'marketing', target, verdict: 'concern', findings: [{ reviewer: 'market', dimension: 'marketing', verdict: 'fail', summary: 'CTA is unclear' }] };
+  const second = { reviewer: 'video-director', dimension: 'video', target, verdict: 'concern', findings: [{ reviewer: 'video-director', dimension: 'video', verdict: 'concern', summary: 'CTA is unclear' }] };
+  const synthesis = synthesizeReview(target, [], [first, second]);
+  assert.deepEqual(synthesis.findings[0].attributions.map(item => item.reviewer), ['market', 'video-director']);
+  assert.deepEqual(synthesis.actions[0].findingIds, [synthesis.findings[0].id]);
 });
