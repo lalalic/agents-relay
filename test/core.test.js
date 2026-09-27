@@ -809,6 +809,21 @@ test('scheduled autonomous cycle keeps ACTIVE lifecycle and derives WAITING betw
   assert.equal(merges,0);
 });
 
+test('final review ignores troubleshooter recovery history', async () => {
+  const succeeded=task('done','SUCCEEDED');
+  const recoveryDone=task('troubleshoot-done-a1','SUCCEEDED'); recoveryDone.agentName='troubleshooter'; recoveryDone.parentTaskId='done';
+  const recoveryCancelled=task('troubleshoot-done-a2','CANCELLED'); recoveryCancelled.agentName='troubleshooter'; recoveryCancelled.parentTaskId='done'; recoveryCancelled.error='Cancelled by user';
+  const store=new InMemoryStore({...job([succeeded,recoveryDone,recoveryCancelled]),state:'ACTIVE',headSha:'recovery-review-sha'});
+  const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(review);
+  assert.deepEqual(review.dependencies,['done']);
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'REVIEWING');
+});
+
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
