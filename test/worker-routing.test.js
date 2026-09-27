@@ -300,3 +300,28 @@ test('Codex remains worker-eligible when its OpenAI resource snapshot is exhaust
   assert.equal(decision.selection.workerId, 'codex');
   assert.equal(decision.selection.resourceHealthy, false);
 });
+
+test('Browser Workspace idle capacity keeps ChatGPT Browser Worker eligible', () => {
+  const decision = selectWorker([
+    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 2, leased: 3, available: true, observedAt: generatedAt, reason: null } },
+  ], { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'chatgpt/browser-worker');
+  assert.equal(decision.selection.browserWorkspaceCapacity?.idle, 2);
+});
+
+test('exhausted Browser Workspace prevents ChatGPT selection and explains no route', () => {
+  const candidate = { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: false, observedAt: generatedAt, reason: null } };
+  assert.throws(() => selectWorker([candidate], { capabilities: ['model'] }), /no idle capacity/);
+  const decision = selectWorker([
+    candidate,
+    { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] },
+  ], { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'codex');
+});
+
+test('unknown Browser Workspace capacity does not hard-gate ChatGPT', () => {
+  const decision = selectWorker([
+    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: null, idle: null, leased: null, available: null, observedAt: generatedAt, reason: 'probe unavailable' } },
+  ], { capabilities: ['model'] });
+  assert.equal(decision.selection.workerId, 'chatgpt/browser-worker');
+});

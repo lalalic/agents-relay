@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
+import type { BrowserWorkspaceCapacity } from './types.js';
 
 export type AccountUsageWindow = {
   usedPercent: number;
@@ -40,6 +41,7 @@ export type AccountUsageOverview = {
   generatedAt: string;
   providers: AccountUsageProvider[];
   credits: CreditProvider[];
+  browserWorkspace?: BrowserWorkspaceCapacity;
 };
 
 export type UsageSnapshot = AccountUsageOverview;
@@ -54,6 +56,66 @@ export interface UsageReader {
 
 export interface CreditReader {
   read(): Promise<CreditSnapshot>;
+}
+
+export interface BrowserWorkspaceCapacityReader {
+  read(): Promise<BrowserWorkspaceCapacity>;
+}
+
+export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityReader {
+  constructor(
+    private readonly command = 'browser-harness',
+    private readonly timeoutMs = 10_000,
+    private readonly now: () => Date = () => new Date(),
+    private readonly staleAfterMs = 15 * 60_000,
+  ) {}
+
+  async read(): Promise<BrowserWorkspaceCapacity> {
+    const observedAt = this.now().toISOString();
+    return await new Promise(resolve => {
+      const child = spawn(this.command, [], { stdio: ['pipe', 'pipe', 'ignore'] });
+      let output = '';
+      let settled = false;
+      const finish = (capacity: BrowserWorkspaceCapacity): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.kill();
+        resolve(capacity);
+      };
+      const unavailable = (reason: string): BrowserWorkspaceCapacity => ({ name: 'Harness', poolSize: null, idle: null, leased: null, available: null, observedAt, reason });
+      const timer = setTimeout(() => finish(unavailable('Browser Workspace capacity probe timed out.')), this.timeoutMs);
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.once('error', () => finish(unavailable('Browser Workspace capacity probe could not be started.')));
+      child.once('close', code => {
+        if (settled) return;
+        const lines = output.trim().split('\n').reverse();
+        for (const line of lines) {
+          try {
+            const raw = JSON.parse(line) as Record<string, unknown>;
+            const name = typeof raw.name === 'string' ? raw.name : 'Harness';
+            const rawObservedAt = typeof raw.observedAt === 'string' && !Number.isNaN(Date.parse(raw.observedAt)) ? raw.observedAt : observedAt;
+            if (Date.parse(observedAt) - Date.parse(rawObservedAt) > this.staleAfterMs) {
+              finish(unavailable('Browser Workspace capacity probe is stale.'));
+              return;
+            }
+            const numberOrNull = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+            const idle = numberOrNull(raw.idle);
+            const leased = numberOrNull(raw.leased);
+            const poolSize = numberOrNull(raw.poolSize);
+            const available = typeof raw.available === 'boolean' ? raw.available : idle === null ? null : idle > 0;
+            if (idle !== null || leased !== null || poolSize !== null || available !== null) {
+              finish({ name, poolSize, idle, leased, available, observedAt: rawObservedAt, reason: null });
+              return;
+            }
+          } catch { /* browser-harness may print startup diagnostics before JSON */ }
+        }
+        finish(unavailable(code === 0 ? 'Browser Workspace capacity probe returned no usable capacity.' : `Browser Workspace capacity probe exited with code ${code ?? 'unknown'}.`));
+      });
+      child.stdin.end('import json\nprint(json.dumps(workspace_capacity()))\n');
+    });
+  }
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -344,14 +406,16 @@ export class UsageRegistry implements UsageSnapshotProvider {
     private readonly zaiReader: UsageReader = new ZaiUsageReader(),
     private readonly deepSeekReader: CreditReader | null = null,
     private readonly openRouterReader: CreditReader | null = null,
+    private readonly browserWorkspaceReader: BrowserWorkspaceCapacityReader | null = null,
   ) {}
 
   async snapshot(): Promise<AccountUsageOverview> {
-    const [openai, zai, deepseek, openrouter] = await Promise.all([
+    const [openai, zai, deepseek, openrouter, browserWorkspace] = await Promise.all([
       this.openaiReader.read(),
       this.zaiReader.read(),
       this.deepSeekReader?.read() ?? Promise.resolve(null),
       this.openRouterReader?.read() ?? Promise.resolve(null),
+      this.browserWorkspaceReader?.read() ?? Promise.resolve(null),
     ]);
     const credits: CreditProvider[] = [];
     if (deepseek) credits.push({ id: 'deepseek', label: 'DeepSeek', credits: deepseek });
@@ -363,6 +427,7 @@ export class UsageRegistry implements UsageSnapshotProvider {
         { id: 'zai', label: 'Z.ai', usage: zai },
       ],
       credits,
+      ...(browserWorkspace ? { browserWorkspace } : {}),
     };
   }
 }
@@ -392,5 +457,6 @@ export function codexAndZaiUsageRegistry(codexHome?: string, _legacyWindowDays?:
     new ZaiUsageReader(),
     process.env.DEEPSEEK_API_KEY ? new DeepSeekCreditReader() : null,
     process.env.OPENROUTER_API_KEY ? new OpenRouterCreditReader() : null,
+    new BrowserWorkspaceUsageReader(),
   );
 }
