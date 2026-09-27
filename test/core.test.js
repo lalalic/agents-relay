@@ -51,6 +51,7 @@ const graphCommentClient = (comments, prNumber=1, prState='OPEN') => {
   };
 };
 class FakeAdapter { name='codex'; id='fake-codex'; capabilities=['model','codex']; launches=0; cancelled=0; resolvers=[]; launch(t, signal) { this.launches += 1; let resolvePromise; let rejectPromise; const promise = new Promise((resolve,reject) => { resolvePromise=resolve; rejectPromise=reject; }); this.resolvers.push({resolve:resolvePromise,reject:rejectPromise}); signal.addEventListener('abort', () => { this.cancelled += 1; rejectPromise(new Error('aborted')); }, {once:true}); return {id:`exec-${this.launches}`,promise,cancel:() => {this.cancelled += 1; rejectPromise(new Error('cancelled'));}}; } }
+class FakeChatGptAdapter extends FakeAdapter { name='chatgpt'; id='fake-chatgpt'; capabilities=['model','chatgpt']; }
 class DelayedTerminalStore extends InMemoryStore {
   constructor(initialJob) {
     super(initialJob);
@@ -164,6 +165,51 @@ test('CLI task create stores optional project and agent metadata with parent', a
   assert.equal(saved.tasks[0].planningSource, undefined);
   assert.equal(saved.tasks.length, 1);
 });
+test('CLI direct task creation can omit routing and reconciler selects worker then model', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-auto-route-'));
+  const file = join(directory, 'job.json');
+  const root = { ...job([]), executionMode: 'fixed', state: 'ACTIVE', reviewEnabled: false, autoMerge: false };
+  await writeFile(file, JSON.stringify(root));
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','auto-route','--output','task-pr','--input','route this task'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const createdJob = JSON.parse(await readFile(file,'utf8'));
+  const created = createdJob.tasks.find(item=>item.id==='auto-route');
+  assert.equal(created.routing,undefined);
+  assert.equal(created.workerSelection,undefined);
+  assert.deepEqual(created.workerRequirements,{capabilities:[]});
+  assert.equal(created.timeoutMs,0);
+
+  const store = new InMemoryStore(createdJob);
+  const events = [];
+  const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:0,emit:event=>events.push(event)});
+  await reconciler.reconcile('j');
+  const routed = (await store.load('j')).tasks.find(item=>item.id==='auto-route');
+  assert.equal(routed.adapter,'chatgpt');
+  assert.equal(routed.workerSelection?.adapter,'chatgpt');
+  assert.equal(routed.routing?.provider,'chatgpt');
+  assert.equal(routed.routing?.model,'account-defaults');
+  assert.equal(routed.routing?.decidedBy,'model-router');
+  assert.equal(routed.timeoutMs,900000);
+  const workerIndex = events.findIndex(event=>event.type==='worker.selected');
+  const modelIndex = events.findIndex(event=>event.type==='model.selected');
+  assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
+  await rm(directory,{recursive:true,force:true});
+});
+
+test('CLI explicit worker/model routing remains a supported compatibility constraint', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-explicit-route-'));
+  const file = join(directory, 'job.json');
+  await writeFile(file, JSON.stringify(job([])));
+  const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','explicit','--adapter','codex','--provider','openai','--model','gpt-test','--output','task-pr','--input','explicit route'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const created = JSON.parse(await readFile(file,'utf8')).tasks.find(item=>item.id==='explicit');
+  assert.equal(created.workerRequirements,undefined);
+  assert.equal(created.routing?.provider,'openai');
+  assert.equal(created.routing?.model,'gpt-test');
+  assert.equal(created.routing?.decidedBy,'cli');
+  await rm(directory,{recursive:true,force:true});
+});
+
 test('CLI task create persists Mermaid Agent Graph from file', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-cli-'));
   const file = join(directory, 'job.json');

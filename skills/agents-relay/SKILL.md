@@ -21,13 +21,14 @@ Normal worker tasks use an agent runtime:
 
 Shell commands, tests, Markad Vision, ffmpeg, build tools, and similar CLIs are tools used inside an agent or directly by the orchestrator. They are not Agents Relay worker tasks.
 
-Every model-backed task must declare:
+Every model-backed task producer normally declares:
 - its descriptive `input`;
-- its adapter (`codex` or `chatgpt`);
-- routing metadata;
+- semantic requirements such as capabilities/runtime only when known;
 - exactly one durable output contract:
   - `task_pr`: the managed task/PR is the authoritative result; or
   - `file`: an exact file path is the authoritative result.
+
+Relay then runs worker-router followed by model-router and persists the selected worker/adapter and model routing before launch. Explicit adapter/provider/model values are compatibility/debug constraints, not normal producer requirements.
 
 ## Lifecycle contract
 
@@ -62,7 +63,7 @@ Example:
 ~~~sh
 npx agents-relay job create --repo OWNER/REPO --head feat/example --base main   --id JOB_ID --title "Objective"
 
-npx agents-relay task create --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --adapter codex   --provider openai --model MODEL   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
+npx agents-relay task create --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
 
 npx agents-relayd --repo OWNER/REPO --events nats
 ~~~

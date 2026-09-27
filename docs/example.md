@@ -2,7 +2,7 @@
 
 ```sh
 npx agents-relay init --file /tmp/agents-relay.json --id dogfood --title "Local dogfood"
-npx agents-relay task create --file /tmp/agents-relay.json --task-id build --adapter codex --provider openai --model MODEL --output task-pr --input "Perform the build task and publish a terminal event"
+npx agents-relay task create --file /tmp/agents-relay.json --task-id build --output task-pr --input "Perform the build task and publish a terminal event"
 npx agents-relay reconcile --file /tmp/agents-relay.json
 npx agents-relay status --file /tmp/agents-relay.json
 ```
@@ -25,6 +25,6 @@ The same flow against the dogfood PR is:
 
 ```sh
 npx agents-relay init --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --title "Dogfood"
-npx agents-relay task create --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id verify-dogfood --adapter codex --provider openai --model MODEL --output task-pr --input "Verify the dogfood flow and publish a terminal event"
+npx agents-relay task create --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302 --task-id verify-dogfood --output task-pr --input "Verify the dogfood flow and publish a terminal event"
 npx agents-relay reconcile --repo lalalic/agents-relay --pr 1 --id agents-relay-dev-20260918-1302
 ```
