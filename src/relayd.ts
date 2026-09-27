@@ -51,16 +51,19 @@ export function normalizeDaemonArguments(argv: readonly string[]): DaemonArgumen
   return { repository, workspaceRoot: repository ? null : workspaceRoot, pullRequest, jobId: id || null, serviceArguments: [...argv] };
 }
 
-export function recoveryScanRepositories(repositories: readonly string[], cached: readonly ManagedJobOverview[]): string[] {
+export function recoveryScanRepositories(repositories: readonly string[], cached: readonly ManagedJobOverview[], dormantProbeIndex = 0): string[] {
   const byRepository = new Map<string, ManagedJobOverview[]>();
   for (const item of cached) {
     const values = byRepository.get(item.job.repository) ?? []; values.push(item); byRepository.set(item.job.repository, values);
   }
-  return repositories.filter(repository => {
+  const activeOrUnknown: string[] = []; const dormant: string[] = [];
+  for (const repository of repositories) {
     const values = byRepository.get(repository);
-    if (!values || values.length === 0) return true;
-    return values.some(item => item.githubState === 'OPEN' && !['COMPLETED','CANCELLED'].includes(item.job.state));
-  });
+    if (!values || values.length === 0 || values.some(item => item.githubState === 'OPEN' && !['COMPLETED','CANCELLED'].includes(item.job.state))) activeOrUnknown.push(repository);
+    else dormant.push(repository);
+  }
+  if (dormant.length === 0) return activeOrUnknown;
+  return [...activeOrUnknown, dormant[Math.abs(dormantProbeIndex) % dormant.length]];
 }
 
 export async function runDaemon(argv: readonly string[]): Promise<void> {
@@ -80,6 +83,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const decisionAuditStore = new JsonlDecisionAuditStore(process.env.AGENTS_RELAY_DECISION_AUDIT_PATH ?? join(homedir(), '.agents-relay', 'decision-audit.jsonl'));
   let cachedOverviews: ManagedJobOverview[] = [];
   const githubReadPaths = { workspaceScans: 0, prRefreshes: 0 };
+  let dormantProbeIndex = 0;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler, () => client.rateLimitStatus().limited);
@@ -91,7 +95,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   } catch { /* first run or invalid cache */ }
   const refreshAll = async (full = false): Promise<ManagedJobOverview[]> => {
     if (client.rateLimitStatus().limited) return cachedOverviews;
-    const scanRepositories = full ? repositories : recoveryScanRepositories(repositories, cachedOverviews);
+    const scanRepositories = full ? repositories : recoveryScanRepositories(repositories, cachedOverviews, dormantProbeIndex++);
     if (scanRepositories.length === 0) return cachedOverviews;
     try {
       githubReadPaths.workspaceScans += 1;

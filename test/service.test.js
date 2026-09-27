@@ -262,11 +262,14 @@ test('relayd serves cached PR state and gates worker pool while GitHub cooldown 
 });
 
 
-test('recovery scan skips repositories whose cached jobs are already terminal', () => {
+test('recovery scan keeps active repositories and rotates one dormant recovery probe', () => {
   const now = new Date().toISOString();
-  const terminal = { job: { id:'done', title:'done', repository:'owner/done', prNumber:1, state:'COMPLETED', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null };
+  const terminal = repository => ({ job: { id:'done-'+repository, title:'done', repository, prNumber:1, state:'COMPLETED', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null });
   const active = { job: { id:'active', title:'active', repository:'owner/active', prNumber:2, state:'ACTIVE', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'OPEN', draft:false, mergedAt:null, closedAt:null };
-  assert.deepEqual(recoveryScanRepositories(['owner/done','owner/active','owner/unknown'], [terminal, active]), ['owner/active','owner/unknown']);
+  const repos=['owner/done-a','owner/active','owner/unknown','owner/done-b'];
+  const cached=[terminal('owner/done-a'), active, terminal('owner/done-b')];
+  assert.deepEqual(recoveryScanRepositories(repos, cached, 0), ['owner/active','owner/unknown','owner/done-a']);
+  assert.deepEqual(recoveryScanRepositories(repos, cached, 1), ['owner/active','owner/unknown','owner/done-b']);
 });
 
 test('relayd exposes bounded GitHub read-path counters', async () => {
