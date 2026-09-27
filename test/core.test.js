@@ -1119,7 +1119,10 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
   assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
   assert.equal(reviewer?.adapter, 'chatgpt');
-  assert.deepEqual(reviewer?.routing, { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: reviewer?.routing?.decidedAt });
+  assert.equal(reviewer?.routing?.provider, 'chatgpt');
+  assert.equal(reviewer?.routing?.model, 'account-defaults');
+  assert.equal(reviewer?.routing?.decidedBy, 'model-router');
+  assert.equal(reviewer?.routing?.decisionEvidence?.fallback, true);
   assert.match(reviewer?.input ?? '', /Review existing PR #1 at exactly head SHA sha-review-1/);
   assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);
 
