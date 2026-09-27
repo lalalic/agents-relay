@@ -435,3 +435,15 @@ test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
   assert.match(dashboardHtml, /workspace scans/);
   assert.match(dashboardHtml, /PR refreshes/);
 });
+
+test('dashboard usage remains available when GitHub quota telemetry fails', async () => {
+  const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
+  const server=await serveDashboardForTest(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
+  const address=server.address();
+  const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
+  assert.equal(response.status,200);
+  const body=await response.json();
+  assert.equal(body.github,null);
+  assert.equal(body.githubStatus.limited,true);
+  await new Promise(resolve=>server.close(resolve));
+});

@@ -143,8 +143,9 @@ export function serveDashboard(
   const usage = async (): Promise<string> => {
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
     const account = await readUsageSnapshot(usageRegistry);
-    const github = resolvedGithubUsageProvider ? await resolvedGithubUsageProvider() : null;
     const githubStatus = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
+    let github: unknown = null;
+    if (resolvedGithubUsageProvider) { try { github = await resolvedGithubUsageProvider(); } catch { /* quota telemetry is best-effort during GitHub degradation */ } }
     return JSON.stringify({ ...account, github, githubStatus });
   };
 
