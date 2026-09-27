@@ -5,9 +5,18 @@ import { createSign } from 'node:crypto';
 import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
+import { PackagePublication, parsePackagePublicationMarker } from './github-webhook.js';
 export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
-export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null };
+function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAuthors: ReadonlySet<string>): PackagePublication | null {
+  const allowed = rows.filter(item => {
+    const author = item.author as Record<string, unknown> | undefined;
+    const login = typeof author?.login === 'string' ? author.login : '';
+    return trustedAuthors.has(login) || login === 'github-actions[bot]';
+  });
+  return allowed.map(item => parsePackagePublicationMarker(String(item.body ?? ''))).filter((item): item is PackagePublication => item !== null).at(-1) ?? null;
+}
+export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null; publication?: PackagePublication | null };
 export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview[]> {
   const [owner, name] = repository.split('/', 2);
   if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0 || !client.graphql) return [];
@@ -24,6 +33,7 @@ export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, 
   const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
   const commentJobs = trusted.map(item => parseJob(String((item as Record<string, unknown>).body ?? ''))).filter((item): item is Job => item !== null);
   const jobs = bodyJob ? [bodyJob] : commentJobs;
+  const publication = publicationFromComments((Array.isArray(comments) ? comments : []) as Array<Record<string, unknown>>, trustedAuthors);
   const tasks = trusted.map(item => {
     const row = item as Record<string, unknown>;
     const task = parseTask(String(row.body ?? ''));
@@ -36,7 +46,7 @@ export async function loadManagedGitHubPullRequestGraphql(client: GitHubClient, 
   return jobs.map(job => {
     job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
     if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
-    return { job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null };
+    return { job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null, publication };
   });
 }
 export async function loadManagedGitHubJobGraphql(client: GitHubClient, repository: string, prNumber: number, jobId: string, trustedAuthors: ReadonlySet<string>): Promise<ManagedJobOverview | null> {
@@ -406,6 +416,7 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
       const bodyJob = parseJob(typeof pr.body === 'string' ? pr.body : '');
       const commentJobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
       const jobs = bodyJob ? [bodyJob] : commentJobs;
+      const publication = publicationFromComments(rows, trustedAuthors);
       const tasks = trusted.map(item => parseTask(String(item.body ?? ''))).filter((item): item is Task => item !== null);
       const state = String(pr.state ?? '').toUpperCase();
       const githubState: PullRequestState = pr.merged === true || state === 'MERGED' ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
@@ -413,7 +424,7 @@ export async function listManagedGitHubJobs(client: GitHubClient, repository: st
         if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
         job.prNumber = number; job.repository = repository;
         job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
-        output.push({ job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null });
+        output.push({ job, githubState, draft: pr.isDraft === true, mergedAt: typeof pr.mergedAt === 'string' ? pr.mergedAt : null, closedAt: typeof pr.closedAt === 'string' ? pr.closedAt : null, publication });
       }
     }
   };

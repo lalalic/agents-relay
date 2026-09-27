@@ -6,7 +6,7 @@ export type GitHubWebhookWake = { deliveryId: string; event: string; action: str
 export const PACKAGE_PUBLISHED_MARKER = 'agents-relay:package-published:v1';
 const WAKE_EVENTS = new Set(['pull_request', 'issue_comment', 'pull_request_review', 'pull_request_review_comment', 'check_run', 'check_suite', 'workflow_run']);
 
-function parsePackagePublication(body: unknown): PackagePublication | null {
+export function parsePackagePublicationMarker(body: unknown): PackagePublication | null {
   if (typeof body !== 'string') return null;
   const prefix = '<!-- ' + PACKAGE_PUBLISHED_MARKER + ' ';
   const start = body.indexOf(prefix);
@@ -42,7 +42,7 @@ export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): 
   const issue = payload.issue as Record<string, unknown> | undefined;
   const number = Number(pullRequest?.number ?? (issue?.pull_request ? issue.number : 0));
   const comment = payload.comment as Record<string, unknown> | undefined;
-  const publication = event === 'issue_comment' ? parsePackagePublication(comment?.body) : null;
+  const publication = event === 'issue_comment' ? parsePackagePublicationMarker(comment?.body) : null;
   return {
     deliveryId,
     event,

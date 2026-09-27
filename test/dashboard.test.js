@@ -77,7 +77,8 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
 test('events follow selected job/task and can return to all tasks', () => {
   assert.match(dashboardHtml, /id="events-all-tasks"/);
   assert.match(dashboardHtml, /let eventTaskId=selectedTaskId/);
-  assert.match(dashboardHtml, /eventTaskId=task\.id;rememberSelection\(\);clearEvents\(\)/);
+  assert.match(dashboardHtml, /const deselect=selectedTaskId===task\.id/);
+  assert.match(dashboardHtml, /eventTaskId=deselect\?null:task\.id/);
   assert.match(dashboardHtml, /eventTaskId&&event\.task_id!==eventTaskId/);
   assert.match(dashboardHtml, /eventsAllTasks\.addEventListener\('click'/);
   assert.match(dashboardHtml, /eventTaskId=null;clearEvents\(\);renderEventScope\(\)/);
@@ -211,12 +212,38 @@ test('dashboard job actions invoke the supplied runtime handler', async () => {
 });
 
 
-test('selected task exposes restart and cancel controls with lifecycle gating', () => {
-  assert.match(dashboardHtml, /taskActionButton\(task,'retry','Restart task','↻'\)/);
-  assert.match(dashboardHtml, /taskActionButton\(task,'cancel','Cancel task','×'\)/);
-  assert.match(dashboardHtml, /\['FAILED','BLOCKED'\]\.includes\(task\.state\)/);
-  assert.match(dashboardHtml, /\['DRAFT','QUEUED','BLOCKED','FAILED'\]\.includes\(task\.state\)/);
-  assert.match(dashboardHtml, /\/api\/task-action\?id=/);
+test('selected task exposes one direct durable state selector instead of retry and cancel buttons', () => {
+  assert.match(dashboardHtml, /const TASK_STATES=\['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'\]/);
+  assert.match(dashboardHtml, /task-state-select/);
+  assert.match(dashboardHtml, /\/api\/task-state\?id=/);
+  assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'retry'/);
+  assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'cancel'/);
+});
+
+test('dashboard task state override invokes the supplied runtime handler', async () => {
+  const task = { id: 'manual-task', jobId: 'task-state-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
+  const job = { id: 'task-state-job', title: 'Task state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  let invoked = '';
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    taskSetState: async (jobId, taskId, state) => { invoked = jobId + '/' + taskId + '/' + state; return job; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/task-state?id=${job.id}&task=${task.id}&state=SUCCEEDED`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(invoked, `${job.id}/${task.id}/SUCCEEDED`);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
+test('dashboard renders job clipboard, publication, merge-review, and commit-link contracts', () => {
+  assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(repoName\(job\.repository\)\+'\/pr#'\+job\.prNumber\)/);
+  assert.match(dashboardHtml, /job\.githubState==='MERGED'&&job\.publication\?\.version/);
+  assert.match(dashboardHtml, /'PUBLISHED v'\+job\.publication\.version/);
+  assert.match(dashboardHtml, /job\.reviewEnabled!==false&&job\.githubState!=='MERGED'/);
+  assert.match(dashboardHtml, /function safeCommitUrl\(repository,sha\)/);
+  assert.match(dashboardHtml, /link\.textContent=sha\.slice\(0,7\)/);
+  assert.match(dashboardHtml, /commitField\('HEAD commit',job,task\.reviewHeadSha\)/);
 });
 
 test('dashboard task actions invoke the supplied runtime handler', async () => {
