@@ -24,6 +24,8 @@ test('schedule, review and PR facts project to runtime status',()=>{
   assert.equal(deriveJobRuntimeStatus({...scheduled,tasks:[task('failed','FAILED'),task('queued','QUEUED')]}),'QUEUED');
   const reviewing=job([task('work','SUCCEEDED')],{reviewEnabled:true});
   assert.equal(deriveJobRuntimeStatus(reviewing),'REVIEWING');
+  const cancelledRecovery=task('recovery','CANCELLED','troubleshooter'); cancelledRecovery.error='Cancelled by user';
+  assert.equal(deriveJobRuntimeStatus(job([task('work','SUCCEEDED'),cancelledRecovery],{reviewEnabled:true})),'REVIEWING');
   const activeReview=job([task('work','SUCCEEDED'),task('review','QUEUED','reviewer')],{reviewEnabled:true,review:{taskId:'review',headSha:'abc',outcome:'started',updatedAt:now()}});
   assert.equal(deriveJobRuntimeStatus(activeReview),'REVIEWING');
   const approved={...reviewing,review:{taskId:'review',headSha:'abc',outcome:'approved',updatedAt:now()}};

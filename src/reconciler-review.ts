@@ -1,6 +1,6 @@
 import { Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
 import { schedule, transitionTaskEvent, transitionJobEvent } from './scheduler.js';
-import { implementationComplete } from './runtime-status.js';
+import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { ReviewerCandidate, selectReviewer } from './reviewer-routing.js';
 import { WorkerSelection } from './types.js';
@@ -27,7 +27,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
     if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'ACTIVE' || !implementationComplete(job) || !headSha) return;
-    if (!this.preReviewGatesPass(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
@@ -35,9 +34,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (reviewTasks.some(task => task.state === 'SUCCEEDED' && review?.headSha === headSha && review.outcome === 'approved')) return;
     const id = `final-review-${headSha.slice(0, 12)}`;
     const now = new Date().toISOString();
-    const implementationTasks = job.tasks.filter(item => item.agentName !== 'reviewer' && !this.isSupersededTask(item));
-    const reviewerRouting = await this.selectReviewer(implementationTasks);
-    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: implementationTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review existing PR #${job.prNumber} at exactly head SHA ${headSha}. Job objective: ${job.objective ?? job.description ?? job.title}. Use the selected reviewer agent contract as the authoritative review protocol.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
+    const reviewGateTasks = implementationTasks(job);
+    const reviewerRouting = await this.selectReviewer(reviewGateTasks);
+    const task: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer', parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'], workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter, input: `Review existing PR #${job.prNumber} at exactly head SHA ${headSha}. Job objective: ${job.objective ?? job.description ?? job.title}. Use the selected reviewer agent contract as the authoritative review protocol.`, output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null, reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now };
 
     await this.store.appendTask(task);
     job.review = { outcome: 'pending', headSha, taskId: id, evidence: null, updatedAt: now };
@@ -140,12 +139,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routedWorker.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routedWorker.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
     }
-  }
-  protected isSupersededTask(task: Task): boolean {
-    return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
-  }
-  protected preReviewGatesPass(job: Job): boolean {
-    return job.tasks.filter(task => task.agentName !== 'reviewer' && !this.isSupersededTask(task)).every(task => task.state === 'SUCCEEDED');
   }
   protected async applyReviewEvent(event: EventRecord): Promise<void> {
     const job = await this.store.load(event.job_id);
