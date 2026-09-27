@@ -26,6 +26,7 @@ import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
+import { parseAgentGraph } from './agent-graph.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
@@ -81,6 +82,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   const outputPath = arg(args, '--output-path');
   const input = await textOption(args, '--input', '--input-file');
   const agentGraph = hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file') ? await textOption(args, '--agent-graph', '--agent-graph-file') : undefined;
+  if (agentGraph) parseAgentGraph(agentGraph);
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
   if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('task create --adapter must be codex, chatgpt, or orchestrator');
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('task create requires --output task-pr|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
@@ -190,7 +192,11 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--input') || hasArg(args, '--input-file')) task.input = await textOption(args, '--input', '--input-file');
   if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined;
   if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
-  if (hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file')) task.agentGraph = await textOption(args, '--agent-graph', '--agent-graph-file');
+  if (hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file')) {
+    const agentGraph = await textOption(args, '--agent-graph', '--agent-graph-file');
+    if (agentGraph) parseAgentGraph(agentGraph);
+    task.agentGraph = agentGraph || undefined;
+  }
   if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null;
   if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean);
   if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);

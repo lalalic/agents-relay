@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
+import { parseAgentGraph } from './agent-graph.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -169,12 +170,20 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const maxAttempts = task.maxAttempts === undefined ? 3 : task.maxAttempts;
     const route = routing(task.routing, 'next_tasks[' + index + '].routing');
     const requirements = workerRequirements(task.workerRequirements ?? task.requirements, 'next_tasks[' + index + '].workerRequirements');
+    const agentGraph = optionalString(task.agentGraph, `next_tasks[${index}].agentGraph`);
+    if (agentGraph) {
+      try {
+        parseAgentGraph(agentGraph);
+      } catch (error) {
+        throw new Error(`Planner next_tasks[${index}].agentGraph is invalid: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     const timeoutMs = task.timeoutMs === undefined ? taskOverallTimeoutMs(storySize, route?.reasoning) : task.timeoutMs;
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
       id, input: task.input, priority, storySize,
-      projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph: optionalString(task.agentGraph, 'agentGraph'),
+      projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
