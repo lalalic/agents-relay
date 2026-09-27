@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -43,6 +43,65 @@ async function settle(reconciler, count = 8) { for (let index = 0; index < count
 
 
 
+test('new planning rounds use plan-N while historical planner-N remains readable', () => {
+  const historical = { ...task('planner-1', 'SUCCEEDED'), kind: 'planner', planningRound: 1, plannerResult: { objective_status: 'satisfied', assessment: 'legacy', next_tasks: [] } };
+  const round = createPlannerRoundTask(job([historical]), { guidance: 're-plan from durable state', manual: true, now: '2026-09-26T12:00:00.000Z' });
+  assert.equal(round.id, 'plan-2');
+  assert.equal(round.parentTaskId, 'planner-1');
+  assert.equal(round.planningDecisionId, 'plan-2');
+  assert.equal(round.planningRound, 2);
+  assert.equal(round.plannerGuidance, 're-plan from durable state');
+  assert.equal(round.manualPlanning, true);
+  assert.equal(JSON.parse(round.input).caller_prompt, 're-plan from durable state');
+});
+
+test('manual plan runs on a zero-task DRAFT job and persists routed-later child provenance', async () => {
+  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const store = new InMemoryStore(root);
+  let observed;
+  const planner = { plan: async context => { observed = context; return { objective_status: 'in_progress', assessment: 'need implementation', next_tasks: [{ id: 'implement', input: 'implement the objective', output, storySize: 'S', workerRequirements: { capabilities: ['model'] } }] }; } };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const result = await reconciler.planJob('auto', 'focus on the durable objective');
+  assert.equal(result.round.id, 'plan-1');
+  assert.equal(result.round.state, 'SUCCEEDED');
+  assert.equal(result.round.plannerResult.objective_status, 'in_progress');
+  assert.equal(result.job.state, 'ACTIVE');
+  assert.equal(observed.objective, 'finish the objective');
+  assert.equal(observed.guidance, 'focus on the durable objective');
+  const child = result.job.tasks.find(item => item.id === 'implement');
+  assert.ok(child);
+  assert.equal(child.parentTaskId, 'plan-1');
+  assert.equal(child.planningDecisionId, 'plan-1');
+  assert.equal(child.planningSource, 'model-planner');
+  assert.equal(child.planningRound, 1);
+  assert.equal(child.workerSelection, undefined);
+  assert.equal(child.routing, undefined);
+});
+
+test('manual satisfied plan persists the planning round without creating work', async () => {
+  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'already complete', next_tasks: [] }) } });
+  const result = await reconciler.planJob('auto');
+  assert.equal(result.round.id, 'plan-1');
+  assert.equal(result.round.plannerResult.objective_status, 'satisfied');
+  assert.equal(result.job.tasks.filter(item => item.kind !== 'planner').length, 0);
+});
+
+test('manual plan rejects a concurrent active planning round', async () => {
+  const active = createPlannerRoundTask(job([], 'fixed'), { manual: true });
+  const store = new InMemoryStore({ ...job([active], 'fixed'), state: 'ACTIVE' });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'done', next_tasks: [] }) } });
+  await assert.rejects(() => reconciler.planJob('auto'), /already QUEUED/);
+});
+
+test('malformed manual planner output fails the round without materializing children', async () => {
+  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'in_progress', assessment: 'bad', next_tasks: [{ id: 'broken', input: 'work without output' }] }) } });
+  await assert.rejects(() => reconciler.planJob('auto'), /output is required/);
+  const saved = await store.load('auto');
+  assert.equal(saved.tasks.some(item => item.id === 'broken'), false);
+  assert.equal(saved.tasks.find(item => item.id === 'plan-1')?.state, 'FAILED');
+});
 test('planner input carries explicit retry feedback for corrective retries', () => {
   const payload = JSON.parse(plannerInput({
     job: { id:'j', title:'j', executionMode:'autonomous', prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[] },

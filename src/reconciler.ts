@@ -5,10 +5,11 @@ import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } fr
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { createPlannerRoundTask, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
+import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
@@ -252,6 +253,9 @@ export class Reconciler extends ReconcilerReviewBase {
       }
     }
   }
+  async planJob(jobId: string, guidance?: string): Promise<{ job: Job; round: Task }> {
+    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, task) => this.launchPlanner(job, task));
+  }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     if (job.executionMode !== 'autonomous') return job;
     if (job.initialPlanning?.status === 'pending') return job;
@@ -268,13 +272,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const latest = planners.at(-1);
     if (latest?.plannerResult?.objective_status === 'satisfied') return job;
     if (latest && !job.schedule && job.review && job.review.outcome !== 'approved') return job;
-    const previousPlanner = allPlanners.at(-1);
-    const used = new Set(job.tasks.map(task => task.id));
-    let number = allPlanners.length + 1;
-    let id = `planner-${number}`;
-    while (used.has(id)) { number += 1; id = `planner-${number}`; }
-    const now = new Date().toISOString();
-    const task: Task = { jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner', parentTaskId: previousPlanner?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator', input: plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: previousPlanner?.id ?? null }), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: allPlanners.length + 1 };
+    const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
@@ -437,7 +435,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let promise: Promise<import('./planner.js').PlannerResult>;
     try {
       const executionContext = await this.plannerContext(job, task);
-      const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.plannerRetryFeedback };
+      const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.plannerRetryFeedback, guidance: task.plannerGuidance };
       task.input = plannerInput(context);
       await this.store.saveTask(task);
       promise = planner.plan(context, controller.signal);
@@ -465,7 +463,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
-        if (!existing) continue;
+        if (existing && !samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
       }
       // Persist the completed decision before exposing executable children.
       task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks } }; task.error = null; task.plannerRetryFeedback = undefined; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);
@@ -482,7 +480,7 @@ export class Reconciler extends ReconcilerReviewBase {
         task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
       }
     }
-    this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
+    if (!task.manualPlanning) this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
   }
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
     validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, TASK_MARKER } from '../dist/markers.js';
@@ -109,6 +109,25 @@ test('task marker metadata round-trips while legacy markers remain compatible', 
   assert.equal(parsed.projectName, 'Agents Relay');
   assert.equal(parsed.agentName, 'codex');
   assert.equal(parsed.parentTaskId, 'orchestrator');
+});
+test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-plan-cli-'));
+  const file = join(directory, 'job.json');
+  const promptFile = join(directory, 'prompt.md');
+  const plannerCommand = join(directory, 'planner.mjs');
+  const root = { ...job([]), objective: 'durable objective', executionMode: 'fixed', state: 'DRAFT' };
+  await writeFile(file, JSON.stringify(root));
+  await writeFile(promptFile, 'additional planning guidance');
+  await writeFile(plannerCommand, '#!/usr/bin/env node\nlet input="";for await (const chunk of process.stdin) input+=chunk;const value=JSON.parse(input);if(value.objective!=="durable objective"||value.caller_prompt!=="additional planning guidance") process.exit(7);process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"complete",next_tasks:[]}));\n');
+  await chmod(plannerCommand, 0o755);
+  const result = spawn(process.execPath, [join('dist','cli.js'),'plan','--file',file,'--project-path',process.cwd(),'--prompt-file',promptFile,'--planner-command',plannerCommand], { cwd: process.cwd() });
+  const [code] = await once(result, 'exit');
+  assert.equal(code, 0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.state, 'ACTIVE');
+  assert.equal(saved.tasks[0].id, 'plan-1');
+  assert.equal(saved.tasks[0].plannerGuidance, 'additional planning guidance');
+  assert.equal(saved.tasks[0].plannerResult.objective_status, 'satisfied');
 });
 test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
@@ -787,7 +806,7 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
   await reconciler.reconcile('j');
   const saved=await store.load('j');
-  const fresh=saved.tasks.find(item=>item.id==='planner-2');
+  const fresh=saved.tasks.find(item=>item.id==='plan-2');
   assert.ok(fresh);
   assert.equal(fresh.kind,'planner');
   assert.equal(fresh.parentTaskId,'planner-1');

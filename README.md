@@ -56,12 +56,24 @@ The canonical Mermaid Graph Engine is the single authoritative Job/Task lifecycl
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 
 Jobs default to `fixed`. `job create` persists only the durable job and never
-creates executable tasks. The top-level orchestrator decides whether the user's
-request should start immediately and, if so, creates the first task batch
-separately. Direct orchestrator-created tasks are persisted directly and are not wrapped in a synthetic Plan. A zero-task autonomous job remains idle;
-reconciliation does not invent its first planner. After an autonomous job has
-been explicitly started, later planning rounds may extend the work. Fixed jobs
-never grow another planning round.
+creates executable tasks. The caller can either create work directly with
+`task create` or invoke the Planner explicitly with `plan`. Direct
+orchestrator-created tasks are persisted directly and are not wrapped in a
+synthetic Plan. `agents-relay plan` works immediately on a zero-task DRAFT Job,
+activates it, persists a real `plan-N` planning round, and materializes validated
+`next_tasks`. Autonomous reconciliation still does not invent the first round
+for an untouched zero-task Job; after explicit work begins, later autonomous
+planning rounds reuse the same planning implementation. Fixed jobs never grow
+another planning round automatically.
+
+Manual planning syntax:
+
+~~~sh
+npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt "Plan the implementation from the durable objective"
+npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt-file guidance.md
+~~~
+
+The optional prompt is additional round guidance; it does not replace the durable Job objective. New planning rounds use `plan-N`; historical `planner-N` records remain readable.
 
 The durable status JSON and dashboard show the mode and planning provenance. An
 autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
