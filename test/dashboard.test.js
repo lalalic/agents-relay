@@ -415,3 +415,36 @@ test('dashboard header exposes in-memory runtime summary', () => {
   assert.match(dashboardHtml, /runtimePill\('ChatGPT'/);
   assert.match(dashboardHtml, /runtimePill\('Codex'/);
 });
+
+
+test('dashboard Usage renders GitHub REST, GraphQL, Search and cooldown telemetry', () => {
+  assert.match(dashboardHtml, /GitHub API/);
+  assert.match(dashboardHtml, /REST core/);
+  assert.match(dashboardHtml, /GraphQL/);
+  assert.match(dashboardHtml, /Search/);
+  assert.match(dashboardHtml, /remaining/);
+  assert.match(dashboardHtml, /used \/ /);
+  assert.match(dashboardHtml, /Relay cooldown active/);
+  assert.match(dashboardHtml, /Resets /);
+});
+
+
+test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
+  assert.match(dashboardHtml, /Calls since start/);
+  assert.match(dashboardHtml, /Read paths/);
+  assert.match(dashboardHtml, /workspace scans/);
+  assert.match(dashboardHtml, /PR refreshes/);
+});
+
+test('dashboard usage remains available when GitHub quota telemetry fails', async () => {
+  const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
+  const server=serveDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>({limited:true,cooldownUntil:'2026-09-27T15:00:00.000Z'}),async()=>{throw new Error('GitHub cooldown');});
+  await once(server,'listening');
+  const address=server.address();
+  const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
+  assert.equal(response.status,200);
+  const body=await response.json();
+  assert.equal(body.github,null);
+  assert.equal(body.githubStatus.limited,true);
+  await new Promise(resolve=>server.close(resolve));
+});

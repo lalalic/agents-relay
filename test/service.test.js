@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments } from '../dist/relayd.js';
+import { normalizeDaemonArguments, recoveryScanRepositories } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -31,7 +31,7 @@ test('repository daemon wires account usage telemetry and the default planner in
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
-  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),exactJob/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>client\.rateLimitStatus\(\),\(\)=>client\.rateLimitSnapshot\(\),exactJob/);
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
@@ -245,4 +245,37 @@ test('repository daemon wires ChatGPT runtime load into worker routing', async (
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /runtimeSummaryProvider:\s*\(\)\s*=>\s*\(\{ chatgptRunning:/);
   assert.match(source, /summarizeRuntime\(cachedOverviews\.map/);
+});
+
+test('relayd single-flights concurrent pull-request refreshes', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /pullRequestRefreshFlights/);
+  assert.match(source, /if \(existing\) return existing/);
+});
+
+test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /new RepositoryWorkerPool\(client, repositories, trusted, concurrency, makeReconciler, \(\) => client\.rateLimitStatus\(\)\.limited\)/);
+  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedOverviews\.filter/);
+  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
+  assert.match(source, /return cachedJob\(\);\n    }\n  };/);
+});
+
+
+test('recovery scan keeps active repositories and rotates one dormant recovery probe', () => {
+  const now = new Date().toISOString();
+  const terminal = repository => ({ job: { id:'done-'+repository, title:'done', repository, prNumber:1, state:'COMPLETED', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null });
+  const active = { job: { id:'active', title:'active', repository:'owner/active', prNumber:2, state:'ACTIVE', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'OPEN', draft:false, mergedAt:null, closedAt:null };
+  const repos=['owner/done-a','owner/active','owner/unknown','owner/done-b'];
+  const cached=[terminal('owner/done-a'), active, terminal('owner/done-b')];
+  assert.deepEqual(recoveryScanRepositories(repos, cached, 0), ['owner/active','owner/unknown','owner/done-a']);
+  assert.deepEqual(recoveryScanRepositories(repos, cached, 1), ['owner/active','owner/unknown','owner/done-b']);
+});
+
+test('relayd exposes bounded GitHub read-path counters', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /githubReadPaths = \{ workspaceScans: 0, prRefreshes: 0 \}/);
+  assert.match(source, /githubReadPaths\.workspaceScans \+= 1/);
+  assert.match(source, /githubReadPaths\.prRefreshes \+= 1/);
+  assert.match(source, /readPaths: \{ \.\.\.githubReadPaths \}/);
 });

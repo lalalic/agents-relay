@@ -24,6 +24,7 @@ export class RepositoryWorkerPool {
   private running = false;
   private pending = false;
   private readonly reconcileLocks = new Map<string, Promise<void>>();
+  private readonly targetedReconcileFlights = new Map<string, Promise<void>>();
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   constructor(
     private readonly client: GitHubClient,
@@ -31,6 +32,7 @@ export class RepositoryWorkerPool {
     private readonly trustedAuthors: ReadonlySet<string>,
     private readonly concurrency: number,
     private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
+    private readonly isRateLimited: () => boolean = () => false,
   ) { this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)]; }
   private readonly repositories: string[];
   private async reconcileExclusive(jobId: string, work: () => Promise<void>): Promise<void> {
@@ -71,6 +73,7 @@ export class RepositoryWorkerPool {
   }
   async reconcileKnown(discovered: ManagedJobOverview[]): Promise<void> { await this.reconcileDiscovered(discovered); }
   async reconcile(): Promise<void> {
+    if (this.isRateLimited()) return;
     if (this.running) { this.pending = true; return; }
     this.running = true;
     try {
@@ -81,14 +84,21 @@ export class RepositoryWorkerPool {
     } finally { this.running = false; }
   }
   async reconcileTarget(repository: string, prNumber: number, jobId: string): Promise<void> {
-    if (!this.repositories.includes(repository)) return;
+    if (this.isRateLimited() || !this.repositories.includes(repository)) return;
     this.jobTargets.set(jobId, { repository, prNumber });
-    await this.reconcileExclusive(jobId, async () => {
+    const key = `${repository}#${prNumber}:${jobId}`;
+    const existing = this.targetedReconcileFlights.get(key);
+    if (existing) return existing;
+    const flight = this.reconcileExclusive(jobId, async () => {
       const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
       await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
     });
+    this.targetedReconcileFlights.set(key, flight);
+    try { await flight; }
+    finally { if (this.targetedReconcileFlights.get(key) === flight) this.targetedReconcileFlights.delete(key); }
   }
   private async handleLifecycleEvent(event: import('./types.js').EventRecord): Promise<void> {
+    if (this.isRateLimited()) return;
     const target = this.jobTargets.get(event.job_id);
     if (!target || !this.repositories.includes(target.repository)) {
       process.stderr.write(`warning: terminal event target unknown for job ${event.job_id}\n`);

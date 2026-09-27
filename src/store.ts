@@ -87,6 +87,8 @@ export class InMemoryStore implements DurableStore {
   }
 }
 export type GitHubClient = { request(path: string, init?: RequestInit): Promise<unknown>; graphql?(query: string, variables?: Record<string, unknown>): Promise<unknown> };
+export type GitHubRateLimitBucket = { limit: number; used: number; remaining: number; reset: number };
+export type GitHubRateLimitSnapshot = { observedAt: string; resources: { core?: GitHubRateLimitBucket; graphql?: GitHubRateLimitBucket; search?: GitHubRateLimitBucket } };
 export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
 
 async function githubGraphql(client: GitHubClient, query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -240,10 +242,37 @@ export class GhApiClient implements GitHubClient {
   private cooldownUntil = 0;
   private rateLimitFailures = 0;
   private installationToken: { value: string; expiresAt: number } | null = null;
+  private rateLimitCache: { cachedAt: number; snapshot: GitHubRateLimitSnapshot } | null = null;
+  private rateLimitFlight: Promise<GitHubRateLimitSnapshot> | null = null;
+  private readonly rateLimitCacheTtlMs = 5 * 60_000;
+  private readonly apiDiagnostics = { rest: 0, graphql: 0, rateLimit: 0 };
   constructor(private readonly appAuth: GitHubAppAuthOptions | null = null) {}
-  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null } {
+  rateLimitStatus(): { limited: boolean; cooldownUntil: string | null; calls: { rest: number; graphql: number; rateLimit: number } } {
     const limited = Date.now() < this.cooldownUntil;
-    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null };
+    return { limited, cooldownUntil: limited ? new Date(this.cooldownUntil).toISOString() : null, calls: { ...this.apiDiagnostics } };
+  }
+  async rateLimitSnapshot(force = false): Promise<GitHubRateLimitSnapshot> {
+    const now = Date.now();
+    if (!force && this.rateLimitCache && now - this.rateLimitCache.cachedAt < this.rateLimitCacheTtlMs) return this.rateLimitCache.snapshot;
+    if (this.rateLimitFlight) return this.rateLimitFlight;
+    if (this.rateLimitStatus().limited && this.rateLimitCache) return this.rateLimitCache.snapshot;
+    const flight = (async (): Promise<GitHubRateLimitSnapshot> => {
+      this.apiDiagnostics.rateLimit += 1;
+      const stdout = await this.spawnGh(['api', 'rate_limit'], undefined, await this.commandEnv());
+      const parsed = JSON.parse(stdout) as Record<string, unknown>;
+      const resources = parsed.resources as Record<string, unknown> | undefined;
+      const bucket = (value: unknown): GitHubRateLimitBucket | undefined => {
+        const item = value as Record<string, unknown> | undefined;
+        const limit = Number(item?.limit), used = Number(item?.used), remaining = Number(item?.remaining), reset = Number(item?.reset);
+        return [limit, used, remaining, reset].every(Number.isFinite) ? { limit, used, remaining, reset } : undefined;
+      };
+      const snapshot: GitHubRateLimitSnapshot = { observedAt: new Date().toISOString(), resources: { core: bucket(resources?.core), graphql: bucket(resources?.graphql), search: bucket(resources?.search) } };
+      this.rateLimitCache = { cachedAt: Date.now(), snapshot };
+      return snapshot;
+    })();
+    this.rateLimitFlight = flight;
+    try { return await flight; }
+    finally { if (this.rateLimitFlight === flight) this.rateLimitFlight = null; }
   }
   private assertAvailable(): void {
     if (Date.now() < this.cooldownUntil) throw new Error(`GitHub API cooldown active until ${new Date(this.cooldownUntil).toISOString()}`);
@@ -303,6 +332,7 @@ export class GhApiClient implements GitHubClient {
   }
   async graphql(query: string, variables: Record<string, unknown> = {}): Promise<unknown> {
     this.assertAvailable();
+    this.apiDiagnostics.graphql += 1;
     const payload = JSON.stringify({ query, variables });
     const stdout = await this.spawnGh(['api', 'graphql', '--input', '-'], payload, await this.commandEnv());
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
@@ -313,6 +343,7 @@ export class GhApiClient implements GitHubClient {
   }
   async request(path: string, init: RequestInit = {}): Promise<unknown> {
     this.assertAvailable();
+    this.apiDiagnostics.rest += 1;
     const args = ['api', path]; const method = String(init.method ?? 'GET');
     if (method !== 'GET') args.push('--method', method); if (init.body) args.push('--input', '-');
     const stdout = await this.spawnGh(args, init.body ? String(init.body) : undefined, await this.commandEnv());

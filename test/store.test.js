@@ -1,5 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, TASK_MARKER } from '../dist/markers.js';
 
@@ -536,4 +537,24 @@ test('GitHubStore read-your-writes survives stale GraphQL across store instances
   remoteUpdatedAt = '2026-09-26T22:02:00.000Z';
   const external = await new GitHubStore(client, 'owner/repo', 1, new Set(['bot'])).load('job-read-your-writes');
   assert.equal(external.tasks[0].state, 'RUNNING');
+});
+
+
+test('GitHub rate limit snapshot is lazy cached and single-flight by construction', async () => {
+  const source = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+  assert.match(source, /rateLimitCacheTtlMs = 5 \* 60_000/);
+  assert.match(source, /if \(!force && this\.rateLimitCache/);
+  assert.match(source, /if \(this\.rateLimitFlight\) return this\.rateLimitFlight/);
+  assert.match(source, /\['api', 'rate_limit'\]/);
+  assert.match(source, /resources: \{ core: bucket\(resources\?\.core\), graphql: bucket\(resources\?\.graphql\), search: bucket\(resources\?\.search\) \}/);
+});
+
+
+test('GitHub client exposes in-memory API call counters in rate-limit status', async () => {
+  const source = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+  assert.match(source, /apiDiagnostics = \{ rest: 0, graphql: 0, rateLimit: 0 \}/);
+  assert.match(source, /calls: \{ \.\.\.this\.apiDiagnostics \}/);
+  assert.match(source, /this\.apiDiagnostics\.graphql \+= 1/);
+  assert.match(source, /this\.apiDiagnostics\.rest \+= 1/);
+  assert.match(source, /this\.apiDiagnostics\.rateLimit \+= 1/);
 });

@@ -419,6 +419,21 @@ test('repository pool serializes same-job targeted reconcile with discovered rec
   assert.equal(calls.length,2);
 });
 
+test('repository pool coalesces concurrent targeted reconciles for the same job', async () => {
+  const calls=[]; let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,()=>({reconcile:async id=>{calls.push(id); await gate;}}));
+  const first=pool.reconcileTarget('owner/repo',45,'burst-job');
+  const second=pool.reconcileTarget('owner/repo',45,'burst-job');
+  const third=pool.reconcileTarget('owner/repo',45,'burst-job');
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(calls,['burst-job']);
+  release();
+  await Promise.all([first,second,third]);
+  assert.deepEqual(calls,['burst-job']);
+});
+
 test('repository pool emits package.published from a correlated publication webhook without service actions', async () => {
   const bus=new MemoryEventBus();
   const events=[];
@@ -1269,4 +1284,13 @@ test('concurrent reconciler instances atomically claim one queued task only once
   await a.handleEvent(eventFor('j',durable.id,null,'task.completed','succeeded','worker completed','user',undefined,source));
   await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal((await store.load('j')).tasks.find(item=>item.id==='atomic-launch').state,'SUCCEEDED');
+});
+
+test('repository pool performs no GitHub-backed reconciliation while rate limited', async () => {
+  const calls=[];
+  const client={request:async()=>{calls.push('request'); throw new Error('must not call GitHub');},graphql:async()=>{calls.push('graphql'); throw new Error('must not call GitHub');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,()=>({reconcile:async()=>{calls.push('reconcile');}}),()=>true);
+  await pool.reconcile();
+  await pool.reconcileTarget('owner/repo',44,'limited-job');
+  assert.deepEqual(calls,[]);
 });
