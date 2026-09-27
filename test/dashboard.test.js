@@ -488,3 +488,10 @@ test('dashboard usage remains available when GitHub quota telemetry fails', asyn
   assert.equal(body.github,null);
   assert.equal(body.githubStatus.limited,true);
 });
+
+test('dashboard GitHub usage shows GraphQL operation and context attribution', async () => {
+  assert.match(dashboardHtml, /GraphQL operations/);
+  assert.match(dashboardHtml, /GraphQL contexts/);
+  assert.match(dashboardHtml, /status\?\.graphql\?\.operations/);
+  assert.match(dashboardHtml, /status\?\.graphql\?\.contexts/);
+});

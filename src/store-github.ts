@@ -7,6 +7,10 @@ import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDepe
 const TASK_WRITE_OVERLAY = new Map<string, Comment>();
 
 export class GitHubStore implements DurableStore {
+  private prNodeCache: Promise<Record<string, unknown>> | null = null;
+  private commentsCache: Comment[] | null = null;
+  private commentsFlight: Promise<Comment[]> | null = null;
+  private clearReadSnapshot(): void { this.prNodeCache = null; this.commentsCache = null; this.commentsFlight = null; }
   constructor(private readonly client: GitHubClient, private readonly repository: string, private readonly prNumber: number, private readonly trustedAuthors: ReadonlySet<string> = new Set()) {}
   private taskKey(task: Pick<Task, 'jobId' | 'id'>): string { return `${this.repository}#${this.prNumber}:${task.jobId ?? ''}/${task.id}`; }
   private taskKeyFromBody(body: string): string | null { const task = parseTask(body); return task ? this.taskKey(task) : null; }
@@ -35,48 +39,53 @@ export class GitHubStore implements DurableStore {
     return await this.client.graphql(query, variables) as Record<string, unknown>;
   }
   private async prNode(): Promise<Record<string, unknown>> {
-    const { owner, name } = this.repoParts();
-    const data = await this.graphql(
-      'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt body headRefName headRefOid}}}',
-      { owner, name, number: this.prNumber }
-    );
-    const repository = data.repository as Record<string, unknown> | undefined;
-    const pr = repository?.pullRequest as Record<string, unknown> | undefined;
-    if (!pr) throw new Error(`Pull request #${this.prNumber} not found in ${this.repository}`);
-    return pr;
+    if (this.prNodeCache) return this.prNodeCache;
+    const flight = (async (): Promise<Record<string, unknown>> => {
+      const { owner, name } = this.repoParts();
+      const data = await this.graphql(
+        'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id state merged mergedAt closedAt body headRefName headRefOid}}}',
+        { owner, name, number: this.prNumber }
+      );
+      const repository = data.repository as Record<string, unknown> | undefined;
+      const pr = repository?.pullRequest as Record<string, unknown> | undefined;
+      if (!pr) throw new Error(`Pull request #${this.prNumber} not found in ${this.repository}`);
+      return pr;
+    })();
+    this.prNodeCache = flight;
+    try { return await flight; } catch (error) { if (this.prNodeCache === flight) this.prNodeCache = null; throw error; }
   }
   private async pullRequestBody(): Promise<string> {
     const pr = await this.prNode();
     return typeof pr.body === 'string' ? pr.body : '';
   }
   private async list(): Promise<Comment[]> {
-    const { owner, name } = this.repoParts();
-    const all: Comment[] = [];
-    let cursor: string | null = null;
-    do {
-      const data = await this.graphql(
-        'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(first:100,after:$cursor){nodes{id databaseId url body updatedAt author{login}} pageInfo{hasNextPage endCursor}}}}}',
-        { owner, name, number: this.prNumber, cursor }
-      );
-      const repository = data.repository as Record<string, unknown> | undefined;
-      const pr = repository?.pullRequest as Record<string, unknown> | undefined;
-      const comments = pr?.comments as Record<string, unknown> | undefined;
-      const nodes = Array.isArray(comments?.nodes) ? comments.nodes as Array<Record<string, unknown>> : [];
-      for (const value of nodes) {
-        const author = value.author as Record<string, unknown> | undefined;
-        all.push({
-          id: Number(value.databaseId ?? 0),
-          nodeId: typeof value.id === 'string' ? value.id : undefined,
-          url: typeof value.url === 'string' ? value.url : undefined,
-          body: String(value.body ?? ''),
-          updatedAt: String(value.updatedAt ?? ''),
-          authorLogin: typeof author?.login === 'string' ? author.login : null
-        });
-      }
-      const pageInfo = comments?.pageInfo as Record<string, unknown> | undefined;
-      cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
-    } while (cursor);
-    return this.overlayTaskWrites(all);
+    if (this.commentsCache) return this.overlayTaskWrites(this.commentsCache);
+    if (this.commentsFlight) return this.overlayTaskWrites(await this.commentsFlight);
+    const flight = (async (): Promise<Comment[]> => {
+      const { owner, name } = this.repoParts();
+      const all: Comment[] = [];
+      let cursor: string | null = null;
+      do {
+        const data = await this.graphql(
+          'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(first:100,after:$cursor){nodes{id databaseId url body updatedAt author{login}} pageInfo{hasNextPage endCursor}}}}}',
+          { owner, name, number: this.prNumber, cursor }
+        );
+        const repository = data.repository as Record<string, unknown> | undefined;
+        const pr = repository?.pullRequest as Record<string, unknown> | undefined;
+        const comments = pr?.comments as Record<string, unknown> | undefined;
+        const nodes = Array.isArray(comments?.nodes) ? comments.nodes as Array<Record<string, unknown>> : [];
+        for (const value of nodes) {
+          const author = value.author as Record<string, unknown> | undefined;
+          all.push({ id: Number(value.databaseId ?? 0), nodeId: typeof value.id === 'string' ? value.id : undefined, url: typeof value.url === 'string' ? value.url : undefined, body: String(value.body ?? ''), updatedAt: String(value.updatedAt ?? ''), authorLogin: typeof author?.login === 'string' ? author.login : null });
+        }
+        const pageInfo = comments?.pageInfo as Record<string, unknown> | undefined;
+        cursor = pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : null;
+      } while (cursor);
+      return all;
+    })();
+    this.commentsFlight = flight;
+    try { this.commentsCache = await flight; return this.overlayTaskWrites(this.commentsCache); }
+    finally { if (this.commentsFlight === flight) this.commentsFlight = null; }
   }
   async comments(): Promise<Comment[]> { return this.list(); }
   async pullRequestState(): Promise<PullRequestState> {
@@ -92,12 +101,15 @@ export class GitHubStore implements DurableStore {
       body: JSON.stringify(payload),
     }) as Record<string, unknown>;
     if (result.merged !== true) throw new Error(typeof result.message === 'string' ? result.message : 'Pull request #' + this.prNumber + ' was not merged');
+    this.prNodeCache = null;
   }
   async closePullRequest(): Promise<void> {
     await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber, { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) });
+    this.prNodeCache = null;
   }
   async updatePullRequestBody(body: string): Promise<void> {
     await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber, { method: 'PATCH', body: JSON.stringify({ body }) });
+    if (this.prNodeCache) { const current = await this.prNodeCache; this.prNodeCache = Promise.resolve({ ...current, body }); }
   }
   async pullRequestHead(): Promise<{ ref: string; sha: string } | null> {
     const pr = await this.prNode();
@@ -127,6 +139,7 @@ export class GitHubStore implements DurableStore {
     const job = jobs.find(x => x.id === jobId);
     if (!job) {
       const conflicting = bodyJob ?? commentJobs[0];
+      this.clearReadSnapshot();
       if (conflicting) throw new Error(`JOB_ID_MISMATCH: PR #${this.prNumber} is bound to ${conflicting.id}, not ${jobId}`);
       throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
     }
@@ -171,7 +184,7 @@ export class GitHubStore implements DurableStore {
     );
     const edge = (data.addComment as Record<string, unknown> | undefined)?.commentEdge as Record<string, unknown> | undefined;
     const node = edge?.node as Record<string, unknown> | undefined;
-    return {
+    const persisted: Comment = {
       id: Number(node?.databaseId ?? 0),
       nodeId: typeof node?.id === 'string' ? node.id : undefined,
       url: typeof node?.url === 'string' ? node.url : undefined,
@@ -179,6 +192,8 @@ export class GitHubStore implements DurableStore {
       updatedAt: typeof node?.updatedAt === 'string' ? node.updatedAt : new Date().toISOString(),
       authorLogin: typeof (node?.author as Record<string, unknown> | undefined)?.login === 'string' ? String((node?.author as Record<string, unknown>).login) : [...this.trustedAuthors][0] ?? null,
     };
+    if (this.commentsCache) this.commentsCache.push(persisted);
+    return persisted;
   }
   private async updateComment(comment: Comment, body: string): Promise<Comment> {
     if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL update');
@@ -187,7 +202,7 @@ export class GitHubStore implements DurableStore {
       { id: comment.nodeId, body }
     );
     const node = (data.updateIssueComment as Record<string, unknown> | undefined)?.issueComment as Record<string, unknown> | undefined;
-    return {
+    const persisted: Comment = {
       id: Number(node?.databaseId ?? comment.id),
       nodeId: typeof node?.id === 'string' ? node.id : comment.nodeId,
       url: typeof node?.url === 'string' ? node.url : comment.url,
@@ -195,6 +210,8 @@ export class GitHubStore implements DurableStore {
       updatedAt: typeof node?.updatedAt === 'string' ? node.updatedAt : new Date().toISOString(),
       authorLogin: typeof (node?.author as Record<string, unknown> | undefined)?.login === 'string' ? String((node?.author as Record<string, unknown>).login) : comment.authorLogin,
     };
+    if (this.commentsCache) { const index = this.commentsCache.findIndex(item => item.nodeId === comment.nodeId || (item.id > 0 && item.id === comment.id)); if (index >= 0) this.commentsCache[index] = persisted; }
+    return persisted;
   }
   private async deleteComment(comment: Comment): Promise<void> {
     if (!comment.nodeId) throw new Error('GitHub comment node id is required for GraphQL delete');
@@ -202,6 +219,7 @@ export class GitHubStore implements DurableStore {
       'mutation($id:ID!){deleteIssueComment(input:{id:$id}){clientMutationId}}',
       { id: comment.nodeId }
     );
+    if (this.commentsCache) this.commentsCache = this.commentsCache.filter(item => item.nodeId !== comment.nodeId && !(item.id > 0 && item.id === comment.id));
   }
   async saveJob(job: Job): Promise<void> {
     const currentBody = await this.pullRequestBody();

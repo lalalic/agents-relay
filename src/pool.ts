@@ -1,4 +1,4 @@
-import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs } from './store.js';
+import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext } from './store.js';
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
@@ -53,7 +53,7 @@ export class RepositoryWorkerPool {
     for (const job of terminalManagedJobs(discovered)) {
       await this.reconcileExclusive(job.id, async () => {
         const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
-        await this.makeReconciler(store, 0).reconcile(job.id);
+        await withGitHubRequestContext(this.client, 'pool.terminal-reconcile', () => this.makeReconciler(store, 0).reconcile(job.id));
       });
     }
     const jobs = runnableManagedJobs(discovered);
@@ -66,7 +66,7 @@ export class RepositoryWorkerPool {
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
       await this.reconcileExclusive(job.id, async () => {
-        await this.makeReconciler(store, allowance).reconcile(job.id);
+        await withGitHubRequestContext(this.client, 'pool.discovered-reconcile', () => this.makeReconciler(store, allowance).reconcile(job.id));
       });
       capacity -= allowance;
     }
@@ -79,7 +79,7 @@ export class RepositoryWorkerPool {
     try {
       do {
         this.pending = false;
-        await this.reconcileDiscovered(await aggregateManagedGitHubJobs(this.client, this.repositories, this.trustedAuthors));
+        await this.reconcileDiscovered(await withGitHubRequestContext(this.client, 'pool.workspace-scan', () => aggregateManagedGitHubJobs(this.client, this.repositories, this.trustedAuthors)));
       } while (this.pending);
     } finally { this.running = false; }
   }
@@ -91,7 +91,7 @@ export class RepositoryWorkerPool {
     if (existing) return existing;
     const flight = this.reconcileExclusive(jobId, async () => {
       const store = new GitHubStore(this.client, repository, prNumber, this.trustedAuthors);
-      await this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId);
+      await withGitHubRequestContext(this.client, 'pool.targeted-reconcile', () => this.makeReconciler(store, Math.max(1, this.concurrency)).reconcile(jobId));
     });
     this.targetedReconcileFlights.set(key, flight);
     try { await flight; }
@@ -106,8 +106,8 @@ export class RepositoryWorkerPool {
     }
     const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors);
     const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
-    await reconciler.handleEvent(event);
-    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) await reconciler.reconcile(event.job_id);
+    await withGitHubRequestContext(this.client, `pool.event.${event.type}`, () => reconciler.handleEvent(event));
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) await withGitHubRequestContext(this.client, `pool.event-reconcile.${event.type}`, () => reconciler.reconcile(event.job_id));
   }
   async watch(bus: EventBus): Promise<() => Promise<void>> {
     return bus.subscribeAll(async event => {
