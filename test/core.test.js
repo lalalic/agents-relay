@@ -602,7 +602,7 @@ test('adapter runtime exit is not task completion', async () => {
 
 test('normal terminal event remains authoritative when Codex exits afterward', async () => {
   const t=task('success-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','success-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'success-then-exit')));
@@ -615,12 +615,12 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   await stop(); await stopEvents();
 });
 
-test('late correlated terminal event recovers an exit watchdog failure', async (context) => {
+test('late correlated terminal event remains authoritative after process exit', async (context) => {
   const t = task('late-terminal-recovery');
   const store = new InMemoryStore(job([t]));
   const adapter = new FakeAdapter();
   const bus = new MemoryEventBus();
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, terminalExitGraceMs: 10 });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus });
   const stop = await reconciler.watch('j');
   context.after(async () => {
     await reconciler.close();
@@ -629,35 +629,28 @@ test('late correlated terminal event recovers an exit watchdog failure', async (
   await reconciler.reconcile('j');
 
   const source = await activeEventSource(store, 'late-terminal-recovery');
-  const started = eventFor('j', t.id, null, 'task.started', 'running', 'worker began', 'user', undefined, source);
-  await bus.publish(started);
-
-  const completedAt = new Date(Date.now() + 5).toISOString();
-  const completed = eventFor('j', t.id, null, 'task.completed', 'succeeded', 'durable output', 'user', undefined, source);
-  completed.timestamp = completedAt;
+  await bus.publish(eventFor('j', t.id, null, 'task.started', 'running', 'worker began', 'user', undefined, source));
   adapter.resolvers[0].resolve({ summary: 'runtime exited' });
   await new Promise(resolve => setTimeout(resolve, 20));
 
-  const failed = (await store.load('j')).tasks[0];
-  assert.equal(failed.state, 'FAILED');
-  assert.equal(failed.failureReason, 'worker_exit_without_terminal_event');
+  const afterExit = (await store.load('j')).tasks[0];
+  assert.equal(afterExit.state, 'RUNNING');
+  assert.equal(afterExit.failureReason, undefined);
 
-  await reconciler.handleEvent(completed);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'durable output', 'user', undefined, source));
   const recovered = (await store.load('j')).tasks[0];
   assert.equal(recovered.state, 'SUCCEEDED');
   assert.equal(recovered.result?.summary, 'durable output');
-  assert.equal(recovered.failureReason, undefined);
 });
 
-test('accepted terminal event protects against process-exit watchdog while persistence is in flight', async () => {
+test('process exit does not interfere while terminal persistence is in flight', async () => {
   const t=task('terminal-persist-race');
   const store=new DelayedTerminalStore(job([t]));
   const adapter=new FakeAdapter();
   const bus=new MemoryEventBus();
   const events=[];
-  const launchReconciler=managedReconciler(store,{owner:'launcher',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
-  const lifecycleReconciler=managedReconciler(store,{owner:'lifecycle',adapters:[adapter],eventBus:bus,terminalExitGraceMs:5});
+  const launchReconciler=managedReconciler(store,{owner:'launcher',adapters:[adapter],eventBus:bus});
+  const lifecycleReconciler=managedReconciler(store,{owner:'lifecycle',adapters:[adapter],eventBus:bus});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event));
   await launchReconciler.reconcile('j');
   const source=await activeEventSource(store,'terminal-persist-race');
@@ -677,7 +670,7 @@ test('accepted terminal event protects against process-exit watchdog while persi
 
 test('worker failure before Codex nonzero exit is not duplicated by the watchdog', async () => {
   const t=task('failed-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','failed-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'failed-then-exit')));
@@ -690,29 +683,30 @@ test('worker failure before Codex nonzero exit is not duplicated by the watchdog
   await stop(); await stopEvents();
 });
 
-test('unexpected Codex exit after task.started fails after a short terminal grace window', async () => {
-  const t=task('exit-without-terminal'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+test('Codex exit after task.started is observational and does not terminate the task', async () => {
+  const t=task('exit-without-terminal'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','exit-without-terminal',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'exit-without-terminal')));
   adapter.resolvers[0].resolve({summary:'process exited'});
   await new Promise(resolve=>setTimeout(resolve,30));
   const durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'FAILED');
-  assert.match(durable.error,/without publishing a terminal/);
-  assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.failureReason,undefined);
+  assert.equal(events.filter(event=>event.type==='task.failed').length,0);
+  assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
   await reconciler.close();
   await stop(); await stopEvents();
 });
 
-test('Codex exit before task.started fails the lifecycle contract without waiting for task timeout', async () => {
+test('Codex exit before task.started is observational and does not terminate the task', async () => {
   const t=task('exit-before-start'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,terminalExitGraceMs:10});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); adapter.resolvers[0].resolve({summary:'process exited'});
   await new Promise(resolve=>setTimeout(resolve,30));
   const durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'FAILED'); assert.match(durable.error,/before publishing task.started/); await stop();
+  assert.equal(durable.state,'QUEUED'); assert.equal(durable.failureReason,undefined); await reconciler.close(); await stop();
 });
 
 test('asynchronous LaunchFailure becomes authoritative delivery failure', async () => {
@@ -1243,8 +1237,8 @@ test('concurrent reconciler instances atomically claim one queued task only once
   const store=new InMemoryStore(job([t]));
   const bus=new MemoryEventBus();
   const adapter=new FakeAdapter();
-  const a=managedReconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
-  const b=managedReconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus,terminalExitGraceMs:1});
+  const a=managedReconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus});
   await Promise.all([a.reconcile('j'),b.reconcile('j')]);
   const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-launch');
   assert.equal(adapter.launches,1);

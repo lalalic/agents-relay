@@ -124,12 +124,10 @@ URLs are hydrated onto tasks when the durable graph is reloaded.
 
 The ownership boundary is strict: workers own `task.started` and the exact
 terminal task event; Relay owns `task.process.launched` and
-`task.process.exited`/`task.process.async_exited`. If a Codex process exits
-after `task.started` without a terminal event, Relay waits only a short bounded
-grace window and then records an explicit `task.failed` lifecycle-contract
-failure (`worker_exit_without_terminal_event`). That safeguard is not a
-process event promoted to completion, and it is suppressed when a valid
-correlated terminal event has already arrived.
+`task.process.exited`/`task.process.async_exited`. Process exit remains
+observational only: Relay performs no exit-time terminal check and does not
+synthesize task failure from process exit. Semantic completion/failure comes
+from the exact worker terminal event or the normal task timeout.
 12. Relay reconciles dependents and/or resumes the parent continuation.
 13. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
