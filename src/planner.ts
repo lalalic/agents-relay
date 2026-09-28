@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
+import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 import { parseAgentGraph } from './agent-graph.js';
 
@@ -15,6 +15,7 @@ export type PlannerTaskSpec = {
   projectName?: string;
   agentName?: string;
   agentGraph?: string;
+  review?: ReviewTaskMetadata;
   dependencies?: string[];
   capabilities?: string[];
   workerRequirements?: WorkerRequirements;
@@ -68,7 +69,7 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
-  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
+  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
 }
 
 
@@ -102,6 +103,23 @@ function workerRequirements(value: unknown, field: string): WorkerRequirements |
     }
   }
   return { capabilities, runtime: optional('runtime'), taskKind: optional('taskKind'), trustDomain: optional('trustDomain'), region: optional('region'), labels };
+}
+function reviewMetadata(value: unknown, field: string): ReviewTaskMetadata | undefined {
+  if (value === undefined || value === null) return undefined;
+  const root = record(value, field);
+  if (root.role !== 'chair' && root.role !== 'specialist') throw new Error(`Planner ${field}.role must be chair or specialist`);
+  const targetValue = record(root.target, `${field}.target`);
+  const artifact = optionalString(targetValue.artifact, `${field}.target.artifact`);
+  const version = optionalString(targetValue.version, `${field}.target.version`);
+  if (!artifact || !version) throw new Error(`Planner ${field}.target requires artifact and version`);
+  const dimension = optionalString(root.dimension, `${field}.dimension`);
+  const selectionReason = optionalString(root.selectionReason, `${field}.selectionReason`);
+  if (root.role === 'specialist' && (!dimension || !selectionReason)) {
+    throw new Error(`Planner ${field} specialist tasks require dimension and selectionReason`);
+  }
+  const round = root.round === undefined ? undefined : root.round;
+  if (round !== undefined && (!Number.isInteger(round) || Number(round) < 1)) throw new Error(`Planner ${field}.round must be a positive integer`);
+  return { role: root.role, target: { artifact, version }, dimension, selectionReason, round: round === undefined ? undefined : Number(round) };
 }
 function rawValue(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
@@ -171,6 +189,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     const route = routing(task.routing, 'next_tasks[' + index + '].routing');
     const requirements = workerRequirements(task.workerRequirements ?? task.requirements, 'next_tasks[' + index + '].workerRequirements');
     const agentGraph = optionalString(task.agentGraph, `next_tasks[${index}].agentGraph`);
+    const review = reviewMetadata(task.review, `next_tasks[${index}].review`);
     if (agentGraph) {
       try {
         parseAgentGraph(agentGraph);
@@ -183,7 +202,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
       id, input: task.input, priority, storySize,
-      projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph,
+      projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs

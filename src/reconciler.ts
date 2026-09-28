@@ -17,6 +17,8 @@ import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
+import { createReviewChairExecutionPlan } from './review-chair.js';
+import { samePlannerChildDefinition } from './planner-child.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -26,6 +28,9 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   const selectedAgent = task.agentName && context ? await agentContractPrompt(context, task.agentName) : '';
   const selectedGraph = task.agentGraph && context ? await agentGraphPrompt(context, task.agentGraph) : '';
+  const chairPlan = task.review?.role === 'chair' && context
+    ? createReviewChairExecutionPlan(context.agents, task.review.target)
+    : null;
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   if (!task.executionId) throw new Error(`Task ${task.id} requires an executionId before worker input is built`);
   const sourceId = executionEventSource(job.id, task.id, task.executionId);
@@ -43,7 +48,7 @@ Project: ${task.projectName ?? context?.project.name ?? 'unspecified'}
 
 Retrieve the durable job and task from GitHub before doing the work. Use whatever GitHub access this environment provides: the URLs, a GitHub integration/tool, or GitHub CLI/API. GitHub is the source of truth for task intent and declared output.
 
-${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? selectedAgent + '\n\n' : ''}${selectedGraph ? selectedGraph + '\n\n' : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
+${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? selectedAgent + '\n\n' : ''}${selectedGraph ? selectedGraph + '\n\n' : ''}${chairPlan ? `[Review Chair execution plan]\n${JSON.stringify(chairPlan, null, 2)}\n\nUse this runtime-discovered panel to create sibling durable specialist Tasks. Preserve each specialistTasks entry as review metadata, keep the target immutable, and synthesize structured results with synthesizeReview semantics before returning the unified revision plan.\n\n` : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
 
 [Output contract]
 ${output}
@@ -488,10 +493,6 @@ export class Reconciler extends ReconcilerReviewBase {
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
     validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
-}
-
-function samePlannerChildDefinition(left: Task, right: Task): boolean {
-  return JSON.stringify({ id: left.id, input: left.input, output: left.output, priority: left.priority, storySize: left.storySize ?? 'M', projectName: left.projectName, agentName: left.agentName, agentGraph: left.agentGraph, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, priority: right.priority, storySize: right.storySize ?? 'M', projectName: right.projectName, agentName: right.agentName, agentGraph: right.agentGraph, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
 }

@@ -150,4 +150,17 @@ A zero-task autonomous Job stays idle under ordinary reconciliation, but an expl
 
 Planner-produced Tasks obey this same contract, including explicit `storySize`.
 
+### Optional Review Chair Tasks
+
+Projects may use the shared `review-chair` agent as a normal Task or Agent
+Graph node. The chair discovers specialist agent roles from the resolved
+visible-agent catalog, records selection reasons, and creates sibling durable
+specialist Tasks carrying the same immutable review target/version. Their
+structured findings are synthesized into one attributed revision plan. A chair
+may add a specialist when synthesis exposes a missing dimension. It never
+chooses worker/model/provider, edits the artifact, or replaces the existing
+SHA-bound final reviewer. For example, `video-director + market + style ->
+review-chair -> unified revision plan` is a project pattern, not a hard-coded
+Relay reviewer list.
+
 A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` label and one bounded time-of-day `agents-relay:next-run:*` index label. The GitHub heartbeat discovers only indexed due candidates, validates the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and pulses `agents-relay:schedule-wake`. GitHub webhook delivery then wakes local Relay for planner/worker execution. While the schedule is active, the durable Job remains `ACTIVE`; between runs its derived runtime status is `WAITING`. Scheduled recurring Jobs do not enter one-shot final-review/auto-merge after each satisfied run; older-cycle failures are historical evidence and do not block a later slot.

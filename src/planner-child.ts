@@ -1,0 +1,5 @@
+import type { Task } from './types.js';
+
+export function samePlannerChildDefinition(left: Task, right: Task): boolean {
+  return JSON.stringify({ id: left.id, input: left.input, output: left.output, review: left.review ?? null, priority: left.priority, storySize: left.storySize ?? 'M', projectName: left.projectName, agentName: left.agentName, agentGraph: left.agentGraph, dependencies: left.dependencies, capabilities: left.capabilities, adapter: left.adapter, routing: left.routing, continuation: left.continuation ?? null, maxAttempts: left.maxAttempts, timeoutMs: left.timeoutMs }) === JSON.stringify({ id: right.id, input: right.input, output: right.output, review: right.review ?? null, priority: right.priority, storySize: right.storySize ?? 'M', projectName: right.projectName, agentName: right.agentName, agentGraph: right.agentGraph, dependencies: right.dependencies, capabilities: right.capabilities, adapter: right.adapter, routing: right.routing, continuation: right.continuation ?? null, maxAttempts: right.maxAttempts, timeoutMs: right.timeoutMs });
+}

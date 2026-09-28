@@ -66,6 +66,7 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 - Otherwise return only the next useful executable batch from the graph-derived Task boundaries.
 - Do not repeat completed work or recreate an existing Task unless replacement work is explicitly needed.
 - Prefer independently verifiable Tasks with stable IDs, but do not split work solely to make Tasks smaller.
+- When a Job needs multi-perspective review, use the visible `review-chair` agent or an Agent Graph to select specialist roles dynamically. Keep specialist Tasks as independent siblings against the same immutable target/version, and leave worker/model/provider routing to Relay.
 - A Task describes what an agent must accomplish; never emit a shell command as a worker Task.
 - Use dependencies only for Task IDs inside the current Job, and only when execution order actually matters. Never encode cross-Job or cross-repository dependencies in `dependencies`.
 - When the current Job is a prerequisite for another durable Job/Task, emit that dependent in top-level `unblocks`. The current blocker Job owns this authoritative reverse relation. Dependent-side `blockedBy` is optional observability metadata and is not the source of truth. Use `resolutionMode: "merge"` when blocker PR merge is sufficient; use `"verified"` when publication, deployment, runtime health, human approval, or another post-merge fact must be verified.
