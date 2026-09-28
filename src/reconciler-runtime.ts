@@ -172,6 +172,14 @@ export abstract class ReconcilerRuntimeBase {
     activeExecutionOwners.set(executionEventSource(jobId, taskId, executionId), this);
   }
 
+  protected clearTerminalTimer(taskId: string, executionId: string): void {
+    const live = this.live.get(taskId);
+    if (!live || live.executionId !== executionId) return;
+    const timer = this.terminalTimers.get(taskId);
+    if (timer) clearTimeout(timer);
+    this.terminalTimers.delete(taskId);
+  }
+
   protected clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
     if (!executionId || live?.executionId === executionId) {
@@ -275,6 +283,7 @@ export abstract class ReconcilerRuntimeBase {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || task.executionId !== executionId) return;
+    if (task.adapter !== 'chatgpt') this.clearTerminalTimer(taskId, executionId);
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
