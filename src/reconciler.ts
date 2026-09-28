@@ -18,7 +18,7 @@ import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
-import { samePlannerChildDefinition } from './planner-child.js'; import { taskFieldsWorkerPrompt } from './task-fields.js';
+import { samePlannerChildDefinition } from './planner-child.js'; import { taskTagWorkerPrompt } from './task-tag.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -39,7 +39,7 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   const output = task.output.kind === 'file'
     ? `file\nPath: ${task.output.path}`
     : `task/PR\nPR: ${prUrl}\nTask: ${task.id}`;
-  const taskFields = taskFieldsWorkerPrompt(job); return `[Agents Relay managed task]
+  const taskTag = taskTagWorkerPrompt(job); return `[Agents Relay managed task]
 Job URL: ${prUrl}
 Job ID: ${job.id}
 Task URL: ${taskUrl}
@@ -53,7 +53,7 @@ ${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? sele
 [Output contract]
 ${output}
 
-${taskFields}[Execution event contract — mandatory]
+${taskTag}[Execution event contract — mandatory]
 Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
 Your exact event source identity is: ${sourceId}
 Every lifecycle event for this execution MUST set source.id to that exact string. Do not derive, rename, or replace it.

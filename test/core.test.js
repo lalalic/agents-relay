@@ -1000,29 +1000,29 @@ test('delivery failure after correlated task.started is diagnostic only and term
   await stop();
 });
 
-test('terminal event persists only Job-declared Task fields separately from lifecycle and result data', async () => {
-  const t = task('field-report', 'RUNNING');
+test('terminal event persists valid Job-defined tag separately from lifecycle and result data', async () => {
+  const t = task('tag-report', 'RUNNING');
   t.adapter = 'orchestrator';
-  const root = { ...job([t]), taskFields: { e2e: { label: 'E2E', values: { pass: '✅', fail: '❌' } } } };
+  const root = { ...job([t]), tag: { description: 'E2E outcome.', values: { pass: '✅', fail: '❌' } } };
   const store = new InMemoryStore(root);
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [] });
-  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { taskFields: { e2e: 'pass', unknown: 'x' }, evidence: 'ok' }));
+  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { tag: 'pass', evidence: 'ok' }));
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.state, 'SUCCEEDED');
-  assert.deepEqual(durable.fields, { e2e: 'pass' });
+  assert.equal(durable.tag, 'pass');
   assert.deepEqual(durable.result.data, { evidence: 'ok' });
 });
 
-test('terminal event drops undeclared Task field values without changing lifecycle', async () => {
-  const t = task('field-invalid', 'RUNNING');
+test('terminal event ignores undeclared tag values without changing lifecycle', async () => {
+  const t = task('tag-invalid', 'RUNNING');
   t.adapter = 'orchestrator';
-  const root = { ...job([t]), taskFields: { e2e: { values: { pass: '✅', fail: '❌' } } } };
+  const root = { ...job([t]), tag: { description: 'E2E outcome.', values: { pass: '✅', fail: '❌' } } };
   const store = new InMemoryStore(root);
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [] });
-  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { taskFields: { e2e: 'maybe' } }));
+  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { tag: 'maybe' }));
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.state, 'SUCCEEDED');
-  assert.equal(durable.fields, undefined);
+  assert.equal(durable.tag, undefined);
   assert.equal(durable.result.data, undefined);
 });
 
