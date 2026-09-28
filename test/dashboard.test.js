@@ -494,4 +494,6 @@ test('dashboard GitHub usage shows GraphQL operation and context attribution', a
   assert.match(dashboardHtml, /GraphQL contexts/);
   assert.match(dashboardHtml, /status\?\.graphql\?\.operations/);
   assert.match(dashboardHtml, /status\?\.graphql\?\.contexts/);
+  assert.match(dashboardHtml, /PR refresh triggers/);
+  assert.match(dashboardHtml, /Coalesced refreshes/);
 });

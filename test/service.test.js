@@ -251,7 +251,7 @@ test('repository daemon wires ChatGPT runtime load into worker routing', async (
 test('relayd single-flights concurrent pull-request refreshes', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /pullRequestRefreshFlights/);
-  assert.match(source, /if \(existing\) return existing/);
+  assert.match(source, /if \(existing\)/);
 });
 
 test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
@@ -275,8 +275,18 @@ test('recovery scan keeps active repositories and rotates one dormant recovery p
 
 test('relayd exposes bounded GitHub read-path counters', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /githubReadPaths = \{ workspaceScans: 0, prRefreshes: 0 \}/);
+  assert.match(source, /githubReadPaths: PrRefreshDiagnostics = \{ workspaceScans: 0, prRefreshes: 0/);
   assert.match(source, /githubReadPaths\.workspaceScans \+= 1/);
   assert.match(source, /githubReadPaths\.prRefreshes \+= 1/);
   assert.match(source, /readPaths: \{ \.\.\.githubReadPaths \}/);
+});
+
+test('relayd preserves PR refresh trigger attribution and coalesces non-webhook bursts', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /PrRefreshTrigger/);
+  assert.match(source, /prRefreshesByTrigger/);
+  assert.match(source, /coalescedPrRefreshesByTrigger/);
+  assert.match(source, /github\.webhook\.\$\{event\.event\}/);
+  assert.match(source, /PR_REFRESH_COALESCE_MS/);
+  assert.match(source, /dashboard\.job-refresh/);
 });

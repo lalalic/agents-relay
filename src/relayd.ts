@@ -22,6 +22,14 @@ import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
+export type PrRefreshTrigger = 'dashboard.jobs-refresh' | 'dashboard.job-refresh' | 'dashboard.task-state' | `github.webhook.${string}` | 'internal.unknown';
+export type PrRefreshDiagnostics = {
+  workspaceScans: number;
+  prRefreshes: number;
+  prRefreshesByTrigger: Record<string, number>;
+  coalescedPrRefreshesByTrigger: Record<string, number>;
+};
+const PR_REFRESH_COALESCE_MS = 1000;
 export const daemonHelp = `Agents Relay daemon runs the dashboard and worker pool.
 
 Usage:
@@ -83,7 +91,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const usageRegistry = codexAndZaiUsageRegistry();
   const decisionAuditStore = new JsonlDecisionAuditStore(process.env.AGENTS_RELAY_DECISION_AUDIT_PATH ?? join(homedir(), '.agents-relay', 'decision-audit.jsonl'));
   let cachedOverviews: ManagedJobOverview[] = [];
-  const githubReadPaths = { workspaceScans: 0, prRefreshes: 0 };
+  const githubReadPaths: PrRefreshDiagnostics = { workspaceScans: 0, prRefreshes: 0, prRefreshesByTrigger: {}, coalescedPrRefreshesByTrigger: {} };
   let dormantProbeIndex = 0;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
@@ -110,30 +118,43 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return cachedOverviews;
     }
   };
-  const overviews = async (forceRefresh = false): Promise<ManagedJobOverview[]> => forceRefresh ? refreshAll(true) : cachedOverviews;
+  const overviews = async (forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => forceRefresh ? refreshAll(true) : cachedOverviews;
   const persistCache = async (): Promise<void> => {
     try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };
   const pullRequestRefreshFlights = new Map<string, Promise<ManagedGitHubPullRequestSnapshot>>();
-  const refreshPullRequestSnapshot = async (repository: string, prNumber: number): Promise<ManagedGitHubPullRequestSnapshot> => {
+  const lastPullRequestRefreshes = new Map<string, { completedAt: number; snapshot: ManagedGitHubPullRequestSnapshot }>();
+  const refreshPullRequestSnapshot = async (repository: string, prNumber: number, trigger: PrRefreshTrigger = 'internal.unknown'): Promise<ManagedGitHubPullRequestSnapshot> => {
     if (client.rateLimitStatus().limited) return { overviews: cachedOverviews.filter(item => item.job.repository === repository && item.job.prNumber === prNumber), seed: { prNode: {}, comments: null } };
     const key = `${repository}#${prNumber}`;
     const existing = pullRequestRefreshFlights.get(key);
-    if (existing) return existing;
+    if (existing) {
+      githubReadPaths.coalescedPrRefreshesByTrigger[trigger] = (githubReadPaths.coalescedPrRefreshesByTrigger[trigger] ?? 0) + 1;
+      return existing;
+    }
+    const previous = lastPullRequestRefreshes.get(key);
+    const webhookRefresh = trigger.startsWith('github.webhook.');
+    if (!webhookRefresh && previous && Date.now() - previous.completedAt < PR_REFRESH_COALESCE_MS) {
+      githubReadPaths.coalescedPrRefreshesByTrigger[trigger] = (githubReadPaths.coalescedPrRefreshesByTrigger[trigger] ?? 0) + 1;
+      return previous.snapshot;
+    }
     const flight = (async (): Promise<ManagedGitHubPullRequestSnapshot> => {
       githubReadPaths.prRefreshes += 1;
-      const snapshot = await withGitHubRequestContext(client, 'relayd.pr-refresh', () => loadManagedGitHubPullRequestSnapshotGraphql(client, repository, prNumber, trusted));
+      githubReadPaths.prRefreshesByTrigger[trigger] = (githubReadPaths.prRefreshesByTrigger[trigger] ?? 0) + 1;
+      const snapshot = await withGitHubRequestContext(client, `relayd.pr-refresh.${trigger}`, () => loadManagedGitHubPullRequestSnapshotGraphql(client, repository, prNumber, trusted));
       cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
       cachedOverviews.push(...snapshot.overviews);
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
       await persistCache();
+      lastPullRequestRefreshes.set(key, { completedAt: Date.now(), snapshot });
+      while (lastPullRequestRefreshes.size > 1000) lastPullRequestRefreshes.delete(lastPullRequestRefreshes.keys().next().value as string);
       return snapshot;
     })();
     pullRequestRefreshFlights.set(key, flight);
     try { return await flight; }
     finally { if (pullRequestRefreshFlights.get(key) === flight) pullRequestRefreshFlights.delete(key); }
   };
-  const refreshPullRequest = async (repository: string, prNumber: number): Promise<ManagedJobOverview[]> => (await refreshPullRequestSnapshot(repository, prNumber)).overviews;
+  const refreshPullRequest = async (repository: string, prNumber: number, trigger: PrRefreshTrigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => (await refreshPullRequestSnapshot(repository, prNumber, trigger)).overviews;
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
@@ -157,7 +178,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
     const result = await dashboardTaskSetState(store)(jobId, taskId, state);
-    await refreshPullRequest(overview.job.repository, overview.job.prNumber);
+    await refreshPullRequest(overview.job.repository, overview.job.prNumber, 'dashboard.task-state');
     return result;
   };
   const secretFile = value(argv,'--github-webhook-secret-file');
@@ -167,7 +188,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     repositories: new Set(repositories),
     refresh: async (event: GitHubWebhookWake): Promise<readonly string[]> => {
       if (!event.repository || !event.pullRequest) return [];
-      const snapshot = await refreshPullRequestSnapshot(event.repository, event.pullRequest);
+      const snapshot = await refreshPullRequestSnapshot(event.repository, event.pullRequest, `github.webhook.${event.event}`);
       for (const item of snapshot.overviews) pool.seedTargetSnapshot(event.repository, event.pullRequest, item.job.id, snapshot.seed);
       return snapshot.overviews.map(item => item.job.id);
     },
@@ -187,7 +208,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft, publication: cached.publication });
     if (client.rateLimitStatus().limited) return cachedJob();
     try {
-      const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber)).find(item => item.job.id === jobId);
+      const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber, 'dashboard.job-refresh')).find(item => item.job.id === jobId);
       if (!refreshed) return null;
       return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft, publication: refreshed.publication };
     } catch (error) {
