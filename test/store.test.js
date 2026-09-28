@@ -688,3 +688,12 @@ test('GitHub GraphQL diagnostics expose operation and request-context attributio
   assert.match(source, /'pr\.comments'/);
   assert.match(source, /'pr\.node'/);
 });
+
+
+test('job display task status markers round-trip through trusted marker', async () => {
+  const { renderJobComment, parseJob } = await import('../dist/markers.js');
+  const base = job('display-markers');
+  base.display = { taskStatusMarkers: { SUCCEEDED: '✅', FAILED: '❌' } };
+  const parsed = parseJob(renderJobComment(base));
+  assert.deepEqual(parsed.display, base.display);
+});

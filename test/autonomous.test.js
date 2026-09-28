@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, validatePlannerHierarchy } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -47,7 +47,8 @@ test('new planning rounds use plan-N while historical planner-N remains readable
   const historical = { ...task('planner-1', 'SUCCEEDED'), kind: 'planner', planningRound: 1, plannerResult: { objective_status: 'satisfied', assessment: 'legacy', next_tasks: [] } };
   const round = createPlannerRoundTask(job([historical]), { guidance: 're-plan from durable state', manual: true, now: '2026-09-26T12:00:00.000Z' });
   assert.equal(round.id, 'plan-2');
-  assert.equal(round.parentTaskId, 'planner-1');
+  assert.equal(round.parentTaskId, null);
+  assert.equal(round.previousPlannerTaskId, 'planner-1');
   assert.equal(round.planningDecisionId, 'plan-2');
   assert.equal(round.planningRound, 2);
   assert.equal(round.plannerGuidance, 're-plan from durable state');
@@ -70,12 +71,36 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(observed.guidance, 'focus on the durable objective');
   const child = result.job.tasks.find(item => item.id === 'implement');
   assert.ok(child);
-  assert.equal(child.parentTaskId, 'plan-1');
+  assert.equal(child.parentTaskId, null);
   assert.equal(child.planningDecisionId, 'plan-1');
   assert.equal(child.planningSource, 'model-planner');
   assert.equal(child.planningRound, 1);
   assert.equal(child.workerSelection, undefined);
   assert.equal(child.routing, undefined);
+});
+
+test('planner hierarchy rejects planner parents, unknown parents, self parents, and cycles', () => {
+  const plannerTask = { ...task('plan-1', 'SUCCEEDED'), kind: 'planner' };
+  assert.throws(() => validatePlannerHierarchy([plannerTask], [{ ...spec('child'), parentTaskId: 'plan-1' }]), /cannot use planner round/);
+  assert.throws(() => validatePlannerHierarchy([], [{ ...spec('child'), parentTaskId: 'missing' }]), /unknown parentTaskId/);
+  assert.throws(() => validatePlannerHierarchy([], [{ ...spec('child'), parentTaskId: 'child' }]), /cannot parent itself/);
+  assert.throws(() => validatePlannerHierarchy([], [{ ...spec('a'), parentTaskId: 'b' }, { ...spec('b'), parentTaskId: 'a' }]), /cycle/);
+});
+
+test('planner can create business parent-child hierarchy without plan-N parents', async () => {
+  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const store = new InMemoryStore(root);
+  const planner = { plan: async () => ({ objective_status: 'in_progress', assessment: 'hierarchy', next_tasks: [
+    { id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
+    { id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
+  ] }) };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const result = await reconciler.planJob('auto');
+  const day = result.job.tasks.find(item => item.id === 'day-2026-09-28');
+  const hour = result.job.tasks.find(item => item.id === 'hour-17');
+  assert.equal(day.parentTaskId, null);
+  assert.equal(hour.parentTaskId, 'day-2026-09-28');
+  assert.equal(hour.planningDecisionId, 'plan-1');
 });
 
 test('manual satisfied plan persists the planning round without creating work', async () => {

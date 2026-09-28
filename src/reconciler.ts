@@ -5,7 +5,7 @@ import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } fr
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { createPlannerRoundTask, parsePlannerResult, plannerInput, PlannerTaskSpec } from './planner.js';
+import { createPlannerRoundTask, parsePlannerResult, plannerInput, PlannerTaskSpec, validatePlannerHierarchy } from './planner.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
@@ -441,7 +441,7 @@ export class Reconciler extends ReconcilerReviewBase {
     let promise: Promise<import('./planner.js').PlannerResult>;
     try {
       const executionContext = await this.plannerContext(job, task);
-      const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.parentTaskId, executionContext, retryFeedback: task.plannerRetryFeedback, guidance: task.plannerGuidance };
+      const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: task.previousPlannerTaskId ?? null, executionContext, retryFeedback: task.plannerRetryFeedback, guidance: task.plannerGuidance };
       task.input = plannerInput(context);
       await this.store.saveTask(task);
       promise = planner.plan(context, controller.signal);
@@ -466,6 +466,7 @@ export class Reconciler extends ReconcilerReviewBase {
     try {
       const result = parsePlannerResult(raw);
       const executionContext = await this.plannerContext(job, task);
+      validatePlannerHierarchy(job.tasks, result.next_tasks);
       if (result.unblocks.length > 0 && !this.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
       for (const unblock of result.unblocks) await this.store.registerBlockerDependent?.(job.id, unblock);
       const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
@@ -493,6 +494,6 @@ export class Reconciler extends ReconcilerReviewBase {
   private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
     validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
     const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: planner.id, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
   }
 }

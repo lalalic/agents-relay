@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
+import { EventRecord, Job, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority, TaskState } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
 
@@ -67,6 +67,21 @@ export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
   return value as ChatGptTabClosePolicy;
 }
 export function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
+export function taskStatusMarkers(args: string[]): Job['display'] | undefined {
+  const raw = arg(args, '--task-status-markers');
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('--task-status-markers must be a JSON object'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('--task-status-markers must be a JSON object');
+  const allowed = new Set<TaskState>(['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED']);
+  const out: Partial<Record<TaskState,string>> = {};
+  for (const [state, marker] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!allowed.has(state as TaskState)) throw new Error('--task-status-markers contains invalid Task state ' + state);
+    if (typeof marker !== 'string' || marker.length === 0 || marker.length > 32) throw new Error('--task-status-markers value for ' + state + ' must be a non-empty string up to 32 characters');
+    out[state as TaskState] = marker;
+  }
+  return { taskStatusMarkers: out };
+}
 export function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
 export function scheduleFromArgs(args: string[]): Job['schedule'] {
   const cron = arg(args, '--schedule');
