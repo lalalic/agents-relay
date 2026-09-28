@@ -5,7 +5,7 @@ import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { routeWorker, workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { discoverModelCandidates, routeModel } from './model-routing.js';
-import { ReconcilerRuntimeBase } from './reconciler-runtime.js';
+import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
@@ -141,17 +141,17 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
     }
   }
-  protected async applyReviewEvent(event: EventRecord): Promise<void> {
+  protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
     const reviewData = event.data?.review && typeof event.data.review === 'object' ? event.data.review as Record<string, unknown> : undefined;
     const headSha = typeof reviewData?.headSha === 'string' ? reviewData.headSha : typeof event.data?.headSha === 'string' ? event.data.headSha : task?.reviewHeadSha;
-    if (!task || !headSha || task.reviewHeadSha !== headSha) return;
+    if (!task || !headSha || task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
     const outcome: ReviewOutcome = event.type === 'review.started' ? 'started' : event.type === 'review.approved' ? 'approved' : event.type === 'review.changes_required' ? 'changes_required' : 'blocked';
     const currentHeadSha = await this.store.headSha?.();
-    if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return;
+    if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: `${event.type}.stale` };
     const taskDecision = tryTransitionTaskEvent(task, event.type);
-    if (!taskDecision.accepted || !taskDecision.target) return;
+    if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
     task.error = null;
     if (taskDecision.target !== 'RUNNING') {
       task.leaseOwner = null;
@@ -194,7 +194,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
     job.updatedAt = job.review.updatedAt;
     await this.store.saveJob(job);
-    if (outcome === 'changes_required') this.detach(this.reconcile(job.id), job.id, task.id, 'review-fix reconciliation');
     if (outcome === 'approved' && job.autoMerge !== false && this.store.mergePullRequest) {
       const decision = await transitionJobEvent(job, 'review.approved', { autoMerge: true });
       await this.store.saveJob(job);
@@ -207,5 +206,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'review.merged', 'succeeded', 'Reviewer-approved PR #' + job.prNumber + ' merge requested', 'user', { headSha, autoMerge: true }, { agent: 'reviewer', component: 'agents-relay' }));
       }
     }
+    return { applied: true, reconcile: outcome === 'changes_required', reason: `review.${outcome}`, reconcileMode: outcome === 'changes_required' ? 'detached' : undefined };
   }
 }

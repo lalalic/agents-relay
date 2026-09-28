@@ -13,8 +13,10 @@ import type { DecisionEngine, DecisionMode } from './decision.js';
 import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
+import { ReconcileCoordinator } from './reconcile-coordinator.js';
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
+export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
@@ -41,13 +43,39 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>();
   private readonly taskTransitions: DurableTaskTransitionRuntime;
+  private readonly eventCoordinator: ReconcileCoordinator;
+  private readonly detachedReconciles = new Set<Promise<unknown>>();
   protected readonly workflowEffects = new WorkflowEffectExecutor();
   protected reconciling = false;
   constructor(protected readonly store: DurableStore, protected readonly options: ReconcileOptions) {
     this.taskTransitions = new DurableTaskTransitionRuntime(store);
+    this.eventCoordinator = new ReconcileCoordinator(async (jobId, signals) => {
+      let shouldReconcile = false;
+      let detached = false;
+      let taskId = 'job';
+      const reasons: string[] = [];
+      for (const signal of signals) {
+        reasons.push(signal.reason);
+        if (!signal.event) { shouldReconcile = true; continue; }
+        taskId = signal.event.task_id || taskId;
+        const result = await this.applyEvent(signal.event);
+        shouldReconcile ||= result.reconcile;
+        detached ||= result.reconcile && result.reconcileMode === 'detached';
+      }
+      if (!shouldReconcile) return;
+      const reconciliation = this.reconcile(jobId);
+      if (detached) {
+        let tracked!: Promise<unknown>;
+        tracked = reconciliation.finally(() => this.detachedReconciles.delete(tracked));
+        this.detachedReconciles.add(tracked);
+        this.detach(tracked, jobId, taskId, `coordinator reconciliation: ${[...new Set(reasons)].join('+')}`);
+      } else {
+        await reconciliation;
+      }
+    });
   }
   abstract reconcile(jobId: string): Promise<Job>;
-  protected abstract applyReviewEvent(event: EventRecord): Promise<void>;
+  protected abstract applyReviewEvent(event: EventRecord): Promise<EventHandlingResult>;
 
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
     for (const outcome of outcomes.filter(item => item.status === 'failed')) {
@@ -95,35 +123,32 @@ export abstract class ReconcilerRuntimeBase {
       ));
     }
   }
-  async handleEvent(event: EventRecord): Promise<void> {
+  async applyEvent(event: EventRecord): Promise<EventHandlingResult> {
     const sourceId = eventSourceId(event);
     const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
-    if (activeOwner && activeOwner !== this) {
-      await activeOwner.handleEvent(event);
-      return;
-    }
-    if (event.type === 'task.started') {
-      await this.markWorkerStarted(event);
-      return;
-    }
-    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
-      await this.applyTerminalEvent(event);
-      return;
-    }
-    if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) { await this.applyReviewEvent(event); return; }
-    if (event.type === 'job.wake' || event.type === 'github.webhook') await this.reconcile(event.job_id);
+    if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
+    if (event.type === 'task.started') return this.markWorkerStarted(event);
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) return this.applyTerminalEvent(event);
+    if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) return this.applyReviewEvent(event);
+    if (event.type === 'job.wake' || event.type === 'github.webhook') return { applied: true, reconcile: true, reason: event.type };
+    return { applied: false, reconcile: false, reason: event.type };
+  }
+  async handleEvent(event: EventRecord): Promise<void> {
+    await this.eventCoordinator.accept({ jobId: event.job_id, reason: `event.${event.type}`, event });
   }
   async watch(jobId: string): Promise<() => Promise<void>> {
     if (!this.options.eventBus) return async () => {};
     try {
-      return await this.options.eventBus.subscribe(jobId, event => this.handleEvent(event));
+      return await this.options.eventBus.subscribe(jobId, event => this.eventCoordinator.acceptObserved({ jobId: event.job_id, reason: `event.${event.type}`, event }));
     } catch (error) {
       await this.reportTransportFailure(error);
       return async () => {};
     }
   }
-  async idle(): Promise<void> { while ([...this.live.values()].some(item => !item.processSettled) || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
+  async idle(): Promise<void> { while ([...this.live.values()].some(item => !item.processSettled) || this.plannerLive.size > 0 || this.continuationLive.size > 0 || this.reconciling || !this.eventCoordinator.isIdle()) await new Promise<void>(resolve => setTimeout(resolve, 25)); }
   async close(): Promise<void> {
+    await this.eventCoordinator.settle();
+    if (this.detachedReconciles.size > 0) await Promise.allSettled([...this.detachedReconciles]);
     for (const live of this.live.values()) {
       const sourceId = executionEventSource(live.jobId, live.taskId, live.executionId);
       if (activeExecutionOwners.get(sourceId) === this) activeExecutionOwners.delete(sourceId);
@@ -194,9 +219,9 @@ export abstract class ReconcilerRuntimeBase {
     this.terminalTimers.delete(taskId);
   }
 
-  protected async markWorkerStarted(event: EventRecord): Promise<void> {
+  protected async markWorkerStarted(event: EventRecord): Promise<EventHandlingResult> {
     const live = this.live.get(event.task_id);
-    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return;
+    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return { applied: false, reconcile: false, reason: 'task.started.stale' };
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
@@ -212,9 +237,9 @@ export abstract class ReconcilerRuntimeBase {
         task.updatedAt = event.timestamp || new Date().toISOString();
       },
     });
-    if (!transition?.decision.accepted) return;
+    if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' };
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
-    if (transition.from === 'FAILED') this.detach(this.reconcile(event.job_id), event.job_id, event.task_id, 'late worker-start reconciliation');
+    return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };
   }
 
   protected isRecoverableWatchdogFailure(task: Task): boolean {
@@ -329,7 +354,7 @@ export abstract class ReconcilerRuntimeBase {
     this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
   }
 
-  protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<void> {
+  protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
@@ -369,9 +394,10 @@ export abstract class ReconcilerRuntimeBase {
         }
       },
     });
-    if (!transition?.decision.accepted) return;
+    if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
-    this.detach(this.reconcile(transition.job.id), transition.job.id, transition.task.id, 'terminal-event reconciliation');
+    const reviewWorker = transition.task.agentName === 'reviewer';
+    return { applied: true, reconcile: !reviewWorker, reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker ? undefined : 'detached' };
   }
   protected terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;

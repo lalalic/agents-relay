@@ -4,6 +4,9 @@
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
+The Event Bus is the shared transport for worker lifecycle facts and orchestration signals. Runtime events such as `task.started` and terminal task/review events are applied as durable lifecycle facts; they do not imply a GitHub PR refresh. GitHub webhooks first enter the Event Bus as repository/PR signals, then the repository pool refreshes that PR once, fans the refreshed snapshot out to affected Jobs, and submits reconcile work through per-Job `ReconcileCoordinator` mailboxes. The coordinator serializes one Job, consumes every lifecycle fact, coalesces reconcile work, and is the only event-consumer path that decides to run orchestration reconciliation. Narrow observers such as worker start acknowledgement may still subscribe directly but do not own reconciliation.
+
+
 ```sh
 npx agents-relayd --repo OWNER/REPO
 ```

@@ -505,6 +505,35 @@ test('repository pool consumes a webhook PR snapshot for targeted reconciliation
   assert.deepEqual(seen,[{id:'seeded-job',maxConcurrent:4,title:'x',state:'OPEN',head:{ref:'feat/seed',sha:'seed-sha'}}]);
 });
 
+test('runtime-only event cannot consume a pending webhook snapshot seed', async () => {
+  const bus=new MemoryEventBus();
+  const root={...job([]),id:'seed-preserved-job',repository:'owner/repo',prNumber:47};
+  let graphqlCalls=0;
+  let reconciles=0;
+  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{graphqlCalls+=1;throw new Error('webhook seed was lost before reconcile');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(store)=>({
+    applyEvent:async event=>({applied:true,reconcile:false,reason:event.type}),
+    reconcile:async id=>{
+      reconciles+=1;
+      if (reconciles >= 2) {
+        const loaded=await store.load(id);
+        assert.equal(loaded.id,'seed-preserved-job');
+      }
+    }
+  }));
+  await pool.reconcileTarget('owner/repo',47,'seed-preserved-job','setup-target');
+  pool.seedTargetSnapshot('owner/repo',47,'seed-preserved-job',{
+    prNode:{id:'PR_seed_preserved',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/seed-preserved',headRefOid:'seed-preserved-sha'},
+    comments:[],
+  });
+  const stop=await pool.watch(bus);
+  await bus.publish(eventFor('seed-preserved-job','task-1',null,'task.started','running','started','orchestrator'));
+  await pool.reconcileTarget('owner/repo',47,'seed-preserved-job','github.webhook:pull_request:edited');
+  assert.equal(graphqlCalls,0);
+  assert.equal(reconciles,2);
+  await stop();
+});
+
 test('repository pool coalesces concurrent targeted reconciles for the same job', async () => {
   const calls=[]; let release;
   const gate=new Promise(resolve=>{release=resolve;});
@@ -518,6 +547,52 @@ test('repository pool coalesces concurrent targeted reconciles for the same job'
   release();
   await Promise.all([first,second,third]);
   assert.deepEqual(calls,['burst-job']);
+});
+
+test('GitHub webhook enters through EventBus before coordinator refreshes and reconciles the discovered job', async () => {
+  const bus=new MemoryEventBus();
+  const root={...job([]),id:'webhook-signal-job',repository:'owner/repo',prNumber:82};
+  const observed=[];
+  let refreshCalls=0;
+  let reconcileCalls=0;
+  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{throw new Error('coordinator must consume the refreshed seed');}};
+  const pool=new RepositoryWorkerPool(
+    client,
+    ['owner/repo'],
+    new Set(['bot']),
+    2,
+    store=>({
+      applyEvent:async event=>({applied:true,reconcile:false,reason:event.type}),
+      reconcile:async id=>{
+        reconcileCalls+=1;
+        const loaded=await store.load(id);
+        assert.equal(loaded.id,'webhook-signal-job');
+      }
+    }),
+    ()=>false,
+    async (repository,prNumber,trigger)=>{
+      refreshCalls+=1;
+      observed.push(`refresh:${trigger}`);
+      assert.equal(repository,'owner/repo');
+      assert.equal(prNumber,82);
+      return {
+        overviews:[{job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],
+        seed:{
+          prNode:{id:'PR_webhook_signal',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/webhook-signal',headRefOid:'webhook-signal-sha'},
+          comments:[],
+        },
+      };
+    },
+  );
+  const stopAudit=await bus.subscribeAll(async event=>{ observed.push(`bus:${event.job_id}:${event.type}`); });
+  const stopPool=await pool.watch(bus);
+  await pool.webhookSignal(bus,{deliveryId:'delivery-signal',event:'pull_request',action:'edited',repository:'owner/repo',pullRequest:82});
+  for(let i=0;i<20&&reconcileCalls===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(refreshCalls,1);
+  assert.equal(reconcileCalls,1);
+  assert.equal(observed[0],'bus:github-webhook:github.webhook');
+  assert.ok(observed.some(value=>value==='bus:webhook-signal-job:github.webhook'));
+  await stopPool(); await stopAudit();
 });
 
 test('repository pool emits package.published from a correlated publication webhook without service actions', async () => {
@@ -541,7 +616,10 @@ test('repository pool routes correlated task lifecycle events to the target reco
   const client={request:async()=>{throw new Error('unexpected request');}};
   const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({
     reconcile:async id=>{calls.push({kind:'reconcile',id,maxConcurrent});},
-    handleEvent:async event=>{calls.push({kind:'event',type:event.type,jobId:event.job_id,taskId:event.task_id,maxConcurrent});}
+    applyEvent:async event=>{
+      calls.push({kind:'event',type:event.type,jobId:event.job_id,taskId:event.task_id,maxConcurrent});
+      return {applied:true,reconcile:event.type==='task.completed',reason:event.type};
+    }
   }));
   const stop=await pool.watch(bus);
   await bus.publish(eventFor('job-2','task-2',null,'job.wake','queued','wake','orchestrator',{repository:'owner/repo',prNumber:43}));
