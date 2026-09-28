@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
-import { dashboardHtml, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
+import { dashboardHtml, dashboardVersion, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 
 
@@ -11,6 +11,24 @@ test('dashboard inline JavaScript parses before publication', () => {
   const scripts = [...dashboardHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(Boolean);
   assert.ok(scripts.length > 0);
   for (const source of scripts) assert.doesNotThrow(() => new Script(source));
+});
+
+test('dashboard polls the live package version and reloads only when it changes', () => {
+  assert.match(dashboardHtml, /const DASHBOARD_VERSION=/);
+  assert.match(dashboardHtml, /loadJSON\('\/api\/version'\)/);
+  assert.match(dashboardHtml, /live\?\.version&&live\.version!==DASHBOARD_VERSION\)location\.reload\(\)/);
+  assert.match(dashboardHtml, /setInterval\(\(\)=>void refreshVersion\(\),30000\)/);
+});
+
+test('dashboard exposes the live package version without caching', async () => {
+  const server = managedDashboard(new InMemoryStore({ id: 'version-job', title: 'Version job', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }), 0, undefined, 300000, 'version-job');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/version`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { version: dashboardVersion });
 });
 
 test('dashboard switches jobs list and detail into a mobile drill-down flow', () => {

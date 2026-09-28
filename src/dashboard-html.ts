@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 
 const packageVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
+export const dashboardVersion = packageVersion;
 
 export const dashboardHtml = `<!doctype html>
 <html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
@@ -163,7 +164,7 @@ export const dashboardHtml = `<!doctype html>
 </head>
 <body>
 <header>
-  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${packageVersion}</span></div>
+  <div class="brand"><h1>Agents Relay Console</h1><p class="tagline">Durable PR state is authoritative; events are observability.</p><span class="version">v${dashboardVersion}</span></div>
   <div id="runtime-summary" class="runtime-summary" aria-label="Runtime summary"></div>
   <div id="rate-limit-warning" class="warning-banner" role="status" hidden></div>
   <nav role="tablist" aria-label="Console views">
@@ -240,6 +241,7 @@ export const dashboardHtml = `<!doctype html>
 // function usageBar(label, window)
 
 const MAX_EVENTS=60;
+const DASHBOARD_VERSION=${JSON.stringify(dashboardVersion)};
 const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
 const rulesTab=document.querySelector('#rules-tab');
@@ -351,6 +353,7 @@ function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)
 function jobGroup(job){if(isTerminalJob(job))return 3;if(job.executionMode==='autonomous')return 1;if(job.draft||job.state==='DRAFT')return 2;return 0;}
 function compareJobs(a,b){const groupDelta=jobGroup(a)-jobGroup(b);if(groupDelta)return groupDelta;const mergePendingDelta=Number(isCompleteUnmerged(b))-Number(isCompleteUnmerged(a));return mergePendingDelta||String(b.updatedAt).localeCompare(String(a.updatedAt));}
 async function loadJSON(url){const response=await fetch(url);if(!response.ok)throw new Error(response.status+' '+response.statusText);return response.json();}
+async function refreshVersion(){try{const live=await loadJSON('/api/version');if(live?.version&&live.version!==DASHBOARD_VERSION)location.reload();}catch{}}
 function renderRateLimitStatus(status){
   if(!status?.limited){rateLimitWarning.hidden=true;rateLimitWarning.textContent='';return;}
   const until=status.cooldownUntil?new Date(status.cooldownUntil):null;
@@ -425,6 +428,7 @@ stream.addEventListener('relay',message=>{const payload=parseMessage(message);if
 if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/model-router-rules')showView('rules');else if(location.hash==='#/worker-router-rules')showView('worker-rules');else showView('jobs');
 setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/model-router-rules'&&location.hash!=='#/worker-router-rules')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
+setInterval(()=>void refreshVersion(),30000);
 async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
 </script>
 </body>
