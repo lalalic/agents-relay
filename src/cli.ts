@@ -31,14 +31,14 @@ export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
   storeFor, saveLocal, githubStore, eventBus, publishWake, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, taskStatusMarkers, requestManagedReconciliation,
+  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, taskFieldsFromArgs, requestManagedReconciliation,
 } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; display?: Job['display']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; taskFields?: Job['taskFields']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -59,7 +59,7 @@ export async function ensureManagedGitHubJob(
     description: pr.body || undefined,
     priority: options.priority ?? 'P2',
     executionMode: options.executionMode ?? 'fixed',
-    display: options.display,
+    taskFields: options.taskFields,
     autoMerge: options.autoMerge ?? true,
     reviewEnabled: options.reviewEnabled ?? true,
     prNumber: pr.number,
@@ -284,7 +284,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       priority: priority(args),
       executionMode: requestedExecutionMode(args),
       schedule: scheduleFromArgs(args),
-      display: taskStatusMarkers(args),
+      taskFields: taskFieldsFromArgs(args),
       autoMerge: !hasArg(args, '--no-auto-merge'),
       reviewEnabled: !hasArg(args, '--no-review'),
       continuation: continuation(args),
@@ -322,7 +322,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--priority')) job.priority = priority(args, job.priority ?? 'P2');
   if (hasArg(args, '--mode') || hasArg(args, '--execution-mode')) job.executionMode = executionMode(args, job.executionMode ?? 'fixed');
   if (hasArg(args, '--schedule')) job.schedule = scheduleFromArgs(args);
-  if (hasArg(args, '--task-status-markers')) job.display = taskStatusMarkers(args);
+  if (hasArg(args, '--task-fields')) job.taskFields = taskFieldsFromArgs(args);
   if (hasArg(args, '--auto-merge') && hasArg(args, '--no-auto-merge')) throw new Error('choose only one of --auto-merge or --no-auto-merge');
   if (hasArg(args, '--auto-merge')) job.autoMerge = true;
   if (hasArg(args, '--no-auto-merge')) job.autoMerge = false;
