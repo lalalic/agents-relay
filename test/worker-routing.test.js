@@ -236,7 +236,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
   assert.equal(routed?.adapter, 'codex');
   assert.equal(routed?.workerSelection?.workerId, 'codex');
   assert.equal(routed?.routing?.provider, 'openai');
-  assert.equal(routed?.routing?.decidedBy, 'model-router');
+  assert.equal(routed?.routing?.decidedBy, 'execution-router:fallback');
 });
 
 test('deterministic fallback keeps Codex eligible despite quota pressure', () => {

@@ -6,6 +6,7 @@ import test, { managedReconciler } from './test-runtime.js';
 import { decisionMode, LayaCliDecisionEngine, parseChoiceDecision, validateDecisionRequest } from '../dist/decision.js';
 import { discoverModelCandidates, routeModel } from '../dist/model-routing.js';
 import { routeWorker, workerCandidates } from '../dist/worker-routing.js';
+import { routeExecution } from '../dist/execution-routing.js';
 
 const contract = { type: 'choice', question: 'Pick one', choices: ['a', 'b'] };
 
@@ -286,6 +287,58 @@ test('worker fallback always chooses Codex when Codex is legal', async () => {
   assert.equal(routed.selection.decisionEvidence.fallback, true);
 });
 
+test('execution router makes one decision over complete routes and forwards all worker requirements as soft facts', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-unified-route-'));
+  const oldHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-test"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const calls = [];
+    const engine = {
+      name: 'fake',
+      async decide(request, decisionContract) {
+        calls.push({ request, contract: decisionContract });
+        const choice = decisionContract.choices.find(item => item.startsWith('chatgpt/browser-worker::')) ?? decisionContract.choices[0];
+        return { type: 'choice', choice };
+      },
+    };
+    const requirements = { capabilities: ['browser-harness', 'review'], taskKind: 'review', trustDomain: 'trusted', region: 'ca', labels: { tier: 'interactive' } };
+    const result = await routeExecution([
+      { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model', 'codex'] },
+      { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 1, leased: 0, available: 5, observedAt: new Date().toISOString(), reason: null } },
+    ], requirements, { decisionEngine: engine, decisionMode: 'active', taskFacts: { role: 'reviewer' } });
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].contract.choices.some(item => item.startsWith('codex::')));
+    assert.ok(calls[0].contract.choices.some(item => item.startsWith('chatgpt/browser-worker::')));
+    assert.deepEqual(calls[0].request.facts.worker_requirements, requirements);
+    assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
+    assert.equal(result.candidate.routing.provider, 'chatgpt');
+  } finally {
+    if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('execution router falls back to Codex default profile when decision fails', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-unified-fallback-'));
+  const oldHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-default"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const failed = new FakeDecisionEngine('unused', new Error('decision unavailable'));
+    const result = await routeExecution([
+      { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 1, leased: 0, available: 5, observedAt: new Date().toISOString(), reason: null } },
+      { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] },
+    ], { capabilities: [] }, { decisionEngine: failed, decisionMode: 'active' });
+    assert.equal(result.selection.workerId, 'codex');
+    assert.equal(result.candidate.routing.model, 'gpt-default');
+    assert.equal(result.selection.selectedBy, 'execution-router:fallback');
+  } finally {
+    if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('final review uses normal Worker Router decision with current user guidance and reviewer diversity as soft context', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-review-worker-router-'));
   const oldHome = process.env.CODEX_HOME;
@@ -321,7 +374,8 @@ test('final review uses normal Worker Router decision with current user guidance
     const implementation = [{ adapter: 'codex', workerSelection: { workerId: 'codex', adapter: 'codex', capabilities: ['model'], selectedBy: 'worker-router:laya', selectedAt: now }, routing: { provider: 'openai', model: 'gpt-test', decidedBy: 'model-router', decidedAt: now }, agentName: 'builder' }];
     const result = await reconciler.selectReviewer(implementation);
     assert.equal(result.selection.workerId, 'codex');
-    assert.equal(result.selection.selectedBy, 'worker-router:laya');
+    assert.equal(result.selection.selectedBy, 'execution-router:laya');
+    assert.equal(calls.length, 1);
     assert.match(calls[0].request.facts.environment_rules, /don't use chatgpt worker/);
     assert.equal(calls[0].request.facts.task.role, 'reviewer');
     assert.deepEqual(calls[0].request.facts.task.reviewer_diversity.implementation_workers, ['codex']);

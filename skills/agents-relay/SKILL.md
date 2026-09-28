@@ -28,7 +28,7 @@ Every model-backed task producer normally declares:
   - `task_pr`: the managed task/PR is the authoritative result; or
   - `file`: an exact file path is the authoritative result.
 
-Relay then runs worker-router followed by model-router and persists the selected worker/adapter and model routing before launch. Explicit adapter/provider/model values are compatibility/debug constraints, not normal producer requirements.
+Relay then runs one Execution Router decision over complete worker+model routes and persists the selected worker/adapter and model routing before launch. Explicit adapter/provider/model values are compatibility/debug constraints, not normal producer requirements.
 
 ## Lifecycle contract
 
@@ -105,7 +105,7 @@ Each successful planner invocation is one real `plan-N` planning round. Relay pe
 
 A zero-task autonomous Job remains idle. After a direct orchestrator-created initial batch completes, Relay may start the first real planner round. Fixed Jobs do not automatically create planner rounds.
 
-Planner-created child Tasks remain descriptive agent work and must include worker requirements, output contract, and `storySize`; worker-router/model-router choose execution routing afterward.
+Planner-created child Tasks remain descriptive agent work and must include the output contract and `storySize`; worker requirements are optional soft routing facts unless an explicit runtime constraint is known. Execution Router chooses the complete runtime route afterward.
 
 ## Durable truth
 
