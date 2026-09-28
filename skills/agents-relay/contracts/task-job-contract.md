@@ -50,6 +50,12 @@ For feature/refactor work with no failure to diagnose, root cause is not require
 
 Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
 
+### Job-defined Task fields
+
+Canonical `Task.state` is reserved for Relay lifecycle only. A Job may declare `taskFields`, a map of Job-specific result fields. Each field declares an optional label and an allowed `values` map whose keys are durable values and whose values are display strings. A Task stores reported values separately in `fields`.
+
+A model-backed worker reports applicable Job-defined values in its canonical terminal event under `data.taskFields`, for example `{"taskFields":{"e2e":"pass"}}`. Relay validates reported names and values against the Job declaration, copies only valid values into the Task marker's `fields`, and does not reinterpret them as lifecycle state. The raw `data.taskFields` transport payload is not duplicated inside `result.data`. Jobs without `taskFields` are unchanged.
+
 ## Worker routing order
 
 Every new model-backed executable task follows this order:

@@ -690,10 +690,12 @@ test('GitHub GraphQL diagnostics expose operation and request-context attributio
 });
 
 
-test('job display task status markers round-trip through trusted marker', async () => {
-  const { renderJobComment, parseJob } = await import('../dist/markers.js');
-  const base = job('display-markers');
-  base.display = { taskStatusMarkers: { SUCCEEDED: '✅', FAILED: '❌' } };
-  const parsed = parseJob(renderJobComment(base));
-  assert.deepEqual(parsed.display, base.display);
+test('job task field contract and task reported fields round-trip through trusted markers', async () => {
+  const { renderJobComment, renderTaskComment, parseJob, parseTask } = await import('../dist/markers.js');
+  const base = job('task-fields');
+  base.taskFields = { e2e: { label: 'E2E', values: { pass: '✅', fail: '❌' } } };
+  assert.deepEqual(parseJob(renderJobComment(base))?.taskFields, base.taskFields);
+  const child = task('hour-17', 'work');
+  child.fields = { e2e: 'pass' };
+  assert.deepEqual(parseTask(renderTaskComment(child))?.fields, child.fields);
 });

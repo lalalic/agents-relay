@@ -1000,6 +1000,32 @@ test('delivery failure after correlated task.started is diagnostic only and term
   await stop();
 });
 
+test('terminal event persists only Job-declared Task fields separately from lifecycle and result data', async () => {
+  const t = task('field-report', 'RUNNING');
+  t.adapter = 'orchestrator';
+  const root = { ...job([t]), taskFields: { e2e: { label: 'E2E', values: { pass: '✅', fail: '❌' } } } };
+  const store = new InMemoryStore(root);
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [] });
+  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { taskFields: { e2e: 'pass', unknown: 'x' }, evidence: 'ok' }));
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.state, 'SUCCEEDED');
+  assert.deepEqual(durable.fields, { e2e: 'pass' });
+  assert.deepEqual(durable.result.data, { evidence: 'ok' });
+});
+
+test('terminal event drops undeclared Task field values without changing lifecycle', async () => {
+  const t = task('field-invalid', 'RUNNING');
+  t.adapter = 'orchestrator';
+  const root = { ...job([t]), taskFields: { e2e: { values: { pass: '✅', fail: '❌' } } } };
+  const store = new InMemoryStore(root);
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [] });
+  await reconciler.handleEvent(eventFor('j', t.id, null, 'task.completed', 'succeeded', 'check complete', 'user', { taskFields: { e2e: 'maybe' } }));
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.state, 'SUCCEEDED');
+  assert.equal(durable.fields, undefined);
+  assert.equal(durable.result.data, undefined);
+});
+
 test('late completed recovers legacy delivery-after-start failure', async () => {
   const t=task('legacy-delivery-failure','FAILED'); t.adapter='chatgpt'; t.executionId='legacy-delivery-exec';
   t.error='Worker delivery failed after task.started: DOM receipt missed user turn';

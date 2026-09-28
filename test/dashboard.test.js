@@ -64,10 +64,12 @@ test('primary task tree excludes planner-history records', () => {
   assert.match(dashboardHtml, /No work tasks in durable state/);
 });
 
-test('task rows append optional job-defined status markers', () => {
-  assert.match(dashboardHtml, /function taskStatusMarker\(job,task\)/);
-  assert.match(dashboardHtml, /job\?\.display\?\.taskStatusMarkers\?\.\[task\.state\]/);
-  assert.match(dashboardHtml, /'task-status-marker'/);
+test('task rows append optional job-defined Task field displays without replacing lifecycle', () => {
+  assert.match(dashboardHtml, /function taskFieldDisplays\(job,task\)/);
+  assert.match(dashboardHtml, /job\?\.taskFields\?\.\[name\]/);
+  assert.match(dashboardHtml, /task\.fields\|\|\{\}/);
+  assert.match(dashboardHtml, /'task-field'/);
+  assert.match(dashboardHtml, /'badge '\+value\(task\.state\)/);
 });
 
 test('task tree branches can fold and unfold without changing task selection', () => {
