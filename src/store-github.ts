@@ -236,10 +236,12 @@ export class GitHubStore implements DurableStore {
     const conflicts = jobComments.filter(comment => parseJob(comment.body)?.id !== job.id);
     if (conflicts.length > 0) throw new Error(`PR #${this.prNumber} already has a different ${JOB_MARKER} marker`);
 
-    await this.updatePullRequestBody(renderJobBody(job));
-
-    const persisted = parseJob(await this.pullRequestBody());
-    if (!persisted || persisted.id !== job.id) throw new Error(`Failed to persist ${JOB_MARKER} marker in PR #${this.prNumber} body for job ${job.id}`);
+    const nextBody = renderJobBody(job);
+    if (currentBody !== nextBody) {
+      await this.updatePullRequestBody(nextBody);
+      const persisted = parseJob(await this.pullRequestBody());
+      if (!persisted || persisted.id !== job.id) throw new Error(`Failed to persist ${JOB_MARKER} marker in PR #${this.prNumber} body for job ${job.id}`);
+    }
 
     for (const legacy of jobComments.filter(comment => parseJob(comment.body)?.id === job.id)) await this.deleteComment(legacy);
   }

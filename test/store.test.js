@@ -186,6 +186,7 @@ class ManagedGitHubClient {
   comments;
   nextPr;
   nextComment;
+  patchCount=0;
   async graphql(query, variables = {}) {
     const pr = this.pulls.find(item => item.number === Number(variables.number)) ?? this.pulls[0];
     if (query.includes('pullRequest(number:$number){id state merged mergedAt closedAt')) return { repository:{ pullRequest: pr ? { id:'PR_'+pr.number, state:String(pr.state||'open').toUpperCase(), merged:false, mergedAt:null, closedAt:null, body:pr.body ?? '' } : null } };
@@ -213,6 +214,7 @@ class ManagedGitHubClient {
     const pullMatch = path.match(/\/pulls\/(\d+)$/);
     if (method === 'GET' && pullMatch) return this.pulls.find(item => item.number === Number(pullMatch[1]));
     if (method === 'PATCH' && pullMatch) {
+      this.patchCount += 1;
       const pull = this.pulls.find(item => item.number === Number(pullMatch[1]));
       if (!pull) throw new Error('pull not found');
       const patch = JSON.parse(String(init.body));
@@ -320,6 +322,23 @@ test('saveJob migrates a legacy Job comment into the PR body without touching Ta
   const comments = client.comments.get(6) ?? [];
   assert.equal(comments.some(item => parseJob(item.body)?.id === 'legacy-body'), false);
   assert.equal(comments.filter(item => parseTask(item.body)?.id === 'child').length, 1);
+});
+
+test('saveJob skips identical PR body writes and patches changed job state', async () => {
+  const durable = { ...job('idempotent'), executionMode: 'fixed' };
+  const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: renderJobBody(durable), state: 'open', head: { ref: 'feat/idempotent' }, base: { ref: 'main' } }]);
+  const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
+
+  const loaded = await store.load('idempotent');
+  assert.equal(renderJobBody(loaded), client.pulls[0].body);
+  await store.saveJob(loaded);
+  assert.equal(client.patchCount, 0);
+
+  const changed = await store.load('idempotent');
+  changed.state = 'COMPLETED';
+  await store.saveJob(changed);
+  assert.equal(client.patchCount, 1);
+  assert.equal(parseJob(client.pulls[0].body)?.state, 'COMPLETED');
 });
 
 test('plain objective text mentioning the Job marker name is not treated as a malformed marker', async () => {

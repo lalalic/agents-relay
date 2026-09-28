@@ -81,9 +81,10 @@ export async function resolveBlockerDependencies(options: {
     return { resumed: 0, obsolete: 0, waiting };
   }
   const now = options.now ?? new Date().toISOString();
+  const relations = blocker.unblocks ?? [];
   let resumed = 0;
   let obsolete = 0;
-  for (const relation of blocker.unblocks ?? []) {
+  for (const relation of relations) {
     if (relation.state !== 'waiting') continue;
     const store = options.dependentStore(relation.repository, relation.prNumber);
     let targetJob: Job;
@@ -112,8 +113,13 @@ export async function resolveBlockerDependencies(options: {
     await store.saveTask(task);
     relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent task requeued'; resumed += 1;
   }
+  const remaining = relations.filter(relation => relation.state === 'waiting');
+  const consumed = remaining.length !== relations.length;
+  if (!consumed) return { resumed, obsolete, waiting: remaining.length };
+  if (remaining.length > 0) blocker.unblocks = remaining;
+  else delete blocker.unblocks;
   blocker.blockerResolvedAt = now;
   blocker.updatedAt = now;
   await options.blockerStore.saveJob(blocker);
-  return { resumed, obsolete, waiting: (blocker.unblocks ?? []).filter(item => item.state === 'waiting').length };
+  return { resumed, obsolete, waiting: remaining.length };
 }
