@@ -52,9 +52,48 @@ Keep these concepts distinct: observation is not root cause; hypothesis is not r
 
 ### Job-defined Task tag
 
-Canonical `Task.state` is reserved for Relay lifecycle only. A Job may optionally declare one `tag` contract with a human-readable `description` explaining what the tag means and when workers should set it, plus an allowed `values` map from durable tag values to display strings. A Task stores the reported durable value in `tag`.
+`Task.state` is reserved for Relay lifecycle only: `DRAFT`, `QUEUED`, `RUNNING`, `BLOCKED`, `SUCCEEDED`, `FAILED`, and `CANCELLED`. A Job may additionally define one optional `tag` contract for a Job-specific result or classification that should be visible on each Task without changing its lifecycle state.
 
-A model-backed worker reports the applicable value in its canonical terminal event under `data.tag`, for example `{"tag":"pass"}`. Relay validates it against `Job.tag.values`, persists only valid values into the Task marker's `tag`, and does not reinterpret the tag as lifecycle state. The transport `data.tag` is not duplicated inside `result.data`. Jobs without a tag contract are unchanged.
+The Job owns the meaning of the tag. Its trusted Job marker declares a human-readable `description` explaining what the tag means and when workers should set it, plus the allowed durable values and their dashboard display strings:
+
+```json
+{
+  "tag": {
+    "description": "Deterministic E2E outcome. Set pass when the fixed E2E exits 0; set fail when it still fails after the required retry.",
+    "values": {
+      "pass": "✅",
+      "fail": "❌"
+    }
+  }
+}
+```
+
+A worker does **not** edit the Task marker directly. When the Job defines a tag and the tag applies to the work just performed, the worker reports one allowed durable value in the canonical terminal event as `data.tag`:
+
+```json
+{
+  "type": "task.completed",
+  "data": {
+    "tag": "pass",
+    "exit_code": 0
+  }
+}
+```
+
+Relay validates `data.tag` against `Job.tag.values`. If the value is allowed, Relay persists it into the trusted Task marker as the Task's `tag`; undeclared or invalid values are ignored. The transport `data.tag` is not duplicated into `result.data`. The resulting Task metadata may therefore contain both independent concepts at once:
+
+```json
+{
+  "state": "SUCCEEDED",
+  "tag": "pass"
+}
+```
+
+The dashboard always keeps the normal lifecycle badge. When a valid Task tag is present, it additionally renders the display string from `Job.tag.values` after the lifecycle status. For the example above this appears as `SUCCEEDED ✅`.
+
+A tag must describe something specific to the Job contract, not Relay lifecycle. Examples include an E2E result (`pass` / `fail`), publication result, validation classification, or another small Job-defined outcome. The Job description must tell the worker when to set the tag and what each allowed value means. Jobs without a `tag` declaration behave exactly as before.
+
+For the ChatGPT Browser Worker guardian, for example, the Job defines `pass -> ✅` and `fail -> ❌`; each hourly E2E child Task reports `data.tag` after running the fixed deterministic E2E, while the Task lifecycle independently records whether Relay execution itself completed, failed, or became blocked.
 
 
 ### Optional Review Chair Tasks
