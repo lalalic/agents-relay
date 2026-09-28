@@ -1,4 +1,5 @@
 import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task } from './types.js';
+import { implementationTasks } from './runtime-status.js';
 import { WorkflowContext } from './workflow/mermaid.js';
 import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from './workflow/lifecycle.js';
 import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
@@ -8,7 +9,8 @@ export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
   const planners = job.tasks.filter(task => task.kind === 'planner');
-  return planners.some(task => task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied') && job.tasks.every(task => task.state === 'SUCCEEDED');
+  return planners.some(task => task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied')
+    && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
 }
 export function schedule(job: Job): Job {
   reconcileTaskDependencies(job);

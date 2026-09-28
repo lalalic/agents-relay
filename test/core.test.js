@@ -1349,6 +1349,29 @@ test('autonomous in-progress batch advances planner without creating final revie
   assert.equal(saved.tasks.filter(item=>item.kind==='planner').at(-1).id,'plan-2');
 });
 
+test('autonomous satisfied objective ignores failed troubleshooter history for final review', async () => {
+  const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
+  const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
+  const recovery=task('troubleshoot-old','FAILED'); recovery.agentName='troubleshooter'; recovery.error='historical timeout';
+  const root={...job([planner,work,recovery]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-recovered'};
+  const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-recovered';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.tasks.filter(item=>item.agentName==='reviewer').length,1);
+});
+
+test('autonomous satisfied objective still blocks final review on failed implementation', async () => {
+  const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
+  const work=task('work','FAILED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner'; work.error='real failure';
+  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-failed-work'};
+  const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-failed-work';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+});
+
 test('autonomous satisfied objective allows one final review', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
