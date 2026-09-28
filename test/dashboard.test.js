@@ -41,6 +41,16 @@ test('task tree rows stay within the mobile viewport and ellipsize long ids', ()
   assert.match(dashboardHtml, /\.task-id \{ min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis;/);
 });
 
+test('task tree branches can fold and unfold without changing task selection', () => {
+  assert.match(dashboardHtml, /const collapsedTasks=new Set\(\)/);
+  assert.match(dashboardHtml, /className='task-fold'/);
+  assert.match(dashboardHtml, /fold\.setAttribute\('aria-expanded',String\(!collapsed\)\)/);
+  assert.match(dashboardHtml, /ul\.hidden=collapsed/);
+  assert.match(dashboardHtml, /collapsedTasks\.add\(key\)/);
+  assert.match(dashboardHtml, /collapsedTasks\.delete\(key\)/);
+  assert.match(dashboardHtml, /if\(nested\.length\)\{/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
