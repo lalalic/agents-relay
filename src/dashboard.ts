@@ -63,7 +63,7 @@ export function serveDashboard(
   refreshMs = 300000,
   jobId?: string,
   usageRegistry?: UsageSnapshotProvider,
-  overviewProvider?: (forceRefresh?: boolean) => Promise<ManagedJobOverview[]>,
+  overviewProvider?: (forceRefresh?: boolean, trigger?: string) => Promise<ManagedJobOverview[]>,
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null; [key: string]: unknown },
   githubUsageProvider?: () => Promise<unknown>,
@@ -83,7 +83,7 @@ export function serveDashboard(
   const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
-        ? (await overviewProvider(forceRefresh)).map(item => ({ ...item.job, githubState: item.githubState, runtimeStatus: deriveJobRuntimeStatus(item.job, item.githubState), mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft, publication: item.publication }))
+        ? (await overviewProvider(forceRefresh, forceRefresh ? 'dashboard.jobs-refresh' : 'internal.unknown')).map(item => ({ ...item.job, githubState: item.githubState, runtimeStatus: deriveJobRuntimeStatus(item.job, item.githubState), mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft, publication: item.publication }))
         : jobId ? [await store.load(jobId)] : [];
       lastKnownJobs = jobs;
       return jobs;
