@@ -31,6 +31,7 @@ test('mobile usage view uses compact single-column cards', () => {
   assert.match(dashboardHtml, /#usage-view \.usage-provider \{[\s\S]*grid-template-columns:1fr;/);
   assert.match(dashboardHtml, /#usage-view \.usage-track \{ height:\.48rem;/);
   assert.match(dashboardHtml, /#usage-view \.panel-head \.subtle \{ display:none; \}/);
+  assert.match(dashboardHtml, /#usage-view \.usage-details \{ padding-top:\.35rem; \}/);
 });
 
 test('task tree rows stay within the mobile viewport and ellipsize long ids', () => {
@@ -453,28 +454,27 @@ test('dashboard header exposes in-memory runtime summary', () => {
 });
 
 
-test('dashboard Usage renders GitHub REST, GraphQL, Search and cooldown telemetry', () => {
+test('dashboard Usage keeps GitHub quota primary and compact', () => {
   assert.match(dashboardHtml, /GitHub API/);
-  assert.match(dashboardHtml, /REST core/);
-  assert.match(dashboardHtml, /GraphQL/);
-  assert.match(dashboardHtml, /Search/);
-  assert.match(dashboardHtml, /remaining/);
-  assert.match(dashboardHtml, /used \/ /);
-  assert.match(dashboardHtml, /Relay cooldown active/);
-  assert.match(dashboardHtml, /Resets /);
+  assert.match(dashboardHtml, /githubBucket\('REST'/);
+  assert.match(dashboardHtml, /githubBucket\('GraphQL'/);
+  assert.match(dashboardHtml, /githubBucket\('Search'/);
+  assert.match(dashboardHtml, /bucket\.remaining\+' \/ '\+bucket\.limit/);
+  assert.match(dashboardHtml, /shortReset\(bucket\.reset\)/);
+  assert.doesNotMatch(dashboardHtml, /Relay cooldown inactive/);
 });
 
 
-test('dashboard Usage shows GitHub call and read-path diagnostics', () => {
-  assert.match(dashboardHtml, /Calls since start/);
-  assert.match(dashboardHtml, /Read paths/);
-  assert.match(dashboardHtml, /workspace scans/);
-  assert.match(dashboardHtml, /PR refreshes/);
+test('dashboard Usage folds GitHub diagnostics behind details', () => {
+  assert.match(dashboardHtml, /element\('details','usage-details'\)/);
+  assert.match(dashboardHtml, /text\('Diagnostics'\)/);
+  assert.match(dashboardHtml, /Calls · GraphQL/);
+  assert.match(dashboardHtml, /Reads · scans/);
 });
 
 test('dashboard keeps GitHub API card visible when only githubStatus is available', () => {
   assert.match(dashboardHtml, /if\(overview\.github\|\|overview\.githubStatus\)grid\.append\(githubUsageCard/);
-  assert.match(dashboardHtml, /GitHub quota telemetry is unavailable\./);
+  assert.match(dashboardHtml, /Quota unavailable/);
 });
 
 test('dashboard usage remains available when GitHub quota telemetry fails', async () => {
@@ -497,8 +497,8 @@ test('dashboard GitHub usage shows GraphQL operation and context attribution', a
 });
 
 test('dashboard GitHub usage shows per-trigger refresh attribution and coalescing', () => {
-  assert.match(dashboardHtml, /PR refresh triggers/);
-  assert.match(dashboardHtml, /Coalesced refresh triggers/);
+  assert.match(dashboardHtml, /Refresh triggers/);
+  assert.match(dashboardHtml, /Coalesced/);
   assert.match(dashboardHtml, /prRefreshesByTrigger/);
   assert.match(dashboardHtml, /prRefreshCoalescedByTrigger/);
 });
