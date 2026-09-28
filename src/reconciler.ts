@@ -162,7 +162,6 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.store.appendTask(recovery);
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
       }
-      await this.routeExecutableTasks(await this.store.load(jobId));
       for (const task of job.tasks) if (task.state === 'CANCELLED') { this.live.get(task.id)?.execution.cancel(); this.plannerLive.get(task.id)?.controller.abort(); }
       const beforeSchedule = await this.store.load(jobId);
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
@@ -181,6 +180,8 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       if (prState === 'OPEN') {
+        await this.routeExecutableTasks(await this.store.load(jobId));
+        scheduled = schedule(await this.store.load(jobId));
         for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
         const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
         const dispatchable = scheduled.tasks

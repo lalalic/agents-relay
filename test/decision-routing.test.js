@@ -7,6 +7,7 @@ import { decisionMode, LayaCliDecisionEngine, parseChoiceDecision, validateDecis
 import { discoverModelCandidates, routeModel } from '../dist/model-routing.js';
 import { routeWorker, workerCandidates } from '../dist/worker-routing.js';
 import { routeExecution } from '../dist/execution-routing.js';
+import { MemoryEventBus } from '../dist/events.js';
 
 const contract = { type: 'choice', question: 'Pick one', choices: ['a', 'b'] };
 
@@ -202,6 +203,51 @@ test('reconciler emits worker.selected before model.selected after code routing'
     const routingEvents = events.filter(event => event.type === 'worker.selected' || event.type === 'model.selected');
     assert.deepEqual(routingEvents.map(event => event.type), ['worker.selected', 'model.selected']);
     const durable = (await store.load('route-events')).tasks[0];
+    assert.equal(durable.workerSelection.workerId, 'codex');
+    assert.equal(durable.routing.model, 'gpt-test');
+  } finally {
+    if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('dependency-unblocked tasks are routed before launch', async () => {
+  const { InMemoryStore } = await import('../dist/store.js');
+  const home = await mkdtemp(join(tmpdir(), 'relay-route-unlock-'));
+  const oldHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-test"\n');
+    const current = new Date().toISOString();
+    const complete = (id, state, dependencies = []) => ({
+      jobId: 'route-unlock', id, kind: 'work', parentTaskId: null, dependencies, capabilities: [],
+      workerRequirements: { capabilities: ['model'] }, adapter: 'codex', input: 'work',
+      output: { kind: 'task_pr' }, state, attempt: 0, maxAttempts: 1, leaseOwner: null,
+      leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null,
+      timeoutMs: 0, createdAt: current, updatedAt: current, planningSource: 'model-planner',
+    });
+    const dependency = complete('dependency', 'SUCCEEDED');
+    dependency.routing = { provider: 'openai', model: 'gpt-test', decidedBy: 'test', decidedAt: current };
+    const child = complete('unlocked', 'DRAFT', ['dependency']);
+    const job = {
+      id: 'route-unlock', title: 'routing', executionMode: 'fixed', prNumber: 1,
+      repository: 'owner/repo', state: 'ACTIVE', continuation: null,
+      createdAt: current, updatedAt: current, tasks: [dependency, child],
+    };
+    const store = new InMemoryStore(job);
+    const adapter = {
+      name: 'codex', id: 'codex', capabilities: ['model', 'codex'], launches: 0,
+      launch(task) {
+        this.launches += 1;
+        if (!task.routing) throw new Error('unrouted launch');
+        return { id: 'launched', promise: new Promise(() => {}), cancel() {} };
+      },
+    };
+    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: new MemoryEventBus() });
+    await reconciler.reconcile('route-unlock');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(adapter.launches, 1);
+    const durable = (await store.load('route-unlock')).tasks.find(item => item.id === 'unlocked');
     assert.equal(durable.workerSelection.workerId, 'codex');
     assert.equal(durable.routing.model, 'gpt-test');
   } finally {
