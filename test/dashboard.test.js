@@ -59,6 +59,17 @@ test('task tree rows stay within the mobile viewport and ellipsize long ids', ()
   assert.match(dashboardHtml, /\.task-id \{ min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis;/);
 });
 
+test('primary task tree excludes planner-history records', () => {
+  assert.match(dashboardHtml, /const work=tasks\.filter\(task=>task\.kind!=='planner'\)/);
+  assert.match(dashboardHtml, /No work tasks in durable state/);
+});
+
+test('task rows append optional job-defined status markers', () => {
+  assert.match(dashboardHtml, /function taskStatusMarker\(job,task\)/);
+  assert.match(dashboardHtml, /job\?\.display\?\.taskStatusMarkers\?\.\[task\.state\]/);
+  assert.match(dashboardHtml, /'task-status-marker'/);
+});
+
 test('task tree branches can fold and unfold without changing task selection', () => {
   assert.match(dashboardHtml, /const collapsedTasks=new Set\(\)/);
   assert.match(dashboardHtml, /className='task-fold'/);

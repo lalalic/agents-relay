@@ -144,11 +144,11 @@ The public CLI resource surface is:
 
 `job create` persists only durable Job state. It never creates executable work. `task create` creates a real executable Task directly under the Job; direct orchestrator-created Tasks are not wrapped in synthetic planner Tasks and have no planner-round provenance. `plan` is the explicit public operation for invoking the Planner against an existing Job; it is not generic CRUD for planner records.
 
-Relay invokes the planner agent, validates its structured result, persists that invocation as one real `plan-N` round, then materializes `next_tasks` under that planning round. `--prompt` / `--prompt-file` add caller guidance to the durable planning input without replacing the Job objective. The planner agent itself does not call Relay CLI or persist Tasks. Only an actual planner invocation creates a planning round. Historical `planner-N` rounds remain readable and participate in round numbering.
+Relay invokes the planner agent, validates its structured result, persists that invocation as one real `plan-N` round, then materializes `next_tasks`. Planner rounds are planning-history records, not business-tree parents. Their history is linked by planner provenance (`previousPlannerTaskId` / planning-round metadata); business Task hierarchy is expressed only through work Task `parentTaskId`. `--prompt` / `--prompt-file` add caller guidance to the durable planning input without replacing the Job objective. The planner agent itself does not call Relay CLI or persist Tasks. Only an actual planner invocation creates a planning round. Historical `planner-N` rounds remain readable and participate in round numbering.
 
 A zero-task autonomous Job stays idle under ordinary reconciliation, but an explicit `plan` command can start it immediately. An autonomous Job may also begin with one or more direct orchestrator-created Tasks and no Plan. After that direct batch completes, Relay may create the next real planning round through the same round-construction/execution path used by manual `plan`. Later rounds continue until the objective is satisfied. Fixed Jobs never create autonomous planner rounds automatically.
 
-Planner-produced Tasks obey this same contract, including explicit `storySize`.
+Planner-produced Tasks obey this same contract, including explicit `storySize`. A planner may set `parentTaskId` to another Task ID in the current Job to create durable business hierarchy. Omit it for root Tasks. Never use a `plan-N` Task as a business parent.
 
 ### Optional Review Chair Tasks
 

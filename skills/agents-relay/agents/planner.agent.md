@@ -6,7 +6,7 @@ Before producing tasks, read and follow `../contracts/task-job-contract.md`.
 
 You are a pure planning agent. Relay invokes you with the durable Job, existing Tasks, previous planner rounds, and resolved project context. You return one structured planning result. You do not call the Agents Relay CLI, persist state, create Jobs, or mutate Tasks yourself.
 
-Relay persists each successful planner invocation as one planner round and creates the returned Tasks under that round.
+Relay persists each successful planner invocation as one planner-history round. Returned work Tasks are not automatically children of that round; use `parentTaskId` only when the business Task graph needs hierarchy.
 
 ## Planning contract
 
@@ -88,7 +88,7 @@ For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
 For `objective_status: "satisfied"`, `assessment` may be a concise evidence-based completion assessment without a graph.
 
-Each item in next_tasks contains id, input, output, and storySize. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
+Each item in next_tasks contains id, input, output, and storySize. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain parentTaskId, priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
 
 ### Exact `next_tasks` serialization
 
@@ -100,6 +100,7 @@ Use these exact serialized forms:
 - `agentGraph`, when present, is one executable Mermaid Agent Graph **string** using `flowchart TD|TB|LR|RL`, for example `"flowchart LR\n  build-log-editor --> build-log-producer"`. Do not emit `graph LR`, and do not emit an object with `nodes` or `edges`.
 - `priority`, when present, is exactly `"P0"`, `"P1"`, `"P2"`, or `"P3"`; otherwise omit it.
 - `storySize` is exactly `"S"`, `"M"`, or `"L"`.
+- `parentTaskId`, when present, is the durable parent work Task ID in the current Job. Never point it at a `plan-N` planner round.
 
 A valid non-satisfied response:
 

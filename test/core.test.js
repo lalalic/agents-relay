@@ -1023,7 +1023,8 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const fresh=saved.tasks.find(item=>item.id==='plan-2');
   assert.ok(fresh);
   assert.equal(fresh.kind,'planner');
-  assert.equal(fresh.parentTaskId,'planner-1');
+  assert.equal(fresh.parentTaskId,null);
+  assert.equal(fresh.previousPlannerTaskId,'planner-1');
   assert.equal(fresh.state,'QUEUED');
   assert.notEqual(saved.state,'FAILED');
 });

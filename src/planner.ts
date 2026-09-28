@@ -9,6 +9,7 @@ import { parseAgentGraph } from './agent-graph.js';
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
   id: string;
+  parentTaskId?: string | null;
   input: string;
   priority?: Priority;
   storySize?: StorySize;
@@ -57,11 +58,11 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
   };
   return {
     jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner',
-    parentTaskId: previousPlanner?.id ?? null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator',
+    parentTaskId: null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator',
     input: plannerInput(context), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0,
     maxAttempts: options.manual ? 1 : 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
     result: null, plannerResult: null, error: null, timeoutMs: options.timeoutMs ?? storySizeTimeoutMs('M'),
-    createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: round,
+    createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: round, previousPlannerTaskId: previousPlanner?.id ?? null,
     plannerGuidance: options.guidance, manualPlanning: options.manual === true,
   };
 }
@@ -69,7 +70,7 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
-  return { id: task.id, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
+  return { id: task.id, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
 }
 
 
@@ -176,6 +177,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (ids.has(id)) throw new Error(`Planner next_tasks contains duplicate id ${id}`);
     ids.add(id);
     if (typeof task.input !== 'string' || task.input.length === 0) throw new Error(`Planner next_tasks[${index}].input is required`);
+    const parentTaskId = task.parentTaskId === undefined || task.parentTaskId === null ? task.parentTaskId as undefined | null : optionalString(task.parentTaskId, `next_tasks[${index}].parentTaskId`);
     const adapter = task.adapter;
     if (adapter !== undefined && !['codex', 'chatgpt'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter must be codex or chatgpt when provided`);
     const output = task.output === undefined ? undefined : record(task.output, `next_tasks[${index}].output`);
@@ -201,7 +203,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, input: task.input, priority, storySize,
+      id, parentTaskId, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
@@ -209,6 +211,29 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     };
   });
   return { objective_status: status, assessment: root.assessment, next_tasks, unblocks };
+}
+
+
+export function validatePlannerHierarchy(existing: readonly Task[], specs: readonly PlannerTaskSpec[]): void {
+  const existingById = new Map(existing.map(task => [task.id, task]));
+  const specsById = new Map(specs.map(spec => [spec.id, spec]));
+  for (const spec of specs) {
+    const parent = spec.parentTaskId;
+    if (!parent) continue;
+    if (parent === spec.id) throw new Error(`Planner next task ${spec.id} cannot parent itself`);
+    const existingParent = existingById.get(parent);
+    if (existingParent?.kind === 'planner') throw new Error(`Planner next task ${spec.id} cannot use planner round ${parent} as parentTaskId`);
+    if (!existingParent && !specsById.has(parent)) throw new Error(`Planner next task ${spec.id} references unknown parentTaskId ${parent}`);
+  }
+  for (const spec of specs) {
+    const seen = new Set<string>([spec.id]);
+    let parent = spec.parentTaskId ?? null;
+    while (parent && specsById.has(parent)) {
+      if (seen.has(parent)) throw new Error(`Planner next_tasks parentTaskId cycle includes ${parent}`);
+      seen.add(parent);
+      parent = specsById.get(parent)?.parentTaskId ?? null;
+    }
+  }
 }
 
 export function parsePlannerOutput(output: string): PlannerResult {
