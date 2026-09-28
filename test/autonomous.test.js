@@ -148,6 +148,9 @@ test('execution mode and planner result markers round-trip', () => {
   assert.equal(executionMode(['--mode', 'autonomous']), 'autonomous');
   assert.equal(executionMode([]), 'fixed');
   assert.match(dashboardHtml, /Execution mode/);
+  assert.match(dashboardHtml, /Cadence/);
+  assert.match(dashboardHtml, /function cadence\(job\)/);
+  assert.match(dashboardHtml, /Every '\+everyMinute\[1\]\+' min/);
 });
 
 test('planner parses authoritative reverse cross-job unblocks and rejects malformed declarations', () => {
