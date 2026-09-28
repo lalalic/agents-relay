@@ -53,8 +53,8 @@ async function eventHistory(jobId: string, taskId: string | null, limit: number)
   return output;
 }
 
-export { dashboardHtml } from './dashboard-html.js';
-import { dashboardHtml } from './dashboard-html.js';
+export { dashboardHtml, dashboardVersion } from './dashboard-html.js';
+import { dashboardHtml, dashboardVersion } from './dashboard-html.js';
 
 export function serveDashboard(
   store: DurableStore,
@@ -153,6 +153,11 @@ export function serveDashboard(
     if (req.url === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(dashboardHtml);
+      return;
+    }
+    if (req.url === '/api/version') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ version: dashboardVersion }));
       return;
     }
     if (req.url === '/webhooks/github' && req.method === 'POST') {
