@@ -9,5 +9,4 @@ coverage/
 *.log
 
 # Local runtime router rules
-.agents-relay-model-router-rules.md
-.agents-relay-worker-router-rules.md
+.agents-relay-execution-router-rules.md

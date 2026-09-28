@@ -1,5 +1,5 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
-import { loadWorkerRouterRules } from './routing-policy.js';
+import { loadExecutionRouterRules } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
 import { AdapterName, AgentAvailability, AgentRegistration, BrowserWorkspaceCapacity, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
 
@@ -183,7 +183,7 @@ export async function routeWorker(
     return { candidate: deterministic, selection: selection(deterministic, 'worker-router:constraint', evidence) };
   }
 
-  const rules = await loadWorkerRouterRules(options.rulesPath);
+  const rules = await loadExecutionRouterRules(options.rulesPath);
   const facts = JSON.parse(JSON.stringify({
     task: options.taskFacts ?? {},
     explicit_constraints: { runtime: requirements.runtime ?? null },
