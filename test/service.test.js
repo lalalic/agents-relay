@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, recoveryScanRepositories } from '../dist/relayd.js';
+import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -251,7 +251,7 @@ test('repository daemon wires ChatGPT runtime load into worker routing', async (
 test('relayd single-flights concurrent pull-request refreshes', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /pullRequestRefreshFlights/);
-  assert.match(source, /if \(existing\) return existing/);
+  assert.match(source, /if \(existing\)/);
 });
 
 test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
@@ -275,8 +275,24 @@ test('recovery scan keeps active repositories and rotates one dormant recovery p
 
 test('relayd exposes bounded GitHub read-path counters', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /githubReadPaths = \{ workspaceScans: 0, prRefreshes: 0 \}/);
+  assert.match(source, /githubReadPaths: GitHubReadPathDiagnostics/);
   assert.match(source, /githubReadPaths\.workspaceScans \+= 1/);
   assert.match(source, /githubReadPaths\.prRefreshes \+= 1/);
   assert.match(source, /readPaths: \{ \.\.\.githubReadPaths \}/);
+});
+
+test('PR refresh coalescing is bounded and explicit refreshes bypass it', () => {
+  assert.equal(shouldCoalescePullRequestRefresh(1000, 1999), true);
+  assert.equal(shouldCoalescePullRequestRefresh(1000, 2000), false);
+  assert.equal(shouldCoalescePullRequestRefresh(1000, 1001, true), false);
+});
+
+test('relayd preserves stable refresh trigger attribution through status and GraphQL context', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /prRefreshesByTrigger/);
+  assert.match(source, /dashboard\.task-state/);
+  assert.match(source, /dashboard\.selected-job/);
+  assert.match(source, /github\.webhook:/);
+  assert.match(source, /relayd\.pr-refresh:\$\{trigger\}/);
+  assert.match(source, /shouldCoalescePullRequestRefresh/);
 });
