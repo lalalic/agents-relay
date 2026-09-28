@@ -4,7 +4,7 @@ import { githubAuthContext } from './github-auth.js';
 import { EventRecord, Job, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
-import { parseJobTaskFieldsJson } from './task-fields.js';
+import { parseJobTagJson } from './task-tag.js';
 
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 300000, dashboardRefreshMs: 300000 } as const;
 export class ServiceEventBus implements EventBus {
@@ -68,7 +68,7 @@ export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
   return value as ChatGptTabClosePolicy;
 }
 export function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
-export function taskFieldsFromArgs(args: string[]): Job['taskFields'] | undefined { return parseJobTaskFieldsJson(arg(args, '--task-fields')); }
+export function jobTagFromArgs(args: string[]): Job['tag'] | undefined { return parseJobTagJson(arg(args, '--tag')); }
 export function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
 export function scheduleFromArgs(args: string[]): Job['schedule'] {
   const cron = arg(args, '--schedule');

@@ -46,7 +46,7 @@ Example:
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
 With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
-Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-auto-merge, --no-review, --task-fields JSON. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
+Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-auto-merge, --no-review, --tag JSON. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
 Job creation never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
@@ -54,7 +54,7 @@ Example:
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --task-fields JSON, --auto-merge|--no-auto-merge, --review|--no-review, and continuation options. Updating the objective also updates the PR body.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, and continuation options. Updating the objective also updates the PR body.
 Unspecified fields are preserved. Marker/binding corruption is never repaired implicitly; update fails with a precise diagnostic instead.
 
 Example:

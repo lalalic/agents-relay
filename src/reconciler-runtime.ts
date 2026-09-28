@@ -14,7 +14,7 @@ import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
 import { ReconcileCoordinator } from './reconcile-coordinator.js';
-import { acceptedReportedTaskFields, eventDataWithoutTaskFields } from './task-fields.js';
+import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
@@ -381,10 +381,10 @@ export abstract class ReconcilerRuntimeBase {
         task.updatedAt = event.timestamp || new Date().toISOString();
         this.terminalWaiters.get(task.id)?.resolve();
         this.terminalWaiters.delete(task.id);
-        const reportedFields = acceptedReportedTaskFields(job, event.data);
-        if (reportedFields) task.fields = { ...(task.fields ?? {}), ...reportedFields };
+        const reportedTag = acceptedReportedTag(job, event.data);
+        if (reportedTag) task.tag = reportedTag;
         if (event.type === 'task.completed') {
-          task.result = { summary: event.message || `Task ${task.id} completed`, data: eventDataWithoutTaskFields(event.data) };
+          task.result = { summary: event.message || `Task ${task.id} completed`, data: eventDataWithoutTag(event.data) };
           task.error = null;
           task.failureReason = undefined;
         } else if (event.type === 'task.failed') {
