@@ -3,8 +3,8 @@ import { completionGateSatisfied, schedule, transitionTaskEvent, transitionJobEv
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
-import { routeWorker, workerCandidates, type WorkerCandidate } from './worker-routing.js';
-import { discoverModelCandidates, routeModel } from './model-routing.js';
+import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
+import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -81,23 +81,18 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       },
     };
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    const routedWorker = await routeWorker(workers, configured?.requirements ?? { capabilities: ['model'] }, {
+    const routed = await routeExecution(workers, configured?.requirements ?? { capabilities: ['model'] }, {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
       taskFacts,
       usage,
+      registered,
       chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
-    });
-    const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
-    const routedModel = await routeModel(routedWorker.candidate, models, {
-      decisionEngine: this.options.decisionEngine,
-      decisionMode: this.options.decisionMode,
-      constraints: configured?.routing,
-      taskFacts,
+      routingConstraints: configured?.routing,
     });
     return {
-      candidate: { ...routedWorker.candidate, routing: routedModel.routing },
-      selection: routedWorker.selection,
+      candidate: routed.candidate,
+      selection: routed.selection,
       reason: 'worker-router',
     };
   }
@@ -117,28 +112,31 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         attachments: task.attachments ?? [],
         output: task.output ?? null,
       };
-      const routedWorker = await routeWorker(candidates, requirements, {
-        decisionEngine: this.options.decisionEngine,
-        decisionMode: this.options.decisionMode,
-        taskFacts,
-        usage,
-        chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
-      });
-      const models = await discoverModelCandidates(routedWorker.candidate, registered, usage);
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
       const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? job.tasks.find(item => item.id === task.parentTaskId) : undefined;
       const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
       const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
         ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
         : [];
-      const routedModel = await routeModel(routedWorker.candidate, models, { decisionEngine: this.options.decisionEngine, decisionMode: this.options.decisionMode, taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null }, constraints: routingConstraints, excludedRoutes, auditStore: this.options.decisionAuditStore, auditTask: task });
-      task.workerSelection = routedWorker.selection;
-      task.adapter = routedWorker.candidate.adapter;
-      task.routing = routedModel.routing;
+      const routed = await routeExecution(candidates, requirements, {
+        decisionEngine: this.options.decisionEngine,
+        decisionMode: this.options.decisionMode,
+        taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
+        usage,
+        registered,
+        chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
+        routingConstraints,
+        excludedRoutes,
+        auditStore: this.options.decisionAuditStore,
+        auditTask: task,
+      });
+      task.workerSelection = routed.selection;
+      task.adapter = routed.candidate.adapter;
+      task.routing = routed.candidate.routing;
       task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
       task.updatedAt = new Date().toISOString();
       await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routedWorker.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routedWorker.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
     }
   }

@@ -165,7 +165,7 @@ test('CLI task create stores optional project and agent metadata with parent', a
   assert.equal(saved.tasks[0].planningSource, undefined);
   assert.equal(saved.tasks.length, 1);
 });
-test('CLI direct task creation can omit routing and reconciler selects worker then model', async () => {
+test('CLI direct task creation can omit routing and reconciler selects one complete execution route', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-auto-route-'));
   const file = join(directory, 'job.json');
   const root = { ...job([]), executionMode: 'fixed', state: 'ACTIVE', reviewEnabled: false, autoMerge: false };
@@ -188,7 +188,7 @@ test('CLI direct task creation can omit routing and reconciler selects worker th
   assert.equal(routed.workerSelection?.adapter,'chatgpt');
   assert.equal(routed.routing?.provider,'chatgpt');
   assert.equal(routed.routing?.model,'account-defaults');
-  assert.equal(routed.routing?.decidedBy,'model-router');
+  assert.equal(routed.routing?.decidedBy,'execution-router:fallback');
   assert.equal(routed.timeoutMs,900000);
   const workerIndex = events.findIndex(event=>event.type==='worker.selected');
   const modelIndex = events.findIndex(event=>event.type==='model.selected');
@@ -1326,7 +1326,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.adapter, 'chatgpt');
   assert.equal(reviewer?.routing?.provider, 'chatgpt');
   assert.equal(reviewer?.routing?.model, 'account-defaults');
-  assert.equal(reviewer?.routing?.decidedBy, 'model-router');
+  assert.equal(reviewer?.routing?.decidedBy, 'execution-router:fallback');
   assert.equal(reviewer?.routing?.decisionEvidence?.fallback, true);
   assert.match(reviewer?.input ?? '', /Review existing PR #1 at exactly head SHA sha-review-1/);
   assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);

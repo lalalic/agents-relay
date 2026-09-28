@@ -107,7 +107,7 @@ Task submission is append-only at creation time, which avoids a single giant mut
 2. A task comment is created durably.
 3. The relay wakes and reloads the PR.
 4. Scheduler marks dependency-satisfied tasks ready.
-5. Worker-router resolves declared worker requirements using the fresh shared usage snapshot, then model-router resolves provider/model details; Relay persists both before launch.
+5. Execution Router builds complete worker+model routes using declared requirements plus fresh shared usage/runtime facts, removes only impossible routes, chooses one route in a single typed decision, and persists worker/model fields before launch. Decision failure falls back to a usable Codex default route.
 6. Final review uses the same worker-router boundary: hard constraints are applied first, then worker and provider/model diversity are preferences. The durable review task records the selected worker and reason.
 7. Dispatcher validates the selected worker's routing/capabilities and claims a lease.
 8. Adapter launches/submits the worker; Relay emits `task.process.launched` only after that succeeds.

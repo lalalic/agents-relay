@@ -99,7 +99,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs worker-router then model-router. Use --adapter orchestrator only for synchronous self-work; explicit adapter/provider/model remain compatibility/debug constraints.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. Use --adapter orchestrator only for synchronous self-work; explicit adapter/provider/model remain compatibility/debug constraints.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
