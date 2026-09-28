@@ -159,19 +159,16 @@ test('job list uses status badges with distinct state classes', () => {
   assert.match(dashboardHtml, /\.badge\.FAILED/);
 });
 
-test('job rows show lifecycle and runtime without PR state, while details keep PR state', () => {
+test('job rows show lifecycle and runtime without PR state or quick actions', () => {
   assert.match(dashboardHtml, /'job-row'/);
   assert.match(dashboardHtml, /element\('div','job-primary'\)/);
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
   assert.doesNotMatch(dashboardHtml, /states\.append\([^;]*job\.githubState/);
   assert.match(dashboardHtml, /field\('PR state',job\.githubState\|\|'UNKNOWN'\)/);
-  assert.match(dashboardHtml, /actionButton\(job,'start','Start','▶'\)/);
-  assert.match(dashboardHtml, /actionButton\(job,'reconcile','Reconcile','↻'\)/);
-  assert.match(dashboardHtml, /actionButton\(job,'cancel','Cancel','×'\)/);
-  assert.match(dashboardHtml, /button\.setAttribute\('aria-label',label\)/);
-  assert.match(dashboardHtml, /job-action/);
-  assert.match(dashboardHtml, /action==='start'.*job\.state==='DRAFT'/);
+  assert.doesNotMatch(dashboardHtml, /actionButton\(job/);
+  assert.doesNotMatch(dashboardHtml, /className='job-action'/);
+  assert.match(dashboardHtml, /const primary=element\('div','job-primary'\);primary\.append\(states\)/);
 });
 
 test('job rows keep autonomous and review flags in the status row', () => {
@@ -191,10 +188,9 @@ test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
   assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
 });
 
-test('job row selection covers the row while action controls stop propagation', () => {
+test('job row selection covers the row', () => {
   assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\.id\)\)/);
   assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\.id\);\}\)/);
-  assert.match(dashboardHtml, /event\.stopPropagation\(\);void runJobAction/);
 });
 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
