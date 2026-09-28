@@ -276,7 +276,6 @@ export class Reconciler extends ReconcilerReviewBase {
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
     if (latest?.plannerResult?.objective_status === 'satisfied') return job;
-    if (latest && !job.schedule && job.review && job.review.outcome !== 'approved') return job;
     const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));

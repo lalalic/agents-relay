@@ -1336,6 +1336,31 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('autonomous in-progress batch advances planner without creating final review', async () => {
+  const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'in_progress',assessment:'continue',next_tasks:[],unblocks:[]};
+  const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
+  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-autonomous-in-progress'};
+  const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-autonomous-in-progress';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,2);
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').at(-1).id,'plan-2');
+});
+
+test('autonomous satisfied objective allows one final review', async () => {
+  const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
+  const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
+  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-autonomous-done'};
+  const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-autonomous-done';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  const saved=await store.load('j');
+  assert.equal(saved.tasks.filter(item=>item.agentName==='reviewer').length,1);
+  assert.equal(saved.tasks.find(item=>item.agentName==='reviewer')?.reviewHeadSha,'sha-autonomous-done');
+});
+
 test('no-review jobs stay ACTIVE and become merge-pending without creating a reviewer task', async () => {
   const work=task('work','SUCCEEDED');
   const root={...job([work]),executionMode:'fixed',state:'ACTIVE',headSha:'sha-no-review',reviewEnabled:false};
@@ -1359,7 +1384,7 @@ test('CLI init persists no-review independently from auto-merge', async () => {
   await rm(directory,{recursive:true,force:true});
 });
 
-test('review changes-required creates exactly one Codex Luna fix task containing all findings', async () => {
+test('review changes-required creates one routable implementation fix task containing all findings', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-fix-12345678'};
   const store=new InMemoryStore(reviewJob); const events=[];
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0,emit:event=>events.push(event)});
@@ -1369,12 +1394,13 @@ test('review changes-required creates exactly one Codex Luna fix task containing
   const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug',{summary:'third bug'}]}};
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
   let saved=await store.load('j');
-  const fixes=saved.tasks.filter(item=>item.agentName==='review-fix');
+  const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
   assert.equal(fixes.length,1);
   assert.equal(fixes[0].id,'review-fix-sha-fix-');
-  assert.equal(fixes[0].adapter,'codex');
-  assert.equal(fixes[0].routing?.model,'gpt-5.6-luna');
-  assert.equal(fixes[0].routing?.reasoning,'medium');
+  assert.equal(fixes[0].agentName,'implementation');
+  assert.deepEqual(fixes[0].workerRequirements,{capabilities:[]});
+  assert.equal(fixes[0].routing,undefined);
+  assert.equal(fixes[0].timeoutMs,0);
   assert.deepEqual(fixes[0].dependencies,[reviewer.id]);
   assert.match(fixes[0].input,/1\. first bug/);
   assert.match(fixes[0].input,/2\. second bug/);
@@ -1385,7 +1411,7 @@ test('review changes-required creates exactly one Codex Luna fix task containing
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
-  assert.equal(saved.tasks.filter(item=>item.agentName==='review-fix').length,1);
+  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
 });
 
 test('review changes-required falls back to one fix task from the review message', async () => {
@@ -1395,7 +1421,7 @@ test('review changes-required falls back to one fix task from the review message
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.ok(reviewer);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
-  const fixes=(await store.load('j')).tasks.filter(item=>item.agentName==='review-fix');
+  const fixes=(await store.load('j')).tasks.filter(item=>item.id.startsWith('review-fix-'));
   assert.equal(fixes.length,1);
   assert.match(fixes[0].input,/fix the race and add coverage/);
 });
