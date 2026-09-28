@@ -6,7 +6,7 @@ import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, ResourceUsageWindow, RoutingDecision } from './types.js';
 import { usageForProvider, WorkerCandidate } from './worker-routing.js';
 import { DecisionAuditStore, DecisionAuditRecord, makeDecisionAudit } from './decision-audit.js';
-import { loadModelRouterRules, loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
+import { loadExecutionRouterRules, loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
 
 export type ModelCandidate = {
   id: string;
@@ -93,7 +93,7 @@ export async function discoverModelCandidates(
 ): Promise<ModelCandidate[]> {
   const registration = registered.find(item => item.id === worker.workerId);
   if (registration?.runtime.provider && registration.runtime.model) {
-    const rules = await loadModelRouterRules(rulesPath);
+    const rules = await loadExecutionRouterRules(rulesPath);
     if (!nonOpenAiModelAuthorized(registration.runtime.provider, registration.runtime.model, rules.text)) return [];
     return [withResource({
       id: `${registration.runtime.provider}/${registration.runtime.model}`,
@@ -106,7 +106,7 @@ export async function discoverModelCandidates(
   }
 
   const base = await readConfig(join(codexHome, 'config.toml')) ?? {};
-  const rules = await loadModelRouterRules(rulesPath);
+  const rules = await loadExecutionRouterRules(rulesPath);
   const candidates: ModelCandidate[] = [];
   if (base.model) {
     const provider = base.provider ?? 'openai';

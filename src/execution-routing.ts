@@ -1,7 +1,7 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
 import { DecisionAuditRecord, DecisionAuditStore, makeDecisionAudit } from './decision-audit.js';
 import { discoverModelCandidates, ModelCandidate } from './model-routing.js';
-import { loadModelRouterRules, loadRoutingPolicy, loadWorkerRouterRules, policyAllows } from './routing-policy.js';
+import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, RoutingDecision, Task, WorkerRequirements, WorkerSelection } from './types.js';
 import { DEFAULT_CHATGPT_PREFERRED_CONCURRENCY, eligibleWorkerCandidates, WorkerCandidate } from './worker-routing.js';
@@ -25,8 +25,7 @@ export type ExecutionRoutingOptions = {
   taskFacts?: Record<string, unknown>;
   usage?: AccountUsageOverview;
   registered?: readonly AgentRegistration[];
-  workerRulesPath?: string;
-  modelRulesPath?: string;
+  rulesPath?: string;
   policyPath?: string;
   chatgptRunning?: number;
   preferredChatgptConcurrency?: number;
@@ -93,10 +92,10 @@ export async function discoverExecutionRoutes(
 ): Promise<{ routes: ExecutionRouteCandidate[]; policy: Awaited<ReturnType<typeof loadRoutingPolicy>> }> {
   const legalWorkers = eligibleWorkerCandidates(workers, requirements);
   const registered = options.registered ?? [];
-  const policy = await loadRoutingPolicy(options.policyPath, options.modelRulesPath);
+  const policy = await loadRoutingPolicy(options.policyPath, options.rulesPath);
   const routes: ExecutionRouteCandidate[] = [];
   for (const worker of legalWorkers) {
-    const models = await discoverModelCandidates(worker, registered, options.usage, undefined, options.modelRulesPath);
+    const models = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
     for (const model of models) {
       if (!modelUsable(model, options.routingConstraints, options.excludedRoutes, policy)) continue;
       routes.push({ id: routeId(worker, model), worker, model });
@@ -114,11 +113,8 @@ export async function routeExecution(
   if (routes.length === 0) throw new Error('No executable worker+model route satisfies authoritative constraints');
 
   const fallback = fallbackRoute(routes);
-  const [workerRules, modelRules] = await Promise.all([
-    loadWorkerRouterRules(options.workerRulesPath),
-    loadModelRouterRules(options.modelRulesPath),
-  ]);
-  const environmentRules = [workerRules.text, modelRules.text].filter(Boolean).join('\n');
+  const rules = await loadExecutionRouterRules(options.rulesPath);
+  const environmentRules = rules.text;
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
 

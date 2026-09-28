@@ -13,7 +13,7 @@ const candidate = (id, provider, profile) => ({ id, provider, model: id, profile
 test('model decisions persist replayable sanitized audit records and policy snapshot', async () => {
   const root = await mkdtemp(join(tmpdir(), 'relay-audit-'));
   const policyPath = join(root, 'policy.json');
-  const rulesPath = join(root, 'model-router-rules.md');
+  const rulesPath = join(root, 'execution-router-rules.md');
   await writeFile(policyPath, JSON.stringify({ disabledProfiles: ['disabled'], preferredProfiles: ['zai'] }));
   await writeFile(rulesPath, 'ZAI only zai-model while its paid quota remains abundant.');
   const store = new JsonlDecisionAuditStore(join(root, 'decisions.jsonl'));
@@ -59,7 +59,7 @@ test('model re-decision refreshes usage, updates routing, and does not retry the
 });
 
 
-test('free-text model router rules are passed verbatim to the decision engine', async () => {
+test('free-text execution router rules are passed verbatim to the decision engine', async () => {
   const root = await mkdtemp(join(tmpdir(), 'relay-rules-'));
   const rulesPath = join(root, 'rules.md');
   const rules = 'Prefer ZAI when paid quota is abundant.\nRe-decide with fresh usage after provider/runtime failure.';

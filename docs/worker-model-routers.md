@@ -23,7 +23,7 @@ The router keeps hard gates intentionally narrow. Explicit runtime/provider/mode
 
 Everything else is normally soft decision context: task capabilities, task kind, trust/region/labels, quota pressure and reset horizon, cost, latency, quality, runtime load, reviewer diversity, and human-maintained free-text guidance. The complete `workerRequirements` object is passed into the decision facts even when its fields are soft.
 
-Free-text guidance is the primary policy surface. Existing worker-router and model-router rule files are both loaded and combined for backward compatibility; they cannot invent routes because route discovery happens before the decision call. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is explicitly authorized by the model rules.
+Free-text guidance is the primary policy surface. The Execution Router rules file is the single free-text policy surface; it cannot invent routes because route discovery happens before the decision call. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is explicitly authorized by the model rules.
 
 ## Codex fallback
 

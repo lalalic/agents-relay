@@ -65,33 +65,21 @@ async function saveRouterRules(path: string, text: string): Promise<RouterRules>
   return { path, hash: createHash('sha256').update(text).digest('hex'), text };
 }
 
-export function modelRouterRulesPath(explicit?: string): string {
-  return explicit ?? process.env.AGENTS_RELAY_MODEL_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-model-router-rules.md');
+export function executionRouterRulesPath(explicit?: string): string {
+  return explicit ?? process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-execution-router-rules.md');
 }
 
-export function workerRouterRulesPath(explicit?: string): string {
-  return explicit ?? process.env.AGENTS_RELAY_WORKER_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-worker-router-rules.md');
+export async function loadExecutionRouterRules(explicit?: string): Promise<RouterRules> {
+  return await loadRouterRules(executionRouterRulesPath(explicit));
 }
 
-export async function loadModelRouterRules(explicit?: string): Promise<RouterRules> {
-  return await loadRouterRules(modelRouterRulesPath(explicit));
-}
-
-export async function saveModelRouterRules(text: string, explicit?: string): Promise<RouterRules> {
-  return await saveRouterRules(modelRouterRulesPath(explicit), text);
-}
-
-export async function loadWorkerRouterRules(explicit?: string): Promise<RouterRules> {
-  return await loadRouterRules(workerRouterRulesPath(explicit));
-}
-
-export async function saveWorkerRouterRules(text: string, explicit?: string): Promise<RouterRules> {
-  return await saveRouterRules(workerRouterRulesPath(explicit), text);
+export async function saveExecutionRouterRules(text: string, explicit?: string): Promise<RouterRules> {
+  return await saveRouterRules(executionRouterRulesPath(explicit), text);
 }
 
 export async function loadRoutingPolicy(explicit?: string, explicitRules?: string): Promise<LoadedRoutingPolicy> {
   const path = policyPath(explicit);
-  const rules = await loadModelRouterRules(explicitRules);
+  const rules = await loadExecutionRouterRules(explicitRules);
   try {
     const text = await readFile(path, 'utf8');
     const policy = safePolicy(JSON.parse(text));

@@ -453,21 +453,14 @@ test('dashboard exposes reviewer approval, changes-required, stale, and merge-re
 });
 
 
-test('dashboard exposes free-text model router rules editor', () => {
-  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Model Rules</);
+test('dashboard exposes one free-text Execution Router rules editor', () => {
+  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Execution Rules</);
   assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
-  assert.match(dashboardHtml, /Free-text guidance loaded by the model decider/);
-  assert.match(dashboardHtml, /fetch\('\/api\/model-router-rules'/);
+  assert.match(dashboardHtml, /Free-text soft policy loaded by the Execution Router/);
+  assert.match(dashboardHtml, /fetch\('\/api\/execution-router-rules'/);
   assert.match(dashboardHtml, /method:'PUT'/);
   assert.match(dashboardHtml, /New routing decisions will load these rules/);
-});
-
-test('dashboard exposes free-text worker router rules editor', () => {
-  assert.match(dashboardHtml, /id="worker-rules-tab"[^>]*>Worker Rules</);
-  assert.match(dashboardHtml, /id="worker-rules-text"[^>]*class="rules-textarea"/);
-  assert.match(dashboardHtml, /Free-text guidance loaded by the worker decider/);
-  assert.match(dashboardHtml, /fetch\('\/api\/worker-router-rules'/);
-  assert.match(dashboardHtml, /New worker decisions will load these rules/);
+  assert.doesNotMatch(dashboardHtml, /worker-rules-tab|model-router-rules|worker-router-rules/);
 });
 
 test('dashboard header exposes in-memory runtime summary', () => {

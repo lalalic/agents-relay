@@ -342,10 +342,10 @@ test('execution router falls back to Codex default profile when decision fails',
 test('final review uses normal Worker Router decision with current user guidance and reviewer diversity as soft context', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-review-worker-router-'));
   const oldHome = process.env.CODEX_HOME;
-  const oldRules = process.env.AGENTS_RELAY_WORKER_ROUTER_RULES;
+  const oldRules = process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES;
   process.env.CODEX_HOME = dir;
   const rulesPath = join(dir, 'worker-rules.md');
-  process.env.AGENTS_RELAY_WORKER_ROUTER_RULES = rulesPath;
+  process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = rulesPath;
   try {
     await writeFile(join(dir, 'config.toml'), 'model = "gpt-test"\nmodel_provider = "openai"\n');
     await writeFile(rulesPath, "don't use chatgpt worker\n");
@@ -382,7 +382,7 @@ test('final review uses normal Worker Router decision with current user guidance
     assert.match(calls[0].request.facts.task.reviewer_diversity.preference, /soft preference below user environment rules/);
   } finally {
     if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
-    if (oldRules === undefined) delete process.env.AGENTS_RELAY_WORKER_ROUTER_RULES; else process.env.AGENTS_RELAY_WORKER_ROUTER_RULES = oldRules;
+    if (oldRules === undefined) delete process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES; else process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = oldRules;
     await rm(dir, { recursive: true, force: true });
   }
 });

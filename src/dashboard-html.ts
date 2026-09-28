@@ -172,8 +172,7 @@ export const dashboardHtml = `<!doctype html>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
-    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Model Rules</button>
-    <button id="worker-rules-tab" type="button" role="tab" aria-selected="false" aria-controls="worker-rules-view">Worker Rules</button>
+    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Execution Rules</button>
   </nav>
 </header>
 <main>
@@ -205,24 +204,12 @@ export const dashboardHtml = `<!doctype html>
   </section>
   <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden>
     <div class="panel">
-      <div class="panel-head"><h2>Model Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
+      <div class="panel-head"><h2>Execution Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
       <div class="panel-body">
         <div class="rules-editor">
-          <p class="rules-help">Free-text guidance loaded by the model decider for every routing decision. Hard capability and health gates remain enforced by code.</p>
-          <textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Model router rules" placeholder="Example: ZAI only glm-5.3-flash high thinking. Prefer it while paid quota is abundant. Non-OpenAI models enter the candidate set only when the provider is configured and the concrete model is named here."></textarea>
+          <p class="rules-help">Free-text soft policy loaded by the Execution Router for every worker+model routing decision. Impossible routes remain excluded by code; Codex remains the deterministic fallback if decision fails.</p>
+          <textarea id="rules-text" class="rules-textarea" spellcheck="true" aria-label="Execution router rules" placeholder="Example: Prefer ZAI glm-5.3-flash high while quota is available. Use ChatGPT for research when appropriate. Codex is fallback only."></textarea>
           <div class="rules-footer"><span id="rules-status" class="subtle" aria-live="polite"></span><button id="rules-save" class="rules-save" type="button">Save rules</button></div>
-        </div>
-      </div>
-    </div>
-  </section>
-  <section id="worker-rules-view" role="tabpanel" aria-labelledby="worker-rules-tab" hidden>
-    <div class="panel">
-      <div class="panel-head"><h2>Worker Router Rules</h2><span id="worker-rules-meta" class="subtle"></span></div>
-      <div class="panel-body">
-        <div class="rules-editor">
-          <p class="rules-help">Free-text guidance loaded by the worker decider when choosing ChatGPT versus Codex. Use this for local preferences; worker legality and Model Router remain separate.</p>
-          <textarea id="worker-rules-text" class="rules-textarea" spellcheck="true" aria-label="Worker router rules" placeholder="Example: Prefer ChatGPT unless the task requires native local execution or computer-use that ChatGPT plus MacBridge cannot perform."></textarea>
-          <div class="rules-footer"><span id="worker-rules-status" class="subtle" aria-live="polite"></span><button id="worker-rules-save" class="rules-save" type="button">Save rules</button></div>
         </div>
       </div>
     </div>
@@ -247,11 +234,9 @@ const DASHBOARD_VERSION=${JSON.stringify(dashboardVersion)};
 const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
 const rulesTab=document.querySelector('#rules-tab');
-const workerRulesTab=document.querySelector('#worker-rules-tab');
 const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
 const rulesView=document.querySelector('#rules-view');
-const workerRulesView=document.querySelector('#worker-rules-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
@@ -277,10 +262,6 @@ const rulesText=document.querySelector('#rules-text');
 const rulesMeta=document.querySelector('#rules-meta');
 const rulesStatus=document.querySelector('#rules-status');
 const rulesSave=document.querySelector('#rules-save');
-const workerRulesText=document.querySelector('#worker-rules-text');
-const workerRulesMeta=document.querySelector('#worker-rules-meta');
-const workerRulesStatus=document.querySelector('#worker-rules-status');
-const workerRulesSave=document.querySelector('#worker-rules-save');
 const rateLimitWarning=document.querySelector('#rate-limit-warning');
 const runtimeSummary=document.querySelector('#runtime-summary');
 let jobs=[];
@@ -399,11 +380,9 @@ function githubUsageCard(snapshot,status){
   return card;
 }
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];const grid=element('div','usage-providers');if(overview.github||overview.githubStatus)grid.append(githubUsageCard(overview.github,overview.githubStatus));for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
-async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/model-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}}
-async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/model-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
-async function drawWorkerRules(){workerRulesStatus.textContent='';try{const rules=await loadJSON('/api/worker-router-rules');workerRulesText.value=typeof rules.text==='string'?rules.text:'';workerRulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){workerRulesMeta.textContent='Unavailable';workerRulesStatus.textContent='Could not load rules: '+error.message;}}
-async function saveWorkerRules(){workerRulesSave.disabled=true;workerRulesStatus.textContent='Saving…';try{const response=await fetch('/api/worker-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:workerRulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();workerRulesMeta.textContent='Saved · '+rules.hash.slice(0,12);workerRulesStatus.textContent='Saved. New worker decisions will load these rules.';}catch(error){workerRulesStatus.textContent='Save failed: '+error.message;}finally{workerRulesSave.disabled=false;}}
-function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';const isWorkerRules=view==='worker-rules';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;workerRulesView.hidden=!isWorkerRules;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));workerRulesTab.setAttribute('aria-selected',String(isWorkerRules));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isRules)void drawRules();else void drawWorkerRules();}
+async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/execution-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}}
+async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/execution-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
+function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));if(isJobs)void refresh();else if(isUsage)void drawUsage();else void drawRules();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
@@ -417,19 +396,17 @@ mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJo
 mobileJobs.addEventListener('change',syncMobileJobsView);
 window.addEventListener('hashchange',syncMobileJobsView);
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
-rulesTab.addEventListener('click',()=>{location.hash='#/model-router-rules';showView('rules');});
-workerRulesTab.addEventListener('click',()=>{location.hash='#/worker-router-rules';showView('worker-rules');});
+rulesTab.addEventListener('click',()=>{location.hash='#/execution-router-rules';showView('rules');});
 rulesSave.addEventListener('click',()=>void saveRules());
-workerRulesSave.addEventListener('click',()=>void saveWorkerRules());
-window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const next=location.hash==='#/usage'?'rules':location.hash==='#/model-router-rules'?'worker-rules':location.hash==='#/worker-router-rules'?'jobs':'usage';location.hash=next==='usage'?'#/usage':next==='rules'?'#/model-router-rules':next==='worker-rules'?'#/worker-router-rules':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
+window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const next=location.hash==='#/usage'?'rules':location.hash==='#/execution-router-rules'?'jobs':'usage';location.hash=next==='usage'?'#/usage':next==='rules'?'#/execution-router-rules':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
 const stream=new EventSource('/events');
 stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();void drawRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
-if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/model-router-rules')showView('rules');else if(location.hash==='#/worker-router-rules')showView('worker-rules');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/model-router-rules'&&location.hash!=='#/worker-router-rules')void refresh();},300000);
+if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else showView('jobs');
+setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/execution-router-rules')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
 async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
