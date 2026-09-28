@@ -99,7 +99,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let dormantProbeIndex = 0;
   const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
-  const pool = new RepositoryWorkerPool(client, repositories, trusted, concurrency, makeReconciler, () => client.rateLimitStatus().limited);
   const cacheDirectory = join(homedir(), '.agents-relay');
   const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
   try {
@@ -160,6 +159,15 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     finally { if (pullRequestRefreshFlights.get(key) === flight) pullRequestRefreshFlights.delete(key); }
   };
   const refreshPullRequest = async (repository: string, prNumber: number, trigger: PullRequestRefreshTrigger, options?: { force?: boolean }): Promise<ManagedJobOverview[]> => (await refreshPullRequestSnapshot(repository, prNumber, trigger, options)).overviews;
+  const pool = new RepositoryWorkerPool(
+    client,
+    repositories,
+    trusted,
+    concurrency,
+    makeReconciler,
+    () => client.rateLimitStatus().limited,
+    (repository, prNumber, trigger) => refreshPullRequestSnapshot(repository, prNumber, trigger),
+  );
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
@@ -191,17 +199,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const webhook = secret ? {
     secret,
     repositories: new Set(repositories),
-    refresh: async (event: GitHubWebhookWake): Promise<readonly string[]> => {
-      if (!event.repository || !event.pullRequest) return [];
-      const snapshot = await refreshPullRequestSnapshot(event.repository, event.pullRequest, `github.webhook:${event.event}${event.action ? ':' + event.action : ''}`);
-      for (const item of snapshot.overviews) pool.seedTargetSnapshot(event.repository, event.pullRequest, item.job.id, snapshot.seed);
-      return snapshot.overviews.map(item => item.job.id);
-    },
     wake: async (event: GitHubWebhookWake): Promise<void> => {
       if (!event.repository || !event.pullRequest) return;
       try {
-        const refreshed = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
-        for (const item of refreshed) await pool.webhookWake(bus, item.job, event);
+        await pool.webhookSignal(bus, event);
       } catch (error) {
         process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       }
@@ -221,6 +222,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return cachedJob();
     }
   };
+  const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>({ ...client.rateLimitStatus(), readPaths: { ...githubReadPaths } }),()=>client.rateLimitSnapshot(),exactJob, {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
@@ -237,7 +239,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
   const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
-  const stopWatch = bus ? await pool.watch(bus) : async()=>{};
   const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)

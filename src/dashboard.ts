@@ -167,9 +167,12 @@ export function serveDashboard(
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
       queueMicrotask(() => {
-        void (webhook.refresh ? webhook.refresh(event) : Promise.resolve([]))
-          .then(jobIds => broadcastSnapshots(jobIds))
-          .catch(error => process.stderr.write(`warning: webhook dashboard snapshot unavailable: ${error instanceof Error ? error.message : String(error)}\n`))
+        const refreshDashboard = webhook.refresh
+          ? webhook.refresh(event)
+            .then(jobIds => broadcastSnapshots(jobIds))
+            .catch(error => process.stderr.write(`warning: webhook dashboard snapshot unavailable: ${error instanceof Error ? error.message : String(error)}\n`))
+          : Promise.resolve();
+        void refreshDashboard
           .then(() => webhook.wake(event))
           .catch(error => process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
       });

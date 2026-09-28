@@ -56,10 +56,12 @@ test('workspace daemon establishes dashboard and event watch before remote refre
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const cached = source.indexOf('const initial = cachedOverviews');
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
+  const server = source.indexOf('const server = serveDashboard', watch);
   const refresh = source.indexOf('void refreshAll(true)', watch);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
-  assert.ok(refresh > watch);
+  assert.ok(server > watch);
+  assert.ok(refresh > server);
   assert.doesNotMatch(source, /const initial = await refreshAll\(\)/);
 });
 
@@ -256,7 +258,7 @@ test('relayd single-flights concurrent pull-request refreshes', async () => {
 
 test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /new RepositoryWorkerPool\(client, repositories, trusted, concurrency, makeReconciler, \(\) => client\.rateLimitStatus\(\)\.limited\)/);
+  assert.match(source, /new RepositoryWorkerPool\([\s\S]*\(\) => client\.rateLimitStatus\(\)\.limited,[\s\S]*refreshPullRequestSnapshot/);
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return \{ overviews: cachedOverviews\.filter/);
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
   assert.match(source, /return cachedJob\(\);\n    }\n  };/);
@@ -287,12 +289,13 @@ test('PR refresh coalescing is bounded and explicit refreshes bypass it', () => 
   assert.equal(shouldCoalescePullRequestRefresh(1000, 1001, true), false);
 });
 
-test('relayd preserves stable refresh trigger attribution through status and GraphQL context', async () => {
+test('relayd preserves stable refresh trigger attribution through coordinator and GraphQL context', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const poolSource = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
   assert.match(source, /prRefreshesByTrigger/);
   assert.match(source, /dashboard\.task-state/);
   assert.match(source, /dashboard\.selected-job/);
-  assert.match(source, /github\.webhook:/);
+  assert.match(poolSource, /github\.webhook:/);
   assert.match(source, /relayd\.pr-refresh:\$\{trigger\}/);
   assert.match(source, /shouldCoalescePullRequestRefresh/);
 });
