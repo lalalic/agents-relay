@@ -1,5 +1,5 @@
 import { Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
-import { schedule, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './scheduler.js';
+import { completionGateSatisfied, schedule, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
@@ -26,6 +26,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
     if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'ACTIVE' || !implementationComplete(job) || !headSha) return;
+    if (job.executionMode === 'autonomous' && !completionGateSatisfied(job)) return;
     const review = job.review;
     if (review?.headSha === headSha && ['started', 'approved', 'changes_required', 'blocked'].includes(review.outcome)) return;
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
@@ -181,12 +182,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         const input = `Address all reviewer findings for PR #${job.prNumber} at ${headSha}:\n\n${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}`;
         const fixTask: Task = {
           jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title,
-          agentName: 'review-fix', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'],
-          adapter: 'codex', input, output: { kind: 'task_pr' },
-          routing: { provider: 'openai', model: 'gpt-5.6-luna', reasoning: 'medium', decidedBy: 'review-fix', decidedAt: now },
+          agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'],
+          workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' },
           continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3,
           leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
-          error: null, timeoutMs: storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
+          error: null, timeoutMs: 0, createdAt: now, updatedAt: now
         };
         await this.store.appendTask(fixTask);
         await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', `Created one fix task ${id} for ${issues.length} reviewer finding(s)`, 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
