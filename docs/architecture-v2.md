@@ -369,6 +369,36 @@ persistence through the idempotent workflow effect executor. External
 executors publish receipts or failure Events and never assign lifecycle state
 directly.
 
+
+## Operational store and GitHub projection
+
+V2 separates operational execution state from the durable collaboration surface.
+
+```mermaid
+flowchart LR
+    G["Graph / Runtime"] --> S["Relay Store"]
+    S --> Q["Transactional outbox"]
+    Q --> W["GitHub projection writer"]
+    W --> H["GitHub Job / Plan / Task / Review"]
+    H --> I["Webhook / inbound facts"]
+    I --> G
+```
+
+The ownership rule is deliberately asymmetric:
+
+- **Graph** owns deterministic workflow decisions.
+- **Relay Store** owns operational execution facts such as local snapshots, event idempotency/offsets, leases/attempt metadata, scheduler state and pending projection work. The local product backend is SQLite in WAL mode.
+- **Event Bus** carries wake-up and progress signals; it is not durable workflow truth by itself.
+- **GitHub** remains the durable collaboration and audit surface for Job Objective, Plan, Task/Result, Review, PR/code state and human decisions.
+
+Relay-originated GitHub mutations are committed to a durable outbox before they are projected. One logical projection writer claims due work, coalesces compatible pending updates, applies idempotent GitHub mutations and persists retry/backoff state. retry-after and x-ratelimit-reset take precedence over bounded exponential fallback.
+
+This is not symmetric database synchronization. Human GitHub changes enter through typed inbound facts/events/actions; runtime components do not race GitHub and SQLite as equal writers of the same field.
+
+SQLiteRelayStore and ProjectedDurableStore establish the first executable vertical slice. A managed Job bootstraps from GitHub once, then Job/Plan/Task runtime mutations can commit locally while GitHub is unavailable. Pending projection survives daemon restart and converges after GitHub recovers without changing the existing marker/comment representation.
+
+The storage boundary is intentionally adapter-shaped. SQLite is a permanent supported local backend, while a future Cloud/Postgres implementation may satisfy the same Relay Store contract without changing Graph Engine, Planner, Worker, Scheduler or Reconciler semantics.
+
 ## 4. Compatibility and migration
 
 Production lifecycle authority now uses
