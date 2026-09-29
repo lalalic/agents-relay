@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { recordTaskBlocked, requestTaskUnblock } from '../dist/unblock.js';
+import { recordObservedHeadChange, recordTaskBlocked, requestTaskUnblock } from '../dist/unblock.js';
 
 const job = { id: 'j', title: 'job', repository: 'org/repo', prNumber: 1, executionMode: 'autonomous', state: 'ACTIVE', continuation: null, headSha: 'c7bd3d6', createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
 const task = (state = 'BLOCKED') => ({ jobId: 'j', id: 'work', kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state, attempt: 2, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'waiting', timeoutMs: 300000, createdAt: job.createdAt, updatedAt: job.updatedAt });
@@ -18,3 +18,14 @@ test('unblock records a stable blocked baseline and one change cycle without ret
 });
 
 test('failed tasks cannot be unblocked', () => assert.throws(() => requestTaskUnblock(task('FAILED'), job, 'human', undefined, '2026-09-29T02:00:00.000Z'), /only BLOCKED/));
+
+test('blocked tasks retain distinct change facts observed before unblock', () => {
+  const work = task();
+  recordTaskBlocked(work, job, '2026-09-29T01:00:00.000Z');
+  const changedJob = { ...job, headSha: 'public-page-sha' };
+  assert.equal(recordObservedHeadChange(work, changedJob, '2026-09-29T01:30:00.000Z'), true);
+  changedJob.headSha = 'stripe-reclassification-sha';
+  assert.equal(recordObservedHeadChange(work, changedJob, '2026-09-29T01:45:00.000Z'), true);
+  requestTaskUnblock(work, changedJob, 'human', 'fresh media available', '2026-09-29T02:00:00.000Z');
+  assert.deepEqual(work.blockState?.changeFacts.map(fact => fact.value), ['public-page-sha', 'stripe-reclassification-sha', 'fresh media available']);
+});

@@ -11,15 +11,14 @@ import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
-export { executionEventSource } from './reconciler-runtime.js';
-export type { ReconcileOptions } from './reconciler-runtime.js';
+export { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js'; import { taskTagWorkerPrompt } from './task-tag.js';
-import { markUnblockPlanner, recordTaskBlocked } from './unblock.js';
+import { markUnblockPlanner, recordObservedHeadChange, recordTaskBlocked } from './unblock.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
@@ -119,10 +118,11 @@ export class Reconciler extends ReconcilerReviewBase {
       const job = await this.store.load(jobId);
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
+      const now = (this.options.now ?? new Date()).getTime();
       const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
       if (headSha) job.headSha = headSha;
+      if (headSha) for (const task of job.tasks) if (recordObservedHeadChange(task, job, new Date(now).toISOString())) await this.store.saveTask(task);
       await this.invalidateStaleReview(job, headSha);
-      const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
         const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
         const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
@@ -274,9 +274,9 @@ export class Reconciler extends ReconcilerReviewBase {
     if (scopedTasks.some(task => task.state === 'BLOCKED') && requestedUnblocks.length === 0) return job;
     if (planners.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED', 'BLOCKED'].includes(task.state))) return job;
-    if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
+    if (requestedUnblocks.length === 0 && planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
-    if (latest?.plannerResult?.objective_status === 'satisfied') return job;
+    if (requestedUnblocks.length === 0 && latest?.plannerResult?.objective_status === 'satisfied') return job;
     const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
     await this.store.appendTask(task);
     for (const blocked of requestedUnblocks) { markUnblockPlanner(blocked, task.id, new Date().toISOString()); await this.store.saveTask(blocked); }

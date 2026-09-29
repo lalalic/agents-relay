@@ -34,6 +34,7 @@ Actions:
   list    List managed Jobs in a repository
   merge   Merge the backing PR and complete the Job
   cancel  Close the backing PR and cancel the Job
+  unblock Request Planner re-evaluation for blocked work Tasks
 
 Common options:
   --repo OWNER/REPO       GitHub repository
@@ -77,6 +78,9 @@ Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head S
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
+  'job unblock': `Request Planner re-evaluation for blocked work Tasks without retrying them directly.
+
+Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID. Optional: --task-id TASK_ID and --reason TEXT.`,
   status: `Show live aggregate runtime status from the running Agents Relay service.
 
 Usage:
@@ -95,7 +99,8 @@ Actions:
   list    List Tasks for a Job
   retry   Retry a failed or blocked Task
   complete Complete an orchestrator-owned Task
-  cancel  Cancel a Task`,
+  cancel  Cancel a Task
+  unblock Request Planner re-evaluation for a BLOCKED Task`,
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
@@ -127,6 +132,9 @@ Required: --task-id ID and the normal Job storage options.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  'task unblock': `Request Planner re-evaluation for a BLOCKED Task without retrying it directly.
+
+Required: --task-id TASK_ID and the normal Job storage options. Optional: --reason TEXT.`,
   plan: `Invoke the Planner against the current durable Job state.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
