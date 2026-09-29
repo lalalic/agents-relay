@@ -58,7 +58,6 @@ export async function transitionJobEvent(job: Job, event: string, context: Workf
 }
 
 export const SCHEDULE_RESOLUTION_MS = 600_000;
-export const RUN_BUCKET_LABEL_COUNT = 144;
 const CRON_PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/;
 
 function cronField(raw: string, name: string, minimum: number, maximum: number): Set<number> {
@@ -171,21 +170,4 @@ export function bucketStart(time: Date = new Date()): Date {
 export function scheduleBucket(time: Date): string {
   const bucket = bucketStart(time);
   return `${bucket.toISOString().slice(0, 4)}${bucket.toISOString().slice(5, 7)}${bucket.toISOString().slice(8, 10)}T${bucket.toISOString().slice(11, 13)}${bucket.toISOString().slice(14, 16)}Z`;
-}
-
-export function runBucketLabel(bucket: string): string {
-  if (!/^\d{8}T\d{4}Z$/.test(bucket)) throw new Error(`Invalid schedule bucket: ${bucket}`);
-  const hour = Number(bucket.slice(9, 11));
-  const minute = Number(bucket.slice(11, 13));
-  const slot = hour * 6 + minute / 10;
-  return `agents-relay:next-run:${slot}`;
-}
-
-export function parseRunBucketLabel(label: string): string | null {
-  const prefix = 'agents-relay:next-run:';
-  if (!label.startsWith(prefix)) return null;
-  const value = label.slice(prefix.length);
-  if (!/^\d{1,3}$/.test(value)) return null;
-  const slot = Number(value);
-  return Number.isInteger(slot) && slot >= 0 && slot < RUN_BUCKET_LABEL_COUNT ? value : null;
 }
