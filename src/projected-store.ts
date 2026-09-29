@@ -190,24 +190,31 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async comments(): Promise<Comment[]> { return this.github.comments(); }
+
+  private async ensurePullRequestFacts(): Promise<PullRequestFacts> {
+    const local = await localPullRequestFacts(this.relay, this.seededFacts);
+    if (local) return local;
+    if (!this.github.pullRequestState || !this.github.pullRequestHead) {
+      throw new Error('Pull request facts have not been observed locally');
+    }
+    const [state, head] = await Promise.all([
+      this.github.pullRequestState(),
+      this.github.pullRequestHead(),
+    ]);
+    const facts: PullRequestFacts = { state, head, observedAt: new Date().toISOString() };
+    await this.relay.savePullRequestFacts(facts);
+    return facts;
+  }
+
   async pullRequestState(): Promise<PullRequestState> {
-    const facts = await localPullRequestFacts(this.relay, this.seededFacts);
-    if (facts) return facts.state;
-    if (!this.github.pullRequestState) throw new Error('Pull request state has not been observed locally');
-    const state = await this.github.pullRequestState();
-    await this.relay.savePullRequestFacts({ state, head: null, observedAt: new Date().toISOString() });
-    return state;
+    return (await this.ensurePullRequestFacts()).state;
   }
+
   async pullRequestHead(): Promise<{ ref: string; sha: string } | null> {
-    const facts = await localPullRequestFacts(this.relay, this.seededFacts);
-    if (facts) return facts.head;
-    if (!this.github.pullRequestHead) throw new Error('Pull request head has not been observed locally');
-    const head = await this.github.pullRequestHead();
-    const state = this.github.pullRequestState ? await this.github.pullRequestState() : null;
-    if (state) await this.relay.savePullRequestFacts({ state, head, observedAt: new Date().toISOString() });
-    return head;
+    return (await this.ensurePullRequestFacts()).head;
   }
-  async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
+
+  async headSha(): Promise<string | null> { return (await this.ensurePullRequestFacts()).head?.sha ?? null; }
   async mergePullRequest(expectedHeadSha?: string): Promise<void> {
     if (!this.github.mergePullRequest) throw new Error('GitHub store cannot merge pull request');
     await this.github.mergePullRequest(expectedHeadSha);
