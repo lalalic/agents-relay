@@ -103,6 +103,45 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   assert.equal(hour.planningDecisionId, 'plan-1');
 });
 
+test('multi-round planner keeps review and revision work under the existing artifact', async () => {
+  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const store = new InMemoryStore(root);
+  let round = 0;
+  const planner = { plan: async context => {
+    round += 1;
+    if (round === 1) return { objective_status: 'in_progress', assessment: 'create the milestone', next_tasks: [
+      { id: 'architecture-v2', input: 'Produce the architecture milestone.', output, storySize: 'M' },
+    ] };
+    assert.ok(JSON.parse(plannerInput(context)).task_tree.some(item => item.id === 'architecture-v2' && item.parent_task_id === null));
+    return { objective_status: 'in_progress', assessment: 'review and revise the milestone', next_tasks: [
+      { id: 'architecture-review', parentTaskId: 'architecture-v2', input: 'Review the architecture.', output, storySize: 'S' },
+      { id: 'architecture-revision-1', parentTaskId: 'architecture-v2', dependencies: ['architecture-review'], input: 'Apply review changes.', output, storySize: 'M' },
+      { id: 'graph-runtime-v2', input: 'Start an independent runtime milestone.', output, storySize: 'M' },
+    ] };
+  } };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const first = await reconciler.planJob('auto');
+  const second = await reconciler.planJob('auto');
+  const tasks = second.job.tasks.filter(item => item.kind !== 'planner');
+  assert.equal(first.job.tasks.filter(item => item.kind !== 'planner').length, 1);
+  assert.deepEqual(tasks.find(item => item.id === 'architecture-review')?.parentTaskId, 'architecture-v2');
+  assert.deepEqual(tasks.find(item => item.id === 'architecture-revision-1')?.parentTaskId, 'architecture-v2');
+  assert.deepEqual(tasks.find(item => item.id === 'architecture-revision-1')?.dependencies, ['architecture-review']);
+  assert.equal(tasks.find(item => item.id === 'graph-runtime-v2')?.parentTaskId, null);
+  assert.equal(second.job.tasks.filter(item => item.kind === 'planner').every(item => item.parentTaskId === null), true);
+});
+
+test('planner input separates semantic tree, dependencies, and plan provenance', () => {
+  const historical = { ...task('architecture-v1', 'SUCCEEDED'), result: { summary: 'historical' } };
+  const planning = { ...task('plan-2', 'SUCCEEDED'), kind: 'planner', parentTaskId: null };
+  const child = { ...task('review', 'DRAFT'), parentTaskId: 'architecture-v1', dependencies: ['architecture-v1'], planningDecisionId: 'plan-2', planningRound: 2 };
+  const plannerJob = job([historical, planning, child]);
+  const payload = JSON.parse(plannerInput({ job: plannerJob, tasks: [historical, planning, child], objective: 'objective', previousPlannerTaskId: 'plan-2' }));
+  assert.deepEqual(payload.task_tree, [{ id: 'architecture-v1', parent_task_id: null, state: 'SUCCEEDED', dependencies: [] }, { id: 'review', parent_task_id: 'architecture-v1', state: 'DRAFT', dependencies: ['architecture-v1'], planning_decision_id: 'plan-2', planning_round: 2 }]);
+  assert.match(payload.task_tree_contract, /planning graph expresses execution flow/);
+  assert.match(payload.task_tree_contract, /Never use a plan-N task/);
+});
+
 test('manual satisfied plan persists the planning round without creating work', async () => {
   const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'already complete', next_tasks: [] }) } });

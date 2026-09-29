@@ -34,6 +34,17 @@ Keep sibling Tasks at a comparable abstraction level. Do not mix a whole product
 
 The graph is the explanation for the decomposition: every emitted Task should map to a meaningful boundary in the graph, and important graph boundaries should not be omitted accidentally.
 
+### Semantic ownership vs execution flow
+
+The planning graph and the durable Task tree are two different views:
+
+- The graph and `dependencies` express execution flow and prerequisites.
+- `parentTaskId` expresses semantic ownership of an artifact or milestone.
+- A later planning round must inspect the existing Task tree and attach work to the existing artifact it changes. Do not turn a later round into a new root merely because its work follows an earlier Task.
+- `plan-N` records are planning provenance, not business milestones, and must never be used as `parentTaskId`.
+
+For example, produce `architecture-v2` as a root milestone, then place `architecture-review`, `architecture-revision-1`, and `architecture-rereview-1` under it. The revision may depend on the review, and the re-review may depend on the revision; those dependencies do not determine their semantic parent. An independent `graph-runtime-v2` milestone remains a root sibling. A troubleshooter belongs under the failed Task (or its artifact subtree), and specialist review work stays under its review/artifact context.
+
 ### Examples
 
 Prefer:

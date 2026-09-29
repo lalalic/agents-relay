@@ -22,6 +22,34 @@ For a newly created PR (`job create --head`), standalone objective Markdown is r
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
+### Planning graph and semantic Task tree
+
+The planning graph expresses execution flow. The Task tree expresses semantic
+ownership. `dependencies` answer which durable outcomes must succeed before a
+Task can run; `parentTaskId` answers which durable artifact, milestone, or
+parent outcome the Task belongs to. These are independent relationships and
+must not be inferred from one another.
+
+For a multi-round artifact workflow, keep the business tree compact and
+milestone-oriented:
+
+```text
+Job
+├── Architecture v2
+│   ├── Review
+│   ├── Revision 1
+│   └── Re-review 1
+└── Graph Runtime v2
+```
+
+The revision may depend on Review and Re-review may depend on Revision 1, but
+both remain semantically owned by Architecture v2. A later Planner round must
+inspect existing Tasks and attach review, change, validation-rerun, release
+correction, or recovery work to the existing artifact subtree. An independent
+milestone is a root sibling. `plan-N` records are planning provenance/history,
+never semantic parents. Existing terminal Tasks are historical evidence and
+must not be rewritten merely to improve the tree.
+
 ### Task input vs result
 
 A Task input records **what is known and what has already been decided before execution**. A Task result records **what execution discovered and what was actually done**.
