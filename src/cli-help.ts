@@ -75,7 +75,7 @@ Example:
   'job merge': `Merge the backing pull request and complete the durable Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
-  'job unblock': `Authoritatively unblock the effective BLOCKED work Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Autonomous Jobs persist a Change Cycle and wake Planner; fixed Jobs resume the blocked Tasks directly.`,
+  'job unblock': `Authoritatively unblock the effective BLOCKED work Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Autonomous Jobs transition blocked work to historical UNBLOCKED state and wake Planner with unblock facts as Plan trigger/context; fixed Jobs record UNBLOCKED first and then resume according to fixed-job retry semantics.`,
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
