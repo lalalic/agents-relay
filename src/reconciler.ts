@@ -18,7 +18,9 @@ import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
-import { samePlannerChildDefinition } from './planner-child.js'; import { taskTagWorkerPrompt } from './task-tag.js';
+import { samePlannerChildDefinition } from './planner-child.js';
+import { consumeChangeCycle, isEffectivelyBlocked } from './unblock.js';
+import { taskTagWorkerPrompt } from './task-tag.js';
 
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
@@ -271,14 +273,12 @@ export class Reconciler extends ReconcilerReviewBase {
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
-    if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (planners.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
+    if (scopedTasks.some(isEffectivelyBlocked)) return job;
+    if (scopedTasks.some(task => task.kind !== 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
-    const latest = planners.at(-1);
-    if (latest?.plannerResult?.objective_status === 'satisfied') return job;
-    const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
-    await this.store.appendTask(task);
+    const latest = planners.at(-1); if (latest?.plannerResult?.objective_status === 'satisfied') return job;
+    const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') }); await this.store.appendTask(task);
+    if (consumeChangeCycle(job, task.id)) await this.store.saveJob(job);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
   }

@@ -7,7 +7,10 @@ function isSuperseded(task: Task): boolean {
 }
 
 export function implementationTasks(job: Job): Task[] {
-  return job.tasks.filter(task => task.agentName !== 'reviewer' && task.agentName !== 'troubleshooter' && !isSuperseded(task));
+  return job.tasks.filter(task => task.agentName !== 'reviewer'
+    && task.agentName !== 'troubleshooter'
+    && !isSuperseded(task)
+    && !(task.state === 'BLOCKED' && task.unblock));
 }
 
 export function implementationComplete(job: Job): boolean {
@@ -23,7 +26,7 @@ export function deriveJobRuntimeStatus(job: Job, prState: PullRequestRuntimeStat
   if (job.schedule) {
     if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
     if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
-    if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
+    if (job.tasks.some(task => task.state === 'BLOCKED' && !task.unblock)) return 'BLOCKED';
     if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
     if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
     return 'WAITING';
@@ -38,7 +41,7 @@ export function deriveJobRuntimeStatus(job: Job, prState: PullRequestRuntimeStat
 
   if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
   if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
-  if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
+  if (job.tasks.some(task => task.state === 'BLOCKED' && !task.unblock)) return 'BLOCKED';
   if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
   if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
 

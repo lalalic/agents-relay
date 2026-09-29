@@ -110,3 +110,14 @@ review-chair -> unified revision plan` is a project pattern, not a hard-coded
 Relay reviewer list.
 
 A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` label and one bounded time-of-day `agents-relay:next-run:*` index label. The GitHub heartbeat discovers only indexed due candidates, validates the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and pulses `agents-relay:schedule-wake`. GitHub webhook delivery then wakes local Relay for planner/worker execution. While the schedule is active, the durable Job remains `ACTIVE`; between runs its derived runtime status is `WAITING`. Scheduled recurring Jobs do not enter one-shot final-review/auto-merge after each satisfied run; older-cycle failures are historical evidence and do not block a later slot.
+
+
+## Dependency vs block and authoritative unblock
+
+`dependencies` describe normal DAG ordering. Dependency completion does not create an unblock event or a planning change cycle; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.
+
+A BLOCKED Task cannot be resumed through retry, queue, dashboard state editing, PR push, webhook, ordinary task update, or troubleshooter inference. Except for blocker-Job resolution, the authoritative entry points are `task unblock --reason ...` and `job unblock --reason ...`. For autonomous Jobs, unblock does not retry the old Task. Relay preserves its blocked baseline, records current head/change facts in a durable Job Change Cycle, marks that blocked decision as unblocked-for-planning, and wakes the next Planner round. The Planner then decides whether to retry, replace, split, wait, or otherwise re-plan the objective.
+
+A blocker Job owns reverse `unblocks` references. When it resolves, Relay checks the dependent Job. If that autonomous Job has an effective BLOCKED work Task, resolution uses the same Change Cycle/replanning primitive. If it does not have BLOCKED work (for example the registered Task is DRAFT or FAILED), existing release/retry behavior remains unchanged.
+
+Automatic Planner creation treats only an effective BLOCKED work Task as a block gate. FAILED history is not itself a Planner gate; active DRAFT/QUEUED/RUNNING work still prevents a competing planning round.

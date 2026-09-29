@@ -53,6 +53,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
   const recoveries: Task[] = [];
   for (const task of job.tasks) {
     if (!['FAILED', 'BLOCKED'].includes(task.state) || task.kind === 'planner' || task.agentName === 'troubleshooter' || !belongsToCurrentRun(job, task)) continue;
+    if (task.state === 'BLOCKED' && task.unblock) continue;
     const id = troubleshooterTaskId(task);
     if (existing.has(id) || hasRecoveryBarrier(job, task)) continue;
     const now = new Date().toISOString();

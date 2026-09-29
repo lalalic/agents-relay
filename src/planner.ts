@@ -261,6 +261,7 @@ export function plannerInput(context: PlannerContext): string {
     retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     previous_planner_task_id: context.previousPlannerTaskId,
+    change_cycle: context.job.changeCycle,
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],
     tasks: context.tasks.map(task => ({
@@ -276,6 +277,8 @@ export function plannerInput(context: PlannerContext): string {
         next_task_ids: task.plannerResult.next_tasks.map(item => item.id),
       } : undefined,
       error: boundedText(task.error, 2000),
+      blocked_baseline: task.blockedBaseline,
+      unblock: task.unblock,
     })),
   });
 }
