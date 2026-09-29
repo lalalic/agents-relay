@@ -1,7 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
 import { transitionTaskEvent } from './scheduler.js';
-import { applyTaskRetryAction } from './task-actions.js';
+import { applyTaskReleaseAction, applyTaskRetryAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
@@ -118,7 +118,7 @@ export async function resolveBlockerDependencies(options: {
       }
     }
     if (task.state === 'DRAFT') {
-      await transitionTaskEvent(task, 'release');
+      await applyTaskReleaseAction(task);
       task.error = null;
       task.updatedAt = now;
       delete task.blockedBy;
