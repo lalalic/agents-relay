@@ -1448,6 +1448,38 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('reconcile persists a newly observed head before final review approval can auto-merge', async () => {
+  const oldHead = 'old-head-before-push';
+  const newHead = 'new-head-after-push';
+  const work = task('work', 'SUCCEEDED');
+  const store = new InMemoryStore({ ...job([work]), headSha: oldHead });
+  store.pullRequestState = async () => 'OPEN';
+  store.headSha = async () => newHead;
+  let mergedHead = null;
+  store.mergePullRequest = async headSha => { mergedHead = headSha; };
+  const reconciler = managedReconciler(store, {
+    owner: 'test',
+    adapters: [new FakeAdapter()],
+    eventBus: new MemoryEventBus(),
+    maxConcurrent: 0,
+  });
+
+  await reconciler.reconcile('j');
+  const afterReview = await store.load('j');
+  const reviewer = afterReview.tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(reviewer);
+  assert.equal(afterReview.headSha, newHead);
+  assert.equal(reviewer.reviewHeadSha, newHead);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', {
+    review: { headSha: newHead, summary: 'approved', blockingFindings: [] },
+  }));
+  const completed = await store.load('j');
+  assert.equal(completed.review?.outcome, 'approved');
+  assert.equal(completed.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  assert.equal(mergedHead, newHead);
+});
+
 test('autonomous in-progress batch advances planner without creating final review', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'in_progress',assessment:'continue',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';

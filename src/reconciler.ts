@@ -116,7 +116,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
-      if (headSha) job.headSha = headSha;
+      if (headSha && job.headSha !== headSha) { job.headSha = headSha; await this.store.saveJob(job); }
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
