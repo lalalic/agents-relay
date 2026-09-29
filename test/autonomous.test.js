@@ -126,7 +126,39 @@ test('malformed manual planner output fails the round without materializing chil
   const saved = await store.load('auto');
   assert.equal(saved.tasks.some(item => item.id === 'broken'), false);
   assert.equal(saved.tasks.find(item => item.id === 'plan-1')?.state, 'FAILED');
+  assert.equal(saved.plans.find(item => item.id === 'plan-1')?.status, 'FAILED');
 });
+test('reconcile recovers a durable PLANNING Plan whose planner Task write was interrupted', async () => {
+  const createdAt = '2026-09-29T12:00:00.000Z';
+  const root = startedAutonomousJob();
+  root.plans = [{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'continuation'}, status:'PLANNING', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }];
+  const store = new InMemoryStore(root);
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[], maxConcurrent:0, planner:{ plan:async()=>({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) } });
+  await reconciler.reconcile('auto');
+  const saved = await store.load('auto');
+  const round = saved.tasks.find(item => item.id === 'plan-1');
+  assert.ok(round);
+  assert.equal(round.state, 'QUEUED');
+  assert.equal(round.createdAt, createdAt);
+  assert.equal(round.planTrigger.source, 'continuation');
+  assert.equal(saved.plans.filter(item => item.id === 'plan-1').length, 1);
+  assert.equal(saved.plans[0].status, 'PLANNING');
+});
+
+test('manual planning recovers an interrupted manual Plan instead of creating a new round', async () => {
+  const createdAt = '2026-09-29T12:05:00.000Z';
+  const root = { ...job([], 'fixed'), state:'DRAFT', plans:[{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'manual'}, status:'PLANNING', guidance:'original guidance', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }] };
+  const store = new InMemoryStore(root);
+  let observed;
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[], maxConcurrent:0, planner:{ plan:async context=>{ observed=context; return { objective_status:'satisfied', assessment:'done', next_tasks:[] }; } } });
+  const result = await reconciler.planJob('auto', 'new guidance must not replace durable pending input');
+  assert.equal(result.round.id, 'plan-1');
+  assert.equal(result.round.createdAt, createdAt);
+  assert.equal(observed.guidance, 'original guidance');
+  assert.equal(result.job.plans.filter(item => item.id === 'plan-1').length, 1);
+  assert.equal(result.job.plans[0].status, 'SUCCEEDED');
+});
+
 test('planner input carries explicit retry feedback for corrective retries', () => {
   const payload = JSON.parse(plannerInput({
     job: { id:'j', title:'j', executionMode:'autonomous', prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[] },

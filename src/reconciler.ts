@@ -5,7 +5,7 @@ import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } fr
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { createPlannerRoundTask, pendingPlanForPlannerTask, parsePlannerResult, plannerInput, PlannerTaskSpec, validatePlannerHierarchy } from './planner.js';
+import { createPlannerRoundTask, pendingPlanForPlannerTask, recoverPendingPlannerTask, parsePlannerResult, plannerInput, PlannerTaskSpec, validatePlannerHierarchy } from './planner.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
@@ -258,7 +258,7 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     if (job.executionMode !== 'autonomous') return job;
-    if (job.initialPlanning?.status === 'pending') return job;
+    if (job.initialPlanning?.status === 'pending') return job; const recovered = recoverPendingPlannerTask(job, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M')); if (recovered) { await this.store.appendTask(recovered); await this.emit(eventFor(job.id, recovered.id, null, 'planner.created', 'queued', `Recovered pending Plan ${recovered.id}`, 'orchestrator')); return this.store.load(job.id); }
     const allPlanners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (allPlanners.length === 0 && job.tasks.length === 0) return job;
     const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
@@ -279,7 +279,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const executionContext = await this.plannerContext(job, contextTask);
     for (const planner of job.tasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)) {
       const result = planner.plannerResult!;
-      const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', objectiveStatus: result.objective_status, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
+      const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', guidance: planner.plannerGuidance, objectiveStatus: result.objective_status, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
       if (!(job.plans ?? []).some(item => item.id === plan.id)) { await this.store.appendPlan(plan); (job.plans ??= []).push(plan); } else await this.store.savePlan(plan);
       const children = result.next_tasks.map(spec => this.plannerChild(job, planner, spec, executionContext));
       for (const child of children) {
@@ -472,7 +472,7 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       // Persist the first-class Plan decision before exposing executable child Task comments.
       const now = new Date().toISOString();
-      const plan: Plan = { jobId: job.id, id: task.id, round: task.planningRound ?? 1, source: task.planningSource ?? 'model-planner', previousPlanId: task.previousPlannerTaskId ?? null, trigger: task.planTrigger ?? { source: task.manualPlanning ? 'manual' : 'continuation' }, status: 'SUCCEEDED', objectiveStatus: result.objective_status, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: task.planTrigger?.currentHeadSha ?? await this.store.headSha?.() ?? job.headSha, createdAt: task.createdAt, updatedAt: now };
+      const plan: Plan = { jobId: job.id, id: task.id, round: task.planningRound ?? 1, source: task.planningSource ?? 'model-planner', previousPlanId: task.previousPlannerTaskId ?? null, trigger: task.planTrigger ?? { source: task.manualPlanning ? 'manual' : 'continuation' }, status: 'SUCCEEDED', guidance: task.plannerGuidance, objectiveStatus: result.objective_status, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: task.planTrigger?.currentHeadSha ?? await this.store.headSha?.() ?? job.headSha, createdAt: task.createdAt, updatedAt: now };
       await this.store.savePlan(plan);
       if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId && plan.trigger.source === 'unblock') { job.changeCycle.consumedByPlannerTaskId = task.id; job.updatedAt = now; await this.store.saveJob(job); }
       task.plannerResult = result; task.result = { summary: result.assessment, data: { objective_status: result.objective_status, next_tasks: result.next_tasks, unblocks: result.unblocks } }; task.error = null; task.plannerRetryFeedback = undefined; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.completed'); await this.store.saveTask(task);

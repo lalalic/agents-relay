@@ -93,9 +93,19 @@ export function pendingPlanForPlannerTask(job: Job, task: Task): Plan {
   return {
     jobId: job.id, id: task.id, round: task.planningRound ?? 1, source: task.planningSource ?? 'model-planner',
     previousPlanId: task.previousPlannerTaskId ?? null, trigger: task.planTrigger ?? { source: task.manualPlanning ? 'manual' : 'continuation' },
-    status: 'PLANNING', assessment: 'Planning in progress.', generatedTaskIds: [],
+    status: 'PLANNING', guidance: task.plannerGuidance, assessment: 'Planning in progress.', generatedTaskIds: [],
     headSha: task.planTrigger?.currentHeadSha ?? job.headSha, createdAt: task.createdAt, updatedAt: task.updatedAt,
   };
+}
+
+export function recoverPendingPlannerTask(job: Job, timeoutMs: number): Task | null {
+  const pending = (job.plans ?? []).filter(plan => plan.status === 'PLANNING' && !job.tasks.some(task => task.kind === 'planner' && task.id === plan.id)).sort((a, b) => a.round - b.round)[0];
+  if (!pending) return null;
+  const task = createPlannerRoundTask(job, { guidance: pending.guidance, manual: pending.trigger.source === 'manual', timeoutMs, now: pending.createdAt });
+  if (task.id !== pending.id || task.planningRound !== pending.round) throw new Error(`Pending Plan ${pending.id} cannot be recovered as planner round ${task.id}`);
+  task.previousPlannerTaskId = pending.previousPlanId; task.planTrigger = pending.trigger; task.planningSource = pending.source; task.planningDecisionId = pending.id;
+  task.input = plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: pending.previousPlanId, trigger: pending.trigger, guidance: pending.guidance });
+  return task;
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {

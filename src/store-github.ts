@@ -5,6 +5,7 @@ import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget } from './blockers.js';
 
 const TASK_WRITE_OVERLAY = new Map<string, Comment>();
+const PLAN_WRITE_OVERLAY = new Map<string, Comment>();
 
 export class GitHubStore implements DurableStore {
   private prNodeCache: Promise<Record<string, unknown>> | null = null;
@@ -18,7 +19,9 @@ export class GitHubStore implements DurableStore {
     }
   }
   private taskKey(task: Pick<Task, 'jobId' | 'id'>): string { return `${this.repository}#${this.prNumber}:${task.jobId ?? ''}/${task.id}`; }
+  private planKey(plan: Pick<Plan, 'jobId' | 'id'>): string { return `${this.repository}#${this.prNumber}:${plan.jobId}/${plan.id}`; }
   private taskKeyFromBody(body: string): string | null { const task = parseTask(body); return task ? this.taskKey(task) : null; }
+  private planKeyFromBody(body: string): string | null { const plan = parsePlan(body); return plan ? this.planKey(plan) : null; }
   private overlayTaskWrites(comments: Comment[]): Comment[] {
     if (TASK_WRITE_OVERLAY.size === 0) return comments;
     const result = [...comments];
@@ -33,6 +36,20 @@ export class GitHubStore implements DurableStore {
     return result;
   }
   private rememberTaskWrite(task: Task, comment: Comment, body: string): void { TASK_WRITE_OVERLAY.set(this.taskKey(task), { ...comment, body }); }
+  private overlayPlanWrites(comments: Comment[]): Comment[] {
+    if (PLAN_WRITE_OVERLAY.size === 0) return comments;
+    const result = [...comments];
+    for (const [key, overlay] of [...PLAN_WRITE_OVERLAY]) {
+      const index = result.findIndex(comment => this.planKeyFromBody(comment.body) === key);
+      if (index >= 0) {
+        const remote = result[index];
+        if (remote.updatedAt && overlay.updatedAt && remote.updatedAt >= overlay.updatedAt) { PLAN_WRITE_OVERLAY.delete(key); continue; }
+        result[index] = { ...remote, ...overlay, id: remote.id || overlay.id, nodeId: remote.nodeId ?? overlay.nodeId, url: remote.url ?? overlay.url, authorLogin: remote.authorLogin ?? overlay.authorLogin };
+      } else { PLAN_WRITE_OVERLAY.delete(key); }
+    }
+    return result;
+  }
+  private rememberPlanWrite(plan: Plan, comment: Comment, body: string): void { PLAN_WRITE_OVERLAY.set(this.planKey(plan), { ...comment, body }); }
   private isTrusted(comment: Comment): boolean { return comment.authorLogin !== null && this.trustedAuthors.has(comment.authorLogin); }
   private repoParts(): { owner: string; name: string } {
     const [owner, name] = this.repository.split('/', 2);
@@ -64,8 +81,8 @@ export class GitHubStore implements DurableStore {
     return typeof pr.body === 'string' ? pr.body : '';
   }
   private async list(): Promise<Comment[]> {
-    if (this.commentsCache) return this.overlayTaskWrites(this.commentsCache);
-    if (this.commentsFlight) return this.overlayTaskWrites(await this.commentsFlight);
+    if (this.commentsCache) return this.overlayPlanWrites(this.overlayTaskWrites(this.commentsCache));
+    if (this.commentsFlight) return this.overlayPlanWrites(this.overlayTaskWrites(await this.commentsFlight));
     const flight = (async (): Promise<Comment[]> => {
       const { owner, name } = this.repoParts();
       const all: Comment[] = [];
@@ -89,7 +106,7 @@ export class GitHubStore implements DurableStore {
       return all;
     })();
     this.commentsFlight = flight;
-    try { this.commentsCache = await flight; return this.overlayTaskWrites(this.commentsCache); }
+    try { this.commentsCache = await flight; return this.overlayPlanWrites(this.overlayTaskWrites(this.commentsCache)); }
     finally { if (this.commentsFlight === flight) this.commentsFlight = null; }
   }
   async comments(): Promise<Comment[]> { return this.list(); }
@@ -247,17 +264,19 @@ export class GitHubStore implements DurableStore {
     for (const legacy of jobComments.filter(comment => parseJob(comment.body)?.id === job.id)) await this.deleteComment(legacy);
   }
   async appendPlan(plan: Plan): Promise<void> {
+    await this.load(plan.jobId);
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const matches = comments.filter(comment => { const existing = parsePlan(comment.body); return existing !== null && existing.jobId === plan.jobId && existing.id === plan.id; });
-    if (matches.length === 0) { await this.comment(renderPlanComment(plan)); return; }
+    if (matches.length === 0) { const body = renderPlanComment(plan); const persisted = await this.comment(body); this.rememberPlanWrite(plan, persisted, body); return; }
     const existing = parsePlan(matches[0].body);
     if (!existing || JSON.stringify({ ...existing, planUrl: undefined }) !== JSON.stringify({ ...plan, planUrl: undefined })) throw new Error(`Plan ${plan.id} already exists with a different definition`);
     for (const duplicate of matches.slice(1)) await this.deleteComment(duplicate);
   }
   async savePlan(plan: Plan): Promise<void> {
+    await this.load(plan.jobId);
     const comments = (await this.list()).filter(comment => this.isTrusted(comment));
     const existing = comments.filter(comment => { const markerPlan = parsePlan(comment.body); return markerPlan !== null && markerPlan.jobId === plan.jobId && markerPlan.id === plan.id; });
-    if (existing.length > 0) { await this.updateComment(existing[0], renderPlanComment(plan)); for (const duplicate of existing.slice(1)) await this.deleteComment(duplicate); }
+    if (existing.length > 0) { const body = renderPlanComment(plan); const persisted = await this.updateComment(existing[0], body); this.rememberPlanWrite(plan, persisted, body); for (const duplicate of existing.slice(1)) await this.deleteComment(duplicate); }
     else await this.appendPlan(plan);
   }
   async appendTask(task: Task): Promise<void> {
