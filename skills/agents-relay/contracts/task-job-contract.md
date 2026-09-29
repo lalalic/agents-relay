@@ -122,7 +122,7 @@ This does not weaken immutable review semantics: final review and specialist rev
 
 ## Dependency vs block and authoritative unblock
 
-`dependencies` describe normal DAG ordering. Dependency completion does not create an unblock event or a planning change cycle; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.
+`dependencies` describe normal DAG ordering. Dependency completion does not create an unblock lifecycle event or Planner unblock trigger; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.
 
 A BLOCKED Task cannot be resumed through retry, queue, dashboard state editing, PR push, webhook, ordinary task update, or troubleshooter inference. Except for blocker-Job resolution, the authoritative entry points are `task unblock --reason ...` and `job unblock --reason ...`. Authoritative unblock records the blocked baseline and current evidence, then transitions `BLOCKED -> UNBLOCKED` through the durable `task.unblocked` lifecycle event. `BLOCKED` therefore always means the blocker is still effective; `UNBLOCKED` means the old blocked attempt is historical and its blocker was explicitly cleared.
 
