@@ -15,6 +15,7 @@ import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/e
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
 import { ReconcileCoordinator } from './reconcile-coordinator.js';
 import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
+import { recordTaskBlocked } from './unblock.js';
 
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
@@ -392,6 +393,7 @@ export abstract class ReconcilerRuntimeBase {
           task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
         } else if (event.type === 'task.blocked') {
           task.error = event.message || `Task ${task.id} blocked`;
+          recordTaskBlocked(task, job, task.updatedAt);
         } else if (event.type === 'task.cancelled') {
           task.error = event.message || `Task ${task.id} cancelled`;
         }

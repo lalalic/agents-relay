@@ -82,6 +82,16 @@ export type Result = { summary: string; artifacts?: string[]; data?: Record<stri
 export type BlockerResolutionMode = 'merge' | 'verified';
 export type BlockerReference = { repository: string; prNumber: number; jobId: string };
 export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; registeredAt: string };
+export type TaskChangeFact = { kind: 'head-sha' | 'manual'; value: string; observedAt: string; actor: string };
+export type TaskBlockState = {
+  blockedAt: string;
+  baseline: { attempt: number; headSha: string | null };
+  changeFacts: TaskChangeFact[];
+  unblockRequestedAt?: string;
+  unblockRequestedBy?: string;
+  unblockReason?: string;
+  plannerTaskId?: string;
+};
 export type BlockerDependentState = 'waiting' | 'resumed' | 'obsolete';
 export type BlockerDependent = { repository: string; prNumber: number; jobId: string; taskId: string; blockedAttempt: number; registeredAt: string; state: BlockerDependentState; resolvedAt?: string; resolution?: 'merge' | 'verified'; note?: string };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
@@ -106,6 +116,7 @@ export type Task = {
   manualStateOverrides?: ManualTaskStateOverride[];
   failureReason?: string;
   blockedBy?: TaskBlockerReference;
+  blockState?: TaskBlockState;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
 export type Job = { id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; createdAt: string; updatedAt: string; tasks: Task[] };

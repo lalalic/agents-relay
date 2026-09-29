@@ -6,8 +6,8 @@ Usage:
   npx agents-relay <command> [options]
 
 Commands:
-  job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
-  task create|update|show|list|complete|retry|cancel  Manage durable tasks
+  job create|update|show|list|merge|cancel|unblock  Manage durable GitHub-backed jobs
+  task create|update|show|list|complete|retry|cancel|unblock  Manage durable tasks
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -25,7 +25,7 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage GitHub-backed durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|merge|cancel> [options]
+  npx agents-relay job <create|update|show|list|merge|cancel> [options] (or unblock)
 
 Actions:
   create  Create a durable Job, optionally binding an existing unmanaged PR
@@ -86,7 +86,7 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|list|retry|cancel> [options]
+  npx agents-relay task <create|update|show|list|retry|cancel> [options] (or unblock)
 
 Actions:
   create  Create one durable Task under an existing Job

@@ -19,11 +19,9 @@ import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js'; import { taskTagWorkerPrompt } from './task-tag.js';
-
+import { markUnblockPlanner, recordTaskBlocked } from './unblock.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
-
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
-
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
   const selectedAgent = task.agentName && context ? await agentContractPrompt(context, task.agentName) : '';
@@ -271,14 +269,17 @@ export class Reconciler extends ReconcilerReviewBase {
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
-    if (scopedTasks.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
+    const requestedUnblocks = scopedTasks.filter(task => task.kind !== 'planner' && task.state === 'BLOCKED' && task.blockState?.unblockRequestedAt && !task.blockState.plannerTaskId);
+    if (scopedTasks.some(task => task.state === 'FAILED')) return job;
+    if (scopedTasks.some(task => task.state === 'BLOCKED') && requestedUnblocks.length === 0) return job;
     if (planners.some(task => task.state === 'FAILED' || task.state === 'BLOCKED')) return job;
-    if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state))) return job;
+    if (scopedTasks.some(task => task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED', 'BLOCKED'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
     const latest = planners.at(-1);
     if (latest?.plannerResult?.objective_status === 'satisfied') return job;
     const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
     await this.store.appendTask(task);
+    for (const blocked of requestedUnblocks) { markUnblockPlanner(blocked, task.id, new Date().toISOString()); await this.store.saveTask(blocked); }
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
     return this.store.load(job.id);
   }
@@ -306,7 +307,6 @@ export class Reconciler extends ReconcilerReviewBase {
       runtimes: this.options.adapters.map(adapter => ({ name: adapter.name, id: adapter.id, capabilities: [...adapter.capabilities] })),
     });
   }
-
   private async plannerContext(job: Job, task: Task): Promise<ExecutionContext> {
     let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
     if (this.store.pullRequestHead) {
@@ -317,7 +317,6 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return this.resolvedContext(job, task, 'planner', projectPath);
   }
-
   protected async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
@@ -328,6 +327,7 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
       await transitionTaskEvent(task, 'block');
+      recordTaskBlocked(task, job, new Date().toISOString());
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
       await this.store.saveTask(task);
       return;
@@ -370,6 +370,7 @@ export class Reconciler extends ReconcilerReviewBase {
       task.leaseExpiresAt = null;
       task.executionId = null;
       await transitionTaskEvent(task, 'block');
+      recordTaskBlocked(task, job, new Date().toISOString());
       task.error = `Execution checkout unavailable: ${error instanceof Error ? error.message : String(error)}`;
       await this.store.saveTask(task);
       return;
@@ -402,7 +403,6 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
       return;
     }
-
     void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 

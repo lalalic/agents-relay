@@ -107,6 +107,8 @@ A restarted daemon can reclaim a durable planner lease owned by the previous run
 
 Planner satisfaction is evidence about the objective, not authority to complete the Job. The durable lifecycle remains `ACTIVE` while work, review, or merge is pending; `FAILED`, `BLOCKED`, `WAITING`, and `RUNNING` are derived runtime statuses. An autonomous job can stop growing only after a planner reports `satisfied`; for PR-backed work, merge is the authoritative transition to lifecycle `COMPLETED`. Failed or blocked tasks remain visible and prevent accidental success.
 
+For a genuine external blocker, use `agents-relay task unblock` (or `job unblock`) after the relevant change is available. Relay persists the blocked baseline and observed change facts, then admits one fresh Planner round for objective re-evaluation. This is intentionally not a direct retry; generic FAILED tasks, commits, webhooks, task edits, and troubleshooter activity do not implicitly unblock or create that planning round.
+
 ## Compatibility and surfaces
 
 Fixed jobs retain their scheduling behavior. Execution mode and real planner-round state are serialized in durable markers and surfaced through Job/Task CLI data and the dashboard. Legacy markers without an execution mode are interpreted as `fixed`. New planning invocations use `plan-N`; historical `planner-N` IDs remain valid durable history and are considered when selecting the next round number.

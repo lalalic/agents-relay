@@ -1,6 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { requestTaskUnblock } from './unblock.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
 export type BlockerResolutionSummary = { resumed: number; obsolete: number; waiting: number };
@@ -100,6 +101,16 @@ export async function resolveBlockerDependencies(options: {
     }
     if (task.state === 'DRAFT') {
       await transitionTaskEvent(task, 'release');
+    } else if (task.state === 'BLOCKED') {
+      requestTaskUnblock(task, targetJob, `blocker:${blocker.id}`, `Blocker ${blocker.id} resolved`, now);
+      task.error = null;
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.executionId = null;
+      task.updatedAt = now;
+      await store.saveTask(task);
+      relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'blocked task unblocked for planner re-evaluation'; resumed += 1;
+      continue;
     } else {
       task.maxAttempts = extendRetryBudget(task);
       await transitionTaskEvent(task, 'retry');

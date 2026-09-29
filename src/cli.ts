@@ -27,6 +27,7 @@ import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProje
 import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 import { parseAgentGraph } from './agent-graph.js';
+import { requestTaskUnblock } from './unblock.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
@@ -129,7 +130,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   };
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel', 'unblock'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -151,6 +152,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const task = job.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
+  if (action === 'unblock') { requestTaskUnblock(task, job, 'cli:task-unblock', arg(args, '--reason') || undefined, new Date().toISOString()); await store.saveTask(task); await saveLocal(localFile, await store.load(job.id)); await publishWake(eventBus(args), job, task.id, `Task ${task.id} unblock requested`); console.log(JSON.stringify(await store.load(job.id), null, 2)); return; }
   if (action === 'complete') {
     if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
     if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
@@ -253,7 +255,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   console.log(JSON.stringify(context, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'merge', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'merge', 'cancel', 'unblock'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -301,6 +303,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const job = await store.load(id);
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
   await store.validateJobBinding(id);
+  if (action === 'unblock') { const taskId = arg(args, '--task-id'); const targets = taskId ? job.tasks.filter(task => task.id === taskId) : job.tasks.filter(task => task.kind !== 'planner' && task.state === 'BLOCKED'); if (taskId && targets.length === 0) throw new Error(`Task ${taskId} not found`); if (targets.length === 0) throw new Error(`Job ${id} has no BLOCKED work tasks`); const now = new Date().toISOString(); for (const task of targets) { requestTaskUnblock(task, job, 'cli:job-unblock', arg(args, '--reason') || undefined, now); await store.saveTask(task); } await publishWake(eventBus(args), job, taskId ?? 'job', `Job ${id} unblock requested`); console.log(JSON.stringify(await store.load(id), null, 2)); return; }
   if (action === 'merge') {
     if (job.state === 'CANCELLED') throw new Error(`Cannot merge cancelled job ${job.id}`);
     const headSha = await store.headSha();

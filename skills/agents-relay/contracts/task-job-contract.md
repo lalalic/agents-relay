@@ -54,6 +54,8 @@ Keep these concepts distinct: observation is not root cause; hypothesis is not r
 
 `Task.state` is reserved for Relay lifecycle only: `DRAFT`, `QUEUED`, `RUNNING`, `BLOCKED`, `SUCCEEDED`, `FAILED`, and `CANCELLED`. A Job may additionally define one optional `tag` contract for a Job-specific result or classification that should be visible on each Task without changing its lifecycle state.
 
+Unblocking is distinct from retry. A BLOCKED work Task records its blocked baseline and change facts in `blockState`; `task unblock` and `job unblock` request a new autonomous Planner round without directly requeueing the blocked Task. Blocker-job resolution uses the same request path for effective BLOCKED dependents. Dependency completion and ordinary retry retain their existing scheduling semantics, and repeated unblock requests are idempotent for the current blocked generation.
+
 The Job owns the meaning of the tag. Its trusted Job marker declares a human-readable `description` explaining what the tag means and when workers should set it, plus the allowed durable values and their dashboard display strings:
 
 ```json
