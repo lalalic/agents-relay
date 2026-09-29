@@ -8,8 +8,8 @@ import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHub
 import { githubAuthContext } from './github-auth.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
-export { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
+import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
+export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { CodexAdapter, ChatGptAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
@@ -376,6 +376,7 @@ export async function createService(args: string[]): Promise<Service> {
     start: dashboardJobAction(loaded.store, reconciler, 'start'),
     reconcile: dashboardJobAction(loaded.store, reconciler, 'reconcile'),
     cancel: dashboardJobAction(loaded.store, reconciler, 'cancel'),
+    jobSetState: dashboardJobSetState(loaded.store),
     taskRetry: dashboardTaskAction(loaded.store, reconciler, 'retry'),
     taskCancel: dashboardTaskAction(loaded.store, reconciler, 'cancel'),
     taskSetState: dashboardTaskSetState(loaded.store),

@@ -12,7 +12,7 @@ import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
+import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
@@ -180,6 +180,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
     return await dashboardJobAction(store, makeReconciler(store, concurrency), action)(jobId);
   };
+  const workspaceJobSetState = async (jobId: string, state: import('./types.js').JobLifecycleState) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const result = await dashboardJobSetState(store)(jobId, state);
+    await refreshPullRequest(overview.job.repository, overview.job.prNumber, 'dashboard.job-state', { force: true });
+    return result;
+  };
   const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -227,6 +235,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
     cancel: workspaceJobAction('cancel'),
+    jobSetState: workspaceJobSetState,
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),
     taskSetState: workspaceTaskSetState,

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
-import { Job, TaskState } from './types.js';
+import { Job, JobLifecycleState, TaskState } from './types.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-policy.js';
@@ -14,7 +14,7 @@ import { summarizeRuntime } from './runtime-summary.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -221,6 +221,22 @@ export function serveDashboard(
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !/^[A-Za-z0-9_-]+$/.test(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
       try {
         const result = await handler(requestedJobId, requestedTaskId);
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(result));
+      } catch (error) {
+        if (!res.headersSent) res.writeHead(409);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job-state') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const requestedJobId = url.searchParams.get('id') ?? '';
+      const requestedState = url.searchParams.get('state') ?? '';
+      const validState = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'].includes(requestedState);
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !validState || !resolvedActions?.jobSetState) { res.writeHead(404); res.end('Job state override unavailable'); return; }
+      try {
+        const result = await resolvedActions.jobSetState(requestedJobId, requestedState as JobLifecycleState);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));
       } catch (error) {
