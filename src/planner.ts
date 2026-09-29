@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
+import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 import { parseAgentGraph } from './agent-graph.js';
 
@@ -29,9 +29,30 @@ export type PlannerTaskSpec = {
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
+export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
+
+function plannerTrigger(job: Job, manual = false): PlanTrigger {
+  if (manual) return { source: 'manual' };
+  const consumed = new Set((job.plans ?? []).flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
+  const unblocked = job.tasks.filter(task => task.state === 'UNBLOCKED' && task.unblock && !consumed.has(task.id));
+  if (unblocked.length > 0) {
+    const records = unblocked.map(task => task.unblock!);
+    const blockedHeadShas = [...new Set(records.map(record => record.baseline.headSha).filter((value): value is string => Boolean(value)))];
+    return {
+      source: 'unblock', taskIds: unblocked.map(task => task.id),
+      reason: [...new Set(records.map(record => record.reason))].join('; '),
+      blockedHeadShas,
+      currentHeadSha: records.map(record => record.currentHeadSha).find((value): value is string => Boolean(value)),
+      unblockSource: records[0].source,
+      facts: [...new Set(records.flatMap(record => record.facts ?? [`unblock: ${record.reason}`]))],
+    };
+  }
+  if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId) return { source: 'unblock', taskIds: job.changeCycle.taskIds, reason: job.changeCycle.reason, facts: job.changeCycle.facts, blockedHeadShas: job.changeCycle.baselineHeadShas, currentHeadSha: job.changeCycle.currentHeadSha, unblockSource: job.changeCycle.source };
+  if (job.schedule?.currentRunSlot) return { source: 'schedule' };
+  return (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner') ? { source: 'initial' } : { source: 'continuation' };
+}
 
 export function plannerRoundNumber(task: Task): number | null {
   if (task.kind !== 'planner') return null;
@@ -54,6 +75,7 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
     tasks: job.tasks,
     objective: job.objective ?? job.description ?? job.title,
     previousPlannerTaskId: previousPlanner?.id ?? null,
+    trigger: plannerTrigger(job, options.manual === true),
     guidance: options.guidance,
   };
   return {
@@ -63,7 +85,16 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
     maxAttempts: options.manual ? 1 : 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
     result: null, plannerResult: null, error: null, timeoutMs: options.timeoutMs ?? storySizeTimeoutMs('M'),
     createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: round, previousPlannerTaskId: previousPlanner?.id ?? null,
-    plannerGuidance: options.guidance, manualPlanning: options.manual === true,
+    plannerGuidance: options.guidance, manualPlanning: options.manual === true, planTrigger: context.trigger,
+  };
+}
+
+export function pendingPlanForPlannerTask(job: Job, task: Task): Plan {
+  return {
+    jobId: job.id, id: task.id, round: task.planningRound ?? 1, source: task.planningSource ?? 'model-planner',
+    previousPlanId: task.previousPlannerTaskId ?? null, trigger: task.planTrigger ?? { source: task.manualPlanning ? 'manual' : 'continuation' },
+    status: 'PLANNING', assessment: 'Planning in progress.', generatedTaskIds: [],
+    headSha: task.planTrigger?.currentHeadSha ?? job.headSha, createdAt: task.createdAt, updatedAt: task.updatedAt,
   };
 }
 
@@ -261,7 +292,8 @@ export function plannerInput(context: PlannerContext): string {
     retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     previous_planner_task_id: context.previousPlannerTaskId,
-    change_cycle: context.job.changeCycle,
+    plan_trigger: context.trigger,
+    legacy_change_cycle: context.job.changeCycle,
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],
     tasks: context.tasks.map(task => ({

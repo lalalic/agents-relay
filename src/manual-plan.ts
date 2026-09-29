@@ -1,4 +1,4 @@
-import { createPlannerRoundTask } from './planner.js';
+import { createPlannerRoundTask, pendingPlanForPlannerTask } from './planner.js';
 import { transitionJobEvent } from './scheduler.js';
 import { DurableStore } from './store.js';
 import { Job, Task } from './types.js';
@@ -15,6 +15,7 @@ export async function executeManualPlan(
   const active = job.tasks.find(task => task.kind === 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state));
   if (active) throw new Error(`Planning round ${active.id} is already ${active.state}`);
   const round = createPlannerRoundTask(job, { guidance, manual: true, timeoutMs });
+  await store.appendPlan(pendingPlanForPlannerTask(job, round));
   await store.appendTask(round);
   job = await store.load(jobId);
   if (job.state === 'DRAFT') {

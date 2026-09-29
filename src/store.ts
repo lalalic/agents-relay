@@ -1,9 +1,9 @@
-import { Job, Task } from './types.js';
+import { Job, Plan, Task } from './types.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { spawn } from 'node:child_process';
 import { createSign } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, TASK_MARKER } from './markers.js';
+import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
 import { PackagePublication, parsePackagePublicationMarker } from './github-webhook.js';
@@ -50,6 +50,7 @@ export async function loadManagedGitHubPullRequestSnapshotGraphql(client: GitHub
   const commentJobs = trusted.map(item => parseJob(String(item.body ?? ''))).filter((item): item is Job => item !== null);
   const jobs = bodyJob ? [bodyJob] : commentJobs;
   const publication = publicationFromComments(commentRows, trustedAuthors);
+  const plans = trusted.map(row => { const plan = parsePlan(String(row.body ?? '')); if (!plan) return null; const planUrl = typeof row.url === 'string' ? row.url : Number.isInteger(row.databaseId) ? `https://github.com/${repository}/pull/${prNumber}#issuecomment-${row.databaseId}` : undefined; return planUrl ? { ...plan, planUrl } : plan; }).filter((item): item is Plan => item !== null);
   const tasks = trusted.map(row => {
     const task = parseTask(String(row.body ?? ''));
     if (!task) return null;
@@ -59,6 +60,7 @@ export async function loadManagedGitHubPullRequestSnapshotGraphql(client: GitHub
   const state = String(pr.state ?? '').toUpperCase();
   const githubState: PullRequestState = pr.merged === true ? 'MERGED' : state === 'CLOSED' ? 'CLOSED' : 'OPEN';
   const overviews = jobs.map(job => {
+    job.plans = plans.filter(plan => plan.jobId === job.id).sort((a,b)=>a.round-b.round);
     job.tasks = tasks.filter(task => task.jobId === job.id || (!task.jobId && jobs.length === 1));
     if (!job.description && typeof pr.body === 'string' && pr.body) job.description = pr.body;
     if (typeof pr.headRefOid === 'string' && pr.headRefOid) job.headSha = pr.headRefOid;
@@ -82,17 +84,20 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
+export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendPlan(plan: Plan): Promise<void>; savePlan(plan: Plan): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {
     if (job) {
       this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job));
+      for (const plan of job.plans ?? []) this.values.set(`${PLAN_MARKER}:${plan.jobId}:${plan.id}`, renderPlanComment(plan));
       for (const task of job.tasks) this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task));
     }
   }
-  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.tasks = this.tasksForJob(jobId); return job; }
+  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId); return job; }
   async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
+  async appendPlan(plan: Plan): Promise<void> { const key = `${PLAN_MARKER}:${plan.jobId}:${plan.id}`; const existing = this.values.get(key); if (existing) { const current = parsePlan(existing); if (current && JSON.stringify(current) === JSON.stringify(plan)) return; throw new Error(`Plan ${plan.id} already exists with a different definition`); } this.values.set(key, renderPlanComment(plan)); }
+  async savePlan(plan: Plan): Promise<void> { this.values.set(`${PLAN_MARKER}:${plan.jobId}:${plan.id}`, renderPlanComment(plan)); }
   async appendTask(task: Task): Promise<void> {
     const key = `${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`;
     const existing = this.values.get(key);
@@ -111,6 +116,7 @@ export class InMemoryStore implements DurableStore {
   async saveAgent(agent: AgentRegistration): Promise<void> { this.values.set(`${AGENT_MARKER}:${agent.id}`, renderAgentComment(agent)); }
   async comments(): Promise<Comment[]> { return [...this.values.values()].map((body, i) => ({ id: i + 1, body, updatedAt: new Date().toISOString(), authorLogin: 'local' })); }
   private findJob(jobId: string): Job | null { return [...this.values.values()].map(parseJob).find((x): x is Job => x !== null && x.id === jobId) ?? null; }
+  private plansForJob(jobId: string): Plan[] { return [...this.values.values()].map(parsePlan).filter((x): x is Plan => x !== null && x.jobId === jobId).sort((a,b)=>a.round-b.round); }
   private tasksForJob(jobId: string): Task[] {
     const jobs = [...this.values.values()].map(parseJob).filter((x): x is Job => x !== null && typeof x.id === 'string' && x.id.length > 0);
     return [...this.values.values()].map(parseTask).filter((x): x is Task => x !== null).filter(task => isTaskForJob(task, jobId, jobs.length === 1));

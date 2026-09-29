@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, readFile, realpath, chmod, rm } from 'node:fs/promi
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
-import { marker, JOB_MARKER, TASK_MARKER, parseJob, parseTask, renderJobComment } from '../dist/markers.js';
+import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
 import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, validatePlannerHierarchy } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
@@ -251,7 +251,23 @@ test('planner result with a formatting-only priority variation creates a child t
   await settle(reconciler, 8);
   const result = await store.load('auto');
   assert.equal(result.tasks.find(item => item.id === 'work-1')?.priority, 'P1');
+  const firstPlan = result.plans?.find(item => item.id === 'plan-1');
+  assert.equal(firstPlan?.status, 'SUCCEEDED');
+  assert.deepEqual(firstPlan?.generatedTaskIds, ['work-1']);
+  const comments = await store.comments();
+  const planIndex = comments.findIndex(comment => comment.body.includes(PLAN_MARKER) && comment.body.includes('\"id\":\"plan-1\"'));
+  const childIndex = comments.findIndex(comment => comment.body.includes(TASK_MARKER) && comment.body.includes('\"id\":\"work-1\"'));
+  assert.ok(planIndex >= 0 && childIndex > planIndex, 'Plan comment must precede generated child Task comment');
   await stop();
+});
+
+test('Plan marker round-trips independently from Job and Task markers', () => {
+  const plan = { jobId:'auto', id:'plan-7', round:7, source:'model-planner', previousPlanId:'plan-6', trigger:{source:'unblock',taskIds:['release'],reason:'publisher access restored',blockedHeadShas:['abc'],currentHeadSha:'def',facts:['access changed']}, status:'SUCCEEDED', objectiveStatus:'in_progress', assessment:'re-plan release', generatedTaskIds:['release-next'], headSha:'def', createdAt:now(), updatedAt:now() };
+  const body = renderPlanComment(plan);
+  assert.ok(body.includes(PLAN_MARKER));
+  assert.deepEqual(parsePlan(body), plan);
+  assert.equal(parseJob(body), null);
+  assert.equal(parseTask(body), null);
 });
 
 test('default planner agent loads markdown instructions and returns typed planning JSON', async () => {

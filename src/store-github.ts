@@ -1,6 +1,6 @@
 import type { DurableStore, GitHubClient, Comment, PullRequestState, GitHubPullRequestSeed } from './store.js';
-import { Job, Task, AgentRegistration } from './types.js';
-import { parseAgent, parseJob, parseTask, renderAgentComment, renderJobBody, renderTaskComment, JOB_MARKER } from './markers.js';
+import { Job, Plan, Task, AgentRegistration } from './types.js';
+import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderPlanComment, renderTaskComment, JOB_MARKER } from './markers.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget } from './blockers.js';
 
@@ -149,6 +149,7 @@ export class GitHubStore implements DurableStore {
       throw new Error(`JOB_MARKER_MISSING: Managed GitHub job ${jobId} has no durable ${JOB_MARKER} marker in PR #${this.prNumber}`);
     }
     const soleTrustedJob = jobs.length === 1;
+    job.plans = comments.map(comment => { const plan = parsePlan(comment.body); if (!plan || plan.jobId !== jobId) return null; const planUrl = comment.url ?? (comment.id > 0 ? `https://github.com/${this.repository}/pull/${this.prNumber}#issuecomment-${comment.id}` : undefined); return planUrl ? { ...plan, planUrl } : plan; }).filter((x): x is Plan => x !== null).sort((a,b)=>a.round-b.round);
     job.tasks = comments.map(comment => {
       const task = parseTask(comment.body);
       if (!task) return null;
@@ -244,6 +245,20 @@ export class GitHubStore implements DurableStore {
     }
 
     for (const legacy of jobComments.filter(comment => parseJob(comment.body)?.id === job.id)) await this.deleteComment(legacy);
+  }
+  async appendPlan(plan: Plan): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const matches = comments.filter(comment => { const existing = parsePlan(comment.body); return existing !== null && existing.jobId === plan.jobId && existing.id === plan.id; });
+    if (matches.length === 0) { await this.comment(renderPlanComment(plan)); return; }
+    const existing = parsePlan(matches[0].body);
+    if (!existing || JSON.stringify({ ...existing, planUrl: undefined }) !== JSON.stringify({ ...plan, planUrl: undefined })) throw new Error(`Plan ${plan.id} already exists with a different definition`);
+    for (const duplicate of matches.slice(1)) await this.deleteComment(duplicate);
+  }
+  async savePlan(plan: Plan): Promise<void> {
+    const comments = (await this.list()).filter(comment => this.isTrusted(comment));
+    const existing = comments.filter(comment => { const markerPlan = parsePlan(comment.body); return markerPlan !== null && markerPlan.jobId === plan.jobId && markerPlan.id === plan.id; });
+    if (existing.length > 0) { await this.updateComment(existing[0], renderPlanComment(plan)); for (const duplicate of existing.slice(1)) await this.deleteComment(duplicate); }
+    else await this.appendPlan(plan);
   }
   async appendTask(task: Task): Promise<void> {
     if (!task.jobId) throw new Error('GitHub task requires jobId');

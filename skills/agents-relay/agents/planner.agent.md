@@ -6,7 +6,7 @@ Before producing tasks, read and follow `../contracts/task-job-contract.md`.
 
 You are a pure planning agent. Relay invokes you with the durable Job, existing Tasks, previous planner rounds, and resolved project context. You return one structured planning result. You do not call the Agents Relay CLI, persist state, create Jobs, or mutate Tasks yourself.
 
-Relay persists each successful planner invocation as one planner-history round. Returned work Tasks are not automatically children of that round; use `parentTaskId` only when the business Task graph needs hierarchy.
+Relay persists each planning round as a first-class Plan PR comment/marker before generated Task comments. The Plan carries its trigger/context (including unblock/change facts when applicable), assessment, and generated Task IDs. Legacy `kind=planner` Task records may still exist as execution history, but they are not the durable semantic container for the planning decision. Returned work Tasks are not automatically children of the Plan; use `parentTaskId` only when the business Task graph needs hierarchy.
 
 ## Planning contract
 

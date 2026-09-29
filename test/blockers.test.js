@@ -32,12 +32,12 @@ test('merge resolution requeues matching dependents once and marks stale generat
   const stores=new Map([['org/a#21',aStore],['org/b#22',bStore]]);
   const factory=(repo,pr)=>stores.get(`${repo}#${pr}`);
   const first=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:factory,resolution:'merge',now:'2026-09-25T19:00:00.000Z'});
-  assert.deepEqual(first,{resumed:1,obsolete:1,waiting:0});
+  assert.deepEqual(first,{resumed:1,obsolete:1,waiting:0,unblocked:[]});
   assert.equal((await blockerStore.load('blocker')).unblocks, undefined);
   assert.equal((await aStore.load('dependent-a')).tasks[0].state,'QUEUED');
   assert.equal((await bStore.load('dependent-b')).tasks[0].state,'FAILED');
   const second=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:factory,resolution:'merge',now:'2026-09-25T20:00:00.000Z'});
-  assert.deepEqual(second,{resumed:0,obsolete:0,waiting:0});
+  assert.deepEqual(second,{resumed:0,obsolete:0,waiting:0,unblocked:[]});
 });
 
 test('consuming blocker relations is write-free on a second resolution pass', async()=>{
@@ -61,10 +61,10 @@ test('verified blocker does not wake on merge but wakes after explicit verificat
   const dependentStore=new InMemoryStore(job('dependent','org/app',20,[task('failed')]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore,dependentJobId:'dependent',dependentTaskId:'failed',resolutionMode:'verified',now});
   const factory=()=>dependentStore;
-  assert.deepEqual(await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:factory,resolution:'merge'}),{resumed:0,obsolete:0,waiting:1});
+  assert.deepEqual(await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:factory,resolution:'merge'}),{resumed:0,obsolete:0,waiting:1,unblocked:[]});
   assert.equal((await dependentStore.load('dependent')).tasks[0].state,'FAILED');
   const verified=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:factory,resolution:'verified'});
-  assert.deepEqual(verified,{resumed:1,obsolete:0,waiting:0});
+  assert.deepEqual(verified,{resumed:1,obsolete:0,waiting:0,unblocked:[]});
   assert.equal((await dependentStore.load('dependent')).tasks[0].state,'QUEUED');
 });
 
@@ -81,7 +81,7 @@ test('draft dependent is durably registered and released from blocker-side autho
   delete dependent.tasks[0].blockedBy;
   await dependentStore.saveTask(dependent.tasks[0]);
   const resolved=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:()=>dependentStore,resolution:'merge',now:'2026-09-25T19:00:00.000Z'});
-  assert.deepEqual(resolved,{resumed:1,obsolete:0,waiting:0});
+  assert.deepEqual(resolved,{resumed:1,obsolete:0,waiting:0,unblocked:[]});
   const released=(await dependentStore.load('dependent')).tasks[0];
   assert.equal(released.state,'QUEUED');
   assert.equal(released.attempt,0);
