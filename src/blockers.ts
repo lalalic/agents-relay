@@ -1,6 +1,5 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
-import { transitionTaskEvent } from './scheduler.js';
 import { applyTaskReleaseAction, applyTaskRetryAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 

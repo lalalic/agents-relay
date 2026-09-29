@@ -416,9 +416,20 @@ v1 task lifecycle graph remains authoritative for accepting the retry
 transition; adapter-specific wake, reconciliation, and output behavior remain
 outside the Action boundary.
 
-The next migration increment routes lease-expiry automatic retry through that
-same `task.retry` mutation. This proves internal reconciliation can reuse the
-Action boundary without moving lifecycle policy out of the canonical graph.
+The migration now routes manual CLI/dashboard retry, lease-expiry retry,
+Planner retry, blocker-resolution retry, and fixed-job authoritative unblock
+through controlled Action semantics. Retry policy remains explicit: user-driven
+retry may extend the durable retry budget, while automatic retries preserve the
+existing finite budget. Fixed authoritative unblock uses the distinct
+`task.unblock.retry` Action so ordinary `task.retry` still rejects historical
+`UNBLOCKED` work.
+
+`task.cancel`, task release/hold, orchestrator self-task completion, and
+`job.activate` / `job.cancel` likewise use shared Action helpers across their
+CLI, dashboard, blocker, manual-plan, and reconcile callers. External effects
+such as closing or merging a pull request remain adapter concerns. Worker,
+review, planner, webhook, and reconcile lifecycle facts remain direct Graph
+Event ingestion and are not wrapped as Actions merely to hide the distinction.
 
 During the transition, code may translate v1 graph decisions into v2 engine
 inputs, but it must not create a second independent lifecycle policy. Any

@@ -17,7 +17,7 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
 import { applyOrchestratorCompleteAction, applyTaskCancelAction, applyTaskHoldAction, applyTaskReleaseAction, applyTaskRetryAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';

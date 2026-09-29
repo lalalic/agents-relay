@@ -1,5 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   decideJobLifecycle,
   decideTaskLifecycle,
@@ -116,4 +117,13 @@ test('graph reconcile releases satisfied dependencies', () => {
   const child={...task('DRAFT'),id:'child',dependencies:['dep']};
   const scheduled=schedule({...job('ACTIVE'),tasks:[dep,child]});
   assert.equal(scheduled.tasks[1].state,'QUEUED');
+});
+
+
+test('command and adapter mutation surfaces do not bypass shared Action boundaries', () => {
+  for (const name of ['cli.ts','dashboard-actions.ts','blockers.ts','manual-plan.ts']) {
+    const source=readFileSync(new URL('../src/'+name,import.meta.url),'utf8');
+    assert.doesNotMatch(source,/transitionTaskEvent\s*\(/,name+' must route task command mutations through task-actions');
+    assert.doesNotMatch(source,/transitionJobEvent\s*\([^\n]*['"](?:activate|cancel)['"]/,name+' must route job command mutations through job-actions');
+  }
 });
