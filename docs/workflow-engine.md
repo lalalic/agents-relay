@@ -8,13 +8,12 @@ by Relay. There is no generated JSON/YAML workflow definition.
 | Version | Profile | Status | Authority |
 | --- | --- | --- | --- |
 | v1 | Mermaid `stateDiagram-v2` | Implemented | This document plus the two canonical `.mmd` files |
-| v2 | Strict Mermaid `flowchart` | Specification only | [`architecture-v2.md`](architecture-v2.md) |
+| v2 | Strict Mermaid `flowchart` | Parser/runtime foundation implemented | [`architecture-v2.md`](architecture-v2.md) and [`src/workflow/graph-v2.ts`](../src/workflow/graph-v2.ts) |
 
-Until the v2 parser, registries, runtime, and compatibility tests are
-implemented and reviewed, the implemented v1 profile remains authoritative for
-the current canonical Job and Task graphs. The v2 specification is the
-handoff contract for that implementation; it does not change current runtime
-behavior.
+The v2 parser, typed registries, deterministic runtime, and focused tests are
+implemented as an isolated foundation. The v1 profile remains authoritative
+for current canonical Job and Task graphs; broad lifecycle migration remains a
+later checkpoint.
 
 Canonical graphs:
 
