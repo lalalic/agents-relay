@@ -80,6 +80,11 @@ export class ProjectedDurableStore implements DurableStore {
     this.projection = new GitHubProjectionWriter(relay, github);
   }
 
+  /** Seed local operational truth from a trusted discovery snapshot without creating a projection echo. */
+  async hydrate(job: Job): Promise<void> {
+    if (!(await this.relay.loadJob(job.id))) await this.relay.saveJob(structuredClone(job));
+  }
+
   async load(jobId: string): Promise<Job> {
     const local = await this.relay.loadJob(jobId);
     if (local) return structuredClone(local);

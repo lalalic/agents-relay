@@ -9,7 +9,9 @@ import { serveDashboard } from './dashboard.js';
 import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type DurableStore, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
+import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store.js';
+import { SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -103,7 +105,21 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let cachedOverviews: ManagedJobOverview[] = [];
   const githubReadPaths: GitHubReadPathDiagnostics = { workspaceScans: 0, prRefreshes: 0, prRefreshesByTrigger: {}, prRefreshCoalesced: 0, prRefreshCoalescedByTrigger: {} };
   let dormantProbeIndex = 0;
-  const makeReconciler = (store: GitHubStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
+  const relayStores = new Map<string, SQLiteRelayStore>();
+  const projectionWriters = new Map<string, GitHubProjectionWriter>();
+  const runtimeStore = (repository: string, prNumber: number, seed?: import('./store.js').GitHubPullRequestSeed | null): DurableStore => {
+    const key = `${repository}#${prNumber}`;
+    let relay = relayStores.get(key);
+    if (!relay) {
+      relay = new SQLiteRelayStore(join(homedir(), '.agents-relay', 'stores', `${repository.replace('/', '_')}-${prNumber}.db`));
+      relayStores.set(key, relay);
+    }
+    const github = new GitHubStore(client, repository, prNumber, trusted, seed);
+    const projected = new ProjectedDurableStore(relay, github);
+    projectionWriters.set(key, projected.projection);
+    return projected;
+  };
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
   const cacheDirectory = join(homedir(), '.agents-relay');
   const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
@@ -173,13 +189,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     makeReconciler,
     () => client.rateLimitStatus().limited,
     (repository, prNumber, trigger) => refreshPullRequestSnapshot(repository, prNumber, trigger),
+    (repository, prNumber, seed) => runtimeStore(repository, prNumber, seed),
   );
   const initial = cachedOverviews; const fallback = initial[0]?.job;
-  const dashboardStore = fallback ? new GitHubStore(client, fallback.repository, fallback.prNumber, trusted) : new InMemoryStore();
+  const dashboardStore = fallback ? runtimeStore(fallback.repository, fallback.prNumber) : new InMemoryStore();
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     if (action === 'reconcile') {
       await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId);
       return await store.load(jobId);
@@ -189,7 +206,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const workspaceJobSetState = async (jobId: string, state: import('./types.js').JobLifecycleState) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     const result = await dashboardJobSetState(store)(jobId, state);
     await refreshPullRequest(overview.job.repository, overview.job.prNumber, 'dashboard.job-state', { force: true });
     return result;
@@ -197,13 +214,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     return await dashboardTaskAction(store, makeReconciler(store, concurrency), action)(jobId, taskId);
   };
   const workspaceTaskSetState = async (jobId: string, taskId: string, state: import('./types.js').TaskState) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = new GitHubStore(client, overview.job.repository, overview.job.prNumber, trusted);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     const result = await dashboardTaskSetState(store)(jobId, taskId, state);
     await refreshPullRequest(overview.job.repository, overview.job.prNumber, 'dashboard.task-state', { force: true });
     return result;
@@ -248,29 +265,33 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   });
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
-    if (client.rateLimitStatus().limited) return;
     try { await pool.reconcile(); }
     catch (error) { process.stderr.write(`warning: workspace reconcile unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
   };
   const scheduleHeartbeatSafely = async (): Promise<void> => {
-    if (client.rateLimitStatus().limited) return;
     const now = new Date();
     for (const item of dueScheduledOverviews(cachedOverviews, now)) {
       const repository = item.job.repository;
       try {
-        await runScheduledBucket(client, repository, trusted, { prNumber: item.job.prNumber, jobId: item.job.id, bucket: scheduleBucket(new Date(item.job.schedule!.nextRunAt)) }, { reconcile: async () => { await pool.reconcileTarget(repository, item.job.prNumber, item.job.id); }, idle: async () => {} }, now);
+        await runScheduledBucket(client, repository, trusted, { prNumber: item.job.prNumber, jobId: item.job.id, bucket: scheduleBucket(new Date(item.job.schedule!.nextRunAt)) }, { reconcile: async () => { await pool.reconcileTarget(repository, item.job.prNumber, item.job.id); }, idle: async () => {} }, now, () => runtimeStore(repository, item.job.prNumber));
       } catch (error) {
         process.stderr.write(`warning: scheduled heartbeat unavailable for ${repository}#${item.job.prNumber}: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
   };
+  const flushProjectionsSafely = async (): Promise<void> => {
+    for (const writer of projectionWriters.values()) {
+      try { await writer.flushOnce(); }
+      catch (error) { process.stderr.write(`warning: GitHub projection flush unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
+    }
+  };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
-  const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
+  const interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
   const scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
-  const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)
-    .then(async items => { await scheduleHeartbeatSafely(); await pool.reconcileKnown(items); })
+    .then(async items => { await scheduleHeartbeatSafely(); await pool.reconcileKnown(items); await flushProjectionsSafely(); })
     .catch(error => process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});

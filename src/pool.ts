@@ -1,4 +1,4 @@
-import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext, type GitHubPullRequestSeed, type ManagedGitHubPullRequestSnapshot } from './store.js';
+import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext, type DurableStore, type GitHubPullRequestSeed, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
@@ -7,6 +7,7 @@ import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordina
 import type { EventRecord } from './types.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && item.job.state === 'ACTIVE').map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
@@ -36,9 +37,10 @@ export class RepositoryWorkerPool {
     repository: string | readonly string[],
     private readonly trustedAuthors: ReadonlySet<string>,
     private readonly concurrency: number,
-    private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
+    private readonly makeReconciler: (store: DurableStore, maxConcurrent: number) => Reconciler,
     private readonly isRateLimited: () => boolean = () => false,
     private readonly refreshWebhookSnapshot?: (repository: string, prNumber: number, trigger: string) => Promise<ManagedGitHubPullRequestSnapshot>,
+    private readonly makeStore: (repository: string, prNumber: number, seed?: GitHubPullRequestSeed | null) => DurableStore = (repository, prNumber, seed) => new GitHubStore(this.client, repository, prNumber, this.trustedAuthors, seed),
   ) {
     this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)];
     const reportCoordinatorError = (error: unknown, signal: ReconcileSignal): void => {
@@ -128,7 +130,6 @@ export class RepositoryWorkerPool {
   }
 
   private async consumeSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
-    if (this.isRateLimited()) return;
     for (const signal of signals) {
       if (signal.repository && signal.prNumber && this.repositories.includes(signal.repository)) {
         this.jobTargets.set(jobId, { repository: signal.repository, prNumber: signal.prNumber });
@@ -143,7 +144,7 @@ export class RepositoryWorkerPool {
     const mayConsumeSeed = signals.some(signal => signal.reason === 'target.request' || signal.reason.startsWith('github.webhook:'));
     const seed = mayConsumeSeed ? this.targetSeeds.get(seedKey) ?? null : null;
     if (mayConsumeSeed) this.targetSeeds.delete(seedKey);
-    const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors, seed);
+    const store = this.makeStore(target.repository, target.prNumber, seed);
     const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
     let shouldReconcile = false;
     const reasons: string[] = [];
@@ -169,7 +170,8 @@ export class RepositoryWorkerPool {
     // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
     for (const job of terminalManagedJobs(discovered)) {
       await this.reconcileExclusive(job.id, async () => {
-        const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+        const store = this.makeStore(job.repository, job.prNumber);
+        await (store as HydratableStore).hydrate?.(job);
         await withGitHubRequestContext(this.client, 'pool.terminal-reconcile', () => this.makeReconciler(store, 0).reconcile(job.id));
       });
     }
@@ -177,7 +179,8 @@ export class RepositoryWorkerPool {
     let capacity = Math.max(1, this.concurrency);
     for (const job of jobs) {
       if (capacity <= 0) break;
-      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+      const store = this.makeStore(job.repository, job.prNumber);
+      await (store as HydratableStore).hydrate?.(job);
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
       const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
