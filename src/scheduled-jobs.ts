@@ -3,6 +3,7 @@ import { Job } from './types.js';
 import { bucketStart, nextScheduleRun, parseRunBucketLabel, runBucketLabel, scheduleBucket } from './scheduler.js';
 
 export const AUTONOMOUS_LABEL = 'agents-relay:autonomous';
+export const AUTONOMOUS_SCHEDULER_WORKFLOW = '.github/workflows/autonomous-scheduler.yml';
 export type ScheduledJobRef = { prNumber: number; jobId: string; bucket: string };
 export type ScheduledRunStatus = 'dispatched' | 'completed' | 'skipped-idempotent' | 'skipped-active';
 export type ScheduledRunResult = { job: Job; status: ScheduledRunStatus };
@@ -24,6 +25,19 @@ export function dueBuckets(now: Date, lookbackBuckets: number): string[] {
 export function indexedDueQuery(repository: string, bucket: string): string {
   const label = runBucketLabel(bucket);
   return `repo:${repository} is:open is:pr label:"${AUTONOMOUS_LABEL}" label:"${label}"`;
+}
+
+export async function assertScheduledAutonomousRepositoryCapability(client: GitHubClient, repository: string, job: Pick<Job, 'executionMode' | 'schedule'>): Promise<void> {
+  if (job.executionMode !== 'autonomous' || !job.schedule) return;
+  const metadata = await client.request(`repos/${repository}`) as { default_branch?: unknown };
+  const defaultBranch = typeof metadata.default_branch === 'string' && metadata.default_branch ? metadata.default_branch : 'main';
+  try {
+    await client.request(`repos/${repository}/contents/${AUTONOMOUS_SCHEDULER_WORKFLOW}?ref=${encodeURIComponent(defaultBranch)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/404|Not Found/i.test(message)) throw error;
+    throw new Error(`SCHEDULED_AUTONOMOUS_UNAVAILABLE: ${repository} default branch ${defaultBranch} must contain ${AUTONOMOUS_SCHEDULER_WORKFLOW} before creating or enabling a scheduled autonomous Job`);
+  }
 }
 
 async function issueLabels(client: GitHubClient, repository: string, prNumber: number): Promise<string[]> {

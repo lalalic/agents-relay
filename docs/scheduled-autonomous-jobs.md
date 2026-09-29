@@ -48,10 +48,57 @@ cron expression and timezone.
 
 ## Heartbeat
 
-One repository workflow, `.github/workflows/autonomous-scheduler.yml`, runs:
+Every repository that wants to host scheduled autonomous Jobs must install one
+repository workflow at `.github/workflows/autonomous-scheduler.yml`. Scheduled
+Job creation/update checks the target repository's default branch and fails with
+`SCHEDULED_AUTONOMOUS_UNAVAILABLE` when this workflow is missing. Unscheduled
+autonomous Jobs and fixed Jobs do not require it.
+
+For a normal consumer repository, use the published Agents Relay package
+directly; the repository does not need an Agents Relay source checkout:
+
+~~~yaml
+name: Autonomous scheduler
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: agents-relay-autonomous-scheduler
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Process due autonomous buckets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npx --yes --package agents-relay@<published-version> agents-relay tick --repo "$GITHUB_REPOSITORY"
+~~~
+
+Pin `<published-version>` to a version available from the package registry. Do
+not use `@latest` for production cadence, because a repository heartbeat should
+not silently change behavior between runs.
+
+The Agents Relay **source repository** may instead build and run its checked-out
+source in the workflow, for example:
 
 ~~~sh
-npx agents-relay tick --repo OWNER/REPO
+npm ci
+npm run build
+node dist/cli.js tick --repo "$GITHUB_REPOSITORY"
 ~~~
 
 The workflow runs every ten minutes and uses a non-cancelling concurrency
