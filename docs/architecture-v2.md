@@ -98,13 +98,13 @@ HTML, and display text do not affect semantics.
 Edges have one of these forms:
 
 ```text
-FROM --> TO
 FROM -->|on: EVENT_ID| TO
 FROM -->|request: ACTION_ID| TO
 FROM -->|true| TO
 FROM -->|false| TO
 FROM -->|to: STATE_ID| TO
 FROM -->|emit: EVENT_ID| TO
+ACTION --> STATE
 ```
 
 An edge label is metadata, not an expression. Only the listed keywords and
@@ -120,12 +120,15 @@ The topology has these deterministic rules:
 - a guard edge must lead to an action or state node;
 - an action may lead to one state using `to:`, and may additionally lead to
   emit nodes using `emit:`;
+  the equivalent unlabelled edge is allowed only from an action to its state
+  target;
 - an emit node has no outgoing edges;
-- an unlabelled edge is allowed only from an action to its state target or from
-  a state to a state when the input is supplied by the surrounding runtime;
+- every outgoing edge from a state uses `on:` or `request:`; an unlabelled
+  state-to-state edge is not executable input;
 - every state must be reachable from the declared initial state, except states
   explicitly marked by a future composition profile; and
-- a state/input pair may have at most one enabled path after guard evaluation.
+- each state has at most one matching path for a given event/action identifier,
+  whether that path is direct or begins with a guard.
 
 The profile intentionally does not support subgraphs, nested graphs, links,
 click handlers, `classDef`, styling, `style`, `%%{init: ...}%%`, HTML labels,
@@ -133,7 +136,59 @@ quoted edge expressions, Mermaid `stateDiagram`, sequence/class/ER diagrams,
 or arbitrary node shapes as semantic constructs. Unsupported syntax is an
 error, never an ignored line.
 
-### 2.4 Representative valid graph
+### 2.4 Normative input and transition semantics
+
+A graph input is a typed record:
+
+```ts
+type GraphInput<FPayload, AInput> = {
+  transport: "event" | "action";
+  id: string;
+  payload: FPayload | AInput;
+};
+type GraphFacts<FPayload, AInput> = {
+  readonly currentState: StateId;
+  readonly input: GraphInput<FPayload, AInput>;
+  readonly durableFacts: Readonly<Record<string, unknown>>;
+};
+```
+
+The concrete v2 implementation may add execution correlation and generic
+parameters, but it must preserve these rules:
+
+1. The adapter resolves the durable current state and normalizes transport,
+   identifier, and payload. An event uses an `on:` edge; an action request uses
+   a `request:` edge. There is no implicit or identifierless input.
+2. Before evaluation, the event/action registry validates the payload for that
+   exact `transport` and `id`, and the state registry validates
+   `currentState`. An invalid input is rejected before guard evaluation.
+3. Guard context is only the readonly typed `GraphFacts`. Guards are pure
+   predicates: they may not mutate durable state, invoke I/O, read the clock,
+   use process identity, call a model, or select from unordered external data.
+4. Exactly one path participates in evaluation: the unique matching `on:` or
+   `request:` path. If it reaches a guard, that guard runs once and only its
+   `true` or `false` branch continues. The path terminates at exactly one
+   target state, optionally after passing through exactly one action node.
+5. The accepted decision is a value, not a side effect:
+   `{ accepted: true, source, target, action?, emittedEvents? }`. `action`
+   carries the controlled action ID and validated input. `emittedEvents`
+   carries declared event IDs before action execution; their payloads are
+   supplied later by a successful action receipt. A rejected graph decision
+   carries no mutation and no effect.
+6. The dispatcher persists the accepted source-to-target state transition
+   before performing the action intent. This ordering makes durable graph
+   policy authoritative even when an external effect fails.
+7. If the path declares emitted events, the successful action receipt supplies
+   their payloads. The dispatcher validates those payloads against the event
+   registry and publishes the events in the physical source order of their emit
+   edges. Action failure produces its own registered failure event; it does not
+   publish the success emit, silently retry outside policy, or write a new
+   lifecycle state directly. The failure event returns to the same graph.
+8. Resulting event payloads are validated by the event registry before graph
+   evaluation. A publish failure is explicit delivery evidence and never a
+   hidden successful transition.
+
+### 2.5 Representative valid graph
 
 This is a complete small retry graph. The graph describes policy; the action
 executor owns the actual retry and event publication.
@@ -162,10 +217,12 @@ For `FAILED + task.retry`, the engine evaluates the registered
 must always produce the same decision; wall-clock time, process IDs, and model
 output are not graph inputs unless represented as durable facts.
 
-### 2.5 Representative invalid graphs and diagnostics
+### 2.6 Representative invalid graphs and diagnostics
 
 Diagnostics must identify the line and the reason. Implementations should keep
 the wording stable enough for tests and operators to act on it.
+Line numbers are one-based physical source lines, counting the `flowchart`
+header.
 
 ```mermaid
 flowchart LR
@@ -175,7 +232,7 @@ failed -->|on: task.retry| unknown
 ```
 
 Invalid: `unknown` is not a declared node. Required diagnostic shape:
-`line 3: edge target 'unknown' is not declared`.
+`line 4: edge target 'unknown' is not declared`.
 
 ```mermaid
 flowchart LR
@@ -197,7 +254,7 @@ retryable -->|maybe| failed
 ```
 
 Invalid: a guard must have exactly `true` and `false` exits. Required
-diagnostic shape: `line 5: guard 'retryable' requires true/false exits; found 'maybe'`.
+diagnostic shape: `line 6: guard 'retryable' requires true/false exits; found 'maybe'`.
 
 ```mermaid
 flowchart LR
@@ -210,19 +267,19 @@ Invalid: the `{...}` shape is not part of the executable profile. Mermaid
 rendering syntax may evolve independently, but executable graphs accept only
 the documented node form and must fail closed when it is not used.
 
-### 2.6 Deterministic validation sequence
+### 2.7 Deterministic validation sequence
 
 The parser/runtime validates in this order so the first diagnostic is stable:
 
 1. document header and permitted comments;
 2. line grammar and node/edge tokenization;
 3. declaration uniqueness and referenced-node existence;
-4. semantic prefixes and registry identifiers;
+4. semantic node/edge prefixes and syntax;
 5. initial-state declaration and state reachability;
 6. guard arity and required `true`/`false` branches;
 7. action target and emit topology;
-8. duplicate or ambiguous input paths; and
-9. registry binding availability.
+8. duplicate or ambiguous input paths; then
+9. typed state, guard, action, event, and emitted-event registry binding.
 
 Validation is pure: it does not mutate durable state, call an external system,
 or execute an action. Runtime evaluation sorts no user-provided collection and
@@ -252,9 +309,18 @@ properties:
 - guards are named, typed facts predicates and cannot mutate state or perform
   external I/O;
 - actions are named, typed intents with explicit input/output and idempotency
-  contracts; and
+  contracts. A successful receipt may supply values for the action's declared
+  emit nodes; a failed receipt names its registered failure event. A receipt
+  never assigns the durable subject's lifecycle state directly; and
 - events are named facts with validated payloads, not commands disguised as
   events.
+
+Registry binding is a load-time operation. The parser resolves the graph
+against all registries before returning a loadable graph. It binds state IDs
+to the subject's durable state schema, input `EVENT_ID` values to the event
+registry, action paths to the action registry, and both emit edges and
+resulting input events to the same event registry. This separation prevents a
+parseable diagram from becoming executable through an unknown semantic name.
 
 Unknown state, guard, action, or event IDs fail graph loading before execution.
 Registries are versioned in code and tested against every canonical graph.
@@ -275,6 +341,29 @@ compatibility source during migration. Existing Job/Task markers, lifecycle
 values, task attempts, leases, execution IDs, review facts, and derived runtime
 status keep their current meaning. A v2 migration must not rewrite markers just
 because the graph representation changes.
+
+The implementation handoff has a mechanically testable version boundary:
+
+1. The public parser surface is versioned. `stateDiagram-v2` remains the only
+   profile accepted by the v1 parser; `flowchart` is accepted only by the new
+   v2 parser. A parser must reject the other header rather than infer a
+   compatible mode.
+2. The v1 compatibility suite must load both existing canonical `.mmd` files,
+   exercise representative transitions for every state/input family they
+   declare, and preserve current durable marker serialization and lifecycle
+   behavior.
+3. The v2 suite must include parser and validator fixtures for every accepted
+   node/edge form, each required rejection class, stable one-based diagnostics,
+   unknown state/guard/action/input-event/emit-event identifiers, duplicate and
+   ambiguous input paths, guard determinism, transition-result ordering, and
+   action/emit execution.
+4. Typed registry fixtures must cover successful binding and one negative test
+   per registry kind. The canonical workflow fixtures and their expected
+   decisions belong in the repository; ad-hoc local graphs are not sufficient
+   acceptance evidence.
+5. Relay may not claim v2 executable-graph support until the v2 parser,
+   validator, typed registries, deterministic transition engine, canonical v2
+   fixtures, and v1 compatibility tests all pass together.
 
 The migration is staged:
 
