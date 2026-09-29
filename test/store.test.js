@@ -2,7 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, listManagedGitHubJobs, loadManagedGitHubPullRequestGraphql, loadManagedGitHubPullRequestSnapshotGraphql } from '../dist/store.js';
-import { AGENT_MARKER, JOB_MARKER, marker, parseAgent, parseJob, parseTask, renderJobBody, TASK_MARKER } from '../dist/markers.js';
+import { AGENT_MARKER, JOB_MARKER, PLAN_MARKER, marker, parseAgent, parseJob, parsePlan, parseTask, renderJobBody, TASK_MARKER } from '../dist/markers.js';
 
 test('rendered job/task markers do not duplicate human markdown content', async () => {
   const { renderJobBody, renderJobComment, renderTaskComment } = await import('../dist/markers.js');
@@ -392,6 +392,34 @@ test('agent registrations persist through trusted stores and ignore forged marke
   assert.equal(parseAgent(comments[1].body).id, 'researcher');
 });
 
+
+test('GitHubStore Plan append/update is job-gated, identity-stable, and fresh-store readable', async () => {
+  const unmanagedComments = [];
+  const unmanaged = githubWithComments(unmanagedComments);
+  const orphan = { jobId:'missing', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'initial'}, status:'PLANNING', assessment:'Planning in progress.', generatedTaskIds:[], createdAt:now(), updatedAt:now() };
+  await assert.rejects(() => unmanaged.appendPlan(orphan), /JOB_MARKER_MISSING/);
+  assert.equal(unmanagedComments.some(item => item.body.includes(PLAN_MARKER)), false);
+
+  const durableJob = job('plan-store');
+  const comments = [githubComment(marker(JOB_MARKER, durableJob), 'bot', 1)];
+  const store = githubWithComments(comments);
+  const createdAt = now();
+  const pending = { jobId:'plan-store', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'unblock',taskIds:['release'],reason:'access restored',facts:['publisher access restored'],blockedHeadShas:['abc'],currentHeadSha:'def'}, status:'PLANNING', guidance:'retry release', assessment:'Planning in progress.', generatedTaskIds:[], headSha:'def', createdAt, updatedAt:createdAt };
+  await store.appendPlan(pending);
+  const persistedComment = comments.find(item => parsePlan(item.body)?.id === 'plan-1');
+  assert.ok(persistedComment);
+  const commentId = persistedComment.id;
+  const finished = { ...pending, status:'SUCCEEDED', objectiveStatus:'in_progress', assessment:'release can proceed', generatedTaskIds:['release-next'], updatedAt:now() };
+  await store.savePlan(finished);
+  assert.equal(comments.filter(item => parsePlan(item.body)?.id === 'plan-1').length, 1);
+  assert.equal(comments.find(item => parsePlan(item.body)?.id === 'plan-1').id, commentId);
+  const fresh = githubWithComments(comments);
+  const loaded = await fresh.load('plan-store');
+  assert.equal(loaded.plans.length, 1);
+  assert.equal(loaded.plans[0].status, 'SUCCEEDED');
+  assert.deepEqual(loaded.plans[0].generatedTaskIds, ['release-next']);
+  assert.match(loaded.plans[0].planUrl, /issuecomment-/);
+});
 
 test('task append is idempotent by job id and task id and rejects conflicting replay', async () => {
   const durableJob = job('idem');

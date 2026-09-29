@@ -1,6 +1,7 @@
-import { AgentRegistration, Job, Task } from './types.js';
+import { AgentRegistration, Job, Plan, Task } from './types.js';
 export const JOB_MARKER = 'agents-relay:job:v1';
 export const TASK_MARKER = 'agents-relay:task:v1';
+export const PLAN_MARKER = 'agents-relay:plan:v1';
 export const AGENT_MARKER = 'agents-relay:agent:v1';
 export function marker(label: string, value: unknown): string { return `<!-- ${label} ${JSON.stringify(value).replace(/>/g, '\\u003e')} -->`; }
 export function parseMarker<T>(body: string, label: string): T | null {
@@ -27,8 +28,8 @@ function contentBeforeDelimiter(body: string, heading: string, end: string): str
   return body.slice(contentStart, endAt);
 }
 
-function jobMetadata(job: Job): Omit<Job, 'objective' | 'description' | 'tasks'> {
-  const { objective: _objective, description: _description, tasks: _tasks, ...metadata } = job;
+function jobMetadata(job: Job): Omit<Job, 'objective' | 'description' | 'tasks' | 'plans'> {
+  const { objective: _objective, description: _description, tasks: _tasks, plans: _plans, ...metadata } = job;
   return metadata;
 }
 
@@ -95,5 +96,26 @@ export function parseTask(body: string): Task | null {
   if (input === undefined) return null;
   return { ...task, input, kind: task.kind === 'planner' ? 'planner' : 'work' };
 }
+
+export function renderPlanComment(plan: Plan): string {
+  const { planUrl: _planUrl, ...metadata } = plan;
+  const triggerLines = [
+    `- **State:** ${plan.status}`,
+    `- **Source:** ${plan.trigger.source}`,
+    plan.trigger.taskIds?.length ? `- **Triggered tasks:** ${plan.trigger.taskIds.join(', ')}` : '',
+    plan.trigger.reason ? `- **Reason:** ${plan.trigger.reason}` : '',
+    plan.trigger.blockedHeadShas?.length ? `- **Blocked head(s):** ${plan.trigger.blockedHeadShas.join(', ')}` : '',
+    plan.trigger.currentHeadSha ? `- **Current head:** ${plan.trigger.currentHeadSha}` : '',
+  ].filter(Boolean).join('\n');
+  const generated = plan.generatedTaskIds.length ? plan.generatedTaskIds.map(id => `- ${id}`).join('\n') : '- _No tasks generated._';
+  const facts = plan.trigger.facts?.length ? `\n\n### Change facts\n\n${plan.trigger.facts.map(fact => `- ${fact}`).join('\n')}` : '';
+  return `${marker(PLAN_MARKER, metadata)}\n## Plan ${plan.round}: ${plan.id}\n\n${triggerLines}${facts}\n\n### Assessment\n\n${plan.assessment}\n\n### Generated tasks\n\n${generated}`;
+}
+export function parsePlan(body: string): Plan | null {
+  const plan = parseMarker<Plan>(body, PLAN_MARKER);
+  if (!plan || typeof plan.jobId !== 'string' || typeof plan.id !== 'string' || !Number.isInteger(plan.round)) return null;
+  return plan;
+}
+
 export function renderAgentComment(agent: AgentRegistration): string { return `${marker(AGENT_MARKER, agent)}\n## Registered agent ${agent.name}\nRole: ${agent.role}\nAvailability: ${agent.availability}`; }
 export function parseAgent(body: string): AgentRegistration | null { return parseMarker<AgentRegistration>(body, AGENT_MARKER); }

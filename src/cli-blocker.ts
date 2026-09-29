@@ -1,7 +1,7 @@
 import { GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { registerBlockerDependency } from './blockers.js';
-import { arg, repository } from './cli-support.js';
+import { arg, eventBus, publishDependentUnblocked, repository } from './cli-support.js';
 import { usage } from './cli-help.js';
 
 export async function runBlockerCommand(action: string, args: string[]): Promise<void> {
@@ -18,6 +18,7 @@ export async function runBlockerCommand(action: string, args: string[]): Promise
   }
   if (action === 'resolve') {
     const summary = await blockerStore.resolveBlockerDependents(id, 'verified');
+    await publishDependentUnblocked(eventBus(args), summary.unblocked, `Blocker Job ${id} resolved (verified)`);
     console.log(JSON.stringify({ blocker: id, resolution: 'verified', ...summary }, null, 2));
     return;
   }

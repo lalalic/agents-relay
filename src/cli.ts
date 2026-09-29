@@ -31,7 +31,7 @@ import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
-  storeFor, saveLocal, githubStore, eventBus, publishWake, priority, storySize, executionMode,
+  storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode,
   chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation,
 } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
@@ -171,11 +171,11 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') {
-      if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of retry`);
+      if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of retry`); if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
       task.maxAttempts = extendRetryBudget(task);
       if (task.kind === 'planner' && task.error) task.plannerRetryFeedback = task.error;
     }
-    await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
+    if (action === 'cancel' && task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and is immutable`); await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
     task.error = action === 'retry' ? null : 'Cancelled by user';
     task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
     await store.saveTask(task);
@@ -185,7 +185,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(task, null, 2));
     return;
   }
-  if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
+  if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
   if (hasArg(args, '--adapter')) {
     const adapter = arg(args, '--adapter') as AdapterName;
     if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('--adapter must be codex, chatgpt, or orchestrator');
@@ -214,7 +214,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
     if (task.state === 'DRAFT') await transitionTaskEvent(task, 'release');
     else if (task.state === 'FAILED') await transitionTaskEvent(task, 'retry');
-    else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`);
+    else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`); else if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and cannot be queued`);
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
@@ -311,12 +311,13 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const headSha = await store.headSha();
     await store.mergePullRequest(headSha ?? undefined);
     await transitionJobEvent(job, 'pr.merged'); await store.saveJob(job);
-    await store.resolveBlockerDependents(id, 'merge');
+    const resolved = await store.resolveBlockerDependents(id, 'merge');
+    await publishDependentUnblocked(eventBus(args), resolved.unblocked, `Blocker Job ${id} resolved (merge)`);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
     if (job.state === 'COMPLETED') throw new Error(`Cannot cancel completed job ${job.id}`);
-    for (const task of job.tasks.filter(item => !['SUCCEEDED','CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
+    for (const task of job.tasks.filter(item => !['SUCCEEDED','UNBLOCKED','CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
     await store.closePullRequest();
     await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;

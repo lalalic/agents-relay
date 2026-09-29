@@ -32,8 +32,10 @@ stateDiagram-v2
     RUNNING --> FAILED: watchdog.failed
     RUNNING --> CANCELLED: task.cancelled
 
-    BLOCKED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
+    BLOCKED --> UNBLOCKED: task.unblocked
     BLOCKED --> CANCELLED: cancel
+
+    UNBLOCKED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
 
     FAILED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
     FAILED --> RUNNING: task.started [recoverableExecution] / mutation.clearError,mutation.clearFailureReason

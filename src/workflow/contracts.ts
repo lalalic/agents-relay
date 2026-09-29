@@ -23,6 +23,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'task.completed',
   'task.failed',
   'task.started',
+  'task.unblocked',
   'watchdog.failed',
   'worker.delivery_failed',
   'worker.start_ack_failed',

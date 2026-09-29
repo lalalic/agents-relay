@@ -228,7 +228,7 @@ export class RepositoryWorkerPool {
         return;
       }
       if (routedWebhook) return;
-      const lifecycle = ['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
+      const lifecycle = ['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
       const wake = event.type === 'job.wake' || event.type === 'github.webhook';
       if (!lifecycle && !wake) return;
       if (repository && prNumber) this.jobTargets.set(event.job_id, { repository, prNumber });
