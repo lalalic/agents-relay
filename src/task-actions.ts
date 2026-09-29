@@ -46,6 +46,17 @@ export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
   return task;
 }
 
+export async function applyTaskCancelAction(task: Task, reason: string): Promise<Task> {
+  if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work and is immutable`);
+  if (!['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
+  await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
+  task.error = reason;
+  task.leaseOwner = null;
+  task.leaseExpiresAt = null;
+  task.executionId = null;
+  return task;
+}
+
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
 export async function dispatchTaskAction(
   store: DurableStore,
@@ -56,6 +67,7 @@ export async function dispatchTaskAction(
   if (!task) throw new Error(`Task ${request.taskId} not found`);
   if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
+  else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
   else throw new Error(`Unsupported task action ${request.id}`);
   await store.saveTask(task);
   return { job, task };

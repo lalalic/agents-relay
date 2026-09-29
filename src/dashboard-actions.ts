@@ -3,7 +3,7 @@ import type { Job, JobLifecycleState, TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
 import { transitionTaskEvent } from './scheduler.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
-import { dispatchTaskAction } from './task-actions.js';
+import { applyTaskCancelAction, dispatchTaskAction } from './task-actions.js';
 
 export function dashboardTaskAction(
   store: DurableStore,
@@ -17,14 +17,7 @@ export function dashboardTaskAction(
     if (action === 'retry') {
       await dispatchTaskAction(store, { id: 'task.retry', jobId, taskId });
     } else {
-      if (!['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
-      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
-      task.error = 'Cancelled by user';
-    }
-    if (action === 'cancel') {
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.executionId = null;
+      await applyTaskCancelAction(task, 'Cancelled by user');
       await store.saveTask(task);
     }
     return await reconciler.wake(job.id);

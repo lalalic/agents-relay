@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
 import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
-import { applyTaskRetryAction } from './task-actions.js';
+import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
@@ -219,14 +219,10 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
     const job = await this.store.load(jobId);
-    for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
+    for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) {
       this.live.get(task.id)?.execution.cancel();
       this.plannerLive.get(task.id)?.controller.abort();
-      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
-      task.error = reason;
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.executionId = null;
+      await applyTaskCancelAction(task, reason);
       await this.store.saveTask(task);
     }
   }
