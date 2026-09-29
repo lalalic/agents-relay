@@ -84,13 +84,21 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
   assert.match(dashboardHtml, /if\(nested\.length\)\{/);
 });
 
-test('job detail exposes configurable ChatGPT shortcuts in a new tab', () => {
-  assert.match(dashboardHtml, /CHAT_SHORTCUTS_KEY='agents-relay:chatgpt-shortcuts'/);
-  assert.match(dashboardHtml, /%1/);
+test('dashboard exposes a top-level ChatGPT Shortcuts editor beside Execution Rules', () => {
+  assert.match(dashboardHtml, /id="rules-tab"[\s\S]*>Execution Rules<\/button>[\s\S]*id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>/);
+  assert.match(dashboardHtml, /id="shortcuts-view"/);
+  assert.match(dashboardHtml, /id="shortcuts-text"/);
+  assert.match(dashboardHtml, /id="shortcuts-save"/);
   assert.match(dashboardHtml, /localStorage\.setItem\(CHAT_SHORTCUTS_KEY/);
+});
+
+test('job detail exposes ChatGPT shortcuts as an empty-first select that resets after launch', () => {
+  assert.match(dashboardHtml, /function chatShortcutField\(job\)/);
+  assert.match(dashboardHtml, /select\.append\(new Option\('',''\)\)/);
+  assert.match(dashboardHtml, /job-chat-shortcut-select/);
   assert.match(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),'_blank','noopener'\)/);
-  assert.match(dashboardHtml, /https:\/\/chatgpt\.com\/\?prompt=/);
-  assert.match(dashboardHtml, /One per line: <name>: <prompt>/);
+  assert.match(dashboardHtml, /select\.value='';/);
+  assert.match(dashboardHtml, /chatShortcutField\(job\)/);
 });
 
 test('dashboard exposes the operations-console structure safely', () => {

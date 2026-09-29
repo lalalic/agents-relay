@@ -72,14 +72,6 @@ export const dashboardHtml = `<!doctype html>
     .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
     .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
     .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
-    .chat-shortcuts { margin-top:.7rem; padding-top:.65rem; border-top:1px solid var(--border); }
-    .chat-shortcut-tabs,.chat-shortcut-list { display:flex; gap:.35rem; flex-wrap:wrap; }
-    .chat-shortcut-tab,.chat-shortcut-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; cursor:pointer; }
-    .chat-shortcut-tab[aria-selected="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); font-weight:750; }
-    .chat-shortcut-button { color:var(--accent); font-weight:700; }
-    .chat-shortcut-editor { display:grid; gap:.4rem; margin-top:.45rem; }
-    .chat-shortcut-editor textarea { width:100%; min-height:7rem; resize:vertical; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--text); padding:.55rem; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
-    .chat-shortcut-help { margin:0; color:var(--muted); font-size:.7rem; }
     ul.tree { display:grid; gap:.25rem; min-width:0; max-width:100%; }
     ul.tree li { min-width:0; max-width:100%; }
     ul.tree ul { width:calc(100% - .6rem); min-width:0; max-width:calc(100% - .6rem); list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
@@ -101,7 +93,7 @@ export const dashboardHtml = `<!doctype html>
     .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
     .event-kind { color:var(--accent); font-weight:800; }
     .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
-    #usage-view,#rules-view,#worker-rules-view { grid-column:1 / -1; }
+    #usage-view,#rules-view,#shortcuts-view,#worker-rules-view { grid-column:1 / -1; }
     .rules-editor { display:grid; gap:.65rem; }
     .rules-help { margin:0; color:var(--muted); font-size:.8rem; }
     .rules-textarea { width:100%; min-height:55vh; resize:vertical; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); color:var(--text); padding:.8rem; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -181,6 +173,7 @@ export const dashboardHtml = `<!doctype html>
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
     <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Execution Rules</button>
+    <button id="shortcuts-tab" type="button" role="tab" aria-selected="false" aria-controls="shortcuts-view">Shortcuts</button>
   </nav>
 </header>
 <main>
@@ -222,6 +215,18 @@ export const dashboardHtml = `<!doctype html>
       </div>
     </div>
   </section>
+  <section id="shortcuts-view" role="tabpanel" aria-labelledby="shortcuts-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>ChatGPT Shortcuts</h2><span class="subtle">One per line · %1 = current repo/pr</span></div>
+      <div class="panel-body">
+        <div class="rules-editor">
+          <p class="rules-help">Format: &lt;name&gt;: &lt;prompt&gt;. Use %1 where the current Job reference should appear.</p>
+          <textarea id="shortcuts-text" class="rules-textarea" spellcheck="true" aria-label="ChatGPT shortcuts"></textarea>
+          <div class="rules-footer"><span id="shortcuts-status" class="subtle" aria-live="polite"></span><button id="shortcuts-save" class="rules-save" type="button">Save shortcuts</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 <script>
 'use strict';
@@ -242,9 +247,11 @@ const DASHBOARD_VERSION=${JSON.stringify(dashboardVersion)};
 const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
 const rulesTab=document.querySelector('#rules-tab');
+const shortcutsTab=document.querySelector('#shortcuts-tab');
 const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
 const rulesView=document.querySelector('#rules-view');
+const shortcutsView=document.querySelector('#shortcuts-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
@@ -270,6 +277,9 @@ const rulesText=document.querySelector('#rules-text');
 const rulesMeta=document.querySelector('#rules-meta');
 const rulesStatus=document.querySelector('#rules-status');
 const rulesSave=document.querySelector('#rules-save');
+const shortcutsText=document.querySelector('#shortcuts-text');
+const shortcutsStatus=document.querySelector('#shortcuts-status');
+const shortcutsSave=document.querySelector('#shortcuts-save');
 const rateLimitWarning=document.querySelector('#rate-limit-warning');
 const runtimeSummary=document.querySelector('#runtime-summary');
 let jobs=[];
@@ -341,31 +351,7 @@ function chatShortcutText(){return localStorage.getItem(CHAT_SHORTCUTS_KEY)||DEF
 function parseChatShortcuts(source){return String(source||'').split(/\\r?\\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const split=line.indexOf(':');return split>0?{name:line.slice(0,split).trim(),prompt:line.slice(split+1).trim()}:null;}).filter(item=>item&&item.name&&item.prompt);}
 function jobChatRef(job){return repoName(job?.repository)+'/pr#'+value(job?.prNumber);}
 function chatShortcutUrl(prompt){return 'https://chatgpt.com/?prompt='+encodeURIComponent(prompt);}
-function renderChatShortcuts(job){
-  const root=element('section','chat-shortcuts');
-  const tabs=element('div','chat-shortcut-tabs');
-  const shortcutsTab=element('button','chat-shortcut-tab',text('Shortcuts'));shortcutsTab.type='button';shortcutsTab.setAttribute('aria-selected','true');
-  const editTab=element('button','chat-shortcut-tab',text('Edit'));editTab.type='button';editTab.setAttribute('aria-selected','false');
-  tabs.append(shortcutsTab,editTab);
-  const body=element('div');
-  function showShortcuts(){
-    shortcutsTab.setAttribute('aria-selected','true');editTab.setAttribute('aria-selected','false');
-    const list=element('div','chat-shortcut-list');
-    for(const item of parseChatShortcuts(chatShortcutText())){const button=element('button','chat-shortcut-button',text(item.name));button.type='button';button.addEventListener('click',()=>{const prompt=item.prompt.replaceAll('%1',jobChatRef(job));window.open(chatShortcutUrl(prompt),'_blank','noopener');});list.append(button);}
-    body.replaceChildren(list.children.length?list:element('p','empty',text('No shortcuts configured.')));
-  }
-  function showEditor(){
-    shortcutsTab.setAttribute('aria-selected','false');editTab.setAttribute('aria-selected','true');
-    const editor=element('div','chat-shortcut-editor');
-    const help=element('p','chat-shortcut-help',text('One per line: <name>: <prompt>. Use %1 for '+jobChatRef(job)+'.'));
-    const textarea=document.createElement('textarea');textarea.value=chatShortcutText();textarea.setAttribute('aria-label','ChatGPT shortcut entries');
-    const save=element('button','refresh-button',text('Save'));save.type='button';save.addEventListener('click',()=>{const value=textarea.value.trim();if(value)localStorage.setItem(CHAT_SHORTCUTS_KEY,value);else localStorage.removeItem(CHAT_SHORTCUTS_KEY);showShortcuts();});
-    editor.append(help,textarea,save);body.replaceChildren(editor);
-  }
-  shortcutsTab.addEventListener('click',showShortcuts);editTab.addEventListener('click',showEditor);
-  root.append(tabs,body);showShortcuts();return root;
-}
-
+function chatShortcutField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('ChatGPT shortcut')));const select=document.createElement('select');select.className='job-filter job-chat-shortcut-select';select.setAttribute('aria-label','ChatGPT shortcut');select.append(new Option('',''));for(const item of parseChatShortcuts(chatShortcutText()))select.append(new Option(item.name,item.prompt));select.value='';select.addEventListener('change',()=>{if(!select.value)return;const prompt=select.value.replaceAll('%1',jobChatRef(job));window.open(chatShortcutUrl(prompt),'_blank','noopener');select.value='';});box.append(select);return box;}
 function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));row.addEventListener('click',()=>selectJob(job.id));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job.id);});select.append(element('span','job-title',text(repoName(job.repository)+'/PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.executionMode==='autonomous')states.append(element('span','badge flag-autonomous',text('AUTONOMOUS')));if(job.reviewEnabled!==false&&job.githubState!=='MERGED')states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.githubState==='MERGED'&&job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
 function taskSubtreeComplete(task,children){return ['SUCCEEDED','CANCELLED'].includes(task.state)&&(children.get(task.id)||[]).every(child=>taskSubtreeComplete(child,children));}
@@ -381,7 +367,7 @@ function taskStateField(task){const box=element('div','detail-group');box.append
 function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('Kind',task.kind||'work'),taskStateField(task),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>task.agentName==='reviewer'&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}
-function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Execution mode',job.executionMode||'fixed'),field('Cadence',cadence(job)),field('Review',reviewStatus(job)),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)));jobDetail.append(summary,renderChatShortcuts(job));const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}
+function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Execution mode',job.executionMode||'fixed'),field('Cadence',cadence(job)),field('Review',reviewStatus(job)),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)),chatShortcutField(job));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}
 function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
@@ -433,7 +419,9 @@ function githubUsageCard(snapshot,status){
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];const grid=element('div','usage-providers');if(overview.github||overview.githubStatus)grid.append(githubUsageCard(overview.github,overview.githubStatus));for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
 async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/execution-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}}
 async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/execution-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
-function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));if(isJobs)void refresh();else if(isUsage)void drawUsage();else void drawRules();}
+async function drawShortcuts(){shortcutsStatus.textContent='';shortcutsText.value=chatShortcutText();}
+function saveShortcuts(){const value=shortcutsText.value.trim();if(value)localStorage.setItem(CHAT_SHORTCUTS_KEY,value);else localStorage.removeItem(CHAT_SHORTCUTS_KEY);shortcutsText.value=chatShortcutText();shortcutsStatus.textContent='Saved.';}
+function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';const isShortcuts=view==='shortcuts';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;shortcutsView.hidden=!isShortcuts;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));shortcutsTab.setAttribute('aria-selected',String(isShortcuts));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isRules)void drawRules();else void drawShortcuts();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
@@ -448,7 +436,9 @@ mobileJobs.addEventListener('change',syncMobileJobsView);
 window.addEventListener('hashchange',syncMobileJobsView);
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
 rulesTab.addEventListener('click',()=>{location.hash='#/execution-router-rules';showView('rules');});
+shortcutsTab.addEventListener('click',()=>{location.hash='#/shortcuts';showView('shortcuts');});
 rulesSave.addEventListener('click',()=>void saveRules());
+shortcutsSave.addEventListener('click',saveShortcuts);
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const next=location.hash==='#/usage'?'rules':location.hash==='#/execution-router-rules'?'jobs':'usage';location.hash=next==='usage'?'#/usage':next==='rules'?'#/execution-router-rules':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
 const stream=new EventSource('/events');
@@ -456,8 +446,8 @@ stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();void drawRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
-if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/execution-router-rules')void refresh();},300000);
+if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/shortcuts')showView('shortcuts');else showView('jobs');
+setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/execution-router-rules'&&location.hash!=='#/shortcuts')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
 async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
