@@ -4,7 +4,8 @@ import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
 export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION;
+export const TASK_CANCEL_ACTION = 'task.cancel' as const;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
