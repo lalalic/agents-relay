@@ -17,7 +17,8 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { dispatchTaskAction } from './task-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
@@ -164,19 +165,22 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     return;
   }
   if (action === 'retry' || action === 'cancel') {
+    let outputJob = job;
+    let outputTask = task;
     if (action === 'retry') {
-      if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of retry`); if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
-      task.maxAttempts = extendRetryBudget(task);
-      if (task.kind === 'planner' && task.error) task.plannerRetryFeedback = task.error;
+      const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: job.id, taskId: id });
+      if (result.job.state === 'DRAFT') { await transitionJobEvent(result.job, 'activate'); await store.saveJob(result.job); }
+      outputJob = await store.load(job.id);
+      outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
+    } else {
+      if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and is immutable`); await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
+      task.error = 'Cancelled by user';
+      task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+      await store.saveTask(task);
     }
-    if (action === 'cancel' && task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and is immutable`); await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
-    task.error = action === 'retry' ? null : 'Cancelled by user';
-    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-    await store.saveTask(task);
-    if (action === 'retry' && job.state === 'DRAFT') { await transitionJobEvent(job, 'activate'); await store.saveJob(job); }
-    await saveLocal(localFile, job);
-    await publishWake(eventBus(args), job, task.id, `${task.id} ${action} requested`);
-    console.log(JSON.stringify(task, null, 2));
+    await saveLocal(localFile, outputJob);
+    await publishWake(eventBus(args), outputJob, outputTask.id, `${outputTask.id} ${action} requested`);
+    console.log(JSON.stringify(outputTask, null, 2));
     return;
   }
   if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);

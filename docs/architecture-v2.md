@@ -410,6 +410,12 @@ The migration is staged:
 7. remove duplicated procedural authority only after graph decisions, restart,
    reconciliation, and durable-record compatibility tests pass.
 
+Checkpoint: `task.retry` is the first shared Action vertical slice. CLI and
+relayd/dashboard dispatch the same domain action mutation, while the existing
+v1 task lifecycle graph remains authoritative for accepting the retry
+transition; adapter-specific wake, reconciliation, and output behavior remain
+outside the Action boundary.
+
 During the transition, code may translate v1 graph decisions into v2 engine
 inputs, but it must not create a second independent lifecycle policy. Any
 intentional behavior change requires a migration note and compatibility test.

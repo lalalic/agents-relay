@@ -17,6 +17,7 @@ import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
+import { dispatchTaskAction } from '../dist/task-actions.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -78,6 +79,25 @@ test('dashboard task action retries failed work and cancels queued work durably'
   durable=await dashboardTaskAction(store,reconciler,'cancel')('j','cancel-me');
   const cancelled=durable.tasks.find(item=>item.id==='cancel-me'); assert.equal(cancelled.state,'CANCELLED'); assert.equal(cancelled.error,'Cancelled by user');
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
+});
+
+test('shared task.retry action preserves planner feedback and clears durable execution identity', async () => {
+  const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
+  const store = new InMemoryStore(job([failed]));
+  const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: 'j', taskId: 'planner-retry' });
+  assert.equal(result.task.state, 'QUEUED');
+  assert.equal(result.task.maxAttempts, 6);
+  assert.equal(result.task.plannerRetryFeedback, 'invalid planner output');
+  assert.equal(result.task.error, null);
+  assert.equal(result.task.executionId, null);
+  assert.equal(result.task.leaseOwner, null);
+  assert.equal(result.task.leaseExpiresAt, null);
+  const persisted = (await store.load('j')).tasks[0];
+  assert.equal(persisted.state, result.task.state);
+  assert.equal(persisted.maxAttempts, result.task.maxAttempts);
+  assert.equal(persisted.plannerRetryFeedback, result.task.plannerRetryFeedback);
+  assert.equal(persisted.error, null);
+  assert.equal(persisted.executionId, null);
 });
 
 test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {

@@ -1,8 +1,9 @@
 import type { DurableStore } from './store.js';
 import type { Job, JobLifecycleState, TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
-import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { transitionTaskEvent } from './scheduler.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
+import { dispatchTaskAction } from './task-actions.js';
 
 export function dashboardTaskAction(
   store: DurableStore,
@@ -14,20 +15,18 @@ export function dashboardTaskAction(
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (action === 'retry') {
-      if (task.state === 'BLOCKED') throw new Error(`Task ${task.id} is BLOCKED; use the unblock CLI with a reason`);
-      if (task.state !== 'FAILED') throw new Error(`Task ${task.id} is not restartable (${task.state})`);
-      task.maxAttempts = extendRetryBudget(task);
-      await transitionTaskEvent(task, 'retry');
-      task.error = null;
+      await dispatchTaskAction(store, { id: 'task.retry', jobId, taskId });
     } else {
       if (!['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
       await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
       task.error = 'Cancelled by user';
     }
-    task.leaseOwner = null;
-    task.leaseExpiresAt = null;
-    task.executionId = null;
-    await store.saveTask(task);
+    if (action === 'cancel') {
+      task.leaseOwner = null;
+      task.leaseExpiresAt = null;
+      task.executionId = null;
+      await store.saveTask(task);
+    }
     return await reconciler.wake(job.id);
   };
 }
