@@ -132,6 +132,51 @@ test('v2 dispatcher publishes only a registered failure event when an action rep
   assert.deepEqual(published, [{ id: 'task.retry_failed', payload: { reason: 'busy' } }]);
 });
 
+test('v2 dispatcher preserves ordered action chains and stops after a failure', async () => {
+  const chain = `flowchart LR
+%% relay: initial A
+A["state: A"]
+first["action: first"]
+second["action: second"]
+B["state: B"]
+A -->|on: go| first
+first --> second
+second --> B`;
+  const order = [];
+  const runtime = new GraphRuntime(chain, {
+    states: new Set(['A','B']),
+    actions: {
+      first: { id: 'first', execute: () => (order.push('first'), {}) },
+      second: { id: 'second', execute: () => (order.push('second'), {}) },
+    },
+    events: { go: { id: 'go' }, 'first.failed': { id: 'first.failed' } },
+  });
+  const dispatcher = new GraphDispatcher(runtime, {
+    persistTransition: () => { order.push('persist'); },
+    publishEvent: event => { order.push(`event:${event.id}`); },
+  });
+  const success = await dispatcher.dispatch({ currentState: 'A', input: { transport: 'event', id: 'go', payload: {} }, durableFacts: {} });
+  assert.deepEqual(success.decision.actions.map(action => action.id), ['first','second']);
+  assert.deepEqual(order, ['persist','first','second']);
+
+  order.length = 0;
+  const failing = new GraphRuntime(chain, {
+    states: new Set(['A','B']),
+    actions: {
+      first: { id: 'first', execute: () => (order.push('first'), { ok: false, failureEvent: { id: 'first.failed', payload: {} } }) },
+      second: { id: 'second', execute: () => (order.push('second'), {}) },
+    },
+    events: { go: { id: 'go' }, 'first.failed': { id: 'first.failed' } },
+  });
+  const failureDispatcher = new GraphDispatcher(failing, {
+    persistTransition: () => { order.push('persist'); },
+    publishEvent: event => { order.push(`event:${event.id}`); },
+  });
+  const failure = await failureDispatcher.dispatch({ currentState: 'A', input: { transport: 'event', id: 'go', payload: {} }, durableFacts: {} });
+  assert.equal(failure.receipts[0]?.ok, false);
+  assert.deepEqual(order, ['persist','first','event:first.failed']);
+});
+
 test('v2 parser rejects semantic labels that disagree with their target nodes', () => {
   assert.throws(
     () => parseGraphV2(source.replace('retry -->|to: QUEUED| queued', 'retry -->|to: BLOCKED| queued')),

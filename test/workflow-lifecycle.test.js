@@ -120,6 +120,14 @@ test('graph reconcile releases satisfied dependencies', () => {
 });
 
 
+test('production lifecycle source does not import the legacy stateDiagram definitions', () => {
+  for (const name of ['types.ts','workflow/lifecycle.ts','scheduler.ts']) {
+    const source=readFileSync(new URL('../src/'+name,import.meta.url),'utf8');
+    assert.doesNotMatch(source,/workflow\/definitions(?:\.js)?['"]/ ,name+' must use v2 lifecycle definitions');
+    assert.doesNotMatch(source,/from ['"]\.\/definitions\.js['"]/ ,name+' must not load the legacy lifecycle runtime');
+  }
+});
+
 test('command and adapter mutation surfaces do not bypass shared Action boundaries', () => {
   for (const name of ['cli.ts','dashboard-actions.ts','blockers.ts','manual-plan.ts']) {
     const source=readFileSync(new URL('../src/'+name,import.meta.url),'utf8');
