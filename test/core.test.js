@@ -1636,6 +1636,40 @@ test('concurrent reconciler instances atomically claim one queued task only once
   assert.equal((await store.load('j')).tasks.find(item=>item.id==='atomic-launch').state,'SUCCEEDED');
 });
 
+test('concurrent reconciler instances route one queued generation only once', async () => {
+  const t=task('atomic-route');
+  t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const events=[];
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  const adapter=new FakeAdapter();
+  const a=managedReconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus});
+  await Promise.all([a.reconcile('j'),b.reconcile('j')]);
+  const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-route');
+  assert.equal(events.filter(event=>event.type==='worker.selected').length,1);
+  assert.equal(events.filter(event=>event.type==='model.selected').length,1);
+  assert.ok(durable.workerSelection);
+  await a.close(); await b.close(); await stopEvents();
+});
+
+test('concurrent terminal reconciliation commits one execution generation', async () => {
+  const t=task('atomic-terminal','RUNNING');
+  t.executionId='atomic-terminal-execution';
+  t.leaseOwner='test';
+  t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  const store=new InMemoryStore(job([t]));
+  const a=managedReconciler(store,{owner:'test-a',adapters:[]});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[]});
+  const terminal=eventFor('j',t.id,null,'task.completed','succeeded','durable output','user',undefined,eventSource('j',t.id,t.executionId));
+  await Promise.all([a.handleEvent(terminal),b.handleEvent(terminal)]);
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.executionId,null);
+});
+
 test('repository pool performs no GitHub-backed reconciliation while rate limited', async () => {
   const calls=[];
   const client={request:async()=>{calls.push('request'); throw new Error('must not call GitHub');},graphql:async()=>{calls.push('graphql'); throw new Error('must not call GitHub');}};

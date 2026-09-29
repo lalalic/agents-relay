@@ -5,7 +5,9 @@ import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
-import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
+import { ReconcilerRuntimeBase, type EventHandlingResult, withExecutionBoundary } from './reconciler-runtime.js';
+
+const taskRouteClaims = new Set<string>();
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
@@ -101,7 +103,15 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
+    for (const candidate of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
+      const claimKey = `${job.id}/${candidate.id}`;
+      if (taskRouteClaims.has(claimKey)) continue;
+      taskRouteClaims.add(claimKey);
+      try {
+        await withExecutionBoundary(job.id, candidate.id, async () => {
+          const freshJob = await this.store.load(job.id);
+          const task = freshJob.tasks.find(item => item.id === candidate.id);
+          if (!task || !['QUEUED', 'BLOCKED'].includes(task.state) || task.workerSelection || !task.output) return;
       const requirements = task.workerRequirements ?? { capabilities: [] };
       const taskFacts = {
         id: task.id,
@@ -113,7 +123,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         output: task.output ?? null,
       };
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
-      const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? job.tasks.find(item => item.id === task.parentTaskId) : undefined;
+      const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? freshJob.tasks.find(item => item.id === task.parentTaskId) : undefined;
       const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
       const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
         ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
@@ -138,6 +148,10 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       await this.store.saveTask(task);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
+        });
+      } finally {
+        taskRouteClaims.delete(claimKey);
+      }
     }
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {

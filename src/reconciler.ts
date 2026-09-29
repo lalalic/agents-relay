@@ -10,7 +10,7 @@ import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextP
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executeManualPlan } from './manual-plan.js';
-import { executionEventSource, type ReconcileOptions } from './reconciler-runtime.js';
+import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
@@ -76,8 +76,6 @@ The ChatGPT/Codex conversation or process exit is never the task result.
 Before your final return, verify that a terminal event for this exact Job/Task was published.
 If no terminal event has been published, publish task.failed before exiting.`;
 }
-
-const taskLaunchClaims = new Set<string>();
 
 export class Reconciler extends ReconcilerReviewBase {
   constructor(store: DurableStore, options: ReconcileOptions) {
@@ -326,26 +324,20 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.store.saveTask(task);
       return;
     }
-    const claimKey = `${job.repository}#${job.prNumber}:${task.id}`;
-    if (taskLaunchClaims.has(claimKey)) return;
-    taskLaunchClaims.add(claimKey);
-    let claimedTask: Task | null = null;
-    try {
+    const claimedTask = await withExecutionBoundary(job.id, task.id, async () => {
       const freshJob = await this.store.load(job.id);
       const freshTask = freshJob.tasks.find(item => item.id === task.id);
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
+      if (freshTask.executionId !== null) return;
       const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
       const startedAt = (this.options.now ?? new Date()).getTime();
-      if (freshTask.executionId !== null) return;
       freshTask.attempt += 1;
       freshTask.leaseOwner = this.options.owner;
       freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
       freshTask.executionId = randomUUID();
       await this.store.saveTask(freshTask);
-      claimedTask = freshTask;
-    } finally {
-      taskLaunchClaims.delete(claimKey);
-    }
+      return freshTask;
+    }) ?? null;
     if (!claimedTask) return;
     task = claimedTask;
     let executionContext: ExecutionContext;

@@ -27,6 +27,27 @@ function eventSourceId(event: EventRecord): string | undefined { return typeof e
 
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
+const executionBoundaryLocks = new Map<string, Promise<void>>();
+
+/**
+ * Serialize the durable execution-generation boundary across reconciler
+ * instances in one relay process. Launch, routing, and terminal persistence
+ * must not observe and write the same queued generation concurrently.
+ */
+export async function withExecutionBoundary<T>(jobId: string, taskId: string, work: () => Promise<T>): Promise<T> {
+  const key = `${jobId}/${taskId}`;
+  const previous = executionBoundaryLocks.get(key);
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  executionBoundaryLocks.set(key, current);
+  if (previous) await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (executionBoundaryLocks.get(key) === current) executionBoundaryLocks.delete(key);
+  }
+}
 function claimTerminalExecution(sourceId: string): void {
   terminalExecutionClaims.add(sourceId);
   const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
@@ -308,7 +329,7 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) live.processSettled = true;
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId) return;
+    if (!task || (task.executionId !== executionId && !terminalExecutionClaimed(jobId, taskId, executionId))) return;
     if (task.adapter !== 'chatgpt') this.clearTerminalTimer(taskId, executionId);
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
@@ -356,7 +377,7 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
-    const transition = await this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
+    const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
@@ -378,6 +399,7 @@ export abstract class ReconcilerRuntimeBase {
         this.clearExecution(task.id, acceptedExecutionId);
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
+        task.executionId = null;
         task.updatedAt = event.timestamp || new Date().toISOString();
         this.terminalWaiters.get(task.id)?.resolve();
         this.terminalWaiters.delete(task.id);
@@ -406,7 +428,7 @@ export abstract class ReconcilerRuntimeBase {
           task.error = event.message || `Task ${task.id} cancelled`;
         }
       },
-    });
+    }));
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
     const reviewWorker = transition.task.agentName === 'reviewer';
