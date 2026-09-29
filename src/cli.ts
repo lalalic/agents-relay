@@ -18,7 +18,6 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
-import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
@@ -43,7 +42,6 @@ export async function ensureManagedGitHubJob(
   const store = new GitHubStore(client, repositoryName, pr.number, trustedAuthors);
   try {
     const existing = await store.load(options.id);
-    if (existing.schedule) await syncScheduleLabels(client, repositoryName, existing);
     return { job: existing, pr };
   } catch (error) {
     if (!(error instanceof Error) || !error.message.startsWith('JOB_MARKER_MISSING:')) throw error;
@@ -70,7 +68,6 @@ export async function ensureManagedGitHubJob(
   };
   if (options.schedule) job.schedule = options.schedule;
   await store.saveJob(job);
-  if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
 }
 async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
@@ -339,7 +336,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   }
   job.updatedAt = new Date().toISOString();
   await store.saveJob(job);
-  if (hasArg(args, '--schedule') && job.schedule) await syncScheduleLabels(auth.client, repo, job);
   console.log(JSON.stringify(await store.load(id), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
@@ -441,22 +437,6 @@ async function main(): Promise<void> {
     catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
     if (!response.ok) throw new Error(`Agents Relay status request failed: HTTP ${response.status}`);
     console.log(JSON.stringify(await response.json(), null, 2));
-    return;
-  }
-  if (command === 'tick') {
-    const repo = repository(args);
-    const auth = await githubAuthContext(args);
-    const nowValue = arg(args, '--now');
-    const now = nowValue ? new Date(nowValue) : new Date();
-    if (Number.isNaN(now.getTime())) throw new Error('--now must be a valid ISO timestamp');
-    const results = await processDueScheduledJobs({
-      client: auth.client,
-      repository: repo,
-      trustedAuthors: auth.trustedAuthors,
-      buckets: dueBuckets(now, integerArg(args, '--lookback-buckets', 3)),
-      now,
-    });
-    console.log(JSON.stringify({ repository: repo, processed: results.length, results }, null, 2));
     return;
   }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded;

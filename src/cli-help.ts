@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|plan|blocker|context|init|record|agent-register|agent-discover|status|reconcile|tick|serve> [options]';
+export const usage = 'agents-relay <job|task|plan|blocker|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -17,7 +17,6 @@ Commands:
   agent-discover           Find registered agents matching hard filters
   status                   Show live aggregate runtime status from agents-relayd
   reconcile                Run reconciliation once
-  tick                     Run the indexed autonomous scheduler heartbeat
   serve                    Run the dashboard and reconciliation service
 
 Run 'npx agents-relay <command> --help' for command options and examples.
@@ -184,13 +183,6 @@ Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wak
 
 Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
-  tick: `Process autonomous jobs indexed into current/recent GitHub next-run buckets.
-
-Required: --repo OWNER/REPO.
-Common: --lookback-buckets N (default 3).
-
-Example:
-  npx agents-relay tick --repo OWNER/REPO`,
   init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
 
 Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
