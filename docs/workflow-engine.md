@@ -1,5 +1,10 @@
 # Executable Mermaid workflow profile
 
+The target graph-first architecture and strict v2 `flowchart` profile are
+specified in [Architecture v2](architecture-v2.md). This document describes
+the existing v1-compatible `stateDiagram-v2` profile used by the canonical
+Job/Task lifecycle graphs during the incremental migration.
+
 Agents Relay uses a deliberately small subset of Mermaid `stateDiagram-v2` as the source of truth for durable lifecycle graphs. The same `.mmd` file is intended to be rendered by Mermaid, reviewed and edited by humans/agents, and parsed directly by Relay. There is no generated JSON/YAML workflow definition.
 
 Canonical graphs:
