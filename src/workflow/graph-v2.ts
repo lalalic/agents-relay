@@ -12,7 +12,9 @@ export type Graph = { readonly source: string; readonly direction: 'LR' | 'RL' |
 
 export type PayloadValidator<Payload = unknown> = (payload: unknown) => payload is Payload;
 export type EventDefinition<Payload = unknown> = { readonly id: string; readonly validate?: PayloadValidator<Payload> };
-export type ActionReceipt = { readonly payloads?: Readonly<Record<string, unknown>> };
+export type ActionReceipt =
+  | { readonly ok?: true; readonly payloads?: Readonly<Record<string, unknown>> }
+  | { readonly ok: false; readonly failureEvent: { readonly id: string; readonly payload: unknown } };
 export type ActionContext<Payload = unknown> = { readonly facts: GraphFacts<Payload>; readonly actionId: string; readonly input: GraphInput<Payload> };
 export type ActionDefinition<Payload = unknown> = { readonly id: string; readonly validate?: PayloadValidator<Payload>; readonly execute?: (context: ActionContext<Payload>) => ActionReceipt | Promise<ActionReceipt> };
 export type Guard = (facts: GraphFacts) => boolean | Promise<boolean>;
@@ -30,7 +32,13 @@ export type GraphDecision = {
   readonly action: { readonly id: string; readonly input: GraphInput } | null;
   readonly emittedEvents: readonly string[];
 } | { readonly accepted: false; readonly source: string; readonly reason: 'no_transition' | 'invalid_input' };
-export type GraphDispatchResult = { readonly decision: Extract<GraphDecision, { readonly accepted: true }>; readonly receipt: ActionReceipt | null };
+export type GraphDispatchResult = { readonly decision: GraphDecision; readonly receipt: ActionReceipt | null };
+export type GraphTransition = { readonly source: string; readonly target: string };
+export type GraphEvent = { readonly id: string; readonly payload: unknown };
+export type GraphDispatcherPorts = {
+  readonly persistTransition: (transition: GraphTransition) => void | Promise<void>;
+  readonly publishEvent: (event: GraphEvent) => void | Promise<void>;
+};
 
 const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_.-]*';
 const NODE = new RegExp(`^(${IDENTIFIER})\\["(state|guard|action|emit):\\s*([^|\\]"]+?)(?:\\s*\\|[^\\]"]*)?"\\]$`);
@@ -76,11 +84,17 @@ export function parseGraphV2(source: string): Graph {
       if (nodes.has(node[1])) fail(lineNumber, `duplicate node '${node[1]}'`);
       const semanticId = node[3].trim();
       if (!NAME.test(semanticId)) fail(lineNumber, `invalid ${node[2]} identifier '${semanticId}'`);
+      if ([...nodes.values()].some(candidate => candidate.kind === node[2] && candidate.semanticId === semanticId)) fail(lineNumber, `duplicate semantic declaration '${node[2]}: ${semanticId}'`);
       nodes.set(node[1], { id: node[1], kind: node[2] as SemanticKind, semanticId, line: lineNumber });
       continue;
     }
     const edge = line.match(EDGE);
     if (edge) { const label = parseLabel(edge[2], lineNumber); edges.push({ from: edge[1], to: edge[3], ...label, line: lineNumber }); continue; }
+    const unsupportedShape = line.match(/[({<]/)?.[0];
+    if (unsupportedShape) {
+      const shape = unsupportedShape === '{' ? '{...}' : `${unsupportedShape}...`;
+      fail(lineNumber, `unsupported node shape '${shape}'; expected '[\"...\"]'`);
+    }
     fail(lineNumber, `unsupported syntax '${line}'`);
   }
   if (!direction) throw new Error('line 1: executable graph is empty; expected flowchart header');
@@ -117,8 +131,16 @@ function validateTopology(nodes: ReadonlyMap<string, GraphNode>, edges: readonly
     } else if (node.kind === 'action') {
       const targets = exits.filter(edge => edge.kind === 'to' || edge.kind === 'unlabelled');
       if (targets.length > 1) fail(node.line, `action '${node.semanticId}' has multiple state targets`);
-      for (const edge of targets) if (nodes.get(edge.to)!.kind !== 'state') fail(edge.line, `action target must be a state`);
-      for (const edge of exits.filter(edge => edge.kind === 'emit')) if (nodes.get(edge.to)!.kind !== 'emit') fail(edge.line, `emit edge must lead to an emit node`);
+      for (const edge of targets) {
+        const target = nodes.get(edge.to)!;
+        if (target.kind !== 'state') fail(edge.line, 'action target must be a state');
+        if (edge.kind === 'to' && edge.semanticId !== target.semanticId) fail(edge.line, `to edge names state '${edge.semanticId}' but targets state '${target.semanticId}'`);
+      }
+      for (const edge of exits.filter(edge => edge.kind === 'emit')) {
+        const target = nodes.get(edge.to)!;
+        if (target.kind !== 'emit') fail(edge.line, 'emit edge must lead to an emit node');
+        if (edge.semanticId !== target.semanticId) fail(edge.line, `emit edge names event '${edge.semanticId}' but targets emit '${target.semanticId}'`);
+      }
       if (!targets.length) fail(node.line, `action '${node.semanticId}' must lead to a state`);
     } else if (exits.length) fail(node.line, `emit node '${node.semanticId}' must not have outgoing edges`);
   }
@@ -151,7 +173,7 @@ export class GraphRuntime {
   }
   private validateRegistries(): void {
     for (const node of this.graph.nodes.values()) {
-      if (node.kind === 'state' && this.registry.states.size && !this.registry.states.has(node.semanticId)) throw new Error(`unknown state '${node.semanticId}'`);
+      if (node.kind === 'state' && !this.registry.states.has(node.semanticId)) throw new Error(`unknown state '${node.semanticId}'`);
       if (node.kind === 'guard' && !this.registry.guards.has(node.semanticId)) throw new Error(`unknown guard '${node.semanticId}'`);
       if (node.kind === 'action' && !this.registry.actions.has(node.semanticId)) throw new Error(`unknown action '${node.semanticId}'`);
       if (node.kind === 'emit' && !this.registry.events.has(node.semanticId)) throw new Error(`unknown emitted event '${node.semanticId}'`);
@@ -220,17 +242,34 @@ export class GraphRuntime {
       throw new Error(`invalid executable path through emit node '${node.semanticId}'`);
     }
   }
+}
+
+export class GraphDispatcher {
+  constructor(readonly runtime: GraphRuntime, readonly ports: GraphDispatcherPorts) {}
+
   async dispatch<Payload>(facts: GraphFacts<Payload>): Promise<GraphDispatchResult> {
-    const decision = await this.evaluate(facts);
-    if (!decision.accepted || !decision.action) return { decision: decision as Extract<GraphDecision, { readonly accepted: true }>, receipt: null };
-    const action = this.registry.actions.get(decision.action.id)!;
+    const decision = await this.runtime.evaluate(facts);
+    if (!decision.accepted) return { decision, receipt: null };
+    await this.ports.persistTransition({ source: decision.source, target: decision.target });
+    if (!decision.action) return { decision, receipt: null };
+
+    const action = this.runtime.registry.actions.get(decision.action.id)!;
     const receipt = action.execute ? await action.execute({ facts, actionId: decision.action.id, input: decision.action.input }) : {};
+    if (receipt.ok === false) {
+      const definition = this.runtime.registry.events.get(receipt.failureEvent.id);
+      if (!definition) throw new Error(`unknown failure event '${receipt.failureEvent.id}'`);
+      if (definition.validate && !definition.validate(receipt.failureEvent.payload)) throw new Error(`invalid payload for failure event '${receipt.failureEvent.id}'`);
+      await this.ports.publishEvent(receipt.failureEvent);
+      return { decision, receipt };
+    }
+
     const payloads = receipt.payloads ?? {};
     for (const eventId of decision.emittedEvents) {
-      const definition = this.registry.events.get(eventId)!;
+      const definition = this.runtime.registry.events.get(eventId)!;
       if (!(eventId in payloads)) throw new Error(`action '${decision.action.id}' did not supply payload for emitted event '${eventId}'`);
       if (definition.validate && !definition.validate(payloads[eventId])) throw new Error(`invalid payload for emitted event '${eventId}'`);
     }
+    for (const eventId of decision.emittedEvents) await this.ports.publishEvent({ id: eventId, payload: payloads[eventId] });
     return { decision, receipt };
   }
 }

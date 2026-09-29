@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { GraphRuntime, parseGraphV2 } from '../dist/workflow/graph-v2.js';
+import { GraphDispatcher, GraphRuntime, parseGraphV2 } from '../dist/workflow/graph-v2.js';
 
 const source = `flowchart LR
 %% relay: initial failed
@@ -32,12 +32,14 @@ test('v2 parser accepts strict flowchart topology and evaluates deterministicall
 });
 
 test('v2 parser reports stable line diagnostics and rejects unsupported syntax', () => {
-  assert.throws(() => parseGraphV2('flowchart TD\n%% relay: initial A\nA{"state: A"}'), /line 3: unsupported syntax/);
+  assert.throws(() => parseGraphV2('flowchart TD\n%% relay: initial A\nA{"state: A"}'), /line 3: unsupported node shape '\{\.\.\.\}'/);
   assert.throws(() => parseGraphV2('flowchart TD\n%% relay: initial A\nA["state: A"]\nA -->|on: go| missing'), /line 4: edge target 'missing' is not declared/);
   assert.throws(() => parseGraphV2('flowchart TD\n%% relay: initial A\nA["state: A"]\nB["state: B"]\nA -->|on: go| A'), /state 'B' is unreachable/);
 });
 
 test('v2 registry binding rejects unknown semantic names and invalid payloads', () => {
+  assert.throws(() => new GraphRuntime(source, { ...registries, states: new Set() }), /unknown state 'FAILED'/);
+  assert.throws(() => new GraphRuntime(source, { ...registries, states: new Set(['FAILED', 'QUEUED']) }), /unknown state 'BLOCKED'/);
   assert.throws(() => new GraphRuntime(source, { ...registries, guards: {} }), /unknown guard 'task.retryable'/);
   const runtime = new GraphRuntime(source, { ...registries, events: { ...registries.events, 'task.retry': { id: 'task.retry', validate: () => false } } });
   assert.throws(() => runtime.evaluateSync({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: {} }), /invalid payload/);
@@ -50,14 +52,69 @@ test('v2 parser rejects duplicate input paths and malformed guard exits', () => 
   assert.throws(() => parseGraphV2(malformed), /unsupported edge label/);
 });
 
-test('v2 dispatcher executes the registered action and validates emitted payloads in edge order', async () => {
+test('v2 dispatcher persists the graph transition before action execution and publishes validated emits', async () => {
   const order = [];
   const runtime = new GraphRuntime(source, {
     ...registries,
-    actions: { 'task.retry': { id: 'task.retry', execute: () => ({ payloads: { 'task.retried': { ok: true } } }) } },
-    events: { ...registries.events, 'task.retried': { id: 'task.retried', validate: payload => (order.push('validated'), payload?.ok === true) } },
+    actions: {
+      'task.retry': {
+        id: 'task.retry',
+        execute: () => {
+          order.push('action');
+          return { payloads: { 'task.retried': { ok: true } } };
+        },
+      },
+    },
+    events: {
+      ...registries.events,
+      'task.retried': { id: 'task.retried', validate: payload => (order.push('validated'), payload?.ok === true) },
+    },
   });
-  const result = await runtime.dispatch({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: { retryable: true } });
+  const dispatcher = new GraphDispatcher(runtime, {
+    persistTransition: transition => {
+      order.push(`persist:${transition.source}->${transition.target}`);
+    },
+    publishEvent: event => {
+      order.push(`publish:${event.id}`);
+    },
+  });
+  const result = await dispatcher.dispatch({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: { retryable: true } });
+  assert.equal(result.receipt?.ok, undefined);
   assert.equal(result.receipt?.payloads?.['task.retried']?.ok, true);
-  assert.deepEqual(order, ['validated']);
+  assert.deepEqual(order, ['persist:FAILED->QUEUED', 'action', 'validated', 'publish:task.retried']);
+});
+
+test('v2 dispatcher publishes only a registered failure event when an action reports failure', async () => {
+  const published = [];
+  const runtime = new GraphRuntime(source, {
+    ...registries,
+    actions: {
+      'task.retry': {
+        id: 'task.retry',
+        execute: () => ({ ok: false, failureEvent: { id: 'task.retry_failed', payload: { reason: 'busy' } } }),
+      },
+    },
+    events: {
+      ...registries.events,
+      'task.retry_failed': { id: 'task.retry_failed', validate: payload => payload?.reason === 'busy' },
+    },
+  });
+  const dispatcher = new GraphDispatcher(runtime, {
+    persistTransition: () => {},
+    publishEvent: event => published.push(event),
+  });
+  const result = await dispatcher.dispatch({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: { retryable: true } });
+  assert.equal(result.receipt?.ok, false);
+  assert.deepEqual(published, [{ id: 'task.retry_failed', payload: { reason: 'busy' } }]);
+});
+
+test('v2 parser rejects semantic labels that disagree with their target nodes', () => {
+  assert.throws(
+    () => parseGraphV2(source.replace('retry -->|to: QUEUED| queued', 'retry -->|to: BLOCKED| queued')),
+    /to edge names state 'BLOCKED' but targets state 'QUEUED'/,
+  );
+  assert.throws(
+    () => parseGraphV2(source.replace('retry -->|emit: task.retried| retried', 'retry -->|emit: task.other| retried')),
+    /emit edge names event 'task.other' but targets emit 'task.retried'/,
+  );
 });

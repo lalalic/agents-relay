@@ -1,8 +1,7 @@
 # Agents Relay v2 architecture specification
 
 Status: architecture foundation for the incremental v2 migration. This document
-defines the target graph contract; it does not claim that the v2 parser or
-runtime has been implemented yet.
+defines the graph contract implemented by the v2 parser, runtime, and dispatcher.
 
 ## 1. Mental model and boundaries
 
@@ -89,28 +88,26 @@ label grammar is:
 
 ```text
 PREFIX ":" SPACES IDENTIFIER ("|" DISPLAY_TEXT)?
-DISPLAY_TEXT := zero or more characters other than an unescaped `"`, `\\`,
-                or newline; `\\"`, `\\\\`, and `\\|` encode those delimiters
+DISPLAY_TEXT := zero or more characters other than `"`, `]`, or newline
 ```
 
-The parser removes the permitted delimiter escapes only for display rendering;
-it never tokenizes or evaluates `DISPLAY_TEXT`. Therefore text such as
-`action: task.retry` after the separator is ordinary display text, not a
-second executable declaration. An unescaped quote or backslash in display
-text, or a newline, is a syntax error with the source line; a later pipe must
-be escaped as `\\|`. There is no
-separate heuristic for "executable-looking" display text: the explicit
-delimiter grammar is the complete rule and makes acceptance deterministic.
+Display text has no escape language in v2. It is never tokenized or evaluated;
+text such as `action: task.retry` after the first separator is ordinary
+display text, not a second executable declaration. A quote, closing bracket,
+or newline in display text is a syntax error with the source line. Later pipe
+characters are ordinary display characters. There is no heuristic for
+"executable-looking" display text: the explicit delimiter is the complete rule
+and keeps the profile deliberately small.
 
 For example:
 
 ```mermaid
 queued["state: QUEUED | ready to dispatch"]
-retry["action: task.retry | emits \\"task.retried\\""]
+retry["action: task.retry | emits task.retried"]
 ```
 
 The parser must reject an unknown prefix, an empty identifier, duplicate node
-IDs, duplicate semantic declarations for one node, malformed escapes, and any
+IDs, duplicate semantic declarations of the same kind and identifier, and any
 node declaration that does not use the exact quoted square-bracket form.
 Styling, classes, icons, HTML, alternate Mermaid shapes, and other renderer
 syntax are not accepted executable input. Display text does not affect
@@ -263,11 +260,14 @@ Invalid: `unknown` is not a declared node. Required diagnostic shape:
 flowchart LR
 %% relay: initial failed
 failed["state: FAILED"]
-failed -->|on: task.retry| retryable["guard: task.notRegistered"]
+retryable["guard: task.notRegistered"]
+failed -->|on: task.retry| retryable
+retryable -->|true| failed
+retryable -->|false| failed
 ```
 
 Invalid: `task.notRegistered` is absent from the guard registry. Required
-diagnostic shape: `line 4: unknown guard 'task.notRegistered'`.
+diagnostic shape: `unknown guard 'task.notRegistered'`.
 
 ```mermaid
 flowchart LR
@@ -278,8 +278,9 @@ failed -->|on: task.retry| retryable
 retryable -->|maybe| failed
 ```
 
-Invalid: a guard must have exactly `true` and `false` exits. Required
-diagnostic shape: `line 6: guard 'retryable' requires true/false exits; found 'maybe'`.
+Invalid: `maybe` is not an executable edge label. Because syntax validation
+precedes topology validation, the required diagnostic shape is
+`line 6: unsupported edge label 'maybe'`.
 
 ```mermaid
 flowchart LR
@@ -341,8 +342,9 @@ properties:
 - events are named facts with validated payloads, not commands disguised as
   events.
 
-Registry binding is a load-time operation. The parser resolves the graph
-against all registries before returning a loadable graph. It binds state IDs
+Registry binding is a runtime load-time operation. `parseGraphV2` remains
+syntax/topology-only; `GraphRuntime` resolves the graph against all registries
+before returning an executable runtime. It binds state IDs
 to the subject's durable state schema, input `EVENT_ID` values to the event
 registry, action paths to the action registry, and both emit edges and
 resulting input events to the same event registry. This separation prevents a
