@@ -70,8 +70,10 @@ comments and have no semantic effect.
 ### 2.2 Nodes and controlled semantic identifiers
 
 Node IDs are local topology names. They use
-`[A-Za-z_][A-Za-z0-9_.-]*` and are not registry identifiers. Each executable
-node has exactly one controlled label:
+`[A-Za-z_][A-Za-z0-9_.-]*` and are not registry identifiers. The only
+executable node declaration is the quoted square-bracket form below; the
+bracket shape is part of the grammar, not presentation that the parser may
+ignore. Each executable node has exactly one controlled label:
 
 ```text
 node-id["state: STATE_ID"]
@@ -82,16 +84,37 @@ node-id["emit: EVENT_ID"]
 
 `STATE_ID`, `GUARD_ID`, `ACTION_ID`, and `EVENT_ID` use the same identifier
 alphabet. The label prefix and the identifier are parsed separately. Display
-text may be added only after a `|` separator and is never executable:
+text may be added only after a `|` separator and is never executable. The
+label grammar is:
+
+```text
+PREFIX ":" SPACES IDENTIFIER ("|" DISPLAY_TEXT)?
+DISPLAY_TEXT := zero or more characters other than an unescaped `"`, `\\`,
+                or newline; `\\"`, `\\\\`, and `\\|` encode those delimiters
+```
+
+The parser removes the permitted delimiter escapes only for display rendering;
+it never tokenizes or evaluates `DISPLAY_TEXT`. Therefore text such as
+`action: task.retry` after the separator is ordinary display text, not a
+second executable declaration. An unescaped quote or backslash in display
+text, or a newline, is a syntax error with the source line; a later pipe must
+be escaped as `\\|`. There is no
+separate heuristic for "executable-looking" display text: the explicit
+delimiter grammar is the complete rule and makes acceptance deterministic.
+
+For example:
 
 ```mermaid
 queued["state: QUEUED | ready to dispatch"]
+retry["action: task.retry | emits \\"task.retried\\""]
 ```
 
 The parser must reject an unknown prefix, an empty identifier, duplicate node
-IDs, duplicate semantic declarations for one node, and labels that contain
-unescaped executable-looking text. Bracket shape, styling, classes, icons,
-HTML, and display text do not affect semantics.
+IDs, duplicate semantic declarations for one node, malformed escapes, and any
+node declaration that does not use the exact quoted square-bracket form.
+Styling, classes, icons, HTML, alternate Mermaid shapes, and other renderer
+syntax are not accepted executable input. Display text does not affect
+semantics, including when it resembles a controlled identifier.
 
 ### 2.3 Edges and edge labels
 
@@ -134,7 +157,9 @@ The profile intentionally does not support subgraphs, nested graphs, links,
 click handlers, `classDef`, styling, `style`, `%%{init: ...}%%`, HTML labels,
 quoted edge expressions, Mermaid `stateDiagram`, sequence/class/ER diagrams,
 or arbitrary node shapes as semantic constructs. Unsupported syntax is an
-error, never an ignored line.
+error, never an ignored line. For example, `retry{"action: task.retry"}`
+must fail with a stable unsupported-node-shape diagnostic naming line and
+shape; it must not be normalized into the accepted square-bracket form.
 
 ### 2.4 Normative input and transition semantics
 
@@ -263,9 +288,10 @@ failed["state: FAILED"]
 failed -->|on: task.retry| retryable{"guard: task.retryable"}
 ```
 
-Invalid: the `{...}` shape is not part of the executable profile. Mermaid
-rendering syntax may evolve independently, but executable graphs accept only
-the documented node form and must fail closed when it is not used.
+Invalid: the `{...}` shape is not part of the executable profile. Required
+diagnostic shape: `line 4: unsupported node shape '{...}'; expected '["..."]'`.
+Mermaid rendering syntax may evolve independently, but executable graphs
+accept only the documented node form and must fail closed when it is not used.
 
 ### 2.7 Deterministic validation sequence
 
