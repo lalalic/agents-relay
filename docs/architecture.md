@@ -31,7 +31,12 @@ markers is read as `fixed`. Fixed remains the default. Direct orchestrator work 
 when all currently runnable work is settled and no planner task is active,
 reconciliation appends one durable `kind: "planner"` `plan-N` task. Historical `planner-N` task IDs remain readable. The planner returns
 typed `objective_status`, `assessment`, and `next_tasks` values. Each
-`next_tasks` item becomes a normal child task of that planner task.
+`next_tasks` item becomes a normal work Task whose
+`planningDecisionId`/`planningRound` record provenance. Its optional
+`parentTaskId` is semantic ownership in the business Task tree and must point
+to an existing non-planner work Task (or another Task in the same batch), never
+to the `plan-N` round. `dependencies` remain independent execution
+prerequisites, including dependencies that cross ownership subtrees.
 
 Stable task IDs and append-if-same-definition behavior make planner retries
 idempotent. Leases, owner recovery, and completion decisions remain in the
