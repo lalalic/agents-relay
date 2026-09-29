@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import type { Job } from './types.js';
+import type { AgentRegistration, Job } from './types.js';
 import type { PullRequestState } from './store.js';
 
 export type PullRequestFacts = {
@@ -47,6 +47,9 @@ export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   saveJob(job: Job): Promise<void>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
+  loadAgents(): Promise<AgentRegistration[] | null>;
+  saveAgents(agents: readonly AgentRegistration[]): Promise<void>;
+  saveAgentWithProjection(agent: AgentRegistration, request: ProjectionRequest): Promise<void>;
   loadPullRequestFacts(): Promise<PullRequestFacts | null>;
   savePullRequestFacts(facts: PullRequestFacts): Promise<void>;
   markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean>;
@@ -72,7 +75,7 @@ type OutboxRow = {
   updated_at: string;
 };
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function rowToProjection(row: OutboxRow): ProjectionOutboxItem {
   return {
@@ -119,6 +122,11 @@ export class SQLiteRelayStore implements RelayStore {
         head_ref TEXT,
         head_sha TEXT,
         observed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS agent_snapshot (
+        agent_id TEXT PRIMARY KEY,
+        json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS event_receipt (
         event_id TEXT PRIMARY KEY,
@@ -179,6 +187,56 @@ export class SQLiteRelayStore implements RelayStore {
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)
       ON CONFLICT(job_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
     `).run(job.id, JSON.stringify(job), now);
+  }
+
+  async loadAgents(): Promise<AgentRegistration[] | null> {
+    const observed = this.db.prepare("SELECT value FROM relay_meta WHERE key='agent_registry_observed_at'").get() as { value?: string } | undefined;
+    if (!observed?.value) return null;
+    const rows = this.db.prepare('SELECT json FROM agent_snapshot ORDER BY agent_id').all() as unknown as Array<{ json: string }>;
+    return rows.map(row => JSON.parse(row.json) as AgentRegistration);
+  }
+
+  async saveAgents(agents: readonly AgentRegistration[]): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM agent_snapshot').run();
+      const insert = this.db.prepare('INSERT INTO agent_snapshot(agent_id,json,updated_at) VALUES(?,?,?)');
+      for (const agent of agents) insert.run(agent.id, JSON.stringify(agent), now);
+      this.markAgentRegistryObserved(now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  async saveAgentWithProjection(agent: AgentRegistration, request: ProjectionRequest): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.writeAgentSnapshot(agent, now);
+      this.markAgentRegistryObserved(now);
+      this.enqueueProjectionInTransaction(request, now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private writeAgentSnapshot(agent: AgentRegistration, now: string): void {
+    this.db.prepare(`
+      INSERT INTO agent_snapshot(agent_id,json,updated_at) VALUES(?,?,?)
+      ON CONFLICT(agent_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
+    `).run(agent.id, JSON.stringify(agent), now);
+  }
+
+  private markAgentRegistryObserved(now: string): void {
+    this.db.prepare(`
+      INSERT INTO relay_meta(key,value) VALUES('agent_registry_observed_at',?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value
+    `).run(now);
   }
 
   async loadPullRequestFacts(): Promise<PullRequestFacts | null> {

@@ -39,7 +39,7 @@ reconciler; planner output never directly marks a job complete.
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
+Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL owns operational execution state and the projection outbox. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
 
 ## State
 

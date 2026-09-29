@@ -20,6 +20,12 @@ const makeJob = () => ({
   state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks: [makeTask()]
 });
 
+const makeAgent = () => ({
+  id: 'agent-1', name: 'Agent One', responsibility: 'test', role: 'implementation', capabilities: ['implementation'], boundaries: [],
+  endpoint: { kind: 'adapter', target: 'codex' }, runtime: { adapter: 'codex' }, availability: 'available', routing: {},
+  evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now(), updatedAt: now()
+});
+
 async function tempDb() {
   const dir = await mkdtemp(join(tmpdir(), 'agents-relay-store-'));
   return { dir, path: join(dir, 'relay.db'), close: async store => { store?.close(); await rm(dir, { recursive: true, force: true }); } };
@@ -64,6 +70,8 @@ test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads 
   remote.pullRequestHead = async () => { throw new Error('GitHub head read should not run'); };
   remote.headSha = async () => { throw new Error('GitHub SHA read should not run'); };
   const local = new ProjectedDurableStore(relay, remote, { prNode: { state: 'OPEN', headRefName: 'feat/local', headRefOid: 'offline-sha' }, comments: [] });
+  assert.deepEqual(await local.listAgents(), []);
+  remote.listAgents = async () => { throw new Error('GitHub agent registry read should not run'); };
   const reconcilerStore = new Proxy(local, { get(target, property, receiver) { if (property === 'pullRequestHead') return undefined; if (property === 'headSha') return target.headSha.bind(target); return Reflect.get(target, property, receiver); } });
   const reconciler = managedReconciler(reconcilerStore, { owner: 'test', adapters: [], maxConcurrent: 1, projectPathForJob: () => process.cwd() });
 
@@ -77,6 +85,29 @@ test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads 
   const restartedLocal = new ProjectedDurableStore(restarted, remote);
   assert.equal(await restartedLocal.pullRequestState(), 'OPEN');
   assert.deepEqual(await restartedLocal.pullRequestHead(), { ref: 'feat/local', sha: 'offline-sha' });
+  assert.deepEqual(await restartedLocal.listAgents(), []);
+  await tmp.close(restarted);
+});
+
+test('SQLiteRelayStore atomically persists agent registry updates with their projection', async () => {
+  const tmp = await tempDb();
+  const store = new SQLiteRelayStore(tmp.path);
+  const agent = makeAgent();
+  await assert.rejects(() => store.saveAgentWithProjection(agent, {
+    idempotencyKey: 'bad-agent', operation: 'save_agent', payload: { value: BigInt(1) }
+  }));
+  assert.equal(await store.loadAgents(), null);
+  assert.equal(await store.pendingProjectionCount(), 0);
+
+  await store.saveAgentWithProjection(agent, {
+    idempotencyKey: 'save_agent:agent-1', operation: 'save_agent', payload: { operation: 'save_agent', value: agent }
+  });
+  assert.deepEqual((await store.loadAgents()).map(item => item.id), ['agent-1']);
+  assert.equal(await store.pendingProjectionCount(), 1);
+  store.close();
+
+  const restarted = new SQLiteRelayStore(tmp.path);
+  assert.deepEqual((await restarted.loadAgents()).map(item => item.id), ['agent-1']);
   await tmp.close(restarted);
 });
 

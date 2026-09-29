@@ -189,14 +189,21 @@ export class ProjectedDurableStore implements DurableStore {
     });
   }
 
-  async listAgents(): Promise<AgentRegistration[]> { return this.github.listAgents(); }
+  async listAgents(): Promise<AgentRegistration[]> {
+    const local = await this.relay.loadAgents();
+    if (local !== null) return structuredClone(local);
+    const remote = await this.github.listAgents();
+    await this.relay.saveAgents(remote);
+    return structuredClone(remote);
+  }
 
   async saveAgent(agent: AgentRegistration): Promise<void> {
-    await this.relay.enqueueProjection({
+    const value = structuredClone(agent);
+    await this.relay.saveAgentWithProjection(value, {
       idempotencyKey: `save_agent:${agent.id}`,
       coalesceKey: `agent:${agent.id}`,
       operation: 'save_agent',
-      payload: { operation: 'save_agent', value: agent } satisfies ProjectedPayload,
+      payload: { operation: 'save_agent', value } satisfies ProjectedPayload,
       priority: 10,
     });
   }
