@@ -1,4 +1,4 @@
-import test from './test-runtime.js';
+import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -16,7 +16,7 @@ const makeTask = (state = 'QUEUED') => ({
   continuation: null, continuationDeliveredAt: null
 });
 const makeJob = () => ({
-  id: 'job-1', title: 'job', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo',
+  id: 'job-1', title: 'job', executionMode: 'fixed', prNumber: 1, repository: 'lalalic/agents-relay',
   state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks: [makeTask()]
 });
 
@@ -49,6 +49,30 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   await store.completeProjection(recovered.id);
   assert.equal(await store.pendingProjectionCount(), 0);
   await tmp.close(store);
+});
+
+test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads are unavailable', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remote = new InMemoryStore(makeJob());
+  remote.pullRequestState = async () => { throw new Error('GitHub state read should not run'); };
+  remote.pullRequestHead = async () => { throw new Error('GitHub head read should not run'); };
+  remote.headSha = async () => { throw new Error('GitHub SHA read should not run'); };
+  const local = new ProjectedDurableStore(relay, remote, { prNode: { state: 'OPEN', headRefName: 'feat/local', headRefOid: 'offline-sha' }, comments: [] });
+  const reconcilerStore = new Proxy(local, { get(target, property, receiver) { if (property === 'pullRequestHead') return undefined; if (property === 'headSha') return target.headSha.bind(target); return Reflect.get(target, property, receiver); } });
+  const reconciler = managedReconciler(reconcilerStore, { owner: 'test', adapters: [], maxConcurrent: 1, projectPathForJob: () => process.cwd() });
+
+  const reconciled = await reconciler.reconcile('job-1');
+  assert.equal(reconciled.tasks[0].state, 'QUEUED');
+  assert.equal(await local.pullRequestState(), 'OPEN');
+  assert.deepEqual(await local.pullRequestHead(), { ref: 'feat/local', sha: 'offline-sha' });
+
+  relay.close();
+  const restarted = new SQLiteRelayStore(tmp.path);
+  const restartedLocal = new ProjectedDurableStore(restarted, remote);
+  assert.equal(await restartedLocal.pullRequestState(), 'OPEN');
+  assert.deepEqual(await restartedLocal.pullRequestHead(), { ref: 'feat/local', sha: 'offline-sha' });
+  await tmp.close(restarted);
 });
 
 test('SQLiteRelayStore coalesces pending mutations for the same projection key', async () => {

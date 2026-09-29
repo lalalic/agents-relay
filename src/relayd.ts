@@ -115,7 +115,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
-    const projected = new ProjectedDurableStore(relay, github);
+    const projected = new ProjectedDurableStore(relay, github, seed ?? null);
     projectionWriters.set(key, projected.projection);
     return projected;
   };

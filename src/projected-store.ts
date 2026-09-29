@@ -2,7 +2,8 @@ import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import type { Comment, DurableStore, PullRequestState } from './store.js';
 import { sameTaskDefinition } from './store-task-definition.js';
-import type { ProjectionOutboxItem, RelayStore } from './relay-store.js';
+import type { ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
+import type { GitHubPullRequestSeed } from './store.js';
 
 type ProjectedPayload =
   | { operation: 'save_job'; value: Job }
@@ -75,9 +76,12 @@ export class GitHubProjectionWriter {
 
 export class ProjectedDurableStore implements DurableStore {
   readonly projection: GitHubProjectionWriter;
+  private readonly seededFacts: PullRequestFacts | null;
 
-  constructor(private readonly relay: RelayStore, private readonly github: DurableStore) {
+  constructor(private readonly relay: RelayStore, private readonly github: DurableStore, seed: GitHubPullRequestSeed | null = null) {
     this.projection = new GitHubProjectionWriter(relay, github);
+    this.seededFacts = pullRequestFactsFromSeed(seed);
+    if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
   }
 
   /** Seed local operational truth from a trusted discovery snapshot without creating a projection echo. */
@@ -186,9 +190,24 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async comments(): Promise<Comment[]> { return this.github.comments(); }
-  async pullRequestState(): Promise<PullRequestState> { return this.github.pullRequestState ? this.github.pullRequestState() : 'OPEN'; }
-  async pullRequestHead(): Promise<{ ref: string; sha: string } | null> { return this.github.pullRequestHead ? this.github.pullRequestHead() : null; }
-  async headSha(): Promise<string | null> { return this.github.headSha ? this.github.headSha() : null; }
+  async pullRequestState(): Promise<PullRequestState> {
+    const facts = await localPullRequestFacts(this.relay, this.seededFacts);
+    if (facts) return facts.state;
+    if (!this.github.pullRequestState) throw new Error('Pull request state has not been observed locally');
+    const state = await this.github.pullRequestState();
+    await this.relay.savePullRequestFacts({ state, head: null, observedAt: new Date().toISOString() });
+    return state;
+  }
+  async pullRequestHead(): Promise<{ ref: string; sha: string } | null> {
+    const facts = await localPullRequestFacts(this.relay, this.seededFacts);
+    if (facts) return facts.head;
+    if (!this.github.pullRequestHead) throw new Error('Pull request head has not been observed locally');
+    const head = await this.github.pullRequestHead();
+    const state = this.github.pullRequestState ? await this.github.pullRequestState() : null;
+    if (state) await this.relay.savePullRequestFacts({ state, head, observedAt: new Date().toISOString() });
+    return head;
+  }
+  async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
   async mergePullRequest(expectedHeadSha?: string): Promise<void> {
     if (!this.github.mergePullRequest) throw new Error('GitHub store cannot merge pull request');
     await this.github.mergePullRequest(expectedHeadSha);
@@ -214,4 +233,19 @@ export class ProjectedDurableStore implements DurableStore {
     if (!this.github.resolveBlockerDependents) throw new Error('GitHub store cannot resolve blocker dependents');
     return this.github.resolveBlockerDependents(jobId, resolution);
   }
+}
+
+function pullRequestFactsFromSeed(seed: GitHubPullRequestSeed | null): PullRequestFacts | null {
+  const pr = seed?.prNode;
+  if (!pr || Object.keys(pr).length === 0) return null;
+  const rawState = typeof pr.state === 'string' ? pr.state.toUpperCase() : '';
+  const state: PullRequestState | null = pr.merged === true || rawState === 'MERGED' ? 'MERGED' : rawState === 'CLOSED' ? 'CLOSED' : rawState === 'OPEN' ? 'OPEN' : null;
+  if (!state) return null;
+  const ref = typeof pr.headRefName === 'string' ? pr.headRefName : '';
+  const sha = typeof pr.headRefOid === 'string' ? pr.headRefOid : '';
+  return { state, head: ref && sha ? { ref, sha } : null, observedAt: new Date().toISOString() };
+}
+
+async function localPullRequestFacts(relay: RelayStore, seededFacts: PullRequestFacts | null): Promise<PullRequestFacts | null> {
+  return await relay.loadPullRequestFacts() ?? seededFacts;
 }

@@ -2,6 +2,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import type { Job } from './types.js';
+import type { PullRequestState } from './store.js';
+
+export type PullRequestFacts = {
+  state: PullRequestState;
+  head: { ref: string; sha: string } | null;
+  observedAt: string;
+};
 
 export type ProjectionOperation =
   | 'save_job'
@@ -37,6 +44,8 @@ export type ProjectionOutboxItem = {
 export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   saveJob(job: Job): Promise<void>;
+  loadPullRequestFacts(): Promise<PullRequestFacts | null>;
+  savePullRequestFacts(facts: PullRequestFacts): Promise<void>;
   markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean>;
   enqueueProjection(request: ProjectionRequest): Promise<void>;
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
@@ -60,7 +69,7 @@ type OutboxRow = {
   updated_at: string;
 };
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function rowToProjection(row: OutboxRow): ProjectionOutboxItem {
   return {
@@ -100,6 +109,13 @@ export class SQLiteRelayStore implements RelayStore {
         job_id TEXT PRIMARY KEY,
         json TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS pull_request_facts (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        state TEXT NOT NULL CHECK(state IN ('OPEN','MERGED','CLOSED')),
+        head_ref TEXT,
+        head_sha TEXT,
+        observed_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS event_receipt (
         event_id TEXT PRIMARY KEY,
@@ -144,6 +160,19 @@ export class SQLiteRelayStore implements RelayStore {
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)
       ON CONFLICT(job_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
     `).run(job.id, JSON.stringify(job), now);
+  }
+
+  async loadPullRequestFacts(): Promise<PullRequestFacts | null> {
+    const row = this.db.prepare('SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts WHERE id=1').get() as { state?: PullRequestState; head_ref?: string | null; head_sha?: string | null; observed_at?: string } | undefined;
+    if (!row?.state || !row.observed_at) return null;
+    return { state: row.state, head: row.head_ref && row.head_sha ? { ref: row.head_ref, sha: row.head_sha } : null, observedAt: row.observed_at };
+  }
+
+  async savePullRequestFacts(facts: PullRequestFacts): Promise<void> {
+    this.db.prepare(`
+      INSERT INTO pull_request_facts(id,state,head_ref,head_sha,observed_at) VALUES(1,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET state=excluded.state,head_ref=excluded.head_ref,head_sha=excluded.head_sha,observed_at=excluded.observed_at
+    `).run(facts.state, facts.head?.ref ?? null, facts.head?.sha ?? null, facts.observedAt);
   }
 
   async markEventProcessed(eventId: string, stream: string | null = null, sequence: number | null = null): Promise<boolean> {
