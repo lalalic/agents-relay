@@ -905,6 +905,22 @@ test('stale lease recovery cannot overwrite a terminal success or newer executio
   assert.equal(durable.error,null);
 });
 
+test('lease expiry retries through the shared action without extending the retry budget', async () => {
+  const t = task('expired-retry', 'RUNNING');
+  t.attempt = 1; t.maxAttempts = 3; t.executionId = 'expired-execution'; t.leaseOwner = 'relay-old';
+  t.leaseExpiresAt = new Date(Date.now() - 1000).toISOString();
+  const store = new InMemoryStore(job([t]));
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [] });
+
+  await reconciler.recoverLostExecutions(await store.load('j'), Date.now());
+
+  const recovered = (await store.load('j')).tasks[0];
+  assert.equal(recovered.state, 'QUEUED');
+  assert.equal(recovered.maxAttempts, 3);
+  assert.equal(recovered.error, null);
+  assert.equal(recovered.executionId, null);
+});
+
 test('normal terminal event remains authoritative when Codex exits afterward', async () => {
   const t=task('success-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
