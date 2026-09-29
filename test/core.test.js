@@ -204,6 +204,26 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   await rm(directory,{recursive:true,force:true});
 });
 
+test('reviewer specialist tasks without a preselected route are routed automatically', async () => {
+  const specialist = task('specialist-review', 'QUEUED');
+  delete specialist.routing;
+  specialist.agentName = 'reviewer';
+  specialist.workerRequirements = { capabilities: [] };
+  const store = new InMemoryStore(job([specialist]));
+  const events = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeChatGptAdapter()], maxConcurrent: 0, emit: event => events.push(event) });
+  await reconciler.reconcile('j');
+  const routed = (await store.load('j')).tasks.find(item => item.id === 'specialist-review');
+  assert.equal(routed?.adapter, 'chatgpt');
+  assert.equal(routed?.workerSelection?.adapter, 'chatgpt');
+  assert.equal(routed?.routing?.provider, 'chatgpt');
+  assert.equal(routed?.routing?.model, 'account-defaults');
+  const workerIndex = events.findIndex(event => event.type === 'worker.selected');
+  const modelIndex = events.findIndex(event => event.type === 'model.selected');
+  assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
+  await reconciler.close();
+});
+
 test('CLI explicit worker/model routing remains a supported compatibility constraint', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-explicit-route-'));
   const file = join(directory, 'job.json');

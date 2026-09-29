@@ -101,7 +101,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.agentName !== 'reviewer' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
+    for (const task of job.tasks.filter(item => item.kind !== 'planner' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
       const requirements = task.workerRequirements ?? { capabilities: [] };
       const taskFacts = {
         id: task.id,
