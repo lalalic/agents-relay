@@ -19,6 +19,7 @@ import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { applyTaskCancelAction, dispatchTaskAction } from './task-actions.js';
+import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
@@ -312,10 +313,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
-    if (job.state === 'COMPLETED') throw new Error(`Cannot cancel completed job ${job.id}`);
-    for (const task of job.tasks.filter(item => !['SUCCEEDED','UNBLOCKED','CANCELLED'].includes(item.state))) { await applyTaskCancelAction(task, 'Job cancelled'); await store.saveTask(task); }
+    await applyJobCancelAction(store, job);
     await store.closePullRequest();
-    await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
@@ -347,13 +346,10 @@ export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, 
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);
     if (action === 'start') {
-      if (job.state !== 'DRAFT') throw new Error(`Job ${job.id} is not startable (${job.state})`);
-      await transitionJobEvent(job, 'activate'); await store.saveJob(job);
+      await applyJobActivateAction(job); await store.saveJob(job);
     } else if (action === 'cancel') {
-      if (job.state === 'COMPLETED' || job.state === 'CANCELLED') throw new Error(`Job ${job.id} is not cancellable (${job.state})`);
-      for (const task of job.tasks.filter(item => !['SUCCEEDED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) { await applyTaskCancelAction(task, 'Job cancelled'); await store.saveTask(task); }
+      await applyJobCancelAction(store, job);
       await store.closePullRequest?.();
-      await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
       return await store.load(job.id);
     }
     return await reconciler.wake(job.id);

@@ -1,5 +1,5 @@
 import { createPlannerRoundTask, pendingPlanForPlannerTask, recoverPendingPlannerTask } from './planner.js';
-import { transitionJobEvent } from './scheduler.js';
+import { applyJobActivateAction } from './job-actions.js';
 import { DurableStore } from './store.js';
 import { Job, Task } from './types.js';
 
@@ -20,7 +20,7 @@ export async function executeManualPlan(
   await store.appendTask(round);
   job = await store.load(jobId);
   if (job.state === 'DRAFT') {
-    await transitionJobEvent(job, 'activate');
+    await applyJobActivateAction(job);
     await store.saveJob(job);
     job = await store.load(jobId);
   }
