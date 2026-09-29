@@ -218,6 +218,7 @@ export class Reconciler extends ReconcilerReviewBase {
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
+  async recoverStartupOrphans(jobId: string): Promise<Job> { const job = await this.store.load(jobId); if (job.state === 'ACTIVE' && (await this.store.pullRequestState?.() ?? 'OPEN') === 'OPEN') await this.recoverOrphanedLocalExecutions(job); return this.store.load(jobId); }
   private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
     const job = await this.store.load(jobId);
     for (const task of job.tasks.filter(item => !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
@@ -231,7 +232,6 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.store.saveTask(task);
     }
   }
-
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
     const candidates = job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null));
     for (const staleTask of candidates) {
@@ -252,6 +252,9 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.store.saveTask(task);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'lease_expired' }));
     }
+  }
+  private async recoverOrphanedLocalExecutions(job: Job): Promise<void> {
+    for (const stale of job.tasks.filter(t => t.state === 'RUNNING' && t.executionId && t.leaseOwner && t.leaseOwner !== this.options.owner && t.adapter !== 'chatgpt')) { const task = (await this.store.load(job.id)).tasks.find(t => t.id === stale.id); if (!task || task.state !== 'RUNNING' || task.executionId !== stale.executionId || task.leaseOwner !== stale.leaseOwner || task.leaseExpiresAt !== stale.leaseExpiresAt || task.adapter === 'chatgpt' || task.leaseOwner === this.options.owner) continue; await transitionTaskEvent(task, 'task.failed'); task.error = 'Orphaned after relayd restart'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; if (task.attempt < task.maxAttempts) { await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); continue; } task.error += ' after maximum attempts'; await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'startup_orphaned' })); }
   }
   async planJob(jobId: string, guidance?: string): Promise<{ job: Job; round: Task }> {
     return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, task) => this.launchPlanner(job, task));
@@ -300,7 +303,6 @@ export class Reconciler extends ReconcilerReviewBase {
       runtimes: this.options.adapters.map(adapter => ({ name: adapter.name, id: adapter.id, capabilities: [...adapter.capabilities] })),
     });
   }
-
   private async plannerContext(job: Job, task: Task): Promise<ExecutionContext> {
     let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
     if (this.store.pullRequestHead) {
@@ -311,7 +313,6 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return this.resolvedContext(job, task, 'planner', projectPath);
   }
-
   protected async launch(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
@@ -396,7 +397,6 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
       return;
     }
-
     void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 

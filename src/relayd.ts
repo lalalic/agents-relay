@@ -111,7 +111,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as ManagedJobOverview[];
     if (Array.isArray(parsed)) cachedOverviews = parsed;
   } catch { /* first run or invalid cache */ }
-  const refreshAll = async (full = false): Promise<ManagedJobOverview[]> => {
+  const refreshAll = async (full = false, failOnError = false): Promise<ManagedJobOverview[]> => {
     if (client.rateLimitStatus().limited) return cachedOverviews;
     const scanRepositories = full ? repositories : recoveryScanRepositories(repositories, cachedOverviews, dormantProbeIndex++);
     if (scanRepositories.length === 0) return cachedOverviews;
@@ -123,6 +123,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
       return cachedOverviews;
     } catch (error) {
+      if (failOnError) throw error;
       process.stderr.write(`warning: workspace job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
       return cachedOverviews;
     }
@@ -246,7 +247,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     taskCancel: workspaceTaskAction('cancel'),
     taskSetState: workspaceTaskSetState,
   });
-  await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     if (client.rateLimitStatus().limited) return;
     try { await pool.reconcile(); }
@@ -268,9 +268,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
   const scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  await once(server,'listening');
+  const startupItems = await refreshAll(true, true); // void refreshAll(true)
+  await scheduleHeartbeatSafely();
+  await pool.reconcileKnown(startupItems);
   console.log('Dashboard listening; repository worker pool active');
-  void refreshAll(true)
-    .then(async items => { await scheduleHeartbeatSafely(); await pool.reconcileKnown(items); })
-    .catch(error => process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
