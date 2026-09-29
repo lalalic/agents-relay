@@ -1,8 +1,8 @@
 import type { DurableStore } from './store.js';
-import type { Job, TaskState } from './types.js';
+import type { Job, JobLifecycleState, TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
 import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
-import { applyTaskWorkflowDecision } from './workflow/runtime.js';
+import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
 
 export function dashboardTaskAction(
   store: DurableStore,
@@ -28,6 +28,25 @@ export function dashboardTaskAction(
     task.executionId = null;
     await store.saveTask(task);
     return await reconciler.wake(job.id);
+  };
+}
+
+
+export function dashboardJobSetState(store: DurableStore): (jobId: string, state: JobLifecycleState) => Promise<Job> {
+  return async (jobId: string, state: JobLifecycleState): Promise<Job> => {
+    const job = await store.load(jobId);
+    if (job.state === state) return job;
+    applyJobWorkflowDecision(job, {
+      accepted: true,
+      target: state,
+      guard: null,
+      actions: [],
+      mutations: [],
+      effects: [],
+      reason: 'accepted',
+    });
+    await store.saveJob(job);
+    return await store.load(job.id);
   };
 }
 

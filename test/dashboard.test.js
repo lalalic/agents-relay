@@ -158,7 +158,7 @@ test('selected job heading is title-only and single-line', () => {
   assert.doesNotMatch(dashboardHtml, /field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
   assert.match(dashboardHtml, /field\('PR state',job\.githubState/);
-  assert.match(dashboardHtml, /field\('Lifecycle state',job\.state\)/);
+  assert.match(dashboardHtml, /jobStateField\(job\)/);
   assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
 });
 
@@ -249,12 +249,34 @@ test('dashboard job actions invoke the supplied runtime handler', async () => {
 });
 
 
+test('selected job exposes one direct durable lifecycle selector while runtime status stays derived', () => {
+  assert.match(dashboardHtml, /const JOB_STATES=\['DRAFT','ACTIVE','COMPLETED','CANCELLED'\]/);
+  assert.match(dashboardHtml, /job-state-select/);
+  assert.match(dashboardHtml, /\/api\/job-state\?id=/);
+  assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
+});
+
 test('selected task exposes one direct durable state selector instead of retry and cancel buttons', () => {
   assert.match(dashboardHtml, /const TASK_STATES=\['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'\]/);
   assert.match(dashboardHtml, /task-state-select/);
   assert.match(dashboardHtml, /\/api\/task-state\?id=/);
   assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'retry'/);
   assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'cancel'/);
+});
+
+test('dashboard job state override invokes the supplied runtime handler', async () => {
+  const job = { id: 'job-state-job', title: 'Job state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  let invoked = '';
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    jobSetState: async (jobId, state) => { invoked = jobId + '/' + state; return { ...job, state }; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/job-state?id=${job.id}&state=COMPLETED`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(invoked, `${job.id}/COMPLETED`);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
 test('dashboard task state override invokes the supplied runtime handler', async () => {

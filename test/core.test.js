@@ -16,7 +16,7 @@ import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
-import { dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
+import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -78,6 +78,14 @@ test('dashboard task action retries failed work and cancels queued work durably'
   durable=await dashboardTaskAction(store,reconciler,'cancel')('j','cancel-me');
   const cancelled=durable.tasks.find(item=>item.id==='cancel-me'); assert.equal(cancelled.state,'CANCELLED'); assert.equal(cancelled.error,'Cancelled by user');
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
+});
+
+test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {
+  const store = new InMemoryStore(job([]));
+  const durable = await dashboardJobSetState(store)('j', 'COMPLETED');
+  assert.equal(durable.state, 'COMPLETED');
+  assert.equal((await store.load('j')).state, 'COMPLETED');
+  assert.equal(deriveJobRuntimeStatus(durable, 'OPEN'), 'IDLE');
 });
 
 test('dashboard direct task state override is durable, audited, and does not reconcile', async () => {
