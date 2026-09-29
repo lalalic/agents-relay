@@ -98,12 +98,12 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async saveJob(job: Job): Promise<void> {
-    await this.relay.saveJob(structuredClone(job));
-    await this.relay.enqueueProjection({
+    const value = structuredClone(job);
+    await this.relay.saveJobWithProjection(value, {
       idempotencyKey: `save_job:${job.id}`,
       coalesceKey: `job:${job.id}`,
       operation: 'save_job',
-      payload: { operation: 'save_job', value: job } satisfies ProjectedPayload,
+      payload: { operation: 'save_job', value } satisfies ProjectedPayload,
       priority: ['COMPLETED', 'CANCELLED'].includes(job.state) ? 100 : 20,
     });
   }
@@ -116,8 +116,7 @@ export class ProjectedDurableStore implements DurableStore {
       throw new Error(`Plan ${plan.id} already exists with a different definition`);
     }
     job.plans = [...(job.plans ?? []), structuredClone(plan)].sort((a, b) => a.round - b.round);
-    await this.relay.saveJob(job);
-    await this.relay.enqueueProjection({
+    await this.relay.saveJobWithProjection(job, {
       idempotencyKey: `append_plan:${plan.jobId}:${plan.id}`,
       operation: 'append_plan',
       payload: { operation: 'append_plan', value: plan } satisfies ProjectedPayload,
@@ -131,8 +130,7 @@ export class ProjectedDurableStore implements DurableStore {
     const index = plans.findIndex(item => item.id === plan.id);
     if (index >= 0) plans[index] = structuredClone(plan); else plans.push(structuredClone(plan));
     job.plans = plans.sort((a, b) => a.round - b.round);
-    await this.relay.saveJob(job);
-    await this.relay.enqueueProjection({
+    await this.relay.saveJobWithProjection(job, {
       idempotencyKey: `save_plan:${plan.jobId}:${plan.id}`,
       coalesceKey: planKey(plan),
       operation: 'save_plan',
@@ -150,8 +148,7 @@ export class ProjectedDurableStore implements DurableStore {
       throw new Error(`Task ${task.id} already exists with a different definition`);
     }
     job.tasks = [...job.tasks, structuredClone(task)];
-    await this.relay.saveJob(job);
-    await this.relay.enqueueProjection({
+    await this.relay.saveJobWithProjection(job, {
       idempotencyKey: `append_task:${task.jobId}:${task.id}`,
       operation: 'append_task',
       payload: { operation: 'append_task', value: task } satisfies ProjectedPayload,
@@ -166,13 +163,13 @@ export class ProjectedDurableStore implements DurableStore {
     const index = tasks.findIndex(item => item.id === task.id);
     if (index >= 0) tasks[index] = structuredClone(task); else tasks.push(structuredClone(task));
     job.tasks = tasks;
-    await this.relay.saveJob(job);
+    const value = structuredClone(task);
     const terminal = ['SUCCEEDED', 'FAILED', 'BLOCKED', 'UNBLOCKED', 'CANCELLED'].includes(task.state);
-    await this.relay.enqueueProjection({
+    await this.relay.saveJobWithProjection(job, {
       idempotencyKey: `save_task:${task.jobId}:${task.id}`,
       coalesceKey: taskKey(task),
       operation: 'save_task',
-      payload: { operation: 'save_task', value: task } satisfies ProjectedPayload,
+      payload: { operation: 'save_task', value } satisfies ProjectedPayload,
       priority: terminal ? 100 : 50,
     });
   }
@@ -190,31 +187,13 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async comments(): Promise<Comment[]> { return this.github.comments(); }
-
-  private async ensurePullRequestFacts(): Promise<PullRequestFacts> {
-    const local = await localPullRequestFacts(this.relay, this.seededFacts);
-    if (local) return local;
-    if (!this.github.pullRequestState || !this.github.pullRequestHead) {
-      throw new Error('Pull request facts have not been observed locally');
-    }
-    const [state, head] = await Promise.all([
-      this.github.pullRequestState(),
-      this.github.pullRequestHead(),
-    ]);
-    const facts: PullRequestFacts = { state, head, observedAt: new Date().toISOString() };
-    await this.relay.savePullRequestFacts(facts);
-    return facts;
-  }
-
   async pullRequestState(): Promise<PullRequestState> {
     return (await this.ensurePullRequestFacts()).state;
   }
-
   async pullRequestHead(): Promise<{ ref: string; sha: string } | null> {
     return (await this.ensurePullRequestFacts()).head;
   }
-
-  async headSha(): Promise<string | null> { return (await this.ensurePullRequestFacts()).head?.sha ?? null; }
+  async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
   async mergePullRequest(expectedHeadSha?: string): Promise<void> {
     if (!this.github.mergePullRequest) throw new Error('GitHub store cannot merge pull request');
     await this.github.mergePullRequest(expectedHeadSha);
@@ -239,6 +218,16 @@ export class ProjectedDurableStore implements DurableStore {
   async resolveBlockerDependents(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary> {
     if (!this.github.resolveBlockerDependents) throw new Error('GitHub store cannot resolve blocker dependents');
     return this.github.resolveBlockerDependents(jobId, resolution);
+  }
+
+  private async ensurePullRequestFacts(): Promise<PullRequestFacts> {
+    const local = await localPullRequestFacts(this.relay, this.seededFacts);
+    if (local) return local;
+    if (!this.github.pullRequestState || !this.github.pullRequestHead) throw new Error('Pull request facts have not been observed locally');
+    const [state, head] = await Promise.all([this.github.pullRequestState(), this.github.pullRequestHead()]);
+    const facts: PullRequestFacts = { state, head, observedAt: new Date().toISOString() };
+    await this.relay.savePullRequestFacts(facts);
+    return facts;
   }
 }
 

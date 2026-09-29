@@ -44,6 +44,7 @@ export type ProjectionOutboxItem = {
 export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   saveJob(job: Job): Promise<void>;
+  saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
   loadPullRequestFacts(): Promise<PullRequestFacts | null>;
   savePullRequestFacts(facts: PullRequestFacts): Promise<void>;
   markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean>;
@@ -155,7 +156,23 @@ export class SQLiteRelayStore implements RelayStore {
   }
 
   async saveJob(job: Job): Promise<void> {
+    this.writeJobSnapshot(job, new Date().toISOString());
+  }
+
+  async saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.writeJobSnapshot(job, now);
+      this.enqueueProjectionInTransaction(request, now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private writeJobSnapshot(job: Job, now: string): void {
     this.db.prepare(`
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)
       ON CONFLICT(job_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
@@ -186,40 +203,51 @@ export class SQLiteRelayStore implements RelayStore {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      if (request.coalesceKey) {
-        this.db.prepare(`
-          DELETE FROM projection_outbox
-          WHERE coalesce_key=? AND status='pending' AND idempotency_key<>?
-        `).run(request.coalesceKey, request.idempotencyKey);
-      }
-      this.db.prepare(`
-        INSERT INTO projection_outbox(
-          idempotency_key,coalesce_key,operation,payload_json,priority,status,
-          attempts,next_attempt_at,last_error,created_at,updated_at
-        ) VALUES(?,?,?,?,?,'pending',0,NULL,NULL,?,?)
-        ON CONFLICT(idempotency_key) DO UPDATE SET
-          coalesce_key=excluded.coalesce_key,
-          operation=excluded.operation,
-          payload_json=excluded.payload_json,
-          priority=MAX(projection_outbox.priority,excluded.priority),
-          status='pending',
-          next_attempt_at=NULL,
-          last_error=NULL,
-          updated_at=excluded.updated_at
-      `).run(
-        request.idempotencyKey,
-        request.coalesceKey ?? null,
-        request.operation,
-        JSON.stringify(request.payload),
-        request.priority ?? 0,
-        now,
-        now,
-      );
+      this.enqueueProjectionInTransaction(request, now);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): void {
+    if (request.coalesceKey) {
+      this.db.prepare(`
+        DELETE FROM projection_outbox
+        WHERE coalesce_key=? AND status='pending' AND idempotency_key<>?
+      `).run(request.coalesceKey, request.idempotencyKey);
+    }
+    const existing = this.db.prepare('SELECT status FROM projection_outbox WHERE idempotency_key=?').get(request.idempotencyKey) as { status?: string } | undefined;
+    // A writer may be applying this key outside the transaction. Never rewrite its
+    // payload: its completion must only remove its own row, not a newer mutation.
+    const nextId = Number((this.db.prepare('SELECT COALESCE(MAX(id),0)+1 AS next_id FROM projection_outbox').get() as { next_id?: number | bigint }).next_id ?? 1);
+    const idempotencyKey = existing?.status === 'processing'
+      ? `${request.idempotencyKey}:queued:${nextId}`
+      : request.idempotencyKey;
+    this.db.prepare(`
+      INSERT INTO projection_outbox(
+        idempotency_key,coalesce_key,operation,payload_json,priority,status,
+        attempts,next_attempt_at,last_error,created_at,updated_at
+      ) VALUES(?,?,?,?,?,'pending',0,NULL,NULL,?,?)
+      ON CONFLICT(idempotency_key) DO UPDATE SET
+        coalesce_key=excluded.coalesce_key,
+        operation=excluded.operation,
+        payload_json=excluded.payload_json,
+        priority=MAX(projection_outbox.priority,excluded.priority),
+        status='pending',
+        next_attempt_at=NULL,
+        last_error=NULL,
+        updated_at=excluded.updated_at
+    `).run(
+      idempotencyKey,
+      request.coalesceKey ?? null,
+      request.operation,
+      JSON.stringify(request.payload),
+      request.priority ?? 0,
+      now,
+      now,
+    );
   }
 
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {

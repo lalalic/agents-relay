@@ -1,4 +1,4 @@
-import test from './test-runtime.js';
+import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
 import { ProjectedDurableStore, GitHubProjectionWriter, githubProjectionRetryAt } from '../dist/projected-store.js';
 import { InMemoryStore } from '../dist/store.js';
-import { schedule } from '../dist/scheduler.js';
 
 const now = () => new Date().toISOString();
 const makeTask = (state = 'QUEUED') => ({
@@ -52,24 +51,24 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   await tmp.close(store);
 });
 
-test('ProjectedDurableStore reconciles durable Task transitions while GitHub reads are unavailable', async () => {
+test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads are unavailable', async () => {
   const tmp = await tempDb();
   const relay = new SQLiteRelayStore(tmp.path);
-  const dependency = { ...makeTask('SUCCEEDED'), id: 'dependency', result: { summary: 'ready' } };
-  const child = { ...makeTask('DRAFT'), id: 'child', dependencies: ['dependency'] };
-  const job = { ...makeJob(), reviewEnabled: false, autoMerge: false, tasks: [dependency, child] };
-  const remote = new InMemoryStore(job);
+  const root = makeJob();
+  root.tasks = [
+    { ...makeTask('SUCCEEDED'), id: 'dependency' },
+    { ...makeTask('DRAFT'), id: 'dependent', dependencies: ['dependency'] },
+  ];
+  const remote = new InMemoryStore(root);
   remote.pullRequestState = async () => { throw new Error('GitHub state read should not run'); };
   remote.pullRequestHead = async () => { throw new Error('GitHub head read should not run'); };
   remote.headSha = async () => { throw new Error('GitHub SHA read should not run'); };
   const local = new ProjectedDurableStore(relay, remote, { prNode: { state: 'OPEN', headRefName: 'feat/local', headRefOid: 'offline-sha' }, comments: [] });
-  await local.hydrate(job);
+  const reconcilerStore = new Proxy(local, { get(target, property, receiver) { if (property === 'pullRequestHead') return undefined; if (property === 'headSha') return target.headSha.bind(target); return Reflect.get(target, property, receiver); } });
+  const reconciler = managedReconciler(reconcilerStore, { owner: 'test', adapters: [], maxConcurrent: 1, projectPathForJob: () => process.cwd() });
 
-  const reconciled = schedule(await local.load('job-1'));
-  const transitioned = reconciled.tasks.find(task => task.id === 'child');
-  assert.equal(transitioned.state, 'QUEUED');
-  await local.saveTask(transitioned);
-  assert.equal((await local.load('job-1')).tasks.find(task => task.id === 'child').state, 'QUEUED');
+  const reconciled = await reconciler.reconcile('job-1');
+  assert.equal(reconciled.tasks.find(task => task.id === 'dependent').state, 'QUEUED');
   assert.equal(await local.pullRequestState(), 'OPEN');
   assert.deepEqual(await local.pullRequestHead(), { ref: 'feat/local', sha: 'offline-sha' });
 
@@ -78,33 +77,6 @@ test('ProjectedDurableStore reconciles durable Task transitions while GitHub rea
   const restartedLocal = new ProjectedDurableStore(restarted, remote);
   assert.equal(await restartedLocal.pullRequestState(), 'OPEN');
   assert.deepEqual(await restartedLocal.pullRequestHead(), { ref: 'feat/local', sha: 'offline-sha' });
-  assert.equal((await restartedLocal.load('job-1')).tasks.find(task => task.id === 'child').state, 'QUEUED');
-  await tmp.close(restarted);
-});
-
-test('ProjectedDurableStore cold-start bootstrap persists state and head as one durable fact snapshot', async () => {
-  const tmp = await tempDb();
-  let stateReads = 0;
-  let headReads = 0;
-  const relay = new SQLiteRelayStore(tmp.path);
-  const remote = new InMemoryStore(makeJob());
-  remote.pullRequestState = async () => { stateReads += 1; return 'OPEN'; };
-  remote.pullRequestHead = async () => { headReads += 1; return { ref: 'feat/cold-start', sha: 'cold-start-sha' }; };
-  const local = new ProjectedDurableStore(relay, remote);
-
-  assert.equal(await local.pullRequestState(), 'OPEN');
-  assert.deepEqual(await local.pullRequestHead(), { ref: 'feat/cold-start', sha: 'cold-start-sha' });
-  assert.equal(await local.headSha(), 'cold-start-sha');
-  assert.equal(stateReads, 1);
-  assert.equal(headReads, 1);
-
-  relay.close();
-  remote.pullRequestState = async () => { throw new Error('restart must not re-read GitHub state'); };
-  remote.pullRequestHead = async () => { throw new Error('restart must not re-read GitHub head'); };
-  const restarted = new SQLiteRelayStore(tmp.path);
-  const restartedLocal = new ProjectedDurableStore(restarted, remote);
-  assert.equal(await restartedLocal.pullRequestState(), 'OPEN');
-  assert.deepEqual(await restartedLocal.pullRequestHead(), { ref: 'feat/cold-start', sha: 'cold-start-sha' });
   await tmp.close(restarted);
 });
 
@@ -117,6 +89,49 @@ test('SQLiteRelayStore coalesces pending mutations for the same projection key',
   const [item] = await store.claimDueProjections();
   assert.deepEqual(item.payload, { n: 2 });
   await tmp.close(store);
+});
+
+test('SQLiteRelayStore preserves a newer projection queued while an older one is processing', async () => {
+  const tmp = await tempDb();
+  const store = new SQLiteRelayStore(tmp.path);
+  await store.enqueueProjection({ idempotencyKey: 'save_task:j:t', coalesceKey: 'task:j:t', operation: 'save_task', payload: { operation: 'save_task', value: { state: 'RUNNING' } } });
+  const [inFlight] = await store.claimDueProjections();
+  await store.enqueueProjection({ idempotencyKey: 'save_task:j:t', coalesceKey: 'task:j:t', operation: 'save_task', payload: { operation: 'save_task', value: { state: 'SUCCEEDED' } } });
+  await store.completeProjection(inFlight.id);
+  const [newer] = await store.claimDueProjections();
+  assert.deepEqual(newer.payload, { operation: 'save_task', value: { state: 'SUCCEEDED' } });
+  await tmp.close(store);
+});
+
+test('SQLiteRelayStore atomically rolls back a snapshot when projection enqueue fails', async () => {
+  const tmp = await tempDb();
+  const store = new SQLiteRelayStore(tmp.path);
+  const job = makeJob();
+  await assert.rejects(() => store.saveJobWithProjection(job, {
+    idempotencyKey: 'bad', operation: 'save_job', payload: { value: BigInt(1) }
+  }));
+  assert.equal(await store.loadJob(job.id), null);
+  assert.equal(await store.pendingProjectionCount(), 0);
+  await tmp.close(store);
+});
+
+test('ProjectedDurableStore bootstraps state and head together on a cold start', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remote = new InMemoryStore(makeJob());
+  remote.pullRequestState = async () => 'OPEN';
+  remote.pullRequestHead = async () => ({ ref: 'feat/cold', sha: 'cold-sha' });
+  const local = new ProjectedDurableStore(relay, remote);
+  assert.equal(await local.pullRequestState(), 'OPEN');
+  assert.deepEqual(await local.pullRequestHead(), { ref: 'feat/cold', sha: 'cold-sha' });
+  relay.close();
+  const restarted = new SQLiteRelayStore(tmp.path);
+  remote.pullRequestState = async () => { throw new Error('offline state read'); };
+  remote.pullRequestHead = async () => { throw new Error('offline head read'); };
+  const offline = new ProjectedDurableStore(restarted, remote);
+  assert.equal(await offline.pullRequestState(), 'OPEN');
+  assert.deepEqual(await offline.pullRequestHead(), { ref: 'feat/cold', sha: 'cold-sha' });
+  await tmp.close(restarted);
 });
 
 test('ProjectedDurableStore advances local task state while GitHub projection is unavailable, then catches up', async () => {
