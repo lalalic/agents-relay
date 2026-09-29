@@ -33,6 +33,18 @@ export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: stri
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
 
+export type SemanticTaskTreeEntry = { id: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
+
+/** Business-task ownership only; planner rounds remain provenance records. */
+export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
+  const work = tasks.filter(task => task.kind !== 'planner');
+  const ids = new Set(work.map(task => task.id));
+  return {
+    roots: work.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId)).map(task => task.id),
+    tasks: work.map(task => ({ id: task.id, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review })),
+  };
+}
+
 function plannerTrigger(job: Job, manual = false): PlanTrigger {
   if (manual) return { source: 'manual' };
   const consumed = new Set((job.plans ?? []).flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
@@ -297,14 +309,6 @@ export function plannerInput(context: PlannerContext): string {
     runtime: agent.runtime,
   }));
   const project = context.executionContext?.project;
-  const taskTree = context.tasks.filter(task => task.kind !== 'planner').map(task => ({
-    id: task.id,
-    parent_task_id: task.parentTaskId,
-    state: task.state,
-    dependencies: task.dependencies,
-    planning_decision_id: task.planningDecisionId,
-    planning_round: task.planningRound,
-  }));
   return JSON.stringify({
     objective: context.objective,
     retry_feedback: context.retryFeedback,
@@ -312,8 +316,7 @@ export function plannerInput(context: PlannerContext): string {
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
     legacy_change_cycle: context.job.changeCycle,
-    task_tree: taskTree,
-    task_tree_contract: 'The planning graph expresses execution flow. The Task tree expresses semantic ownership. parent_task_id identifies the durable artifact or milestone a task belongs to; dependencies independently identify execution prerequisites. Attach review, revision, re-review, validation correction, and recovery work to the existing artifact subtree. Never use a plan-N task as a semantic parent.',
+    semantic_task_tree: semanticTaskTree(context.tasks),
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],
     tasks: context.tasks.map(task => ({
