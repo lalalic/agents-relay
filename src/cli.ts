@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
-import { assertScheduledAutonomousRepositoryCapability, dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
+import { dueBuckets, processDueScheduledJobs, syncScheduleLabels } from './scheduled-jobs.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
@@ -43,7 +43,6 @@ export async function ensureManagedGitHubJob(
   const store = new GitHubStore(client, repositoryName, pr.number, trustedAuthors);
   try {
     const existing = await store.load(options.id);
-    await assertScheduledAutonomousRepositoryCapability(client, repositoryName, existing);
     if (existing.schedule) await syncScheduleLabels(client, repositoryName, existing);
     return { job: existing, pr };
   } catch (error) {
@@ -70,7 +69,6 @@ export async function ensureManagedGitHubJob(
     tasks: []
   };
   if (options.schedule) job.schedule = options.schedule;
-  await assertScheduledAutonomousRepositoryCapability(client, repositoryName, job);
   await store.saveJob(job);
   if (job.schedule) await syncScheduleLabels(client, repositoryName, job);
   return { job: await store.load(options.id), pr };
@@ -339,7 +337,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     if (!next) throw new Error('--continue-kind and --continue-target must be supplied together');
     job.continuation = next;
   }
-  await assertScheduledAutonomousRepositoryCapability(auth.client, repo, job);
   job.updatedAt = new Date().toISOString();
   await store.saveJob(job);
   if (hasArg(args, '--schedule') && job.schedule) await syncScheduleLabels(auth.client, repo, job);

@@ -15,8 +15,6 @@ import {
 } from '../dist/scheduler.js';
 import {
   AUTONOMOUS_LABEL,
-  AUTONOMOUS_SCHEDULER_WORKFLOW,
-  assertScheduledAutonomousRepositoryCapability,
   dueBuckets,
   indexedDueQuery,
   listIndexedScheduledJobs,
@@ -89,11 +87,6 @@ function fakeClient(initialLabels, comments, options = {}) {
   return {
     state,
     request: async (path, init = {}) => {
-      if (path === 'repos/owner/repo') return { default_branch: options.defaultBranch ?? 'main' };
-      if (path === `repos/owner/repo/contents/${AUTONOMOUS_SCHEDULER_WORKFLOW}?ref=${encodeURIComponent(options.defaultBranch ?? 'main')}`) {
-        if (options.schedulerWorkflow === false) throw new Error('404 Not Found');
-        return { path: AUTONOMOUS_SCHEDULER_WORKFLOW };
-      }
       if (path === 'repos/owner/repo/pulls/1' && init.method === 'PATCH') {
         state.prBody = JSON.parse(String(init.body)).body;
         return { body: state.prBody };
@@ -312,30 +305,7 @@ test('schedule metadata round-trips through the trusted job marker', async () =>
   assert.equal(bucketStart(at('2026-09-21T16:20:00Z')).getTime(), Date.parse('2026-09-21T16:20:00Z'));
 });
 
-test('scheduled autonomous capability requires the repository heartbeat workflow', async () => {
-  const missing = fakeClient([], undefined, { schedulerWorkflow: false, defaultBranch: 'trunk' });
-  await assert.rejects(
-    () => assertScheduledAutonomousRepositoryCapability(missing, 'owner/repo', scheduledJob()),
-    /SCHEDULED_AUTONOMOUS_UNAVAILABLE: owner\/repo default branch trunk must contain \.github\/workflows\/autonomous-scheduler\.yml/,
-  );
 
-  const present = fakeClient([]);
-  await assert.doesNotReject(() => assertScheduledAutonomousRepositoryCapability(present, 'owner/repo', scheduledJob()));
-  await assert.doesNotReject(() => assertScheduledAutonomousRepositoryCapability(missing, 'owner/repo', scheduledJob({ schedule: undefined })));
-  await assert.doesNotReject(() => assertScheduledAutonomousRepositoryCapability(missing, 'owner/repo', scheduledJob({ executionMode: 'fixed' })));
-});
-
-test('managed scheduled creation refuses to persist without the repository heartbeat workflow', async () => {
-  const client = fakeClient([], undefined, { schedulerWorkflow: false });
-  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  await assert.rejects(() => ensureManagedGitHubJob(client, 'owner/repo', trusted, {
-    id: 'scheduled',
-    prNumber: 1,
-    executionMode: 'autonomous',
-    schedule: schedule(),
-  }), /SCHEDULED_AUTONOMOUS_UNAVAILABLE/);
-  assert.equal(parseJob(client.state.prBody), null);
-});
 
 test('managed scheduled creation persists metadata and initializes the label index', async () => {
   const client = fakeClient([]);

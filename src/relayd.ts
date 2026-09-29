@@ -20,6 +20,7 @@ import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
+import { dueBuckets, processDueScheduledJobs } from './scheduled-jobs.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
@@ -31,6 +32,7 @@ export type GitHubReadPathDiagnostics = {
   prRefreshCoalescedByTrigger: Record<string, number>;
 };
 const PR_REFRESH_COALESCE_MS = 1000;
+export const SCHEDULE_HEARTBEAT_MS = 600_000;
 export function shouldCoalescePullRequestRefresh(completedAt: number | null, now = Date.now(), force = false): boolean {
   return !force && completedAt !== null && now >= completedAt && now - completedAt < PR_REFRESH_COALESCE_MS;
 }
@@ -246,10 +248,23 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     try { await pool.reconcile(); }
     catch (error) { process.stderr.write(`warning: workspace reconcile unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
   };
+  const scheduleHeartbeatSafely = async (): Promise<void> => {
+    if (client.rateLimitStatus().limited) return;
+    const now = new Date();
+    for (const repository of repositories) {
+      try {
+        await processDueScheduledJobs({ client, repository, trustedAuthors: trusted, buckets: dueBuckets(now, 36), now, engine: job => ({ reconcile: async () => { await pool.reconcileTarget(repository, job.prNumber, job.id); }, idle: async () => {} }) });
+      } catch (error) {
+        process.stderr.write(`warning: scheduled heartbeat unavailable for ${repository}: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+  };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
   const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
-  const stop=()=>{clearInterval(interval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
+  const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   console.log('Dashboard listening; repository worker pool active');
+  void scheduleHeartbeatSafely();
   void refreshAll(true)
     .then(items => pool.reconcileKnown(items))
     .catch(error => process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
