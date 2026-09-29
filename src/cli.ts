@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
-import { applyTaskCancelAction, dispatchTaskAction } from './task-actions.js';
+import { applyTaskCancelAction, applyTaskRetryAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -138,7 +138,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
-    if (refreshed.state === 'DRAFT') { await transitionJobEvent(refreshed, 'activate'); await store.saveJob(refreshed); }
+    if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
     await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
@@ -170,7 +170,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     let outputTask = task;
     if (action === 'retry') {
       const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: job.id, taskId: id });
-      if (result.job.state === 'DRAFT') { await transitionJobEvent(result.job, 'activate'); await store.saveJob(result.job); }
+      if (result.job.state === 'DRAFT') { await applyJobActivateAction(result.job); await store.saveJob(result.job); }
       outputJob = await store.load(job.id);
       outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
     } else {
@@ -210,7 +210,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     const taskMap = new Map(job.tasks.map(item => [item.id, item]));
     if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
     if (task.state === 'DRAFT') await transitionTaskEvent(task, 'release');
-    else if (task.state === 'FAILED') await transitionTaskEvent(task, 'retry');
+    else if (task.state === 'FAILED') await applyTaskRetryAction(task);
     else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`); else if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and cannot be queued`);
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
