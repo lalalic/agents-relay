@@ -82,6 +82,9 @@ export type Result = { summary: string; artifacts?: string[]; data?: Record<stri
 export type BlockerResolutionMode = 'merge' | 'verified';
 export type BlockerReference = { repository: string; prNumber: number; jobId: string };
 export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; registeredAt: string };
+export type BlockedBaseline = { blockedAt: string; headSha?: string; reason?: string };
+export type TaskUnblockRecord = { at: string; source: 'cli' | 'blocker_job'; reason: string; baseline: BlockedBaseline; currentHeadSha?: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
+export type JobChangeCycle = { triggeredAt: string; source: 'cli' | 'blocker_job'; reason: string; taskIds: string[]; baselineHeadShas: string[]; currentHeadSha?: string; facts: string[]; consumedByPlannerTaskId?: string };
 export type BlockerDependentState = 'waiting' | 'resumed' | 'obsolete';
 export type BlockerDependent = { repository: string; prNumber: number; jobId: string; taskId: string; blockedAttempt: number; registeredAt: string; state: BlockerDependentState; resolvedAt?: string; resolution?: 'merge' | 'verified'; note?: string };
 export type TaskOutput = { kind: 'task_pr' } | { kind: 'file'; path: string };
@@ -106,9 +109,11 @@ export type Task = {
   manualStateOverrides?: ManualTaskStateOverride[];
   failureReason?: string;
   blockedBy?: TaskBlockerReference;
+  blockedBaseline?: BlockedBaseline;
+  unblock?: TaskUnblockRecord;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
-export type Job = { id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

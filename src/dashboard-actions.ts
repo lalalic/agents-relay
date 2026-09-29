@@ -14,7 +14,8 @@ export function dashboardTaskAction(
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (action === 'retry') {
-      if (!['FAILED', 'BLOCKED'].includes(task.state)) throw new Error(`Task ${task.id} is not restartable (${task.state})`);
+      if (task.state === 'BLOCKED') throw new Error(`Task ${task.id} is BLOCKED; use the unblock CLI with a reason`);
+      if (task.state !== 'FAILED') throw new Error(`Task ${task.id} is not restartable (${task.state})`);
       task.maxAttempts = extendRetryBudget(task);
       await transitionTaskEvent(task, 'retry');
       task.error = null;
@@ -56,6 +57,7 @@ export function dashboardTaskSetState(store: DurableStore): (jobId: string, task
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.state === state) return job;
+    if (task.state === 'BLOCKED' && state !== 'CANCELLED') throw new Error(`Task ${task.id} is BLOCKED; only the unblock CLI may resume or replan it`);
 
     const now = new Date().toISOString();
     const from = task.state;

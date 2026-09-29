@@ -392,6 +392,16 @@ export abstract class ReconcilerRuntimeBase {
           task.failureReason = typeof event.data?.reason === 'string' ? event.data.reason : undefined;
         } else if (event.type === 'task.blocked') {
           task.error = event.message || `Task ${task.id} blocked`;
+          const data = event.data ?? {};
+          const head = ['candidate_head', 'candidate_head_sha', 'pr_head', 'head_sha']
+            .map(key => data[key])
+            .find(value => typeof value === 'string' && value.length > 0);
+          task.blockedBaseline = {
+            blockedAt: event.timestamp || task.updatedAt,
+            headSha: typeof head === 'string' ? head : job.headSha,
+            reason: task.error,
+          };
+          task.unblock = undefined;
         } else if (event.type === 'task.cancelled') {
           task.error = event.message || `Task ${task.id} cancelled`;
         }

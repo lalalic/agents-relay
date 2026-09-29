@@ -27,6 +27,7 @@ import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProje
 import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 import { parseAgentGraph } from './agent-graph.js';
+import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
@@ -129,7 +130,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   };
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -151,6 +152,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const task = job.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
+  if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
   if (action === 'complete') {
     if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
     if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
@@ -169,6 +171,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   }
   if (action === 'retry' || action === 'cancel') {
     if (action === 'retry') {
+      if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of retry`);
       task.maxAttempts = extendRetryBudget(task);
       if (task.kind === 'planner' && task.error) task.plannerRetryFeedback = task.error;
     }
@@ -210,7 +213,8 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     const taskMap = new Map(job.tasks.map(item => [item.id, item]));
     if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
     if (task.state === 'DRAFT') await transitionTaskEvent(task, 'release');
-    else if (task.state === 'FAILED' || task.state === 'BLOCKED') await transitionTaskEvent(task, 'retry');
+    else if (task.state === 'FAILED') await transitionTaskEvent(task, 'retry');
+    else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`);
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
@@ -253,7 +257,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   console.log(JSON.stringify(context, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'merge', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -299,6 +303,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (!prNumber) throw new Error(`job ${action} requires --pr`);
   const store = new GitHubStore(auth.client, repo, prNumber, auth.trustedAuthors);
   const job = await store.load(id);
+  if (action === 'unblock') { await runJobUnblockCommand(args, store, job); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
   await store.validateJobBinding(id);
   if (action === 'merge') {

@@ -6,8 +6,8 @@ Usage:
   npx agents-relay <command> [options]
 
 Commands:
-  job create|update|show|list|merge|cancel  Manage durable GitHub-backed jobs
-  task create|update|show|list|complete|retry|cancel  Manage durable tasks
+  job create|update|show|list|merge|unblock|cancel  Manage durable GitHub-backed jobs
+  task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -25,7 +25,7 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage GitHub-backed durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|merge|cancel> [options]
+  npx agents-relay job <create|update|show|list|merge|unblock|cancel> [options]
 
 Actions:
   create  Create a durable Job, optionally binding an existing unmanaged PR
@@ -33,6 +33,7 @@ Actions:
   show    Show one durable Job
   list    List managed Jobs in a repository
   merge   Merge the backing PR and complete the Job
+  unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
   cancel  Close the backing PR and cancel the Job
 
 Common options:
@@ -74,6 +75,7 @@ Example:
   'job merge': `Merge the backing pull request and complete the durable Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
+  'job unblock': `Authoritatively unblock the effective BLOCKED work Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Autonomous Jobs persist a Change Cycle and wake Planner; fixed Jobs resume the blocked Tasks directly.`,
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
@@ -86,14 +88,15 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|list|retry|cancel> [options]
+  npx agents-relay task <create|update|show|list|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
   update  Update mutable Task fields
   show    Show one Task
   list    List Tasks for a Job
-  retry   Retry a failed or blocked Task
+  retry   Retry a FAILED Task
+  unblock Authoritatively invalidate a BLOCKED decision
   complete Complete an orchestrator-owned Task
   cancel  Cancel a Task`,
   'task create': `Create one durable Task under an existing Job.

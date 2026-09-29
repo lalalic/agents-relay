@@ -1,6 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { isEffectivelyBlocked, unblockAutonomousTasks } from './unblock.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
 export type BlockerResolutionSummary = { resumed: number; obsolete: number; waiting: number };
@@ -97,6 +98,21 @@ export async function resolveBlockerDependencies(options: {
     const matches = !!task && ['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt;
     if (!matches) {
       relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = obsoleteReason(task, relation); obsolete += 1; continue;
+    }
+    if (targetJob.executionMode === 'autonomous') {
+      if (isEffectivelyBlocked(task)) {
+        await unblockAutonomousTasks({
+          store,
+          job: targetJob,
+          tasks: [task],
+          trigger: { source: 'blocker_job', reason: `Blocker Job ${blocker.id} resolved (${options.resolution})`, blockerJobId: blocker.id, resolution: options.resolution },
+          now,
+        });
+        relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent task unblocked for replanning'; resumed += 1; continue;
+      }
+      if (task.state === 'BLOCKED' && task.unblock) {
+        relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent Job already unblocked for replanning'; resumed += 1; continue;
+      }
     }
     if (task.state === 'DRAFT') {
       await transitionTaskEvent(task, 'release');
