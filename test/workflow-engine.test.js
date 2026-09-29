@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseExecutableMermaid, WorkflowEngine } from '../dist/workflow/mermaid.js';
+import { parseGraphV2 } from '../dist/workflow/graph-v2.js';
+import { jobLifecycleV2, taskLifecycleV2 } from '../dist/workflow/definitions-v2.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow, validateCanonicalWorkflowGraph } from '../dist/workflow/definitions.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
 
@@ -120,8 +122,14 @@ test('every repository lifecycle graph file parses and validates with the produc
   assert.ok(files.length > 0, 'expected at least one workflow .mmd file');
   for (const file of files) {
     const source = await readFile(new URL(file, directory), 'utf8');
-    const graph = parseExecutableMermaid(source);
-    assert.doesNotThrow(() => validateCanonicalWorkflowGraph(graph), file);
+    if (source.trimStart().startsWith('flowchart ')) {
+      assert.doesNotThrow(() => parseGraphV2(source), file);
+      const runtime = file.startsWith('job-lifecycle') ? jobLifecycleV2 : taskLifecycleV2;
+      assert.equal(runtime.graph.source, source, file+' must be loaded by the production v2 runtime');
+    } else {
+      const graph = parseExecutableMermaid(source);
+      assert.doesNotThrow(() => validateCanonicalWorkflowGraph(graph), file);
+    }
   }
 });
 

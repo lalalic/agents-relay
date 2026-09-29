@@ -182,6 +182,8 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('skills/agents-relay/contracts/task-job-contract.md'), true);
   assert.equal(files.has('workflow/job-lifecycle.mmd'), true);
   assert.equal(files.has('workflow/task-lifecycle.mmd'), true);
+  assert.equal(files.has('workflow/job-lifecycle-v2.mmd'), true);
+  assert.equal(files.has('workflow/task-lifecycle-v2.mmd'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);

@@ -48,7 +48,7 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
 
-Lifecycle transition authority lives in the directly renderable canonical sources [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd); see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
+Lifecycle transition authority lives in the directly renderable v2 flowchart sources [`workflow/job-lifecycle-v2.mmd`](workflow/job-lifecycle-v2.mmd) and [`workflow/task-lifecycle-v2.mmd`](workflow/task-lifecycle-v2.mmd). The legacy `stateDiagram-v2` files remain compatibility fixtures only; see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
 
 The canonical Mermaid Graph Engine is the single authoritative Job/Task lifecycle decision path. Lifecycle events, guards, deterministic mutations, and declarative effects are defined by the workflow graphs and executed through the shared graph runtime.
 

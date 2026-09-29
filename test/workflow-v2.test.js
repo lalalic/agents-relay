@@ -27,7 +27,7 @@ test('v2 parser accepts strict flowchart topology and evaluates deterministicall
   const runtime = new GraphRuntime(source, registries);
   const input = { transport: 'event', id: 'task.retry', payload: {} };
   const decision = runtime.evaluateSync({ currentState: 'FAILED', input, durableFacts: { retryable: true } });
-  assert.deepEqual(decision, { accepted: true, source: 'FAILED', target: 'QUEUED', action: { id: 'task.retry', input }, emittedEvents: ['task.retried'] });
+  assert.deepEqual(decision, { accepted: true, source: 'FAILED', target: 'QUEUED', actions: [{ id: 'task.retry', input, emittedEvents: ['task.retried'] }] });
   assert.equal(runtime.evaluateSync({ currentState: 'FAILED', input, durableFacts: { retryable: false } }).target, 'BLOCKED');
 });
 
@@ -50,6 +50,30 @@ test('v2 parser rejects duplicate input paths and malformed guard exits', () => 
   assert.throws(() => parseGraphV2(duplicate), /ambiguous input path/);
   const malformed = source.replace('retryable -->|false| blocked', 'retryable -->|maybe| blocked');
   assert.throws(() => parseGraphV2(malformed), /unsupported edge label/);
+});
+
+
+test('v2 guards may reject by omitting a branch and semantic guard instances may repeat', () => {
+  const guarded = `flowchart LR
+%% relay: initial active
+active["state: ACTIVE"]
+done["state: DONE"]
+g1["guard: allowed"]
+g2["guard: allowed"]
+active -->|on: finish| g1
+g1 -->|true| done
+done -->|on: reopen| g2
+g2 -->|true| active`;
+  const runtime = new GraphRuntime(guarded, {
+    states: new Set(['ACTIVE','DONE']),
+    guards: { allowed: facts => facts.durableFacts.allowed === true },
+    events: { finish: { id: 'finish' }, reopen: { id: 'reopen' } },
+  });
+  const rejected = runtime.evaluateSync({ currentState: 'ACTIVE', input: { transport: 'event', id: 'finish', payload: {} }, durableFacts: { allowed: false } });
+  assert.deepEqual(rejected, { accepted: false, source: 'ACTIVE', reason: 'no_transition' });
+  const accepted = runtime.evaluateSync({ currentState: 'ACTIVE', input: { transport: 'event', id: 'finish', payload: {} }, durableFacts: { allowed: true } });
+  assert.equal(accepted.target, 'DONE');
+  assert.deepEqual(runtime.evaluateSync({ currentState: 'DONE', input: { transport: 'event', id: 'finish', payload: {} }, durableFacts: {} }), { accepted: false, source: 'DONE', reason: 'no_transition' });
 });
 
 test('v2 dispatcher persists the graph transition before action execution and publishes validated emits', async () => {
@@ -79,8 +103,8 @@ test('v2 dispatcher persists the graph transition before action execution and pu
     },
   });
   const result = await dispatcher.dispatch({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: { retryable: true } });
-  assert.equal(result.receipt?.ok, undefined);
-  assert.equal(result.receipt?.payloads?.['task.retried']?.ok, true);
+  assert.equal(result.receipts[0]?.ok, undefined);
+  assert.equal(result.receipts[0]?.payloads?.['task.retried']?.ok, true);
   assert.deepEqual(order, ['persist:FAILED->QUEUED', 'action', 'validated', 'publish:task.retried']);
 });
 
@@ -104,7 +128,7 @@ test('v2 dispatcher publishes only a registered failure event when an action rep
     publishEvent: event => published.push(event),
   });
   const result = await dispatcher.dispatch({ currentState: 'FAILED', input: { transport: 'event', id: 'task.retry', payload: {} }, durableFacts: { retryable: true } });
-  assert.equal(result.receipt?.ok, false);
+  assert.equal(result.receipts[0]?.ok, false);
   assert.deepEqual(published, [{ id: 'task.retry_failed', payload: { reason: 'busy' } }]);
 });
 

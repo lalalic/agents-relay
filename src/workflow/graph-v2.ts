@@ -25,14 +25,14 @@ export type GraphRegistries = {
   readonly events?: ReadonlyMap<string, EventDefinition> | Readonly<Record<string, EventDefinition>>;
 };
 
+export type GraphActionDecision = { readonly id: string; readonly input: GraphInput; readonly emittedEvents: readonly string[] };
 export type GraphDecision = {
   readonly accepted: true;
   readonly source: string;
   readonly target: string;
-  readonly action: { readonly id: string; readonly input: GraphInput } | null;
-  readonly emittedEvents: readonly string[];
-} | { readonly accepted: false; readonly source: string; readonly reason: 'no_transition' | 'invalid_input' };
-export type GraphDispatchResult = { readonly decision: GraphDecision; readonly receipt: ActionReceipt | null };
+  readonly actions: readonly GraphActionDecision[];
+} | { readonly accepted: false; readonly source: string; readonly reason: 'no_transition' | 'ambiguous' | 'invalid_input' };
+export type GraphDispatchResult = { readonly decision: GraphDecision; readonly receipts: readonly ActionReceipt[] };
 export type GraphTransition = { readonly source: string; readonly target: string };
 export type GraphEvent = { readonly id: string; readonly payload: unknown };
 export type GraphDispatcherPorts = {
@@ -84,7 +84,7 @@ export function parseGraphV2(source: string): Graph {
       if (nodes.has(node[1])) fail(lineNumber, `duplicate node '${node[1]}'`);
       const semanticId = node[3].trim();
       if (!NAME.test(semanticId)) fail(lineNumber, `invalid ${node[2]} identifier '${semanticId}'`);
-      if ([...nodes.values()].some(candidate => candidate.kind === node[2] && candidate.semanticId === semanticId)) fail(lineNumber, `duplicate semantic declaration '${node[2]}: ${semanticId}'`);
+      if (node[2] === 'state' && [...nodes.values()].some(candidate => candidate.kind === 'state' && candidate.semanticId === semanticId)) fail(lineNumber, `duplicate semantic declaration 'state: ${semanticId}'`);
       nodes.set(node[1], { id: node[1], kind: node[2] as SemanticKind, semanticId, line: lineNumber });
       continue;
     }
@@ -113,35 +113,45 @@ export function parseGraphV2(source: string): Graph {
 function validateTopology(nodes: ReadonlyMap<string, GraphNode>, edges: readonly GraphEdge[], initial: string): void {
   const outgoing = new Map<string, GraphEdge[]>();
   for (const edge of edges) outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge]);
-  const inputs = new Set<string>();
   for (const node of nodes.values()) {
     const exits = outgoing.get(node.id) ?? [];
     if (node.kind === 'state') {
       for (const edge of exits) {
         if (edge.kind !== 'on' && edge.kind !== 'request') fail(edge.line, `state '${node.semanticId}' may only have on:/request: exits`);
-        const key = `${node.semanticId}\\0${edge.kind}\\0${edge.semanticId}`;
-        if (inputs.has(key)) fail(edge.line, `ambiguous input path for ${edge.kind} '${edge.semanticId}' from state '${node.semanticId}'`);
-        inputs.add(key);
         const target = nodes.get(edge.to)!;
-        if (target.kind !== 'state' && target.kind !== 'guard') fail(edge.line, `${edge.kind} edge must lead to a state or guard`);
+        if (target.kind !== 'state' && target.kind !== 'guard' && target.kind !== 'action') fail(edge.line, `${edge.kind} edge must lead to a state, guard, or action`);
+      }
+      const groups = new Map<string, GraphEdge[]>();
+      for (const edge of exits) {
+        const key = `${edge.kind}\\0${edge.semanticId}`;
+        groups.set(key, [...(groups.get(key) ?? []), edge]);
+      }
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        if (group.some(edge => nodes.get(edge.to)!.kind !== 'guard') || new Set(group.map(edge => edge.to)).size !== group.length) {
+          const edge = group[1];
+          fail(edge.line, `ambiguous input path for ${edge.kind} '${edge.semanticId}' from state '${node.semanticId}'`);
+        }
       }
     } else if (node.kind === 'guard') {
-      if (exits.length !== 2 || new Set(exits.map(edge => edge.kind)).size !== 2 || !exits.some(edge => edge.kind === 'true') || !exits.some(edge => edge.kind === 'false')) fail(node.line, `guard '${node.semanticId}' requires true/false exits`);
+      if (exits.length < 1 || exits.length > 2 || exits.some(edge => edge.kind !== 'true' && edge.kind !== 'false') || new Set(exits.map(edge => edge.kind)).size !== exits.length) fail(node.line, `guard '${node.semanticId}' requires one or two unique true/false exits`);
       for (const edge of exits) if (nodes.get(edge.to)!.kind !== 'state' && nodes.get(edge.to)!.kind !== 'action') fail(edge.line, `guard edge '${edge.kind}' must lead to an action or state`);
     } else if (node.kind === 'action') {
-      const targets = exits.filter(edge => edge.kind === 'to' || edge.kind === 'unlabelled');
-      if (targets.length > 1) fail(node.line, `action '${node.semanticId}' has multiple state targets`);
-      for (const edge of targets) {
+      const continuations = exits.filter(edge => edge.kind === 'to' || edge.kind === 'unlabelled');
+      if (continuations.length > 1) fail(node.line, `action '${node.semanticId}' has multiple continuations`);
+      for (const edge of continuations) {
         const target = nodes.get(edge.to)!;
-        if (target.kind !== 'state') fail(edge.line, 'action target must be a state');
-        if (edge.kind === 'to' && edge.semanticId !== target.semanticId) fail(edge.line, `to edge names state '${edge.semanticId}' but targets state '${target.semanticId}'`);
+        if (edge.kind === 'to') {
+          if (target.kind !== 'state') fail(edge.line, 'to: action continuation must target a state');
+          if (edge.semanticId !== target.semanticId) fail(edge.line, `to edge names state '${edge.semanticId}' but targets state '${target.semanticId}'`);
+        } else if (target.kind !== 'state' && target.kind !== 'action') fail(edge.line, 'unlabelled action continuation must lead to an action or state');
       }
       for (const edge of exits.filter(edge => edge.kind === 'emit')) {
         const target = nodes.get(edge.to)!;
         if (target.kind !== 'emit') fail(edge.line, 'emit edge must lead to an emit node');
         if (edge.semanticId !== target.semanticId) fail(edge.line, `emit edge names event '${edge.semanticId}' but targets emit '${target.semanticId}'`);
       }
-      if (!targets.length) fail(node.line, `action '${node.semanticId}' must lead to a state`);
+      if (!continuations.length) fail(node.line, `action '${node.semanticId}' must have one continuation`);
     } else if (exits.length) fail(node.line, `emit node '${node.semanticId}' must not have outgoing edges`);
   }
   const reachable = new Set<string>([initial]);
@@ -190,57 +200,68 @@ export class GraphRuntime {
     if (!definition) throw new Error(`unknown ${input.transport} '${input.id}'`);
     if (definition.validate && !definition.validate(input.payload)) throw new Error(`invalid payload for ${input.transport} '${input.id}'`);
   }
-  private path(state: string, input: GraphInput, facts: GraphFacts): { target: string; action: GraphNode | null; emittedEvents: string[] } {
-    const node = [...this.graph.nodes.values()].find(candidate => candidate.kind === 'state' && candidate.semanticId === state);
-    if (!node) throw new Error(`unknown state '${state}'`);
-    const edges = this.graph.edges.filter(edge => edge.from === node.id && edge.kind === (input.transport === 'event' ? 'on' : 'request') && edge.semanticId === input.id);
-    if (!edges.length) throw new Error(`no transition from state '${state}' on ${input.transport} '${input.id}'`);
-    let current = edges[0].to;
-    let action: GraphNode | null = null;
-    const emittedEvents: string[] = [];
+  private pathFromSync(current: string, facts: GraphFacts): { target: string; actions: { node: GraphNode; emittedEvents: string[] }[] } | null {
+    const actions: { node: GraphNode; emittedEvents: string[] }[] = [];
     const visited = new Set<string>();
     while (true) {
       if (visited.has(current)) throw new Error(`cyclic graph path at '${current}'`); visited.add(current);
       const currentNode = this.graph.nodes.get(current)!;
-      if (currentNode.kind === 'state') return { target: currentNode.semanticId, action, emittedEvents };
+      if (currentNode.kind === 'state') return { target: currentNode.semanticId, actions };
       if (currentNode.kind === 'guard') {
         const guard = this.registry.guards.get(currentNode.semanticId)!;
         const result = guard(facts);
         if (result instanceof Promise) throw new Error(`guard '${currentNode.semanticId}' is asynchronous; use evaluate()`);
         const branch = (result ? 'true' : 'false') as GraphEdgeKind;
-        current = this.graph.edges.find(edge => edge.from === currentNode.id && edge.kind === branch)!.to; continue;
+        const branchEdge = this.graph.edges.find(edge => edge.from === currentNode.id && edge.kind === branch);
+        if (!branchEdge) return null;
+        current = branchEdge.to; continue;
       }
-      if (currentNode.kind === 'action') { action = currentNode; for (const edge of this.graph.edges) if (edge.from === currentNode.id && edge.kind === 'emit') emittedEvents.push(edge.semanticId!); current = this.graph.edges.find(edge => edge.from === currentNode.id && (edge.kind === 'to' || edge.kind === 'unlabelled'))!.to; continue; }
+      if (currentNode.kind === 'action') { const emittedEvents = this.graph.edges.filter(edge => edge.from === currentNode.id && edge.kind === 'emit').map(edge => edge.semanticId!); actions.push({ node: currentNode, emittedEvents }); current = this.graph.edges.find(edge => edge.from === currentNode.id && (edge.kind === 'to' || edge.kind === 'unlabelled'))!.to; continue; }
       throw new Error(`invalid executable path through emit node '${currentNode.semanticId}'`);
     }
   }
   evaluateSync<Payload>(facts: GraphFacts<Payload>): GraphDecision {
-    this.validateInput(facts.input); const result = this.path(facts.currentState, facts.input, facts);
-    const actionNode = result.action; return { accepted: true, source: facts.currentState, target: result.target, action: actionNode ? { id: actionNode.semanticId, input: facts.input } : null, emittedEvents: result.emittedEvents };
+    this.validateInput(facts.input);
+    const stateNode = [...this.graph.nodes.values()].find(node => node.kind === 'state' && node.semanticId === facts.currentState);
+    if (!stateNode) throw new Error(`unknown state '${facts.currentState}'`);
+    const edges = this.graph.edges.filter(edge => edge.from === stateNode.id && edge.kind === (facts.input.transport === 'event' ? 'on' : 'request') && edge.semanticId === facts.input.id);
+    const results = edges.map(edge => this.pathFromSync(edge.to, facts)).filter((result): result is { target: string; actions: { node: GraphNode; emittedEvents: string[] }[] } => result !== null);
+    if (results.length === 0) return { accepted: false, source: facts.currentState, reason: 'no_transition' };
+    if (results.length > 1) return { accepted: false, source: facts.currentState, reason: 'ambiguous' };
+    const result = results[0];
+    return { accepted: true, source: facts.currentState, target: result.target, actions: result.actions.map(step => ({ id: step.node.semanticId, input: facts.input, emittedEvents: step.emittedEvents })) };
   }
   async evaluate<Payload>(facts: GraphFacts<Payload>): Promise<GraphDecision> {
     this.validateInput(facts.input);
     const stateNode = [...this.graph.nodes.values()].find(node => node.kind === 'state' && node.semanticId === facts.currentState);
     if (!stateNode) throw new Error(`unknown state '${facts.currentState}'`);
-    const edge = this.graph.edges.find(candidate => candidate.from === stateNode.id && candidate.kind === (facts.input.transport === 'event' ? 'on' : 'request') && candidate.semanticId === facts.input.id);
-    if (!edge) throw new Error(`no transition from state '${facts.currentState}' on ${facts.input.transport} '${facts.input.id}'`);
-    let current = edge.to; let action: GraphNode | null = null; const emittedEvents: string[] = [];
-    while (true) {
-      const node = this.graph.nodes.get(current)!;
-      if (node.kind === 'state') return { accepted: true, source: facts.currentState, target: node.semanticId, action: action ? { id: action.semanticId, input: facts.input } : null, emittedEvents };
+    const edges = this.graph.edges.filter(candidate => candidate.from === stateNode.id && candidate.kind === (facts.input.transport === 'event' ? 'on' : 'request') && candidate.semanticId === facts.input.id);
+    const evaluatePath = async (start: string): Promise<{ target: string; actions: { node: GraphNode; emittedEvents: string[] }[] } | null> => {
+      let current = start; const actions: { node: GraphNode; emittedEvents: string[] }[] = [];
+      while (true) {
+        const node = this.graph.nodes.get(current)!;
+        if (node.kind === 'state') return { target: node.semanticId, actions };
       if (node.kind === 'guard') {
         const result = await this.registry.guards.get(node.semanticId)!(facts);
-        current = this.graph.edges.find(candidate => candidate.from === node.id && candidate.kind === (result ? 'true' : 'false'))!.to;
+        const branch = this.graph.edges.find(candidate => candidate.from === node.id && candidate.kind === (result ? 'true' : 'false'));
+        if (!branch) return null;
+        current = branch.to;
         continue;
       }
       if (node.kind === 'action') {
-        action = node;
-        for (const candidate of this.graph.edges) if (candidate.from === node.id && candidate.kind === 'emit') emittedEvents.push(candidate.semanticId!);
+        const emittedEvents = this.graph.edges.filter(candidate => candidate.from === node.id && candidate.kind === 'emit').map(candidate => candidate.semanticId!);
+        actions.push({ node, emittedEvents });
         current = this.graph.edges.find(candidate => candidate.from === node.id && (candidate.kind === 'to' || candidate.kind === 'unlabelled'))!.to;
         continue;
       }
-      throw new Error(`invalid executable path through emit node '${node.semanticId}'`);
-    }
+        throw new Error(`invalid executable path through emit node '${node.semanticId}'`);
+      }
+    };
+    const results = (await Promise.all(edges.map(edge => evaluatePath(edge.to)))).filter((result): result is { target: string; actions: { node: GraphNode; emittedEvents: string[] }[] } => result !== null);
+    if (results.length === 0) return { accepted: false, source: facts.currentState, reason: 'no_transition' };
+    if (results.length > 1) return { accepted: false, source: facts.currentState, reason: 'ambiguous' };
+    const result = results[0];
+    return { accepted: true, source: facts.currentState, target: result.target, actions: result.actions.map(step => ({ id: step.node.semanticId, input: facts.input, emittedEvents: step.emittedEvents })) };
   }
 }
 
@@ -249,28 +270,29 @@ export class GraphDispatcher {
 
   async dispatch<Payload>(facts: GraphFacts<Payload>): Promise<GraphDispatchResult> {
     const decision = await this.runtime.evaluate(facts);
-    if (!decision.accepted) return { decision, receipt: null };
+    if (!decision.accepted) return { decision, receipts: [] };
     await this.ports.persistTransition({ source: decision.source, target: decision.target });
-    if (!decision.action) return { decision, receipt: null };
-
-    const action = this.runtime.registry.actions.get(decision.action.id)!;
-    const receipt = action.execute ? await action.execute({ facts, actionId: decision.action.id, input: decision.action.input }) : {};
-    if (receipt.ok === false) {
-      const definition = this.runtime.registry.events.get(receipt.failureEvent.id);
-      if (!definition) throw new Error(`unknown failure event '${receipt.failureEvent.id}'`);
-      if (definition.validate && !definition.validate(receipt.failureEvent.payload)) throw new Error(`invalid payload for failure event '${receipt.failureEvent.id}'`);
-      await this.ports.publishEvent(receipt.failureEvent);
-      return { decision, receipt };
+    const receipts: ActionReceipt[] = [];
+    for (const step of decision.actions) {
+      const action = this.runtime.registry.actions.get(step.id)!;
+      const receipt = action.execute ? await action.execute({ facts, actionId: step.id, input: step.input }) : {};
+      receipts.push(receipt);
+      if (receipt.ok === false) {
+        const definition = this.runtime.registry.events.get(receipt.failureEvent.id);
+        if (!definition) throw new Error(`unknown failure event '${receipt.failureEvent.id}'`);
+        if (definition.validate && !definition.validate(receipt.failureEvent.payload)) throw new Error(`invalid payload for failure event '${receipt.failureEvent.id}'`);
+        await this.ports.publishEvent(receipt.failureEvent);
+        return { decision, receipts };
+      }
+      const payloads = receipt.payloads ?? {};
+      for (const eventId of step.emittedEvents) {
+        const definition = this.runtime.registry.events.get(eventId)!;
+        if (!(eventId in payloads)) throw new Error(`action '${step.id}' did not supply payload for emitted event '${eventId}'`);
+        if (definition.validate && !definition.validate(payloads[eventId])) throw new Error(`invalid payload for emitted event '${eventId}'`);
+      }
+      for (const eventId of step.emittedEvents) await this.ports.publishEvent({ id: eventId, payload: payloads[eventId] });
     }
-
-    const payloads = receipt.payloads ?? {};
-    for (const eventId of decision.emittedEvents) {
-      const definition = this.runtime.registry.events.get(eventId)!;
-      if (!(eventId in payloads)) throw new Error(`action '${decision.action.id}' did not supply payload for emitted event '${eventId}'`);
-      if (definition.validate && !definition.validate(payloads[eventId])) throw new Error(`invalid payload for emitted event '${eventId}'`);
-    }
-    for (const eventId of decision.emittedEvents) await this.ports.publishEvent({ id: eventId, payload: payloads[eventId] });
-    return { decision, receipt };
+    return { decision, receipts };
   }
 }
 

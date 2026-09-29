@@ -7,41 +7,45 @@ by Relay. There is no generated JSON/YAML workflow definition.
 
 | Version | Profile | Status | Authority |
 | --- | --- | --- | --- |
-| v1 | Mermaid `stateDiagram-v2` | Implemented | This document plus the two canonical `.mmd` files |
-| v2 | Strict Mermaid `flowchart` | Parser/runtime foundation implemented | [`architecture-v2.md`](architecture-v2.md) and [`src/workflow/graph-v2.ts`](../src/workflow/graph-v2.ts) |
+| v2 | Strict Mermaid `flowchart` | Production | Canonical Job/Task lifecycle authority |
+| v1 | Mermaid `stateDiagram-v2` | Compatibility fixture | Regression/parity oracle only |
 
-The v2 parser, typed registries, deterministic runtime, and focused tests are
-implemented as an isolated foundation. The v1 profile remains authoritative
-for current canonical Job and Task graphs; broad lifecycle migration remains a
-later checkpoint.
+Production canonical graphs:
 
-Canonical graphs:
+- `workflow/job-lifecycle-v2.mmd`
+- `workflow/task-lifecycle-v2.mmd`
+
+Legacy compatibility fixtures remain at:
 
 - `workflow/job-lifecycle.mmd`
 - `workflow/task-lifecycle.mmd`
 
-## Supported profile
+## Supported production profile
 
-A file must start with `stateDiagram-v2`. Blank lines and Mermaid `%%` comments are allowed. The executable profile supports only transitions:
+Production lifecycle graphs use the strict v2 `flowchart` subset defined in
+[`architecture-v2.md`](architecture-v2.md) and implemented by
+[`src/workflow/graph-v2.ts`](../src/workflow/graph-v2.ts). The executable
+concepts remain intentionally small: state, guard, action, emit, and labeled
+input/branch edges. Unsupported Mermaid syntax fails closed.
 
-```text
-[*] --> STATE
-STATE --> STATE: event
-STATE --> STATE: event [guard]
-STATE --> STATE: event / action
-STATE --> STATE: event [guard] / action1, action2
-STATE --> [*]
-```
-
-State, event, guard, and action identifiers use letters/numbers plus `_`, `.`, and `-` (identifiers start with a letter or `_`). Exactly one initial `[*] --> STATE` transition is required. Initial/final pseudo-state transitions have no event label. Unsupported Mermaid constructs fail validation rather than being silently ignored.
-
-The label grammar is intentionally small:
+A graph declares one initial state with:
 
 ```text
-event [guard] / action1, action2
+flowchart LR
+%% relay: initial queued
+queued["state: QUEUED"]
 ```
 
-Guards and actions are **names**, not embedded JavaScript. Runtime code registers implementations for those names. The graph defines policy/structure; TypeScript implements primitive capabilities and side effects.
+State input edges use `on: event` or `request: action`. Guards use explicit
+`true`/`false` branches; a missing branch means that candidate is not
+enabled. Multiple guarded candidates for the same state/input are allowed so
+the runtime preserves deterministic `no_transition` / `ambiguous`
+semantics. Actions may form an unlabelled chain before the target state, which
+preserves ordered mutation/effect lists without adding another DSL construct.
+
+Semantic identifiers are registry-bound names, never embedded code. Display
+text has no executable meaning. The legacy `stateDiagram-v2` parser remains
+available only to verify compatibility against the pre-v2 lifecycle fixtures.
 
 ## Engine boundary
 
@@ -78,7 +82,7 @@ These boundaries keep the executable Mermaid profile small while preventing life
 
 ## Integration verification checklist
 
-- `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` are the only persistent lifecycle transition sources.
+- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production lifecycle transition sources; the legacy files are compatibility fixtures.
 - Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.

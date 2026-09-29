@@ -363,12 +363,17 @@ failure Events; they never assign lifecycle state directly.
 
 ## 4. Compatibility and migration
 
-The current `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`
-files use the existing `stateDiagram-v2` profile. They remain the v1 durable
-compatibility source during migration. Existing Job/Task markers, lifecycle
-values, task attempts, leases, execution IDs, review facts, and derived runtime
-status keep their current meaning. A v2 migration must not rewrite markers just
-because the graph representation changes.
+Production lifecycle authority now uses
+`workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` through
+the strict v2 `flowchart` runtime. The older
+`workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`
+`stateDiagram-v2` files remain compatibility fixtures and parity oracles only.
+
+The migration preserves existing Job/Task markers, lifecycle values, task
+attempts, leases, execution IDs, review facts, and derived runtime status. The
+v1/v2 parity suite compares canonical transition targets, ordered
+mutation/effect actions, guarded rejection, and ambiguity before the old files
+can be retired.
 
 The implementation handoff has a mechanically testable version boundary:
 
@@ -410,10 +415,10 @@ The migration is staged:
 7. remove duplicated procedural authority only after graph decisions, restart,
    reconciliation, and durable-record compatibility tests pass.
 
-Checkpoint: `task.retry` is the first shared Action vertical slice. CLI and
-relayd/dashboard dispatch the same domain action mutation, while the existing
-v1 task lifecycle graph remains authoritative for accepting the retry
-transition; adapter-specific wake, reconciliation, and output behavior remain
+Checkpoint: `task.retry` was the first shared Action vertical slice. CLI and
+relayd/dashboard dispatch the same domain action mutation, and the production
+v2 lifecycle flowchart now authoritatively accepts or rejects the retry
+transition. Adapter-specific wake, reconciliation, and output behavior remain
 outside the Action boundary.
 
 The migration now routes manual CLI/dashboard retry, lease-expiry retry,

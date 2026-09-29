@@ -1,4 +1,4 @@
-import { jobLifecycleWorkflow, taskLifecycleWorkflow } from './workflow/definitions.js';
+import { assertV2StateTransition, jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
 export type JobLifecycleState = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'FAILED' | 'REVIEWING' | 'MERGE_PENDING' | 'MERGED' | 'CANCELLED';
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'UNBLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
@@ -119,5 +119,5 @@ export type Job = { id: string; title: string; objective?: string; projectPath?:
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
-export function assertJobLifecycleTransition(from: JobLifecycleState, to: JobLifecycleState): void { jobLifecycleWorkflow.assertStateTransition(from, to, 'job'); }
-export function assertTaskTransition(from: TaskState, to: TaskState): void { taskLifecycleWorkflow.assertStateTransition(from, to, 'task'); }
+export function assertJobLifecycleTransition(from: JobLifecycleState, to: JobLifecycleState): void { assertV2StateTransition(jobLifecycleV2.graph, from, to, 'job'); }
+export function assertTaskTransition(from: TaskState, to: TaskState): void { assertV2StateTransition(taskLifecycleV2.graph, from, to, 'task'); }

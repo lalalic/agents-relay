@@ -1,0 +1,44 @@
+flowchart LR
+%% relay: initial draft
+draft["state: DRAFT"]
+active["state: ACTIVE"]
+completed["state: COMPLETED"]
+cancelled["state: CANCELLED"]
+notMergedDraft["guard: notMerged"]
+notMergedActive["guard: notMerged"]
+autoMergeReview["guard: autoMerge"]
+autoMergeImplementation["guard: autoMerge"]
+cancelDraftMerge["action: effect.cancelActiveTasks"]
+cancelDraftClose["action: effect.cancelActiveTasks"]
+mergeReview["action: effect.mergePullRequest"]
+mergeImplementation["action: effect.mergePullRequest"]
+cancelActiveMerge["action: effect.cancelActiveTasks"]
+cancelActiveClose["action: effect.cancelActiveTasks"]
+cancelCancelledMerge["action: effect.cancelActiveTasks"]
+
+draft -->|on: activate| active
+draft -->|on: pr.merged| cancelDraftMerge
+cancelDraftMerge --> completed
+draft -->|on: cancel| cancelled
+draft -->|on: pr.closed| notMergedDraft
+notMergedDraft -->|true| cancelDraftClose
+cancelDraftClose --> cancelled
+
+active -->|on: review.approved| autoMergeReview
+autoMergeReview -->|true| mergeReview
+mergeReview --> active
+active -->|on: implementation.completed| autoMergeImplementation
+autoMergeImplementation -->|true| mergeImplementation
+mergeImplementation --> active
+active -->|on: effect.mergePullRequest.failed| active
+active -->|on: pr.merged| cancelActiveMerge
+cancelActiveMerge --> completed
+active -->|on: cancel| cancelled
+active -->|on: pr.closed| notMergedActive
+notMergedActive -->|true| cancelActiveClose
+cancelActiveClose --> cancelled
+
+cancelled -->|on: pr.merged| cancelCancelledMerge
+cancelCancelledMerge --> completed
+cancelled -->|on: effect.cancelActiveTasks.failed| cancelled
+completed -->|on: effect.cancelActiveTasks.failed| completed
