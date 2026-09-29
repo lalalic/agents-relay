@@ -47,3 +47,4 @@ stateDiagram-v2
 
     SUCCEEDED --> [*]
     CANCELLED --> [*]
+    CANCELLED --> QUEUED: recover [explicitRecovery] / mutation.clearError,mutation.clearFailureReason

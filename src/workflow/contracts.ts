@@ -13,6 +13,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'pr.merged',
   'reconcile',
   'release',
+  'recover',
   'retry',
   'review.started',
   'review.approved',
@@ -30,6 +31,7 @@ export const WORKFLOW_EVENT_NAMES = [
 ] as const;
 
 export const WORKFLOW_FACT_NAMES = [
+  'explicitRecovery',
   'dependenciesSatisfied',
   'dependenciesUnsatisfied',
   'runnable',

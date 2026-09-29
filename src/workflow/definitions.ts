@@ -42,6 +42,7 @@ export const jobLifecycleWorkflow = load(
 export const taskLifecycleWorkflow = load(
   'task-lifecycle',
   {
+    explicitRecovery: booleanGuard('explicitRecovery'),
     dependenciesSatisfied: booleanGuard('dependenciesSatisfied'),
     dependenciesUnsatisfied: booleanGuard('dependenciesUnsatisfied'),
     runnable: booleanGuard('runnable'),

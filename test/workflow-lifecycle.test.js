@@ -57,6 +57,7 @@ const taskCases = [
   ['RUNNING','task.cancelled',{},'CANCELLED'],
   ['BLOCKED','task.unblocked',{},'UNBLOCKED'],
   ['BLOCKED','cancel',{},'CANCELLED'],
+  ['CANCELLED','recover',{explicitRecovery:true},'QUEUED'],
   ['UNBLOCKED','retry',{},'QUEUED'],
   ['FAILED','retry',{},'QUEUED'],
   ['FAILED','task.started',{recoverableExecution:true},'RUNNING'],
@@ -96,6 +97,7 @@ test('Graph Engine is authoritative for the lifecycle transition corpus', () => 
     ['FAILED','task.completed',{recoverableExecution:false}],
     ['RUNNING','worker.delivery_failed',{}],
     ['DRAFT','reconcile',{dependenciesSatisfied:false}],
+    ['CANCELLED','recover',{}],
   ]) assert.equal(decideTaskLifecycle(task(from),event,facts).accepted,false);
 });
 

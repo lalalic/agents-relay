@@ -372,6 +372,24 @@ test('CLI record persists completed orchestrator work without pretending it was 
   assert.equal(saved.tasks[0].executionId, 'abc123');
   assert.equal(saved.tasks[0].result.data.commit, 'abc123');
 });
+test('CLI recover requeues the existing cancelled task without creating a replacement', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-recover-'));
+  const file = join(directory, 'job.json');
+  const cancelled = task('hourly-slot', 'CANCELLED');
+  cancelled.attempt = 3; cancelled.maxAttempts = 3; cancelled.error = 'Cancelled by user';
+  await writeFile(file, JSON.stringify(job([cancelled])));
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'task', 'recover', '--file', file, '--id', 'j', '--task-id', 'hourly-slot', '--reason', 'Relay lease-race repair verified'], { cwd: process.cwd() });
+  const [code] = await once(result, 'exit');
+  assert.equal(code, 0);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks.length, 1);
+  assert.equal(saved.tasks[0].id, 'hourly-slot');
+  assert.equal(saved.tasks[0].state, 'QUEUED');
+  assert.equal(saved.tasks[0].error, null);
+  assert.equal(saved.tasks[0].executionId, null);
+  assert.equal(saved.tasks[0].maxAttempts, 6);
+  await rm(directory, { recursive: true, force: true });
+});
 test('healthy task states clear stale current errors without deleting history events', async () => {
   const cases=[['FAILED','retry'],['QUEUED','task.started'],['RUNNING','task.completed']];
   for (const [from,event] of cases) {
@@ -393,6 +411,13 @@ test('manual retry budget advances in three-attempt windows without resetting hi
 test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
 test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=schedule(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
 test('RUNNING tasks cannot return to DRAFT', async () => { const current=task('running','RUNNING'); await assert.rejects(transitionTaskEvent(current,'hold'),/No enabled workflow transition from RUNNING on hold/); });
+test('explicit recovery requeues a cancelled task only with the recovery fact', async () => {
+  const cancelled=task('cancelled','CANCELLED'); cancelled.error='Cancelled by user'; cancelled.executionId='stale-exec';
+  await assert.rejects(transitionTaskEvent(cancelled,'recover'),/No enabled workflow transition from CANCELLED on recover/);
+  await transitionTaskEvent(cancelled,'recover',{explicitRecovery:true});
+  assert.equal(cancelled.state,'QUEUED');
+  assert.equal(cancelled.error,null);
+});
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('repository pool orders open jobs globally by durable priority', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','low']); });
 test('startup reconciliation selects expired durable RUNNING leases after daemon restart', () => {

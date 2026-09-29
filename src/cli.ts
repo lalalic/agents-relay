@@ -124,7 +124,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   };
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'recover', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -161,6 +161,21 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     await store.saveTask(task);
     await saveLocal(localFile, await store.load(job.id));
     console.log(JSON.stringify(task, null, 2));
+    return;
+  }
+  if (action === 'recover') {
+    const reason = arg(args, '--reason');
+    if (task.state !== 'CANCELLED') throw new Error(`Task ${id} is ${task.state}; only CANCELLED tasks can be explicitly recovered`);
+    if (!reason.trim()) throw new Error('task recover requires --reason');
+    if (job.state === 'CANCELLED' || job.state === 'COMPLETED') throw new Error(`Cannot recover task ${id} on terminal job ${job.id} (${job.state})`);
+    task.maxAttempts = extendRetryBudget(task);
+    await transitionTaskEvent(task, 'recover', { explicitRecovery: true });
+    task.error = null;
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+    await store.saveTask(task);
+    await saveLocal(localFile, job);
+    await publishWake(eventBus(args), job, task.id, `${task.id} recovered: ${reason}`);
+    console.log(JSON.stringify({ taskId: task.id, recovered: true, reason, task }, null, 2));
     return;
   }
   if (action === 'retry' || action === 'cancel') {

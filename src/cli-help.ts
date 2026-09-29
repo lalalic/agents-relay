@@ -7,7 +7,7 @@ Usage:
 
 Commands:
   job create|update|show|list|merge|unblock|cancel  Manage durable GitHub-backed jobs
-  task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
+  task create|update|show|list|complete|retry|recover|unblock|cancel  Manage durable tasks
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
@@ -87,7 +87,7 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|list|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|list|retry|recover|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -95,6 +95,7 @@ Actions:
   show    Show one Task
   list    List Tasks for a Job
   retry   Retry a FAILED Task
+  recover Explicitly requeue a CANCELLED Task after repairing its blocker
   unblock Authoritatively invalidate a BLOCKED decision
   complete Complete an orchestrator-owned Task
   cancel  Cancel a Task`,
@@ -126,6 +127,9 @@ Required: --task-id ID, --summary TEXT, and the normal Job storage options. The 
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  'task recover': `Explicitly requeue one CANCELLED Task after its recovery blocker is repaired.
+
+Required: --task-id ID, --reason TEXT, and the normal Job storage options. This preserves the existing Task identity and clears only the stale execution lease; it cannot recover a terminal Job.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
