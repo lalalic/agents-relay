@@ -159,7 +159,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 
 ## Non-goals for v1
 
-- Reimplement GitHub collaborative records as a competing database. V2 keeps GitHub as the durable collaboration projection while a small local Relay Store owns operational execution state.
+- Reimplement GitHub as a database.
 - Build a general workflow-language/DAG editor.
 - Require Redis, Postgres, Temporal, or Kubernetes.
 - Make NATS mandatory.

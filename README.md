@@ -2,8 +2,6 @@
 
 Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. The PR body stores the durable Job marker plus human-readable Job objective, while PR comments store durable Task and other append-friendly records; correlated terminal events are authoritative for model-backed task lifecycle transitions.
 
-V2 separates **operational execution state** from that collaboration record. A local RelayStore may use SQLite/WAL for runtime snapshots, event idempotency and a durable GitHub projection outbox. ProjectedDurableStore bootstraps from the existing GitHub representation, commits Job/Plan/Task runtime changes locally, and lets GitHubProjectionWriter project them asynchronously. GitHub therefore remains the human-readable durable Job/Plan/Task/Review surface without being required for every high-frequency runtime transition.
-
 ## Quick start
 
 For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
