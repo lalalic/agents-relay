@@ -233,24 +233,24 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   private async recoverLostExecutions(job: Job, now: number): Promise<void> {
-    for (const task of job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null))) {
-      const expired = task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now;
-      if (!expired) continue;
+    const candidates = job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null));
+    for (const staleTask of candidates) {
+      if (staleTask.leaseExpiresAt === null || new Date(staleTask.leaseExpiresAt).getTime() > now) continue;
+      // Re-read durable state before applying lease recovery: another reconciler may have accepted a terminal event or launched a newer execution.
+      const task = (await this.store.load(job.id)).tasks.find(item => item.id === staleTask.id);
+      if (!task) continue;
+      const sameGeneration = task.executionId === staleTask.executionId && task.leaseOwner === staleTask.leaseOwner && task.leaseExpiresAt === staleTask.leaseExpiresAt;
+      const recoverable = task.state === 'RUNNING' || (task.state === 'QUEUED' && task.executionId !== null);
+      if (!sameGeneration || !recoverable || task.leaseExpiresAt === null || new Date(task.leaseExpiresAt).getTime() > now) continue;
       this.live.get(task.id)?.execution.cancel();
       const planner = this.plannerLive.get(task.id);
       if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
-      const failedEvent = task.state === 'RUNNING' ? 'task.failed' : 'fail';
-      await transitionTaskEvent(task, failedEvent);
-      task.error = 'Lease expired';
-      task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-      if (task.attempt < task.maxAttempts) {
-        await transitionTaskEvent(task, 'retry');
-        await this.store.saveTask(task);
-      } else {
-        task.error += ' after maximum attempts';
-        await this.store.saveTask(task);
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'lease_expired' }));
-      }
+      await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.failed' : 'fail');
+      task.error = 'Lease expired'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+      if (task.attempt < task.maxAttempts) { await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); continue; }
+      task.error += ' after maximum attempts';
+      await this.store.saveTask(task);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'lease_expired' }));
     }
   }
   async planJob(jobId: string, guidance?: string): Promise<{ job: Job; round: Task }> {

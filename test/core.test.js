@@ -847,6 +847,30 @@ test('stale sync process settlement cannot clear a newer execution terminal time
   await stop();
 });
 
+test('stale lease recovery cannot overwrite a terminal success or newer execution generation', async () => {
+  const t=task('lease-race','RUNNING');
+  t.attempt=2; t.maxAttempts=2; t.executionId='exec-old'; t.leaseOwner='relay-old';
+  t.leaseExpiresAt=new Date(Date.now()-1000).toISOString();
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[]});
+  const stale=await store.load('j');
+
+  const completed={...(await store.load('j')).tasks[0],state:'SUCCEEDED',result:{summary:'durable success'},error:null,leaseOwner:null,leaseExpiresAt:null,executionId:null,updatedAt:now()};
+  await store.saveTask(completed);
+  await reconciler.recoverLostExecutions(stale, Date.now());
+  let durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.result?.summary,'durable success');
+
+  const newer={...t,state:'RUNNING',executionId:'exec-new',leaseOwner:'relay-new',leaseExpiresAt:new Date(Date.now()-1000).toISOString(),updatedAt:now()};
+  await store.saveTask(newer);
+  await reconciler.recoverLostExecutions(stale, Date.now());
+  durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.executionId,'exec-new');
+  assert.equal(durable.error,null);
+});
+
 test('normal terminal event remains authoritative when Codex exits afterward', async () => {
   const t=task('success-then-exit'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
