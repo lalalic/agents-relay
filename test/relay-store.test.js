@@ -159,6 +159,82 @@ test('ProjectedDurableStore advances local task state while GitHub projection is
   await tmp.close(relay);
 });
 
+
+test('ProjectedDurableStore queues merge and close as durable GitHub projections', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remote = new InMemoryStore(makeJob());
+  let merges = 0;
+  let closes = 0;
+  remote.mergePullRequest = async expectedHeadSha => {
+    merges += 1;
+    assert.equal(expectedHeadSha, 'merge-sha');
+  };
+  remote.closePullRequest = async () => { closes += 1; };
+  const local = new ProjectedDurableStore(relay, remote);
+
+  await local.mergePullRequest('merge-sha');
+  await local.closePullRequest();
+  assert.equal(merges, 0);
+  assert.equal(closes, 0);
+  assert.equal(await relay.pendingProjectionCount(), 2);
+
+  assert.deepEqual(await local.projection.flushOnce(), { projected: 2, deferred: 0 });
+  assert.equal(merges, 1);
+  assert.equal(closes, 1);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  await tmp.close(relay);
+});
+
+test('ProjectedDurableStore resolves blocker domain mutations locally without direct GitHub blocker writes', async () => {
+  const rootTmp = await tempDb();
+  const dependentTmp = await tempDb();
+  const blockerRelay = new SQLiteRelayStore(rootTmp.path);
+  const dependentRelay = new SQLiteRelayStore(dependentTmp.path);
+
+  const blockerJob = { ...makeJob(), id: 'blocker-job', repository: 'owner/blocker', prNumber: 10, tasks: [] };
+  const dependentTask = { ...makeTask('DRAFT'), jobId: 'dependent-job', id: 'dependent-task' };
+  const dependentJob = { ...makeJob(), id: 'dependent-job', repository: 'owner/dependent', prNumber: 20, tasks: [dependentTask] };
+  const blockerRemote = new InMemoryStore(blockerJob);
+  const dependentRemote = new InMemoryStore(dependentJob);
+  blockerRemote.registerBlockerDependent = async () => { throw new Error('direct GitHub blocker registration must not run'); };
+  blockerRemote.resolveBlockerDependents = async () => { throw new Error('direct GitHub blocker resolution must not run'); };
+
+  let blockerLocal;
+  let dependentLocal;
+  const relatedStore = (repository, prNumber) => {
+    if (repository === 'owner/dependent' && prNumber === 20) return dependentLocal;
+    if (repository === 'owner/blocker' && prNumber === 10) return blockerLocal;
+    throw new Error(`unexpected related store ${repository}#${prNumber}`);
+  };
+  blockerLocal = new ProjectedDurableStore(blockerRelay, blockerRemote, null, relatedStore);
+  dependentLocal = new ProjectedDurableStore(dependentRelay, dependentRemote, null, relatedStore);
+  await blockerLocal.hydrate(blockerJob);
+  await dependentLocal.hydrate(dependentJob);
+
+  await blockerLocal.registerBlockerDependent('blocker-job', {
+    repository: 'owner/dependent',
+    prNumber: 20,
+    jobId: 'dependent-job',
+    taskId: 'dependent-task',
+    resolutionMode: 'merge',
+  });
+  const registered = await blockerLocal.load('blocker-job');
+  assert.equal(registered.unblocks.length, 1);
+  assert.equal((await dependentLocal.load('dependent-job')).tasks[0].blockedBy.jobId, 'blocker-job');
+
+  const resolved = await blockerLocal.resolveBlockerDependents('blocker-job', 'merge');
+  assert.equal(resolved.resumed, 1);
+  assert.equal(resolved.waiting, 0);
+  assert.equal((await dependentLocal.load('dependent-job')).tasks[0].state, 'QUEUED');
+  assert.equal((await blockerLocal.load('blocker-job')).unblocks, undefined);
+  assert.ok(await blockerRelay.pendingProjectionCount() > 0);
+  assert.ok(await dependentRelay.pendingProjectionCount() > 0);
+
+  await rootTmp.close(blockerRelay);
+  await dependentTmp.close(dependentRelay);
+});
+
 test('GitHubProjectionWriter defers rate-limited writes and respects retry-after', async () => {
   const tmp = await tempDb();
   const relay = new SQLiteRelayStore(tmp.path);

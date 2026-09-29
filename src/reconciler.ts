@@ -210,9 +210,6 @@ export class Reconciler extends ReconcilerReviewBase {
           { jobId: finalState.id, transitionKey: `implementation.completed:${headSha}`, data: { headSha } },
         );
         await this.applyJobEffectOutcomes(finalState, outcomes);
-        if (outcomes.some(item => item.effect === 'effect.mergePullRequest' && item.status !== 'failed')) {
-          await this.emit(eventFor(finalState.id, 'job', null, 'job.merged', 'succeeded', 'Completed work requested merge for PR #' + finalState.prNumber, 'user', { headSha, autoMerge: true }, { agent: 'relay', component: 'agents-relay' }));
-        }
       }
       return this.store.load(jobId);
     } finally { this.reconciling = false; }

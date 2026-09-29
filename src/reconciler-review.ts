@@ -214,9 +214,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         { jobId: job.id, taskId: task.id, transitionKey: `review.approved:${headSha}`, data: { headSha } },
       );
       await this.applyJobEffectOutcomes(job, outcomes);
-      if (outcomes.some(item => item.effect === 'effect.mergePullRequest' && item.status !== 'failed')) {
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'review.merged', 'succeeded', 'Reviewer-approved PR #' + job.prNumber + ' merge requested', 'user', { headSha, autoMerge: true }, { agent: 'reviewer', component: 'agents-relay' }));
-      }
     }
     return { applied: true, reconcile: outcome === 'changes_required', reason: `review.${outcome}`, reconcileMode: outcome === 'changes_required' ? 'detached' : undefined };
   }

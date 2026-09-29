@@ -17,7 +17,9 @@ export type ProjectionOperation =
   | 'append_task'
   | 'save_task'
   | 'save_agent'
-  | 'update_pr_body';
+  | 'update_pr_body'
+  | 'merge_pull_request'
+  | 'close_pull_request';
 
 export type ProjectionRequest = {
   idempotencyKey: string;

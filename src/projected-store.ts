@@ -1,5 +1,5 @@
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
-import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
+import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget, type BlockerResolutionSummary } from './blockers.js';
 import type { Comment, DurableStore, PullRequestState } from './store.js';
 import { sameTaskDefinition } from './store-task-definition.js';
 import type { ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
@@ -10,7 +10,9 @@ type ProjectedPayload =
   | { operation: 'append_plan' | 'save_plan'; value: Plan }
   | { operation: 'append_task' | 'save_task'; value: Task }
   | { operation: 'save_agent'; value: AgentRegistration }
-  | { operation: 'update_pr_body'; value: string };
+  | { operation: 'update_pr_body'; value: string }
+  | { operation: 'merge_pull_request'; expectedHeadSha?: string }
+  | { operation: 'close_pull_request' };
 
 function taskKey(task: Pick<Task, 'jobId' | 'id'>): string { return `task:${task.jobId ?? ''}:${task.id}`; }
 function planKey(plan: Pick<Plan, 'jobId' | 'id'>): string { return `plan:${plan.jobId}:${plan.id}`; }
@@ -70,6 +72,14 @@ export class GitHubProjectionWriter {
         if (!this.github.updatePullRequestBody) throw new Error('GitHub projection target cannot update PR body');
         await this.github.updatePullRequestBody(payload.value);
         return;
+      case 'merge_pull_request':
+        if (!this.github.mergePullRequest) throw new Error('GitHub projection target cannot merge pull request');
+        await this.github.mergePullRequest(payload.expectedHeadSha);
+        return;
+      case 'close_pull_request':
+        if (!this.github.closePullRequest) throw new Error('GitHub projection target cannot close pull request');
+        await this.github.closePullRequest();
+        return;
     }
   }
 }
@@ -78,7 +88,12 @@ export class ProjectedDurableStore implements DurableStore {
   readonly projection: GitHubProjectionWriter;
   private readonly seededFacts: PullRequestFacts | null;
 
-  constructor(private readonly relay: RelayStore, private readonly github: DurableStore, seed: GitHubPullRequestSeed | null = null) {
+  constructor(
+    private readonly relay: RelayStore,
+    private readonly github: DurableStore,
+    seed: GitHubPullRequestSeed | null = null,
+    private readonly relatedStore?: (repository: string, prNumber: number) => DurableStore,
+  ) {
     this.projection = new GitHubProjectionWriter(relay, github);
     this.seededFacts = pullRequestFactsFromSeed(seed);
     if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
@@ -195,12 +210,20 @@ export class ProjectedDurableStore implements DurableStore {
   }
   async headSha(): Promise<string | null> { return (await this.pullRequestHead())?.sha ?? null; }
   async mergePullRequest(expectedHeadSha?: string): Promise<void> {
-    if (!this.github.mergePullRequest) throw new Error('GitHub store cannot merge pull request');
-    await this.github.mergePullRequest(expectedHeadSha);
+    await this.relay.enqueueProjection({
+      idempotencyKey: `merge_pull_request:${expectedHeadSha ?? 'current'}`,
+      operation: 'merge_pull_request',
+      payload: { operation: 'merge_pull_request', expectedHeadSha } satisfies ProjectedPayload,
+      priority: 200,
+    });
   }
   async closePullRequest(): Promise<void> {
-    if (!this.github.closePullRequest) throw new Error('GitHub store cannot close pull request');
-    await this.github.closePullRequest();
+    await this.relay.enqueueProjection({
+      idempotencyKey: 'close_pull_request',
+      operation: 'close_pull_request',
+      payload: { operation: 'close_pull_request' } satisfies ProjectedPayload,
+      priority: 200,
+    });
   }
   async updatePullRequestBody(body: string): Promise<void> {
     await this.relay.enqueueProjection({
@@ -212,12 +235,24 @@ export class ProjectedDurableStore implements DurableStore {
     });
   }
   async registerBlockerDependent(jobId: string, dependent: BlockerDependentTarget): Promise<void> {
-    if (!this.github.registerBlockerDependent) throw new Error('GitHub store cannot register blocker dependency');
-    await this.github.registerBlockerDependent(jobId, dependent);
+    if (!this.relatedStore) throw new Error('Projected store requires a related-store factory for blocker dependencies');
+    await registerBlockerDependency({
+      blockerStore: this,
+      blockerJobId: jobId,
+      dependentStore: this.relatedStore(dependent.repository, dependent.prNumber),
+      dependentJobId: dependent.jobId,
+      dependentTaskId: dependent.taskId,
+      resolutionMode: dependent.resolutionMode,
+    });
   }
   async resolveBlockerDependents(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary> {
-    if (!this.github.resolveBlockerDependents) throw new Error('GitHub store cannot resolve blocker dependents');
-    return this.github.resolveBlockerDependents(jobId, resolution);
+    if (!this.relatedStore) throw new Error('Projected store requires a related-store factory for blocker dependencies');
+    return resolveBlockerDependencies({
+      blockerStore: this,
+      blockerJobId: jobId,
+      resolution,
+      dependentStore: (repository, prNumber) => this.relatedStore!(repository, prNumber),
+    });
   }
 
   private async ensurePullRequestFacts(): Promise<PullRequestFacts> {
