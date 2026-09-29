@@ -438,6 +438,39 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   assert.match(saved.error,/event bus/);
   assert.equal(adapter.launches,0);
 });
+test('startup recovery immediately retries an old-owner Codex execution', async () => {
+  const running=task('restart-codex','RUNNING');
+  running.attempt=1; running.maxAttempts=3; running.executionId='old-execution'; running.leaseOwner='relayd-old'; running.leaseExpiresAt='2099-09-25T17:00:00.000Z';
+  const store=new InMemoryStore(job([running])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:bus,projectPathForJob:()=>process.cwd()});
+  await reconciler.recoverStartupOrphans('j');
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'QUEUED'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
+});
+test('startup recovery leaves current-owner Codex and ChatGPT async executions untouched', async () => {
+  const current=task('current-codex','RUNNING'); current.attempt=1; current.executionId='current'; current.leaseOwner='relayd-new'; current.leaseExpiresAt='2099-09-25T17:00:00.000Z';
+  const chat=task('chat-async','RUNNING'); chat.adapter='chatgpt'; chat.attempt=1; chat.executionId='chat'; chat.leaseOwner='relayd-old'; chat.leaseExpiresAt='2099-09-25T17:00:00.000Z';
+  const store=new InMemoryStore(job([current,chat])); const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  await reconciler.recoverStartupOrphans('j');
+  const saved=await store.load('j');
+  assert.deepEqual(saved.tasks.map(item=>({state:item.state,attempt:item.attempt,executionId:item.executionId,leaseOwner:item.leaseOwner})),[
+    {state:'RUNNING',attempt:1,executionId:'current',leaseOwner:'relayd-new'},
+    {state:'RUNNING',attempt:1,executionId:'chat',leaseOwner:'relayd-old'},
+  ]);
+  assert.equal(adapter.launches,0);
+});
+test('startup recovery respects terminal state and max-attempt protection', async () => {
+  const terminal=task('already-terminal','SUCCEEDED'); terminal.attempt=2; terminal.executionId='done'; terminal.leaseOwner='relayd-old'; terminal.leaseExpiresAt='2099-09-25T17:00:00.000Z'; terminal.result={summary:'done'};
+  const exhausted=task('exhausted-codex','RUNNING'); exhausted.attempt=3; exhausted.maxAttempts=3; exhausted.executionId='exhausted'; exhausted.leaseOwner='relayd-old'; exhausted.leaseExpiresAt='2099-09-25T17:00:00.000Z';
+  const protectedJob=job([terminal,exhausted]); protectedJob.reviewEnabled=false; protectedJob.autoMerge=false;
+  const store=new InMemoryStore(protectedJob); const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  await reconciler.recoverStartupOrphans('j');
+  const saved=await store.load('j'); const done=saved.tasks.find(item=>item.id==='already-terminal'); const failed=saved.tasks.find(item=>item.id==='exhausted-codex');
+  assert.equal(done.state,'SUCCEEDED'); assert.equal(done.executionId,'done');
+  assert.equal(failed.state,'FAILED'); assert.equal(failed.attempt,3); assert.match(failed.error,/maximum attempts/); assert.equal(adapter.launches,0);
+});
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
 test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
 test('GitHub draft PR does not override ACTIVE job execution lifecycle', () => { const held={...job([]),id:'held'}; const item={job:held,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['held']); });
