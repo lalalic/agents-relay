@@ -71,13 +71,16 @@ test('task rows append optional Job-defined tag display without replacing lifecy
   assert.match(dashboardHtml, /'badge '\+value\(task\.state\)/);
 });
 
-test('task tree branches can fold and unfold without changing task selection', () => {
+test('task tree branches default-collapse complete subtrees and preserve manual fold overrides', () => {
   assert.match(dashboardHtml, /const collapsedTasks=new Set\(\)/);
+  assert.match(dashboardHtml, /const expandedTasks=new Set\(\)/);
+  assert.match(dashboardHtml, /function taskSubtreeComplete\(task,children\)\{return \['SUCCEEDED','CANCELLED'\]\.includes\(task\.state\)&&\(children\.get\(task\.id\)\|\|\[\]\)\.every\(child=>taskSubtreeComplete\(child,children\)\);\}/);
+  assert.match(dashboardHtml, /collapsedTasks\.has\(key\)\|\|\(!expandedTasks\.has\(key\)&&taskSubtreeComplete\(task,children\)\)/);
   assert.match(dashboardHtml, /className='task-fold'/);
   assert.match(dashboardHtml, /fold\.setAttribute\('aria-expanded',String\(!collapsed\)\)/);
   assert.match(dashboardHtml, /ul\.hidden=collapsed/);
-  assert.match(dashboardHtml, /collapsedTasks\.add\(key\)/);
-  assert.match(dashboardHtml, /collapsedTasks\.delete\(key\)/);
+  assert.match(dashboardHtml, /collapsedTasks\.add\(key\);expandedTasks\.delete\(key\)/);
+  assert.match(dashboardHtml, /collapsedTasks\.delete\(key\);expandedTasks\.add\(key\)/);
   assert.match(dashboardHtml, /if\(nested\.length\)\{/);
 });
 
