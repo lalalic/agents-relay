@@ -13,15 +13,8 @@ export type TaskActionRequest = {
 
 export type TaskActionResult = { job: Job; task: Task };
 
-/** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
-export async function dispatchTaskAction(
-  store: DurableStore,
-  request: TaskActionRequest,
-): Promise<TaskActionResult> {
-  if (request.id !== TASK_RETRY_ACTION) throw new Error(`Unsupported task action ${request.id}`);
-  const job = await store.load(request.jobId);
-  const task = job.tasks.find(item => item.id === request.taskId);
-  if (!task) throw new Error(`Task ${request.taskId} not found`);
+/** Shared task.retry mutation. The canonical lifecycle graph remains the transition authority. */
+export async function applyTaskRetryAction(task: Task): Promise<Task> {
   if (task.state === 'BLOCKED') throw new Error(`Task ${task.id} is BLOCKED; use task unblock --reason instead of retry`);
   if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
   if (task.state !== 'FAILED') throw new Error(`Task ${task.id} is not restartable (${task.state})`);
@@ -34,6 +27,19 @@ export async function dispatchTaskAction(
   task.leaseOwner = null;
   task.leaseExpiresAt = null;
   task.executionId = null;
+  return task;
+}
+
+/** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
+export async function dispatchTaskAction(
+  store: DurableStore,
+  request: TaskActionRequest,
+): Promise<TaskActionResult> {
+  if (request.id !== TASK_RETRY_ACTION) throw new Error(`Unsupported task action ${request.id}`);
+  const job = await store.load(request.jobId);
+  const task = job.tasks.find(item => item.id === request.taskId);
+  if (!task) throw new Error(`Task ${request.taskId} not found`);
+  await applyTaskRetryAction(task);
   await store.saveTask(task);
   return { job, task };
 }

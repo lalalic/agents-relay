@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
 import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { applyTaskRetryAction } from './task-actions.js';
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
@@ -245,7 +246,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
       await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.failed' : 'fail');
       task.error = 'Lease expired'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-      if (task.attempt < task.maxAttempts) { await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); continue; }
+      if (task.attempt < task.maxAttempts) { await applyTaskRetryAction(task); await this.store.saveTask(task); continue; }
       task.error += ' after maximum attempts';
       await this.store.saveTask(task);
       await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error, 'user', { reason: 'lease_expired' }));

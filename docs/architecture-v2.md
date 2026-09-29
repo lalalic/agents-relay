@@ -416,6 +416,10 @@ v1 task lifecycle graph remains authoritative for accepting the retry
 transition; adapter-specific wake, reconciliation, and output behavior remain
 outside the Action boundary.
 
+The next migration increment routes lease-expiry automatic retry through that
+same `task.retry` mutation. This proves internal reconciliation can reuse the
+Action boundary without moving lifecycle policy out of the canonical graph.
+
 During the transition, code may translate v1 graph decisions into v2 engine
 inputs, but it must not create a second independent lifecycle policy. Any
 intentional behavior change requires a migration note and compatibility test.
