@@ -1,285 +1,325 @@
 # Agents Relay v2 architecture specification
 
-This document is the v2 design contract. It is intentionally narrower than
-Mermaid: an executable graph is a deterministic workflow document, not a
-general-purpose workflow programming language.
+Status: architecture foundation for the incremental v2 migration. This document
+defines the target graph contract; it does not claim that the v2 parser or
+runtime has been implemented yet.
 
-## Mental model
+## 1. Mental model and boundaries
 
-```text
-Event -> Graph -> State -> Action -> Event
-```
-
-An **Event** is an observed fact or an explicit request, such as
-`task.completed`, `github.pr.merged`, or `task.retry`. The **Graph** evaluates
-the event against the current durable **State** and registered **Guard** facts.
-The accepted transition records the next state and declares an **Action**.
-An action executor performs the external intent and reports a new Event. A
-graph may also declare an `emit` node for a deterministic event produced by
-the transition itself.
-
-The graph engine is the only lifecycle decision authority. It does not call
-GitHub, the event bus, workers, or storage. Adapters, the CLI, relayd,
-webhooks, the scheduler, and reconciliation collect facts or submit typed
-actions/events through the same engine boundary.
-
-## Durable boundaries
-
-- GitHub PR bodies and comments remain the durable Job/Task record.
-- Graph files are the canonical workflow source; generated JSON/YAML mirrors
-  are not allowed.
-- Registries provide executable meaning for names in a graph. They are typed
-  code boundaries, not an alternate workflow definition.
-- Durable persistence, leases, idempotency, event delivery, external I/O, and
-  derived runtime-status projections remain outside graph semantics.
-- Existing v1 Job/Task markers and public lifecycle behavior remain compatible
-  during migration. A migration may add a graph or adapter, but must not
-  reinterpret old marker fields silently.
-
-The current `stateDiagram-v2` implementation in
-[`workflow-engine.md`](workflow-engine.md) remains the compatibility profile
-until the v2 flowchart runtime is implemented. This document defines the
-target profile for the next runtime task; it does not authorize a broad
-lifecycle migration in the documentation phase.
-
-## Strict executable Mermaid profile
-
-### File shape
-
-An executable v2 file:
-
-1. starts with exactly `flowchart LR`, `flowchart TD`, `flowchart TB`, or
-   `flowchart RL`;
-2. contains only the declarations and edges described below;
-3. permits blank lines and `%%` comments;
-4. has exactly one root `state:` node (a state with no incoming edge);
-5. has at least one `state:` node and one executable edge; and
-6. contains no Mermaid directives, styling, or renderer-only syntax.
-
-The direction affects rendering only. It never changes execution order.
-
-### Identifiers and declarations
-
-Node IDs and semantic IDs match:
+Agents Relay v2 is an action-driven runtime for durable agent graphs. The
+canonical loop is:
 
 ```text
-[A-Za-z_][A-Za-z0-9_.-]*
+Event / Action request
+  -> Graph
+  -> durable State transition
+  -> declared Action/effect
+  -> execution
+  -> resulting Event
+  -> Graph
 ```
 
-Every node must be declared exactly once before it is referenced by an edge.
-The declaration forms are the complete executable node vocabulary:
+An **Event** is an observed fact (`task.completed`, `github.pr.merged`, or
+`schedule.due`). A **State** is durable truth (`Task=BLOCKED` or
+`Job.lifecycle=ACTIVE`). An **Action** is an intent or effect (`task.retry`,
+`worker.launch`, or `github.merge`). A graph is the deterministic policy that
+connects those concepts; it is not a process runner or a scripting language.
+
+The boundary is deliberately one-way:
+
+- adapters (CLI, API, webhook, scheduler, and event subscriptions) normalize
+  input into an Event or Action request;
+- the Graph Engine validates topology, evaluates registered guards, and returns
+  a transition plus declared effects;
+- the state store applies only the returned deterministic mutation;
+- Action executors perform I/O and publish resulting Events;
+- the resulting Event is fed back through the same Graph Engine.
+
+No adapter may assign lifecycle state directly. No graph may call GitHub, NATS,
+worker processes, a browser, or a durable store. This keeps the graph
+reviewable and makes CLI and relayd/API behavior semantically equivalent.
+
+## 2. Strict executable Mermaid profile
+
+The v2 executable format is a deliberately small Mermaid `flowchart` subset.
+It is the canonical source for new workflow graphs: the same file is edited in
+reviews, rendered by Mermaid, and parsed by Relay. There is no generated JSON,
+YAML, or hidden TypeScript workflow definition.
+
+### 2.1 Accepted document form
+
+The document must contain:
+
+1. one header: `flowchart LR`, `flowchart RL`, `flowchart TD`, or `flowchart TB`;
+2. zero or more blank lines or `%%` comments;
+3. node declarations and directed edges from the grammar below;
+4. exactly one `initial` comment naming the initial state; and
+5. at least one state node and one executable path.
+
+The `initial` declaration is a Relay comment, not executable code:
+
+```mermaid
+flowchart LR
+%% relay: initial draft
+draft["state: DRAFT"]
+```
+
+This is the only supported comment directive. Other comments remain display
+comments and have no semantic effect.
+
+### 2.2 Nodes and controlled semantic identifiers
+
+Node IDs are local topology names. They use
+`[A-Za-z_][A-Za-z0-9_.-]*` and are not registry identifiers. Each executable
+node has exactly one controlled label:
 
 ```text
-NODE["state: STATE_ID"]
-NODE{"guard: GUARD_ID"}
-NODE["action: ACTION_ID"]
-NODE(["emit: EVENT_ID"])
+node-id["state: STATE_ID"]
+node-id["guard: GUARD_ID"]
+node-id["action: ACTION_ID"]
+node-id["emit: EVENT_ID"]
 ```
 
-`state` nodes represent durable state. `guard` nodes read a registered,
-side-effect-free fact. `action` nodes represent a typed intent/effect. `emit`
-nodes represent an event that can be fed back into the graph. The Mermaid
-shape is presentation only; the `state:`, `guard:`, `action:`, and `emit:`
-prefixes are the semantic contract.
+`STATE_ID`, `GUARD_ID`, `ACTION_ID`, and `EVENT_ID` use the same identifier
+alphabet. The label prefix and the identifier are parsed separately. Display
+text may be added only after a `|` separator and is never executable:
 
-`STATE_ID`, `GUARD_ID`, `ACTION_ID`, and `EVENT_ID` must be registry names.
-Display text may be added only as a non-executable Mermaid label in a future
-profile; this profile does not parse or preserve arbitrary display text.
+```mermaid
+queued["state: QUEUED | ready to dispatch"]
+```
 
-The root state is the initial durable state. A terminal state is a declared
-state with no outgoing edge. There are no pseudo-state nodes in this profile;
-using `[*]` or another undeclared Mermaid pseudo-node is unsupported. This
-keeps the source valid as a normal Mermaid flowchart and avoids importing
-`stateDiagram-v2` semantics into the v2 language.
+The parser must reject an unknown prefix, an empty identifier, duplicate node
+IDs, duplicate semantic declarations for one node, and labels that contain
+unescaped executable-looking text. Bracket shape, styling, classes, icons,
+HTML, and display text do not affect semantics.
 
-### Edges and labels
+### 2.3 Edges and edge labels
 
-An unlabeled edge is allowed only for structural flow between a state, guard,
-action, or emit node:
+Edges have one of these forms:
 
 ```text
 FROM --> TO
+FROM -->|on: EVENT_ID| TO
+FROM -->|request: ACTION_ID| TO
+FROM -->|true| TO
+FROM -->|false| TO
+FROM -->|to: STATE_ID| TO
+FROM -->|emit: EVENT_ID| TO
 ```
 
-An event edge is the only executable transition input:
+An edge label is metadata, not an expression. Only the listed keywords and
+controlled identifiers are accepted. `true` and `false` are reserved guard
+outcomes. Labels such as `if x == 1`, arbitrary prose used as a condition, or
+embedded JavaScript are invalid.
 
-```text
-STATE -->|event: EVENT_ID| NEXT
-```
+The topology has these deterministic rules:
 
-Guard branches must use exactly one of these labels:
+- a state node is the only legal source of an `on:` or `request:` edge;
+- an `on:`/`request:` edge may go directly to a state or to one guard node;
+- a guard has exactly two outgoing edges, labelled `true` and `false`;
+- a guard edge must lead to an action or state node;
+- an action may lead to one state using `to:`, and may additionally lead to
+  emit nodes using `emit:`;
+- an emit node has no outgoing edges;
+- an unlabelled edge is allowed only from an action to its state target or from
+  a state to a state when the input is supplied by the surrounding runtime;
+- every state must be reachable from the declared initial state, except states
+  explicitly marked by a future composition profile; and
+- a state/input pair may have at most one enabled path after guard evaluation.
 
-```text
-GUARD -->|true| NEXT
-GUARD -->|false| NEXT
-```
+The profile intentionally does not support subgraphs, nested graphs, links,
+click handlers, `classDef`, styling, `style`, `%%{init: ...}%%`, HTML labels,
+quoted edge expressions, Mermaid `stateDiagram`, sequence/class/ER diagrams,
+or arbitrary node shapes as semantic constructs. Unsupported syntax is an
+error, never an ignored line.
 
-An action or emit node is reached structurally and carries its declared
-registry meaning; action parameters, expressions, scripts, and arbitrary
-payloads do not appear in Mermaid. There is no special final-edge syntax; a
-terminal state is identified by its absence of outgoing edges.
+### 2.4 Representative valid graph
 
-A state may have multiple event edges only when their event IDs differ or
-when they pass through distinct guard nodes. For one state, event, and guard
-outcome, there must be exactly one reachable next node. This is the
-determinism rule; declaration order never breaks a tie.
-
-### Representative valid graph
+This is a complete small retry graph. The graph describes policy; the action
+executor owns the actual retry and event publication.
 
 ```mermaid
 flowchart LR
-    start["state: FAILED"]
-    retryable{"guard: task.retryable"}
-    retry["action: task.retry"]
-    retried(["emit: task.retried"])
-    blocked["state: BLOCKED"]
+%% relay: initial failed
+failed["state: FAILED"]
+retryable["guard: task.retryable"]
+retry["action: task.retry"]
+queued["state: QUEUED"]
+blocked["state: BLOCKED"]
+retried["emit: task.retried"]
 
-    start -->|event: task.retry| retryable
-    retryable -->|true| retry
-    retryable -->|false| blocked
-    retry --> retried
-    retried --> start
+failed -->|on: task.retry| retryable
+retryable -->|true| retry
+retryable -->|false| blocked
+retry -->|to: QUEUED| queued
+retry -->|emit: task.retried| retried
 ```
 
-The engine evaluates `task.retry` in `FAILED`, reads the typed
-`task.retryable` guard, and either executes `task.retry` followed by
-`task.retried`, or reaches `BLOCKED`. The exact persistence and delivery
-semantics are supplied by the runtime, not by Mermaid.
+For `FAILED + task.retry`, the engine evaluates the registered
+`task.retryable` guard. A true result returns `FAILED -> QUEUED`, the declared
+`task.retry` action, and the `task.retried` event intent. A false result returns
+`FAILED -> BLOCKED` and no retry action. The same input and canonical facts
+must always produce the same decision; wall-clock time, process IDs, and model
+output are not graph inputs unless represented as durable facts.
 
-## Registries and runtime contract
+### 2.5 Representative invalid graphs and diagnostics
 
-The parser produces a typed graph containing node IDs, node kinds, semantic
-IDs, and ordered edges. It does not execute code. The runtime binds the graph
-to four finite registries:
-
-| Registry | Resolves | Required contract |
-| --- | --- | --- |
-| State | `state: X` | durable state identity and terminal/initial policy |
-| Guard | `guard: X` | pure synchronous or explicitly awaited fact evaluation |
-| Action | `action: X` | typed intent, payload, idempotency, and failure event |
-| Event | `event: X`, `emit: X` | event schema and correlation rules |
-
-Registries are selected by graph kind (for example Job or Task) and are
-validated before the graph is installed. A graph may not invent a registry
-entry through a label, node ID, or display string. Worker/model routing and
-agent identity are runtime concerns, not graph-language primitives.
-
-The decision boundary is:
-
-```text
-current durable state + event + canonical facts
-  -> one accepted/rejected transition
-  -> next state + declared actions/emits
-```
-
-Applying deterministic mutations and persisting the decision is an adapter
-responsibility with normal fresh-read, lease, and idempotency protections.
-An external action failure becomes its registered failure Event and is
-re-evaluated by the same graph. Code must not assign a lifecycle state merely
-because an effect threw an exception.
-
-## Deterministic parsing and validation
-
-Parsing is line-oriented and deterministic: trim whitespace, ignore blanks and
-`%%` comments, parse declarations, then parse edges in source order. The
-parser must reject, with the line number and offending text:
-
-- missing or unsupported `flowchart` direction;
-- duplicate declarations, undeclared edge endpoints, malformed identifiers,
-  or malformed semantic prefixes;
-- multiple root states, or a root node that is not a state;
-- missing event labels on state-to-state executable transitions;
-- guard branches without exactly one `true` and one `false` outcome;
-- unknown state, guard, action, or event registry IDs;
-- unreachable declared nodes, dead-end non-terminal nodes, and edges that
-  cannot participate in a valid state/event path;
-- duplicate edges and ambiguous state/event/guard outcomes; and
-- any syntax outside this profile.
-
-Validation must fail closed. It must not ignore a line, treat an unknown node
-as a display label, infer a missing guard branch, or use source order as an
-implicit priority. Cycles are allowed because retry and reconciliation
-workflows may return to a prior state; every cycle must still be reachable
-from the initial state and have a valid event/guard path.
-
-### Invalid examples
+Diagnostics must identify the line and the reason. Implementations should keep
+the wording stable enough for tests and operators to act on it.
 
 ```mermaid
 flowchart LR
-    start["state: FAILED"]
-    start -->|event: task.retry| missing
+%% relay: initial failed
+failed["state: FAILED"]
+failed -->|on: task.retry| unknown
 ```
 
-Rejected: `missing` was not declared and therefore has no typed semantic
-meaning.
+Invalid: `unknown` is not a declared node. Required diagnostic shape:
+`line 3: edge target 'unknown' is not declared`.
 
 ```mermaid
 flowchart LR
-    start["state: FAILED"]
-    retry["state: QUEUED"]
-    blocked["state: BLOCKED"]
-    start -->|event: task.retry| retry
-    start -->|event: task.retry| blocked
+%% relay: initial failed
+failed["state: FAILED"]
+failed -->|on: task.retry| retryable["guard: task.notRegistered"]
 ```
 
-Rejected: duplicate state/event outcomes are ambiguous; action presence is
-not a priority rule.
+Invalid: `task.notRegistered` is absent from the guard registry. Required
+diagnostic shape: `line 4: unknown guard 'task.notRegistered'`.
 
 ```mermaid
 flowchart LR
-    start["state: FAILED"]
-    classDef secret fill:#000
+%% relay: initial failed
+failed["state: FAILED"]
+retryable["guard: task.retryable"]
+failed -->|on: task.retry| retryable
+retryable -->|maybe| failed
 ```
 
-Rejected: styling and other renderer directives are unsupported executable
-syntax, even though a Mermaid renderer may understand them.
+Invalid: a guard must have exactly `true` and `false` exits. Required
+diagnostic shape: `line 5: guard 'retryable' requires true/false exits; found 'maybe'`.
 
-## Compatibility and migration
+```mermaid
+flowchart LR
+%% relay: initial failed
+failed["state: FAILED"]
+failed -->|on: task.retry| retryable{"guard: task.retryable"}
+```
 
-Migration is incremental:
+Invalid: the `{...}` shape is not part of the executable profile. Mermaid
+rendering syntax may evolve independently, but executable graphs accept only
+the documented node form and must fail closed when it is not used.
 
-1. land and review this architecture specification and profile;
-2. implement the parser, typed registries, deterministic validator, and
-   decision runtime with focused tests;
-3. adapt the existing canonical Job and Task lifecycle graphs through one
-   runtime while preserving marker serialization and lifecycle results;
-4. route one representative mutation through the common Action dispatcher
-   from both CLI and relayd/API;
-5. move reconciliation and orchestration decisions graph-by-graph;
-6. add composition only when a real workflow requires it; and
-7. remove duplicate procedural paths only after parity and restart/reconcile
-   tests pass.
+### 2.6 Deterministic validation sequence
 
-During each step, GitHub remains the durable source of truth, events remain
-wake-up/evidence signals unless explicitly declared lifecycle facts, and
-runtime status remains a derived projection. Existing `stateDiagram-v2`
-graphs are not silently reinterpreted as v2 flowcharts; conversion is an
-explicit, reviewed change.
+The parser/runtime validates in this order so the first diagnostic is stable:
 
-## Review checkpoints and acceptance criteria
+1. document header and permitted comments;
+2. line grammar and node/edge tokenization;
+3. declaration uniqueness and referenced-node existence;
+4. semantic prefixes and registry identifiers;
+5. initial-state declaration and state reachability;
+6. guard arity and required `true`/`false` branches;
+7. action target and emit topology;
+8. duplicate or ambiguous input paths; and
+9. registry binding availability.
 
-Durable review boundaries are required at these points:
+Validation is pure: it does not mutate durable state, call an external system,
+or execute an action. Runtime evaluation sorts no user-provided collection and
+does not use hash-map iteration order to choose a transition. Ambiguity is an
+error, not a tie-break opportunity.
 
-1. architecture specification and executable profile;
+## 3. Typed registries and execution boundary
+
+The graph references names; typed registries supply behavior. The minimum
+interfaces are conceptually:
+
+```ts
+type StateId = string;
+type GuardId = string;
+type ActionId = string;
+type EventId = string;
+
+type Guard = (context: Readonly<GraphFacts>) => boolean | Promise<boolean>;
+type Action = (context: ActionContext) => Promise<ActionReceipt>;
+type EventDefinition = { readonly id: EventId; readonly payload: PayloadSchema };
+```
+
+The concrete TypeScript types may differ, but the boundary must preserve these
+properties:
+
+- state IDs are finite per graph and are checked against the durable subject;
+- guards are named, typed facts predicates and cannot mutate state or perform
+  external I/O;
+- actions are named, typed intents with explicit input/output and idempotency
+  contracts; and
+- events are named facts with validated payloads, not commands disguised as
+  events.
+
+Unknown state, guard, action, or event IDs fail graph loading before execution.
+Registries are versioned in code and tested against every canonical graph.
+Adding a semantic capability should normally add one registry entry and tests,
+not expand the Mermaid language.
+
+The Action Dispatcher is the only mutation/effect entry point. CLI commands,
+relayd HTTP/API handlers, scheduler ticks, webhook handlers, and internal
+callers construct the same typed action request. They do not call a lower-level
+store method to bypass graph evaluation. External executors publish receipts or
+failure Events; they never assign lifecycle state directly.
+
+## 4. Compatibility and migration
+
+The current `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`
+files use the existing `stateDiagram-v2` profile. They remain the v1 durable
+compatibility source during migration. Existing Job/Task markers, lifecycle
+values, task attempts, leases, execution IDs, review facts, and derived runtime
+status keep their current meaning. A v2 migration must not rewrite markers just
+because the graph representation changes.
+
+The migration is staged:
+
+1. land and review this specification and its examples;
+2. implement the strict flowchart parser, typed registries, deterministic
+   validator, and Graph Engine with focused tests;
+3. add an adapter that can represent the existing canonical Job/Task lifecycle
+   decisions without changing durable marker serialization;
+4. route one representative mutation through the common Action Dispatcher from
+   both CLI and relayd/API and prove semantic parity;
+5. migrate lifecycle/reconcile decisions incrementally, preserving behavior and
+   treating the v1 graphs as compatibility fixtures until each graph is proven
+   equivalent;
+6. add composition only when a real workflow requires it, with a separately
+   reviewed profile extension; and
+7. remove duplicated procedural authority only after graph decisions, restart,
+   reconciliation, and durable-record compatibility tests pass.
+
+During the transition, code may translate v1 graph decisions into v2 engine
+inputs, but it must not create a second independent lifecycle policy. Any
+intentional behavior change requires a migration note and compatibility test.
+
+## 5. Review checkpoints and acceptance criteria
+
+The Job's durable review gates are:
+
+1. architecture specification and executable profile (this artifact);
 2. parser/runtime/registry design before broad migration;
-3. first CLI-to-relayd Action-dispatcher vertical slice;
-4. lifecycle/reconciliation migration, checking for hidden procedural
-   authority; and
-5. final architecture, compatibility, restart/reconcile, and regression
-   review.
+3. first CLI + relayd/API vertical slice using one Action Dispatcher;
+4. lifecycle/reconcile migration, including hidden-authority audit; and
+5. final architecture, restart/reconcile, durable-record, and regression review.
 
-The next runtime implementation is acceptable when it demonstrates that:
+Each checkpoint binds review findings to the exact PR head being reviewed.
 
-- the profile parses deterministically and renders as useful Mermaid;
-- typed state, guard, action, and event registries reject unknown names;
-- unsupported syntax and malformed topology fail with precise diagnostics;
-- identical durable input and event produce identical decisions;
-- CLI and relayd/internal callers share one Action dispatcher;
-- migrated graphs, not ad-hoc reconciler conditionals, own lifecycle policy;
-- v1 Job/Task markers and public behavior remain compatible; and
-- tests cover parser validation, ambiguity, registry failures, dispatch parity,
-  restart/reconcile behavior, and durable-record compatibility.
+The later implementation is accepted only when it demonstrates:
 
-Adding or changing a workflow should normally mean editing a reviewed graph
-and, only when necessary, adding a typed registry primitive—not adding another
-procedural lifecycle branch.
+- strict parsing with precise rejection of unsupported syntax;
+- deterministic validation and transition selection;
+- typed state/guard/action/event registries;
+- no direct lifecycle mutation path outside the Graph Engine and Dispatcher;
+- CLI and relayd/API parity for a representative action;
+- compatibility with existing Job/Task markers and public behavior;
+- restart/reconcile safety and event-to-state recovery coverage; and
+- graph edits as the normal starting point for workflow changes, with no hidden
+  procedural second engine.
+
+This document is a specification, not permission to begin broad lifecycle
+migration in the architecture task.
