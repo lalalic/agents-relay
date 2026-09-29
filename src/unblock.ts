@@ -1,6 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockedBaseline, Job, PlanTrigger, Task, TaskUnblockRecord } from './types.js';
-import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { transitionTaskEvent } from './scheduler.js';
+import { applyTaskUnblockRetryAction } from './task-actions.js';
 
 export type UnblockSource = { source: 'cli' | 'blocker_job'; reason: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
 
@@ -81,10 +82,8 @@ export async function unblockTask(options: { store: DurableStore; job: Job; task
   options.task.unblock = { at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
   await transitionTaskEvent(options.task, 'task.unblocked');
   await options.store.saveTask(options.task);
-  options.task.maxAttempts = extendRetryBudget(options.task);
-  await transitionTaskEvent(options.task, 'retry');
-  options.task.error = null; options.task.leaseOwner = null; options.task.leaseExpiresAt = null; options.task.executionId = null;
-  options.task.updatedAt = now; delete options.task.blockedBy;
+  await applyTaskUnblockRetryAction(options.task);
+  options.task.updatedAt = now;
   await options.store.saveTask(options.task);
   return { replanning: false };
 }

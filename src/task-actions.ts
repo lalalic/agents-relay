@@ -3,7 +3,8 @@ import type { Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION;
+export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
@@ -31,16 +32,30 @@ export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy =
   return task;
 }
 
+/** Fixed-job authoritative unblock continuation: UNBLOCKED -> QUEUED through the canonical graph. */
+export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
+  if (task.state !== 'UNBLOCKED') throw new Error(`Task ${task.id} must be UNBLOCKED before task.unblock.retry (${task.state})`);
+  await transitionTaskEvent(task, 'retry');
+  task.maxAttempts = extendRetryBudget(task);
+  task.error = null;
+  task.leaseOwner = null;
+  task.leaseExpiresAt = null;
+  task.executionId = null;
+  delete task.blockedBy;
+  return task;
+}
+
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
 export async function dispatchTaskAction(
   store: DurableStore,
   request: TaskActionRequest,
 ): Promise<TaskActionResult> {
-  if (request.id !== TASK_RETRY_ACTION) throw new Error(`Unsupported task action ${request.id}`);
   const job = await store.load(request.jobId);
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
-  await applyTaskRetryAction(task, { extendBudget: true });
+  if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
+  else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
+  else throw new Error(`Unsupported task action ${request.id}`);
   await store.saveTask(task);
   return { job, task };
 }

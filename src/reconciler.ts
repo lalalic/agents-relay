@@ -484,7 +484,7 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
       } else {
-        task.plannerRetryFeedback = message; task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
+        task.plannerRetryFeedback = message; task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await applyTaskRetryAction(task); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
       }
       const pending = (await this.store.load(job.id)).plans?.find(plan => plan.id === task.id) ?? pendingPlanForPlannerTask(job, task); await this.store.savePlan({ ...pending, status: task.state === 'QUEUED' ? 'PLANNING' : 'FAILED', error: message, assessment: task.state === 'QUEUED' ? `Planning retry: ${message}` : `Planning failed: ${message}`, updatedAt: new Date().toISOString() });
     }
