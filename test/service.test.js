@@ -71,12 +71,12 @@ test('workspace daemon establishes dashboard and event watch before remote refre
   const cached = source.indexOf('const initial = cachedOverviews');
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
   const server = source.indexOf('const server = serveDashboard', watch);
-  const refresh = source.indexOf('void refreshAll(true)', watch);
+  const refresh = source.indexOf('const startupItems = await refreshAll(true, true)', watch);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
   assert.ok(server > watch);
   assert.ok(refresh > server);
-  assert.doesNotMatch(source, /const initial = await refreshAll\(\)/);
+  assert.doesNotMatch(source, /\n  void refreshAll\(true\)/);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {
