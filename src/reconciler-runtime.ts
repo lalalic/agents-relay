@@ -24,6 +24,10 @@ type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () 
 
 export function executionEventSource(jobId: string, taskId: string, executionId: string): string { return `job/${jobId}/task/${taskId}/execution/${executionId}`; }
 function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
+function executionIdFromSource(sourceId: string | undefined, jobId: string, taskId: string): string | undefined {
+  const prefix = `job/${jobId}/task/${taskId}/execution/`;
+  return sourceId?.startsWith(prefix) ? sourceId.slice(prefix.length) || undefined : undefined;
+}
 
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
@@ -381,7 +385,15 @@ export abstract class ReconcilerRuntimeBase {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
-        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return false;
+        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
+          const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
+          const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
+          // A duplicate launch can leave one worker orphaned after another worker
+          // has already produced the terminal fact. Accept only a known execution
+          // from the same durable attempt and only when its fact is newer than its
+          // launch. A prior retry attempt cannot complete a newer generation.
+          if (!prior || prior.attempt !== task.attempt || !event.timestamp || new Date(event.timestamp).getTime() < new Date(prior.startedAt).getTime()) return false;
+        }
         const terminalWaiter = this.terminalWaiters.get(task.id);
         return !terminalWaiter || Boolean(event.timestamp && new Date(event.timestamp).getTime() >= terminalWaiter.launchBarrier);
       },
@@ -395,7 +407,10 @@ export abstract class ReconcilerRuntimeBase {
       mutate: (job, task) => {
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
         const acceptedExecutionId = task.executionId;
-        if (modelBacked && acceptedExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, acceptedExecutionId));
+        const eventExecutionId = executionIdFromSource(eventSourceId(event), job.id, task.id);
+        const terminalExecutionId = eventExecutionId ?? acceptedExecutionId;
+        if (modelBacked && terminalExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, terminalExecutionId));
+        if (eventExecutionId && acceptedExecutionId && eventExecutionId !== acceptedExecutionId) this.live.get(task.id)?.execution.cancel();
         this.clearExecution(task.id, acceptedExecutionId);
         task.leaseOwner = null;
         task.leaseExpiresAt = null;

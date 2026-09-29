@@ -335,6 +335,11 @@ export class Reconciler extends ReconcilerReviewBase {
       freshTask.leaseOwner = this.options.owner;
       freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
       freshTask.executionId = randomUUID();
+      freshTask.executionHistory = [...(freshTask.executionHistory ?? []), {
+        id: freshTask.executionId,
+        attempt: freshTask.attempt,
+        startedAt: new Date(startedAt).toISOString(),
+      }].slice(-8);
       await this.store.saveTask(freshTask);
       return freshTask;
     }) ?? null;
@@ -419,6 +424,7 @@ export class Reconciler extends ReconcilerReviewBase {
     if (!planner) { task.attempt = task.maxAttempts; task.error = 'No objective planner configured'; await transitionTaskEvent(task, 'fail'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user')); return; }
     const startedAt = (this.options.now ?? new Date()).getTime();
     await transitionTaskEvent(task, 'task.started'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + Math.max(this.options.leaseMs ?? 300000, task.timeoutMs)).toISOString(); task.executionId = randomUUID();
+    task.executionHistory = [...(task.executionHistory ?? []), { id: task.executionId, attempt: task.attempt, startedAt: new Date(startedAt).toISOString() }].slice(-8);
     await this.store.saveTask(task);
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.started', 'running', `Planner task ${task.id} started`, 'orchestrator'));
     const controller = new AbortController(); const executionId = task.executionId;

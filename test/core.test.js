@@ -1670,6 +1670,25 @@ test('concurrent terminal reconciliation commits one execution generation', asyn
   assert.equal(durable.executionId,null);
 });
 
+test('terminal fact from a duplicate same-attempt execution wins over its orphan', async () => {
+  const t=task('duplicate-terminal','RUNNING');
+  t.attempt=1;
+  t.executionId='orphan-execution';
+  t.leaseOwner='test';
+  t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[
+    {id:'successful-execution',attempt:1,startedAt:'2026-09-29T20:00:00.000Z'},
+    {id:'orphan-execution',attempt:1,startedAt:'2026-09-29T20:00:01.000Z'},
+  ];
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[]});
+  await reconciler.handleEvent({...eventFor('j',t.id,null,'task.completed','succeeded','durable output','user',undefined,eventSource('j',t.id,'successful-execution')),timestamp:'2026-09-29T20:00:02.000Z'});
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.executionId,null);
+  assert.equal(durable.result?.summary,'durable output');
+});
+
 test('repository pool performs no GitHub-backed reconciliation while rate limited', async () => {
   const calls=[];
   const client={request:async()=>{calls.push('request'); throw new Error('must not call GitHub');},graphql:async()=>{calls.push('graphql'); throw new Error('must not call GitHub');}};

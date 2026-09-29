@@ -105,7 +105,7 @@ export type Task = {
   jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
-  leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; threadId: string | null;
+  leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
   manualStateOverrides?: ManualTaskStateOverride[];
