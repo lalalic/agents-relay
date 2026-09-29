@@ -472,6 +472,20 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   assert.match(saved.error,/event bus/);
   assert.equal(adapter.launches,0);
 });
+test('expired lease retry preserves the existing automatic retry budget', async () => {
+  const running=task('expired-budget','RUNNING');
+  running.attempt=1;
+  running.maxAttempts=3;
+  running.executionId='expired-budget-execution';
+  running.leaseOwner='relayd-old';
+  running.leaseExpiresAt='2026-09-25T16:30:00.000Z';
+  const store=new InMemoryStore(job([running]));
+  const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  await reconciler.reconcile('j');
+  const saved=(await store.load('j')).tasks.find(item=>item.id==='expired-budget');
+  assert.equal(saved.maxAttempts,3);
+});
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
 test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
 test('GitHub draft PR does not override ACTIVE job execution lifecycle', () => { const held={...job([]),id:'held'}; const item={job:held,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['held']); });
