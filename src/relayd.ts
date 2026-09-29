@@ -265,13 +265,16 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
-  const interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
-  const scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
-  const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  let interval: NodeJS.Timeout | undefined;
+  let scheduleInterval: NodeJS.Timeout | undefined;
+  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); void stopWatch().finally(()=>server.close(()=>process.exit(0)));}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await once(server,'listening');
   const startupItems = await refreshAll(true, true); // void refreshAll(true)
-  await scheduleHeartbeatSafely();
   await pool.reconcileKnown(startupItems);
+  // Startup recovery must finish before normal polling or scheduled work can run.
+  await scheduleHeartbeatSafely();
+  interval=setInterval(()=>void reconcileSafely(),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
+  scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   console.log('Dashboard listening; repository worker pool active');
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
