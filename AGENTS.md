@@ -4,7 +4,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 
 ## Principles
 
-- GitHub PR state is durable truth. Events are wake-up/observability signals, never durable truth.
+- GitHub PR state is durable collaborative truth. V2 Relay Store owns operational execution state; events remain wake-up/observability signals, never durable truth by themselves.
 - Reconcile desired durable state into ephemeral worker executions.
 - One top-level objective maps to one PR; child tasks live inside that PR.
 - `job create` creates durable job state only. The top-level orchestrator decides whether to start work and, if so, submits the initial task batch separately. A zero-task autonomous job must remain idle; Relay must not invent its first planner/task batch.
@@ -12,7 +12,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
 - Keep provider/model routing separate from roles and capabilities.
-- Prefer standard library and small dependencies; do not build a second database when GitHub already holds the durable state.
+- Prefer standard library and small dependencies. Do not duplicate GitHub collaborative records in a competing database; V2 may use the built-in SQLite Relay Store for operational state, leases, event idempotency, materialized runtime views, and projection outbox.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
