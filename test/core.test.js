@@ -1051,7 +1051,12 @@ test('delivery failure after correlated task.started is diagnostic only and term
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>events.push(event)});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  await new Promise(resolve=>setTimeout(resolve,20));
+  for(let i=0;i<50;i++){
+    const observed=(await store.load('j')).tasks[0];
+    if(observed.state==='RUNNING') break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
   rejectRun(new LaunchFailure('DOM receipt missed the submitted user turn'));
   await new Promise(resolve=>setTimeout(resolve,20));
   let durable=(await store.load('j')).tasks[0];
