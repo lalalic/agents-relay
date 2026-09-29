@@ -272,7 +272,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
     const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
     const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
+    if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING', 'FAILED'].includes(task.state))) return job;
     if (scopedTasks.some(isEffectivelyBlocked)) return job;
     if (scopedTasks.some(task => task.kind !== 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
     if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
