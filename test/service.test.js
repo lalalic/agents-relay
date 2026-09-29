@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS } from '../dist/relayd.js';
+import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -12,6 +12,16 @@ import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
 test('relayd scheduled heartbeat cadence is ten minutes', () => {
   assert.equal(SCHEDULE_HEARTBEAT_MS, 600_000);
+});
+test('relayd scheduled heartbeat selects only exact due open autonomous jobs from cache', () => {
+  const now = new Date('2026-09-29T18:05:00Z');
+  const base = { title: 'scheduled', priority: 'P0', autoMerge: false, reviewEnabled: false, continuation: null, createdAt: now.toISOString(), updatedAt: now.toISOString(), tasks: [] };
+  const overview = (id, nextRunAt, overrides = {}) => ({ githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: { ...base, id, repository: 'owner/repo', prNumber: 1, state: 'ACTIVE', executionMode: 'autonomous', schedule: { cron: '0 * * * *', timezone: 'UTC', nextRunAt, missedRunPolicy: 'skip', concurrencyPolicy: 'skip', lastScheduledSlot: null, currentRunSlot: null, lastRunAt: null }, ...overrides } });
+  const due = overview('due', '2026-09-29T18:00:00Z');
+  const future = overview('future', '2026-09-29T19:00:00Z');
+  const fixed = overview('fixed', '2026-09-29T18:00:00Z', { executionMode: 'fixed' });
+  const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
+  assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
 });
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
