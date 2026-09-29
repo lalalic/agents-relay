@@ -355,11 +355,19 @@ Registries are versioned in code and tested against every canonical graph.
 Adding a semantic capability should normally add one registry entry and tests,
 not expand the Mermaid language.
 
-The Action Dispatcher is the only mutation/effect entry point. CLI commands,
-relayd HTTP/API handlers, scheduler ticks, webhook handlers, and internal
-callers construct the same typed action request. They do not call a lower-level
-store method to bypass graph evaluation. External executors publish receipts or
-failure Events; they never assign lifecycle state directly.
+Command-style lifecycle mutations use the shared Action service boundary.
+CLI commands, relayd/dashboard handlers, and internal callers that express the
+same intent reuse the same typed Action implementation; they do not duplicate
+transition policy in adapter code.
+
+Observed facts are different: scheduler, webhook, worker, review, planner, and
+reconcile facts enter as Events and are evaluated directly by the Graph
+Runtime. They are not wrapped as Actions merely for uniformity. Deterministic
+transition mutations declared by the graph are applied atomically with the
+accepted state transition; declared external effects execute only after durable
+persistence through the idempotent workflow effect executor. External
+executors publish receipts or failure Events and never assign lifecycle state
+directly.
 
 ## 4. Compatibility and migration
 
@@ -436,9 +444,11 @@ such as closing or merging a pull request remain adapter concerns. Worker,
 review, planner, webhook, and reconcile lifecycle facts remain direct Graph
 Event ingestion and are not wrapped as Actions merely to hide the distinction.
 
-During the transition, code may translate v1 graph decisions into v2 engine
-inputs, but it must not create a second independent lifecycle policy. Any
-intentional behavior change requires a migration note and compatibility test.
+Production code no longer translates v1 graph decisions into v2 decisions.
+The legacy parser/runtime is retained only by compatibility and parity tests.
+Any future behavior change must begin in the canonical v2 graph and include a
+migration note plus compatibility/regression evidence when durable behavior is
+affected.
 
 ## 5. Review checkpoints and acceptance criteria
 
@@ -464,5 +474,28 @@ The later implementation is accepted only when it demonstrates:
 - graph edits as the normal starting point for workflow changes, with no hidden
   procedural second engine.
 
-This document is a specification, not permission to begin broad lifecycle
-migration in the architecture task.
+## 6. Current implementation evidence
+
+The v2 lifecycle migration is implemented locally with these mechanically
+checked boundaries:
+
+- `src/workflow/definitions-v2.ts` loads the canonical v2 Job/Task flowcharts
+  with typed state, guard, action, and event registries;
+- `src/workflow/lifecycle.ts` uses those v2 runtimes for production lifecycle
+  decisions, and `src/types.ts` uses the same topology for transition
+  assertions;
+- `test/workflow-v2-lifecycle-parity.test.js` compares v2 against the legacy
+  compatibility fixtures for target states, ordered actions, guarded rejection,
+  and ambiguity;
+- command/adapter mutation tests reject new bypasses around the shared Action
+  boundaries, while production-source tests reject reintroduction of the legacy
+  lifecycle definitions;
+- npm packaging tests require both production v2 graphs and legacy compatibility
+  fixtures to ship; and
+- the full repository test suite is the final local regression gate before each
+  reviewable migration checkpoint.
+
+The remaining Job work is review/reconciliation of this implementation against
+the current immutable PR head, incorporation of any findings, final regression
+validation, and merge. Composition remains intentionally absent because no
+current lifecycle workflow requires it.
