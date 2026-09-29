@@ -112,6 +112,14 @@ Relay reviewer list.
 A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker, plus the `agents-relay:autonomous` label and one bounded time-of-day `agents-relay:next-run:*` index label. The GitHub heartbeat discovers only indexed due candidates, validates the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and pulses `agents-relay:schedule-wake`. GitHub webhook delivery then wakes local Relay for planner/worker execution. While the schedule is active, the durable Job remains `ACTIVE`; between runs its derived runtime status is `WAITING`. Scheduled recurring Jobs do not enter one-shot final-review/auto-merge after each satisfied run; older-cycle failures are historical evidence and do not block a later slot.
 
 
+## Task evidence and head identity
+
+Task inputs must make evidence freshness and target identity explicit when those facts affect correctness. A Task may bind its own review, audit, or source evidence to an immutable SHA/version. That frozen target belongs to that Task; it must not be propagated mechanically into later dependent work. A downstream release, deploy, publication, or other Task that runs after dependencies complete must resolve the current durable Job/PR head at execution time unless the Job objective explicitly requires the earlier immutable target.
+
+When success depends on the actual current UI, browser state, store listing, runtime state, or another externally observable surface, the Task contract must require fresh evidence from that real current surface. Reusing an existing screenshot, prepared asset, cached observation, or older evidence is valid only when the Job explicitly permits it.
+
+This does not weaken immutable review semantics: final review and specialist review Tasks should continue to declare and inspect one exact immutable target/version.
+
 ## Dependency vs block and authoritative unblock
 
 `dependencies` describe normal DAG ordering. Dependency completion does not create an unblock event or a planning change cycle; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.
