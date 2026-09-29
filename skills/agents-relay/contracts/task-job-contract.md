@@ -98,6 +98,33 @@ For the ChatGPT Browser Worker guardian, for example, the Job defines `pass -> �
 
 ### Optional Review Chair Tasks
 
+### Semantic Task tree and planning provenance
+
+The planning graph, semantic Task tree, and dependency graph are separate:
+
+```text
+plan-2 (planning provenance only)
+  ├─ revision (parentTaskId: milestone, dependencies: [review])
+  └─ re-review (parentTaskId: milestone, dependencies: [revision])
+independent-milestone (parentTaskId: null, dependencies: [revision])
+```
+
+`parentTaskId` answers which durable artifact or milestone owns this work. It
+may point to an existing terminal work Task when a later planning round
+continues that artifact, or to another work Task in the same batch. It must
+never point to a `plan-N`/historical `planner-N` record and must not be used
+just to group a round. `dependencies` answer what must finish first and may
+cross semantic subtrees. Reviews, changes-required revisions, re-reviews,
+specialist reviews, and troubleshooter recovery belong under the relevant
+artifact/milestone; independent milestones remain roots. Planning provenance
+is retained separately in `planningDecisionId` and `planningRound`, and
+historical terminal Tasks are immutable.
+
+Incorrect: make every generated Task a child of the current `plan-N`, or use
+`parentTaskId` as a substitute for a dependency. Correct: attach a re-review
+to the original milestone, set its dependency to the revision Task, and leave
+the original milestone's terminal record unchanged.
+
 Projects may use the shared `review-chair` agent as a normal Task or Agent
 Graph node. The chair discovers specialist agent roles from the resolved
 visible-agent catalog, records selection reasons, and creates sibling durable

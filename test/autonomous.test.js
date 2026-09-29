@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, validatePlannerHierarchy } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -101,6 +101,48 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   assert.equal(day.parentTaskId, null);
   assert.equal(hour.parentTaskId, 'day-2026-09-28');
   assert.equal(hour.planningDecisionId, 'plan-1');
+});
+
+test('later planning rounds attach revisions and reviews to semantic milestones', async () => {
+  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const store = new InMemoryStore(root);
+  let round = 0;
+  const planner = { plan: async () => {
+    round += 1;
+    if (round === 1) return { objective_status: 'in_progress', assessment: 'initial milestone', next_tasks: [
+      { id: 'milestone', input: 'Deliver the milestone.', output, storySize: 'S' },
+      { id: 'review', parentTaskId: 'milestone', dependencies: ['milestone'], input: 'Review the milestone.', output, storySize: 'S', review: { role: 'specialist', target: { artifact: 'milestone', version: 'head-1' }, dimension: 'correctness', selectionReason: 'focused review' } },
+    ] };
+    return { objective_status: 'in_progress', assessment: 'revision and independent milestone', next_tasks: [
+      { id: 'revision', parentTaskId: 'milestone', dependencies: ['review'], input: 'Revise the milestone.', output, storySize: 'S' },
+      { id: 're-review', parentTaskId: 'milestone', dependencies: ['revision'], input: 'Re-review the milestone.', output, storySize: 'S' },
+      { id: 'independent', dependencies: ['revision'], input: 'Deliver an independent milestone.', output, storySize: 'S' },
+    ] };
+  } };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const first = await reconciler.planJob('auto');
+  const milestoneBefore = first.job.tasks.find(item => item.id === 'milestone');
+  assert.ok(milestoneBefore);
+  await store.saveTask({ ...milestoneBefore, state: 'SUCCEEDED', result: { summary: 'delivered' }, updatedAt: now() });
+  const second = await reconciler.planJob('auto');
+  const saved = await store.load('auto');
+  assert.deepEqual(saved.tasks.find(item => item.id === 'milestone'), { ...milestoneBefore, state: 'SUCCEEDED', result: { summary: 'delivered' }, updatedAt: saved.tasks.find(item => item.id === 'milestone').updatedAt });
+  assert.equal(saved.tasks.find(item => item.id === 'revision').parentTaskId, 'milestone');
+  assert.deepEqual(saved.tasks.find(item => item.id === 're-review').dependencies, ['revision']);
+  assert.equal(saved.tasks.find(item => item.id === 're-review').parentTaskId, 'milestone');
+  assert.equal(saved.tasks.find(item => item.id === 'independent').parentTaskId, null);
+  assert.equal(saved.tasks.find(item => item.id === 'revision').planningDecisionId, second.round.id);
+  assert.deepEqual(semanticTaskTree(saved.tasks).roots, ['milestone', 'independent']);
+  assert.equal(semanticTaskTree(saved.tasks).tasks.some(item => item.id === 'plan-1'), false);
+});
+
+test('planner input exposes ownership tree separately from plan provenance', () => {
+  const milestone = { ...task('milestone', 'SUCCEEDED'), planningDecisionId: 'plan-1', planningRound: 1 };
+  const plan = { ...task('plan-2', 'SUCCEEDED'), kind: 'planner', planningRound: 2 };
+  const payload = JSON.parse(plannerInput({ job: job([milestone, plan]), tasks: [milestone, plan], objective: 'finish', previousPlannerTaskId: 'plan-2' }));
+  assert.deepEqual(payload.semantic_task_tree.roots, ['milestone']);
+  assert.deepEqual(payload.semantic_task_tree.tasks.map(item => item.id), ['milestone']);
+  assert.equal(payload.tasks.find(item => item.id === 'plan-2').kind, 'planner');
 });
 
 test('manual satisfied plan persists the planning round without creating work', async () => {
