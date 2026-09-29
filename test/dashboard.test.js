@@ -84,6 +84,15 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
   assert.match(dashboardHtml, /if\(nested\.length\)\{/);
 });
 
+test('job detail exposes configurable ChatGPT shortcuts in a new tab', () => {
+  assert.match(dashboardHtml, /CHAT_SHORTCUTS_KEY='agents-relay:chatgpt-shortcuts'/);
+  assert.match(dashboardHtml, /%1/);
+  assert.match(dashboardHtml, /localStorage\.setItem\(CHAT_SHORTCUTS_KEY/);
+  assert.match(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),'_blank','noopener'\)/);
+  assert.match(dashboardHtml, /https:\/\/chatgpt\.com\/\?prompt=/);
+  assert.match(dashboardHtml, /One per line: <name>: <prompt>/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);

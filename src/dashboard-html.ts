@@ -72,6 +72,14 @@ export const dashboardHtml = `<!doctype html>
     .detail-label { margin:0; color:var(--muted); font-size:.66rem; text-transform:uppercase; letter-spacing:.04em; }
     .detail-value { margin:.12rem 0 0; font-weight:650; overflow-wrap:anywhere; }
     .section-title { margin:.8rem 0 .35rem; color:var(--muted); font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; }
+    .chat-shortcuts { margin-top:.7rem; padding-top:.65rem; border-top:1px solid var(--border); }
+    .chat-shortcut-tabs,.chat-shortcut-list { display:flex; gap:.35rem; flex-wrap:wrap; }
+    .chat-shortcut-tab,.chat-shortcut-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; cursor:pointer; }
+    .chat-shortcut-tab[aria-selected="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); font-weight:750; }
+    .chat-shortcut-button { color:var(--accent); font-weight:700; }
+    .chat-shortcut-editor { display:grid; gap:.4rem; margin-top:.45rem; }
+    .chat-shortcut-editor textarea { width:100%; min-height:7rem; resize:vertical; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--text); padding:.55rem; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .chat-shortcut-help { margin:0; color:var(--muted); font-size:.7rem; }
     ul.tree { display:grid; gap:.25rem; min-width:0; max-width:100%; }
     ul.tree li { min-width:0; max-width:100%; }
     ul.tree ul { width:calc(100% - .6rem); min-width:0; max-width:calc(100% - .6rem); list-style:none; margin:.2rem 0 .1rem .6rem; padding-left:.6rem; border-left:1px solid var(--border); }
@@ -322,6 +330,42 @@ function syncFilters(){
   jobSearch.value=searchQuery;
 }
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
+
+const CHAT_SHORTCUTS_KEY='agents-relay:chatgpt-shortcuts';
+const DEFAULT_CHAT_SHORTCUTS=[
+  'Why blocked?: %1: why is it blocked? Find the root cause and move it forward.',
+  'Move forward: %1: check the current state and move it forward.',
+  'What is wrong?: %1: check the current state and explain what is wrong.'
+].join('\\n');
+function chatShortcutText(){return localStorage.getItem(CHAT_SHORTCUTS_KEY)||DEFAULT_CHAT_SHORTCUTS;}
+function parseChatShortcuts(source){return String(source||'').split(/\\r?\\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const split=line.indexOf(':');return split>0?{name:line.slice(0,split).trim(),prompt:line.slice(split+1).trim()}:null;}).filter(item=>item&&item.name&&item.prompt);}
+function jobChatRef(job){return repoName(job?.repository)+'/pr#'+value(job?.prNumber);}
+function chatShortcutUrl(prompt){return 'https://chatgpt.com/?prompt='+encodeURIComponent(prompt);}
+function renderChatShortcuts(job){
+  const root=element('section','chat-shortcuts');
+  const tabs=element('div','chat-shortcut-tabs');
+  const shortcutsTab=element('button','chat-shortcut-tab',text('Shortcuts'));shortcutsTab.type='button';shortcutsTab.setAttribute('aria-selected','true');
+  const editTab=element('button','chat-shortcut-tab',text('Edit'));editTab.type='button';editTab.setAttribute('aria-selected','false');
+  tabs.append(shortcutsTab,editTab);
+  const body=element('div');
+  function showShortcuts(){
+    shortcutsTab.setAttribute('aria-selected','true');editTab.setAttribute('aria-selected','false');
+    const list=element('div','chat-shortcut-list');
+    for(const item of parseChatShortcuts(chatShortcutText())){const button=element('button','chat-shortcut-button',text(item.name));button.type='button';button.addEventListener('click',()=>{const prompt=item.prompt.replaceAll('%1',jobChatRef(job));window.open(chatShortcutUrl(prompt),'_blank','noopener');});list.append(button);}
+    body.replaceChildren(list.children.length?list:element('p','empty',text('No shortcuts configured.')));
+  }
+  function showEditor(){
+    shortcutsTab.setAttribute('aria-selected','false');editTab.setAttribute('aria-selected','true');
+    const editor=element('div','chat-shortcut-editor');
+    const help=element('p','chat-shortcut-help',text('One per line: <name>: <prompt>. Use %1 for '+jobChatRef(job)+'.'));
+    const textarea=document.createElement('textarea');textarea.value=chatShortcutText();textarea.setAttribute('aria-label','ChatGPT shortcut entries');
+    const save=element('button','refresh-button',text('Save'));save.type='button';save.addEventListener('click',()=>{const value=textarea.value.trim();if(value)localStorage.setItem(CHAT_SHORTCUTS_KEY,value);else localStorage.removeItem(CHAT_SHORTCUTS_KEY);showShortcuts();});
+    editor.append(help,textarea,save);body.replaceChildren(editor);
+  }
+  shortcutsTab.addEventListener('click',showShortcuts);editTab.addEventListener('click',showEditor);
+  root.append(tabs,body);showShortcuts();return root;
+}
+
 function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(job.id===selectedJob));row.addEventListener('click',()=>selectJob(job.id));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(job.id===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job.id);});select.append(element('span','job-title',text(repoName(job.repository)+'/PR#'+value(job.prNumber)+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.executionMode==='autonomous')states.append(element('span','badge flag-autonomous',text('AUTONOMOUS')));if(job.reviewEnabled!==false&&job.githubState!=='MERGED')states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.githubState==='MERGED'&&job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
 function taskSubtreeComplete(task,children){return ['SUCCEEDED','CANCELLED'].includes(task.state)&&(children.get(task.id)||[]).every(child=>taskSubtreeComplete(child,children));}
@@ -337,7 +381,7 @@ function taskStateField(task){const box=element('div','detail-group');box.append
 function manualOverrideField(task){const rows=Array.isArray(task.manualStateOverrides)?task.manualStateOverrides:[];const last=rows.at(-1);return field('Manual override',last?last.from+' → '+last.to+' · '+relativeTime(last.at):'—');}
 function renderTaskDetail(task){taskDetailRoot.replaceChildren();if(!task){taskDetailRoot.append(element('p','empty',text('Select a task to inspect execution details.')));return;}const routing=task.routing||{};const groups=element('div','detail-groups');groups.append(field('Task',task.id),field('Kind',task.kind||'work'),taskStateField(task),manualOverrideField(task),field('Planning decision',task.planningDecisionId||'—'),field('Planning source',task.planningSource||'—'),field('Planning round',task.planningRound===undefined?'—':String(task.planningRound)),field('Project / agent',value(task.projectName)+' / '+value(task.agentName)),field('Parent task',task.parentTaskId||'root'),field('Adapter',task.adapter),field('Provider / model',value(routing.provider)+' / '+value(routing.model)),field('Reasoning / profile',value(routing.reasoning||routing.profile)),field('Attempt',attemptBudget(task)),field('Dependencies',Array.isArray(task.dependencies)&&task.dependencies.length?task.dependencies.join(', '):'none'),taskCommentField(task),chatField(task));const job=selected();if(task.reviewHeadSha&&job)groups.append(commitField('HEAD commit',job,task.reviewHeadSha));const graph=agentGraphField(task);if(graph)groups.append(graph);if(task.plannerResult)groups.append(field('Objective status',task.plannerResult.objective_status),markdownField('Assessment',task.plannerResult.assessment));if(task.error)groups.append(field('Error',task.error));taskDetailRoot.append(groups);}
 function reviewStatus(job){const review=job?.review;if(!review)return 'Not started';if(review.outcome==='approved'&&review.headSha===job.headSha)return 'MERGE READY · approved';const stale=Array.isArray(job?.tasks)&&job.tasks.some(task=>task.agentName==='reviewer'&&task.reviewHeadSha&&job.headSha&&task.reviewHeadSha!==job.headSha);if(stale)return 'STALE · awaiting review';return String(review.outcome||'pending').replace('_',' ').toUpperCase();}
-function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Execution mode',job.executionMode||'fixed'),field('Cadence',cadence(job)),field('Review',reviewStatus(job)),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)));jobDetail.append(summary);const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}
+function renderSelectedJob(){jobDetail.replaceChildren();const job=selected();if(!job){selectedJobTitle.textContent='';jobDetail.append(element('div','empty',text('No durable jobs discovered.')));buildTree([]);renderTaskDetail(null);return;}selectedJobTitle.textContent=value(job.title||job.id);if(job.id!==selectedJob){selectedJob=job.id;selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}const summary=element('div','job-summary');summary.append(field('PR state',job.githubState||'UNKNOWN'),jobStateField(job),field('Runtime status',job.runtimeStatus||'IDLE'),field('Execution mode',job.executionMode||'fixed'),field('Cadence',cadence(job)),field('Review',reviewStatus(job)),commitField('Review head SHA',job,job.review?.headSha||job.headSha||''),prField(job),field('Repository',job.repository||'—'),field('Last activity',relativeTime(job.updatedAt)),field('Task states',compactCounts(job.tasks)));jobDetail.append(summary,renderChatShortcuts(job));const selectedTask=(job.tasks||[]).find(task=>task.id===selectedTaskId)||null;if(selectedTaskId&&!selectedTask){selectedTaskId=null;eventTaskId=null;clearEvents();rememberSelection();}buildTree(job.tasks||[]);renderTaskDetail(selectedTask);renderEventScope();}
 function renderAll(){jobs.sort(compareJobs);syncFilters();renderJobList();renderSelectedJob();syncMobileJobsView();}
 function isCompleteUnmerged(job){return job.runtimeStatus==='MERGE_PENDING';}
 function isTerminalJob(job){return ['COMPLETED','CANCELLED'].includes(job.state)||['MERGED','CLOSED'].includes(job.githubState);}
