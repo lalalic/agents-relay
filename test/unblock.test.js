@@ -65,9 +65,24 @@ test('blocker Job resolution sends autonomous BLOCKED dependents to replanning, 
   const failedStore=new InMemoryStore(makeJob([failed]));
   await registerBlockerDependency({blockerStore:blockerStore2,blockerJobId:'blocker2',dependentStore:failedStore,dependentJobId:'dependent',dependentTaskId:'failed',resolutionMode:'verified',now:at});
   await resolveBlockerDependencies({blockerStore:blockerStore2,blockerJobId:'blocker2',dependentStore:()=>failedStore,resolution:'verified',now:'2026-09-29T10:00:00.000Z'});
-  assert.equal((await failedStore.load('dependent')).tasks[0].state,'QUEUED');
+  const failedResult=(await failedStore.load('dependent')).tasks[0];
+  assert.equal(failedResult.state,'QUEUED');
+  assert.equal(failedResult.maxAttempts,6);
 });
 
+
+test('fixed authoritative unblock uses distinct unblock retry semantics', async()=>{
+  const blocked={...baseTask('fixed-release'),attempt:3,maxAttempts:3};
+  const store=new InMemoryStore(makeJob([blocked],'fixed'));
+  const current=await store.load('dependent');
+  const result=await unblockTask({store,job:current,task:current.tasks[0],trigger:{source:'cli',reason:'external blocker cleared'},now:'2026-09-29T10:00:00.000Z'});
+  assert.equal(result.replanning,false);
+  const saved=(await store.load('dependent')).tasks[0];
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.maxAttempts,6);
+  assert.equal(saved.unblock.source,'cli');
+  assert.equal(saved.error,null);
+});
 
 test('UNBLOCKED tasks do not spawn a troubleshooter before Planner', async()=>{
   const blocked=baseTask('release');
