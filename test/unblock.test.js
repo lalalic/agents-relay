@@ -71,6 +71,26 @@ test('blocker Job resolution sends autonomous BLOCKED dependents to replanning, 
 });
 
 
+test('blocker resolution resumes a fixed Job interrupted after durable UNBLOCKED', async()=>{
+  const blockerJob={id:'blocker-interrupted',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerStore=new InMemoryStore(blockerJob);
+  const blocked={...baseTask('interrupted'),attempt:2,maxAttempts:3};
+  const dependentStore=new InMemoryStore(makeJob([blocked],'fixed'));
+  await registerBlockerDependency({blockerStore,blockerJobId:'blocker-interrupted',dependentStore,dependentJobId:'dependent',dependentTaskId:'interrupted',resolutionMode:'verified',now:at});
+
+  const durable=(await dependentStore.load('dependent')).tasks[0];
+  durable.state='UNBLOCKED';
+  durable.unblock={at:'2026-09-29T09:59:00.000Z',source:'blocker_job',reason:'blocker cleared',baseline:{blockedAt:at},currentHeadSha:'abc'};
+  await dependentStore.saveTask(durable);
+
+  const resolved=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker-interrupted',dependentStore:()=>dependentStore,resolution:'verified',now:'2026-09-29T10:00:00.000Z'});
+  assert.equal(resolved.resumed,1);
+  const saved=(await dependentStore.load('dependent')).tasks[0];
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.maxAttempts,6);
+  assert.equal(saved.error,null);
+});
+
 test('fixed authoritative unblock uses distinct unblock retry semantics', async()=>{
   const blocked={...baseTask('fixed-release'),attempt:3,maxAttempts:3};
   const store=new InMemoryStore(makeJob([blocked],'fixed'));

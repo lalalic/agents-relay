@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
-import { applyTaskReleaseAction, applyTaskRetryAction } from './task-actions.js';
+import { applyTaskReleaseAction, applyTaskUnblockRetryAction, dispatchTaskAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
@@ -125,11 +125,17 @@ export async function resolveBlockerDependencies(options: {
     } else if (task.state === 'BLOCKED') {
       await unblockTask({ store, job: targetJob, task, trigger: { source: 'blocker_job', reason: `Blocker Job ${blocker.id} resolved (${options.resolution})`, blockerJobId: blocker.id, resolution: options.resolution }, now });
       unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-    } else {
-      await applyTaskRetryAction(task, { extendBudget: true });
-      delete task.blockedBy;
+    } else if (task.state === 'FAILED') {
+      const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: targetJob.id, taskId: task.id });
+      delete result.task.blockedBy;
+      result.task.updatedAt = now;
+      await store.saveTask(result.task);
+    } else if (task.state === 'UNBLOCKED') {
+      await applyTaskUnblockRetryAction(task);
       task.updatedAt = now;
       await store.saveTask(task);
+    } else {
+      throw new Error(`Unsupported dependent task state ${task.state}`);
     }
     relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent task requeued'; resumed += 1;
   }
