@@ -4,11 +4,15 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh } from '../dist/relayd.js';
+import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
+
+test('relayd scheduled heartbeat cadence is ten minutes', () => {
+  assert.equal(SCHEDULE_HEARTBEAT_MS, 600_000);
+});
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
   const normalized = normalizeDaemonArguments(argv);
