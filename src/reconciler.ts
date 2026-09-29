@@ -452,7 +452,7 @@ export class Reconciler extends ReconcilerReviewBase {
       task.plannerRetryFeedback = error.message;
       task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
       await transitionTaskEvent(task, 'task.failed');
-      if (task.attempt < task.maxAttempts) await transitionTaskEvent(task, 'retry');
+      if (task.attempt < task.maxAttempts) await applyTaskRetryAction(task);
       await this.store.saveTask(task);
       const pending = (job.plans ?? []).find(plan => plan.id === task.id) ?? pendingPlanForPlannerTask(job, task);
       await this.store.savePlan({ ...pending, status: task.state === 'FAILED' ? 'FAILED' : 'PLANNING', error: error.message, assessment: task.state === 'FAILED' ? `Planning failed: ${error.message}` : `Planning retry: ${error.message}`, updatedAt: new Date().toISOString() });

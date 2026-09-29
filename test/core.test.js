@@ -81,6 +81,20 @@ test('dashboard task action retries failed work and cancels queued work durably'
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
 });
 
+test('internal task.retry preserves retry budget while manual dispatch extends it', async () => {
+  const internal = { ...task('internal-retry', 'FAILED'), attempt: 2, maxAttempts: 3, error: 'transient' };
+  const store = new InMemoryStore(job([internal]));
+  const { applyTaskRetryAction } = await import('../dist/task-actions.js');
+  await applyTaskRetryAction(internal);
+  assert.equal(internal.state, 'QUEUED');
+  assert.equal(internal.maxAttempts, 3);
+
+  const manual = { ...task('manual-retry', 'FAILED'), attempt: 3, maxAttempts: 3, error: 'manual' };
+  const manualStore = new InMemoryStore(job([manual]));
+  const result = await dispatchTaskAction(manualStore, { id: 'task.retry', jobId: 'j', taskId: 'manual-retry' });
+  assert.equal(result.task.maxAttempts, 6);
+});
+
 test('shared task.retry action preserves planner feedback and clears durable execution identity', async () => {
   const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
   const store = new InMemoryStore(job([failed]));
