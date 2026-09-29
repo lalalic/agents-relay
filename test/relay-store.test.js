@@ -111,6 +111,25 @@ test('SQLiteRelayStore atomically persists agent registry updates with their pro
   await tmp.close(restarted);
 });
 
+test('ProjectedDurableStore preserves a complete agent baseline before first saveAgent', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remote = new InMemoryStore(makeJob());
+  const existing = { ...makeAgent(), id: 'existing-agent', name: 'Existing' };
+  await remote.saveAgent(existing);
+  const local = new ProjectedDurableStore(relay, remote);
+
+  const added = { ...makeAgent(), id: 'new-agent', name: 'New' };
+  await local.saveAgent(added);
+  assert.deepEqual((await local.listAgents()).map(agent => agent.id).sort(), ['existing-agent', 'new-agent']);
+
+  remote.listAgents = async () => { throw new Error('GitHub registry read must not run after baseline'); };
+  const offlineAdded = { ...makeAgent(), id: 'offline-agent', name: 'Offline' };
+  await local.saveAgent(offlineAdded);
+  assert.deepEqual((await local.listAgents()).map(agent => agent.id).sort(), ['existing-agent', 'new-agent', 'offline-agent']);
+  await tmp.close(relay);
+});
+
 test('SQLiteRelayStore coalesces pending mutations for the same projection key', async () => {
   const tmp = await tempDb();
   const store = new SQLiteRelayStore(tmp.path);

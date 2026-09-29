@@ -198,6 +198,9 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async saveAgent(agent: AgentRegistration): Promise<void> {
+    if (await this.relay.loadAgents() === null) {
+      await this.relay.saveAgents(await this.github.listAgents());
+    }
     const value = structuredClone(agent);
     await this.relay.saveAgentWithProjection(value, {
       idempotencyKey: `save_agent:${agent.id}`,
