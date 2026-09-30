@@ -1,7 +1,8 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
-import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { applyTaskReleaseAction, applyTaskUnblockRetryAction, dispatchTaskAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { dispatchBlockerResolution } from './workflow/blocker-resolution-v2.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
 export type BlockerResolutionSummary = { resumed: number; obsolete: number; waiting: number; unblocked: BlockerDependentTarget[] };
@@ -77,67 +78,66 @@ export async function resolveBlockerDependencies(options: {
 }): Promise<BlockerResolutionSummary> {
   const blocker = await options.blockerStore.load(options.blockerJobId);
   const mode = blocker.blockerResolutionMode ?? 'merge';
-  if (mode === 'verified' && options.resolution !== 'verified') {
-    const waiting = (blocker.unblocks ?? []).filter(item => item.state === 'waiting').length;
-    return { resumed: 0, obsolete: 0, waiting, unblocked: [] };
-  }
   const now = options.now ?? new Date().toISOString();
   const relations = blocker.unblocks ?? [];
   let resumed = 0;
   let obsolete = 0;
   const unblocked: BlockerDependentTarget[] = [];
+
   for (const relation of relations) {
     if (relation.state !== 'waiting') continue;
     const store = options.dependentStore(relation.repository, relation.prNumber);
-    let targetJob: Job;
+    let targetJob: Job | null = null;
+    let task: Task | undefined;
+    let loadError: string | null = null;
     try {
       targetJob = await store.load(relation.jobId);
+      task = targetJob.tasks.find(item => item.id === relation.taskId);
     } catch (error) {
-      relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = error instanceof Error ? error.message : String(error); obsolete += 1; continue;
+      loadError = error instanceof Error ? error.message : String(error);
     }
-    const task = targetJob.tasks.find(item => item.id === relation.taskId);
-    const matches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'UNBLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt;
-    if (!matches) {
-      relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = obsoleteReason(task, relation); obsolete += 1; continue;
-    }
-    if (targetJob.executionMode === 'autonomous') {
-      if (isEffectivelyBlocked(task)) {
-        await unblockAutonomousTasks({
-          store,
-          job: targetJob,
-          tasks: [task],
-          trigger: { source: 'blocker_job', reason: `Blocker Job ${blocker.id} resolved (${options.resolution})`, blockerJobId: blocker.id, resolution: options.resolution },
-          now,
-        });
+
+    const targetMatches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'UNBLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt;
+    let note = 'dependent task requeued';
+    const decision = await dispatchBlockerResolution({
+      resolutionAllowed: !(mode === 'verified' && options.resolution !== 'verified'),
+      targetMatches,
+      autonomousJob: targetJob?.executionMode === 'autonomous',
+      effectivelyBlocked: !!task && isEffectivelyBlocked(task),
+      alreadyUnblocked: task?.state === 'UNBLOCKED' && Boolean(task.unblock),
+      isDraft: task?.state === 'DRAFT', isBlocked: task?.state === 'BLOCKED',
+      isFailed: task?.state === 'FAILED', isUnblocked: task?.state === 'UNBLOCKED',
+    }, async actionId => {
+      if (!targetJob || !task) throw new Error('Blocker graph requested action without a matching dependent task');
+      if (actionId === 'blocker.autonomousUnblock') {
+        await unblockAutonomousTasks({ store, job: targetJob, tasks: [task], trigger: { source: 'blocker_job', reason: 'Blocker Job ' + blocker.id + ' resolved (' + options.resolution + ')', blockerJobId: blocker.id, resolution: options.resolution }, now });
         unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-        relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent task unblocked for replanning'; resumed += 1; continue;
-      }
-      if (task.state === 'UNBLOCKED' && task.unblock) {
-        relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent Job already unblocked for replanning'; resumed += 1; continue;
-      }
+        note = 'dependent task unblocked for replanning';
+      } else if (actionId === 'blocker.acceptExistingUnblock') note = 'dependent Job already unblocked for replanning';
+      else if (actionId === 'blocker.releaseDraft') {
+        await applyTaskReleaseAction(task); task.error = null; task.updatedAt = now; delete task.blockedBy; await store.saveTask(task);
+      } else if (actionId === 'blocker.unblockTask') {
+        await unblockTask({ store, job: targetJob, task, trigger: { source: 'blocker_job', reason: 'Blocker Job ' + blocker.id + ' resolved (' + options.resolution + ')', blockerJobId: blocker.id, resolution: options.resolution }, now });
+        unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
+      } else if (actionId === 'blocker.retryFailed') {
+        const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: targetJob.id, taskId: task.id }); delete result.task.blockedBy; result.task.updatedAt = now; await store.saveTask(result.task);
+      } else if (actionId === 'blocker.retryUnblocked') { await applyTaskUnblockRetryAction(task); task.updatedAt = now; await store.saveTask(task); }
+      else throw new Error('Unsupported blocker graph action ' + actionId);
+      return {};
+    });
+    if (!decision.accepted || decision.target === 'wait') continue;
+    if (decision.target === 'obsolete') {
+      relation.state = 'obsolete'; relation.resolvedAt = now; relation.resolution = options.resolution;
+      relation.note = loadError ?? obsoleteReason(task, relation); obsolete += 1; continue;
     }
-    if (task.state === 'DRAFT') {
-      await transitionTaskEvent(task, 'release');
-      task.error = null;
-      task.updatedAt = now;
-      delete task.blockedBy;
-      await store.saveTask(task);
-    } else if (task.state === 'BLOCKED') {
-      await unblockTask({ store, job: targetJob, task, trigger: { source: 'blocker_job', reason: `Blocker Job ${blocker.id} resolved (${options.resolution})`, blockerJobId: blocker.id, resolution: options.resolution }, now });
-      unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-    } else {
-      task.maxAttempts = extendRetryBudget(task);
-      await transitionTaskEvent(task, 'retry');
-      task.error = null;
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.executionId = null;
-      delete task.blockedBy;
-      task.updatedAt = now;
-      await store.saveTask(task);
-    }
-    relation.state = 'resumed'; relation.resolvedAt = now; relation.resolution = options.resolution; relation.note = 'dependent task requeued'; resumed += 1;
+    if (decision.target !== 'resumed') throw new Error('Blocker graph produced unsupported target ' + decision.target);
+    relation.state = 'resumed';
+    relation.resolvedAt = now;
+    relation.resolution = options.resolution;
+    relation.note = note;
+    resumed += 1;
   }
+
   const remaining = relations.filter(relation => relation.state === 'waiting');
   const consumed = remaining.length !== relations.length;
   if (!consumed) return { resumed, obsolete, waiting: remaining.length, unblocked };

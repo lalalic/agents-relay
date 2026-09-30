@@ -17,6 +17,7 @@ import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
+import { dispatchTaskAction } from '../dist/task-actions.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -80,12 +81,75 @@ test('dashboard task action retries failed work and cancels queued work durably'
   await assert.rejects(()=>dashboardTaskAction(store,reconciler,'retry')('j','cancel-me'),/not restartable/);
 });
 
+test('internal task.retry preserves retry budget while manual dispatch extends it', async () => {
+  const internal = { ...task('internal-retry', 'FAILED'), attempt: 2, maxAttempts: 3, error: 'transient' };
+  const store = new InMemoryStore(job([internal]));
+  const { applyTaskRetryAction } = await import('../dist/task-actions.js');
+  await applyTaskRetryAction(internal);
+  assert.equal(internal.state, 'QUEUED');
+  assert.equal(internal.maxAttempts, 3);
+
+  const manual = { ...task('manual-retry', 'FAILED'), attempt: 3, maxAttempts: 3, error: 'manual' };
+  const manualStore = new InMemoryStore(job([manual]));
+  const result = await dispatchTaskAction(manualStore, { id: 'task.retry', jobId: 'j', taskId: 'manual-retry' });
+  assert.equal(result.task.maxAttempts, 6);
+});
+
+test('task.queue uses one graph/action dependency gate for draft and failed work', async () => {
+  const done = task('done', 'SUCCEEDED');
+  const draft = task('draft', 'DRAFT', ['done']);
+  const failed = { ...task('failed', 'FAILED', ['done']), error: 'boom', executionId: 'old-exec', leaseOwner: 'old-owner' };
+  const blockedByDep = task('waiting', 'DRAFT', ['missing']);
+  const store = new InMemoryStore(job([done, draft, failed, blockedByDep]));
+
+  assert.equal((await dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'draft' })).task.state, 'QUEUED');
+  const failedResult = await dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'failed' });
+  assert.equal(failedResult.task.state, 'QUEUED');
+  assert.equal(failedResult.task.error, null);
+  assert.equal(failedResult.task.executionId, null);
+  assert.equal(failedResult.task.leaseOwner, null);
+  await assert.rejects(
+    () => dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'waiting' }),
+    /not queueable/,
+  );
+  assert.equal((await store.load('j')).tasks.find(item => item.id === 'waiting').state, 'DRAFT');
+});
+
+test('manual task.retry supersedes active automatic troubleshooter recovery for the same task', async () => {
+  const failed={...task('root','FAILED'),error:'boom'};
+  const recovery={...task('troubleshoot-root-a0','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const store=new InMemoryStore(job([failed,recovery]));
+  await dispatchTaskAction(store,{id:'task.retry',jobId:'j',taskId:'root'});
+  const saved=await store.load('j');
+  const root=saved.tasks.find(item=>item.id==='root');
+  const superseded=saved.tasks.find(item=>item.id==='troubleshoot-root-a0');
+  assert.equal(root.state,'QUEUED');
+  assert.equal(superseded.state,'CANCELLED');
+  assert.equal(superseded.executionId,null);
+  assert.match(superseded.error,/Superseded by manual retry of root/);
+});
+
+test('legacy planner Task is read-only under shared task.retry action', async () => {
+  const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
+  const store = new InMemoryStore(job([failed]));
+  await assert.rejects(() => dispatchTaskAction(store, { id: 'task.retry', jobId: 'j', taskId: 'planner-retry' }), /read-only/);
+  const persisted = (await store.load('j')).tasks[0];
+  assert.equal(persisted.state, 'FAILED');
+  assert.equal(persisted.error, 'invalid planner output');
+});
+
 test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {
   const store = new InMemoryStore(job([]));
   const durable = await dashboardJobSetState(store)('j', 'COMPLETED');
   assert.equal(durable.state, 'COMPLETED');
   assert.equal((await store.load('j')).state, 'COMPLETED');
   assert.equal(deriveJobRuntimeStatus(durable, 'OPEN'), 'IDLE');
+});
+
+test('dashboard job lifecycle override cannot invent a transition absent from the canonical graph', async () => {
+  const store = new InMemoryStore(job([]));
+  await assert.rejects(() => dashboardJobSetState(store)('j', 'DRAFT'), /Invalid job transition ACTIVE -> DRAFT/);
+  assert.equal((await store.load('j')).state, 'ACTIVE');
 });
 
 test('dashboard direct task state override is durable, audited, and does not reconcile', async () => {
@@ -106,6 +170,13 @@ test('dashboard direct task state override is durable, audited, and does not rec
   assert.equal(updatedTask.manualStateOverrides[0].to, 'SUCCEEDED');
   assert.equal(updatedTask.manualStateOverrides[0].actor, 'dashboard-user');
   assert.equal(updatedTask.error, 'historical failure');
+});
+
+test('dashboard task state override cannot invent a transition absent from the canonical graph', async () => {
+  const manual = task('manual-invalid', 'SUCCEEDED');
+  const store = new InMemoryStore(job([manual]));
+  await assert.rejects(() => dashboardTaskSetState(store)('j', 'manual-invalid', 'RUNNING'), /Invalid task transition SUCCEEDED -> RUNNING/);
+  assert.equal((await store.load('j')).tasks[0].state, 'SUCCEEDED');
 });
 
 test('dashboard cancel transitions RUNNING through task.cancelled and clears execution identity', async () => {
@@ -154,9 +225,10 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.state, 'ACTIVE');
-  assert.equal(saved.tasks[0].id, 'plan-1');
-  assert.equal(saved.tasks[0].plannerGuidance, 'additional planning guidance');
-  assert.equal(saved.tasks[0].plannerResult.objective_status, 'satisfied');
+  assert.equal(saved.tasks.some(item => item.kind === 'planner'), false);
+  assert.equal(saved.plans[0].id, 'plan-1');
+  assert.equal(saved.plans[0].guidance, 'additional planning guidance');
+  assert.equal(saved.plans[0].plannerResult.objective_status, 'satisfied');
 });
 test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
@@ -361,16 +433,15 @@ test('CLI task create and retry keep ACTIVE lifecycle while runtime changes', as
   [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
-test('manual planner retry preserves the previous planner error as retry feedback', async () => {
+test('CLI refuses mutation of legacy planner Task history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-planner-retry-')); const file=join(directory,'job.json');
   const failedTask={...task('planner-1','FAILED'),kind:'planner',adapter:'orchestrator',error:'Planner next_tasks[0].output is required',attempt:3,maxAttempts:3};
   await writeFile(file, JSON.stringify(job([failedTask])));
   const child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','planner-1'],{cwd:process.cwd()});
-  const [code]=await once(child,'exit'); assert.equal(code,0);
+  const [code]=await once(child,'exit'); assert.notEqual(code,0);
   const saved=JSON.parse(await readFile(file,'utf8')); const planner=saved.tasks.find(t=>t.id==='planner-1');
-  assert.equal(planner.state,'QUEUED');
-  assert.equal(planner.error,null);
-  assert.equal(planner.plannerRetryFeedback,'Planner next_tasks[0].output is required');
+  assert.equal(planner.state,'FAILED');
+  assert.equal(planner.error,'Planner next_tasks[0].output is required');
   await rm(directory,{recursive:true,force:true});
 });
 
@@ -458,11 +529,11 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   assert.match(saved.error,/event bus/);
   assert.equal(adapter.launches,0);
 });
-test('startup recovery immediately retries an old-owner Codex execution', async () => {
+test('startup recovery graph retries an old-owner Codex execution', async () => {
   const running=task('restart-codex','RUNNING');
   running.attempt=1; running.maxAttempts=3; running.executionId='old-execution'; running.leaseOwner='relayd-old'; running.leaseExpiresAt='2099-09-25T17:00:00.000Z';
-  const store=new InMemoryStore(job([running])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:bus,projectPathForJob:()=>process.cwd()});
+  const store=new InMemoryStore(job([running])); const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
   assert.equal(saved.state,'QUEUED'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
@@ -470,26 +541,23 @@ test('startup recovery immediately retries an old-owner Codex execution', async 
 test('startup recovery leaves current-owner Codex and ChatGPT async executions untouched', async () => {
   const current=task('current-codex','RUNNING'); current.attempt=1; current.executionId='current'; current.leaseOwner='relayd-new'; current.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const chat=task('chat-async','RUNNING'); chat.adapter='chatgpt'; chat.attempt=1; chat.executionId='chat'; chat.leaseOwner='relayd-old'; chat.leaseExpiresAt='2099-09-25T17:00:00.000Z';
-  const store=new InMemoryStore(job([current,chat])); const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const store=new InMemoryStore(job([current,chat]));
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=await store.load('j');
   assert.deepEqual(saved.tasks.map(item=>({state:item.state,attempt:item.attempt,executionId:item.executionId,leaseOwner:item.leaseOwner})),[
     {state:'RUNNING',attempt:1,executionId:'current',leaseOwner:'relayd-new'},
     {state:'RUNNING',attempt:1,executionId:'chat',leaseOwner:'relayd-old'},
   ]);
-  assert.equal(adapter.launches,0);
 });
-test('startup recovery respects terminal state and max-attempt protection', async () => {
-  const terminal=task('already-terminal','SUCCEEDED'); terminal.attempt=2; terminal.executionId='done'; terminal.leaseOwner='relayd-old'; terminal.leaseExpiresAt='2099-09-25T17:00:00.000Z'; terminal.result={summary:'done'};
+test('startup recovery graph terminalizes an exhausted orphan without a new generation', async () => {
   const exhausted=task('exhausted-codex','RUNNING'); exhausted.attempt=3; exhausted.maxAttempts=3; exhausted.executionId='exhausted'; exhausted.leaseOwner='relayd-old'; exhausted.leaseExpiresAt='2099-09-25T17:00:00.000Z';
-  const protectedJob=job([terminal,exhausted]); protectedJob.reviewEnabled=false; protectedJob.autoMerge=false;
-  const store=new InMemoryStore(protectedJob); const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  const root=job([exhausted]); root.reviewEnabled=false; root.autoMerge=false;
+  const store=new InMemoryStore(root);
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
-  const saved=await store.load('j'); const done=saved.tasks.find(item=>item.id==='already-terminal'); const failed=saved.tasks.find(item=>item.id==='exhausted-codex');
-  assert.equal(done.state,'SUCCEEDED'); assert.equal(done.executionId,'done');
-  assert.equal(failed.state,'FAILED'); assert.equal(failed.attempt,3); assert.match(failed.error,/maximum attempts/); assert.equal(adapter.launches,0);
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'FAILED'); assert.equal(saved.attempt,3); assert.match(saved.error,/Orphaned after relayd restart after maximum attempts/); assert.equal(saved.executionId,null);
 });
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
 test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
@@ -521,6 +589,40 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.deepEqual(calls,[{id:'job-1',maxConcurrent:4}]);
   await stop();
+});
+
+test('scheduler timer enters through EventBus schedule.tick before scheduled graph reconciliation', async () => {
+  const bus=new MemoryEventBus();
+  const at=new Date('2026-09-29T18:05:00.000Z');
+  const root={...job([]),id:'scheduled-event-job',repository:'owner/repo',prNumber:48,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
+  const store=new InMemoryStore(root);
+  const seen=[]; let reconciles=0;
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async id=>{reconciles+=1; seen.push('reconcile:'+id);}}),()=>false,undefined,()=>store);
+  const stopAudit=await bus.subscribeAll(async event=>{if(event.type==='schedule.tick')seen.push('bus:'+event.type);});
+  const stopPool=await pool.watch(bus);
+  await pool.scheduleTickSignal(bus,root,at);
+  for(let i=0;i<20&&reconciles===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(seen[0],'bus:schedule.tick');
+  assert.equal(reconciles,1);
+  const durable=await store.load(root.id);
+  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
+  assert.equal(durable.schedule.lastRunAt,at.toISOString());
+  await stopPool(); await stopAudit();
+});
+
+test('scheduler timer without EventBus uses the same schedule coordinator path', async () => {
+  const at=new Date('2026-09-29T18:05:00.000Z');
+  const root={...job([]),id:'scheduled-local-job',repository:'owner/repo',prNumber:49,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
+  const store=new InMemoryStore(root);
+  let reconciles=0;
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{reconciles+=1;}}),()=>false,undefined,()=>store);
+  await pool.scheduleTickSignal(undefined,root,at);
+  assert.equal(reconciles,1);
+  const durable=await store.load(root.id);
+  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
+  assert.equal(durable.schedule.lastRunAt,at.toISOString());
 });
 
 test('repository pool serializes same-job targeted reconcile with discovered reconcile', async () => {
@@ -931,8 +1033,8 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','success-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'success-then-exit')));
   await bus.publish(eventFor('j','success-then-exit',null,'task.completed','succeeded','durable output','user',undefined,await activeEventSource(store,'success-then-exit')));
-  adapter.resolvers[0].resolve({summary:'runtime exited'});
   await new Promise(resolve=>setTimeout(resolve,20));
+  assert.ok(adapter.cancelled > 0, 'accepted Codex terminal fact must stop the still-live worker process');
   assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
   assert.equal(events.filter(event=>event.type==='task.failed').length,0);
   assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
@@ -1070,7 +1172,12 @@ test('delivery failure after correlated task.started is diagnostic only and term
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>events.push(event)});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  await new Promise(resolve=>setTimeout(resolve,20));
+  for(let i=0;i<50;i++){
+    const observed=(await store.load('j')).tasks[0];
+    if(observed.state==='RUNNING') break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
   rejectRun(new LaunchFailure('DOM receipt missed the submitted user turn'));
   await new Promise(resolve=>setTimeout(resolve,20));
   let durable=(await store.load('j')).tasks[0];
@@ -1128,15 +1235,15 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
   const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
   const store=new InMemoryStore(root);
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'current slot done',next_tasks:[]})}});
   await reconciler.reconcile('j');
+  await reconciler.idle();
   const saved=await store.load('j');
-  const fresh=saved.tasks.find(item=>item.id==='plan-2');
+  const fresh=saved.plans?.find(item=>item.id==='plan-2');
   assert.ok(fresh);
-  assert.equal(fresh.kind,'planner');
-  assert.equal(fresh.parentTaskId,null);
-  assert.equal(fresh.previousPlannerTaskId,'planner-1');
-  assert.equal(fresh.state,'QUEUED');
+  assert.equal(fresh.previousPlanId,'planner-1');
+  assert.equal(fresh.status,'SUCCEEDED');
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history only
   assert.notEqual(saved.state,'FAILED');
 });
 
@@ -1448,6 +1555,26 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('cancelled same-head review creates a versioned review round instead of conflicting', async () => {
+  const work=task('work','SUCCEEDED');
+  const base='final-review-sha-review-r';
+  const old={...task(base,'CANCELLED'),agentName:'reviewer',reviewHeadSha:'sha-review-round',error:'Cancelled by user',dependencies:['work']};
+  const reviewJob={...job([work,old]),headSha:'sha-review-round',review:{outcome:'pending',headSha:'sha-review-round',taskId:old.id,evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(reviewJob);
+  store.pullRequestState=async()=> 'OPEN';
+  store.headSha=async()=> 'sha-review-round';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  let saved=await store.load('j');
+  let rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  assert.equal(rounds.length,2);
+  assert.equal(rounds[1].id,base+'-r2');
+  assert.equal(saved.review?.taskId,base+'-r2');
+  await reconciler.reconcile('j');
+  saved=await store.load('j');
+  rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  assert.equal(rounds.length,2);
+});
 test('reconcile persists a newly observed head before final review approval can auto-merge', async () => {
   const oldHead = 'old-head-before-push';
   const newHead = 'new-head-after-push';
@@ -1489,8 +1616,8 @@ test('autonomous in-progress batch advances planner without creating final revie
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
-  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,2);
-  assert.equal(saved.tasks.filter(item=>item.kind==='planner').at(-1).id,'plan-2');
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history remains read-only
+  assert.equal(saved.plans?.some(item=>item.id==='plan-2'),true);
 });
 
 test('autonomous satisfied objective ignores failed troubleshooter history for final review', async () => {
@@ -1574,7 +1701,7 @@ test('review changes-required creates one routable implementation fix task conta
   assert.match(fixes[0].input,/3\. third bug/);
   assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
   assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'WAITING');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
@@ -1719,6 +1846,59 @@ test('concurrent reconciler instances atomically claim one queued task only once
   await a.handleEvent(eventFor('j',durable.id,null,'task.completed','succeeded','worker completed','user',undefined,source));
   await new Promise(resolve=>setTimeout(resolve,10));
   assert.equal((await store.load('j')).tasks.find(item=>item.id==='atomic-launch').state,'SUCCEEDED');
+});
+
+test('concurrent reconciler instances route one queued generation only once', async () => {
+  const t=task('atomic-route');
+  t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const events=[];
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  const adapter=new FakeAdapter();
+  const a=managedReconciler(store,{owner:'test-a',adapters:[adapter],eventBus:bus});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[adapter],eventBus:bus});
+  await Promise.all([a.reconcile('j'),b.reconcile('j')]);
+  const durable=(await store.load('j')).tasks.find(item=>item.id==='atomic-route');
+  assert.equal(events.filter(event=>event.type==='worker.selected').length,1);
+  assert.equal(events.filter(event=>event.type==='model.selected').length,1);
+  assert.ok(durable.workerSelection);
+  await a.close(); await b.close(); await stopEvents();
+});
+
+test('concurrent terminal reconciliation commits one execution generation', async () => {
+  const t=task('atomic-terminal','RUNNING');
+  t.executionId='atomic-terminal-execution';
+  t.leaseOwner='test';
+  t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  const store=new InMemoryStore(job([t]));
+  const a=managedReconciler(store,{owner:'test-a',adapters:[]});
+  const b=managedReconciler(store,{owner:'test-b',adapters:[]});
+  const terminal=eventFor('j',t.id,null,'task.completed','succeeded','durable output','user',undefined,eventSource('j',t.id,t.executionId));
+  await Promise.all([a.handleEvent(terminal),b.handleEvent(terminal)]);
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.executionId,null);
+});
+
+test('terminal fact from a duplicate same-attempt execution wins over its orphan', async () => {
+  const t=task('duplicate-terminal','RUNNING');
+  t.attempt=1;
+  t.executionId='orphan-execution';
+  t.leaseOwner='test';
+  t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[
+    {id:'successful-execution',attempt:1,startedAt:'2026-09-29T20:00:00.000Z'},
+    {id:'orphan-execution',attempt:1,startedAt:'2026-09-29T20:00:01.000Z'},
+  ];
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[]});
+  await reconciler.handleEvent({...eventFor('j',t.id,null,'task.completed','succeeded','durable output','user',undefined,eventSource('j',t.id,'successful-execution')),timestamp:'2026-09-29T20:00:02.000Z'});
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'SUCCEEDED');
+  assert.equal(durable.executionId,null);
+  assert.equal(durable.result?.summary,'durable output');
 });
 
 test('repository pool performs no GitHub-backed reconciliation while rate limited', async () => {

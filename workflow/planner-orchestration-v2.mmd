@@ -1,0 +1,65 @@
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+checkLegacy["state: check_legacy_pending"]
+checkRecover["state: check_recover"]
+checkSeed["state: check_seed"]
+checkPlanner["state: check_planner"]
+checkBlocked["state: check_blocked"]
+checkWork["state: check_work"]
+checkMaterialized["state: check_materialized"]
+checkObjective["state: check_objective"]
+wait["state: wait"]
+recovered["state: recovered"]
+created["state: created"]
+
+autonomous["guard: autonomousJob"]
+legacyPending["guard: legacyPlanningPending"]
+recoverablePending["guard: recoverablePendingPlan"]
+hasSeed["guard: hasSeedWork"]
+noActivePlanner["guard: noActivePlanner"]
+noBlocked["guard: noBlockedWork"]
+noActiveWork["guard: noActiveImplementation"]
+materialized["guard: continuationMaterialized"]
+unsatisfied["guard: objectiveUnsatisfied"]
+
+recoverAction["action: planner.recoverPending"]
+createAction["action: planner.createRound"]
+
+idle -->|on: planner.reconcile| autonomous
+autonomous -->|false| wait
+autonomous -->|true| checkLegacy
+
+checkLegacy -->|on: planner.reconcile| legacyPending
+legacyPending -->|true| wait
+legacyPending -->|false| checkRecover
+
+checkRecover -->|on: planner.reconcile| recoverablePending
+recoverablePending -->|true| recoverAction
+recoverAction --> recovered
+recoverablePending -->|false| checkSeed
+
+checkSeed -->|on: planner.reconcile| hasSeed
+hasSeed -->|false| wait
+hasSeed -->|true| checkPlanner
+
+checkPlanner -->|on: planner.reconcile| noActivePlanner
+noActivePlanner -->|false| wait
+noActivePlanner -->|true| checkBlocked
+
+checkBlocked -->|on: planner.reconcile| noBlocked
+noBlocked -->|false| wait
+noBlocked -->|true| checkWork
+
+checkWork -->|on: planner.reconcile| noActiveWork
+noActiveWork -->|false| wait
+noActiveWork -->|true| checkMaterialized
+
+checkMaterialized -->|on: planner.reconcile| materialized
+materialized -->|false| wait
+materialized -->|true| checkObjective
+
+checkObjective -->|on: planner.reconcile| unsatisfied
+unsatisfied -->|false| wait
+unsatisfied -->|true| createAction
+createAction --> created

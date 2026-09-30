@@ -1,12 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
+import { EventRecord, Job, Task, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
 import { parseJobTagJson } from './task-tag.js';
 
-export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 300000, dashboardRefreshMs: 300000 } as const;
+export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 300000, dashboardRefreshMs: 300000, projectionFlushMs: 1000 } as const;
 export class ServiceEventBus implements EventBus {
   private readonly unsubscribers = new Set<() => Promise<void>>();
   constructor(private readonly upstream: EventBus) {}
@@ -49,6 +49,27 @@ async function localStore(file: string): Promise<{ store: InMemoryStore; job: Jo
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
 export async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }
 export async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
+
+export async function relayControlJob(args: string[], jobId: string): Promise<Job> {
+  const host = arg(args, '--host', '127.0.0.1');
+  const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
+  let response: Response;
+  try { response = await fetch(`http://${host}:${port}/api/job?id=${encodeURIComponent(jobId)}`); }
+  catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
+  return await response.json() as Job;
+}
+export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'retry'|'cancel'|'complete'; summary?: string; task?: Task }): Promise<Job> {
+  const host = arg(args, '--host', '127.0.0.1');
+  const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
+  let response: Response;
+  try { response = await fetch(`http://${host}:${port}/api/task-command`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!response.ok) throw new Error(`Agents Relay task command failed: ${await response.text() || `HTTP ${response.status}`}`);
+  return await response.json() as Job;
+}
 export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.unblocked', 'unblocked', `Task ${taskId} unblocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason })); } catch (error) { process.stderr.write(`warning: unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DurableStore, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
-import { Job, JobLifecycleState, TaskState } from './types.js';
+import { Job, JobLifecycleState, Task, TaskState } from './types.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-policy.js';
@@ -14,7 +14,7 @@ import { summarizeRuntime } from './runtime-summary.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -204,6 +204,29 @@ export function serveDashboard(
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
       try {
         const result = await handler(requestedJobId);
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(result));
+      } catch (error) {
+        if (!res.headersSent) res.writeHead(409);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/task-command') {
+      if (req.method !== 'POST') { res.writeHead(404); res.end('Task command unavailable'); return; }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { jobId?: string; taskId?: string; action?: string; summary?: string; task?: Task };
+        const requestedJobId = typeof body.jobId === 'string' ? body.jobId : '';
+        const requestedTaskId = typeof body.taskId === 'string' ? body.taskId : '';
+        if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
+        let result: Job;
+        if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task);
+        else if (body.action === 'retry' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
+        else if (body.action === 'cancel' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);
+        else if (body.action === 'complete' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && typeof body.summary === 'string' && body.summary.trim() && resolvedActions?.taskComplete) result = await resolvedActions.taskComplete(requestedJobId, requestedTaskId, body.summary);
+        else throw new Error('Task command unavailable');
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));
       } catch (error) {

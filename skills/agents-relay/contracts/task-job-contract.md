@@ -24,31 +24,9 @@ Task producers choose semantic task properties such as objective, dependencies, 
 
 ### Planning graph and semantic Task tree
 
-The planning graph expresses execution flow. The Task tree expresses semantic
-ownership. `dependencies` answer which durable outcomes must succeed before a
-Task can run; `parentTaskId` answers which durable artifact, milestone, or
-parent outcome the Task belongs to. These are independent relationships and
-must not be inferred from one another.
+The planning graph expresses execution flow. The Task tree expresses semantic ownership. `dependencies` answer which durable outcomes must succeed before a Task can run; `parentTaskId` answers which durable artifact or milestone owns the Task. These are independent relationships.
 
-For a multi-round artifact workflow, keep the business tree compact and
-milestone-oriented:
-
-```text
-Job
-├── Architecture v2
-│   ├── Review
-│   ├── Revision 1
-│   └── Re-review 1
-└── Graph Runtime v2
-```
-
-The revision may depend on Review and Re-review may depend on Revision 1, but
-both remain semantically owned by Architecture v2. A later Planner round must
-inspect existing Tasks and attach review, change, validation-rerun, release
-correction, or recovery work to the existing artifact subtree. An independent
-milestone is a root sibling. `plan-N` records are planning provenance/history,
-never semantic parents. Existing terminal Tasks are historical evidence and
-must not be rewritten merely to improve the tree.
+A later Planner round must inspect the existing semantic tree and attach review, revision, re-review, validation rerun, release correction, or recovery work to the existing artifact subtree. Independent milestones remain roots. `plan-N` records are provenance/history and must never be semantic parents. Existing terminal Tasks remain immutable historical evidence and may continue to own later work.
 
 ### Task input vs result
 
@@ -125,33 +103,6 @@ For the ChatGPT Browser Worker guardian, for example, the Job defines `pass -> �
 
 
 ### Optional Review Chair Tasks
-
-### Semantic Task tree and planning provenance
-
-The planning graph, semantic Task tree, and dependency graph are separate:
-
-```text
-plan-2 (planning provenance only)
-  ├─ revision (parentTaskId: milestone, dependencies: [review])
-  └─ re-review (parentTaskId: milestone, dependencies: [revision])
-independent-milestone (parentTaskId: null, dependencies: [revision])
-```
-
-`parentTaskId` answers which durable artifact or milestone owns this work. It
-may point to an existing terminal work Task when a later planning round
-continues that artifact, or to another work Task in the same batch. It must
-never point to a `plan-N`/historical `planner-N` record and must not be used
-just to group a round. `dependencies` answer what must finish first and may
-cross semantic subtrees. Reviews, changes-required revisions, re-reviews,
-specialist reviews, and troubleshooter recovery belong under the relevant
-artifact/milestone; independent milestones remain roots. Planning provenance
-is retained separately in `planningDecisionId` and `planningRound`, and
-historical terminal Tasks are immutable.
-
-Incorrect: make every generated Task a child of the current `plan-N`, or use
-`parentTaskId` as a substitute for a dependency. Correct: attach a re-review
-to the original milestone, set its dependency to the revision Task, and leave
-the original milestone's terminal record unchanged.
 
 Projects may use the shared `review-chair` agent as a normal Task or Agent
 Graph node. The chair discovers specialist agent roles from the resolved

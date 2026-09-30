@@ -1,0 +1,19 @@
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+checkSatisfied["state: check_satisfied"]
+waiting["state: waiting"]
+finished["state: finished"]
+
+hasSlot["guard: hasCurrentSlot"]
+satisfied["guard: plannerSatisfied"]
+finish["action: schedule.finishSlot"]
+
+idle -->|on: schedule.reconcile| hasSlot
+hasSlot -->|false| waiting
+hasSlot -->|true| checkSatisfied
+
+checkSatisfied -->|on: schedule.reconcile| satisfied
+satisfied -->|false| waiting
+satisfied -->|true| finish
+finish --> finished

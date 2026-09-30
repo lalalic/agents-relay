@@ -1,6 +1,8 @@
 import type { DurableStore } from './store.js';
 import type { BlockedBaseline, Job, PlanTrigger, Task, TaskUnblockRecord } from './types.js';
-import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { transitionTaskEvent } from './scheduler.js';
+import { applyTaskUnblockRetryAction } from './task-actions.js';
+import { dispatchAuthoritativeUnblock } from './workflow/authoritative-unblock-v2.js';
 
 export type UnblockSource = { source: 'cli' | 'blocker_job'; reason: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
 
@@ -72,19 +74,25 @@ export async function unblockAutonomousTasks(options: { store: DurableStore; job
 
 export async function unblockTask(options: { store: DurableStore; job: Job; task: Task; trigger: UnblockSource; now?: string }): Promise<{ replanning: boolean; planTrigger?: PlanTrigger }> {
   if (!isEffectivelyBlocked(options.task)) throw new Error(`Task ${options.task.id} is not an effective BLOCKED work task`);
-  if (options.job.executionMode === 'autonomous') return { replanning: true, planTrigger: await unblockAutonomousTasks({ store: options.store, job: options.job, tasks: [options.task], trigger: options.trigger, now: options.now }) };
-  const now = options.now ?? new Date().toISOString();
-  const currentHeadSha = await options.store.headSha?.() ?? options.job.headSha ?? null;
-  const baseline = baselineFor(options.task);
-  options.task.blockedBaseline = baseline;
-  const facts = unblockFacts(options.job, [options.task], currentHeadSha, options.trigger.reason);
-  options.task.unblock = { at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
-  await transitionTaskEvent(options.task, 'task.unblocked');
-  await options.store.saveTask(options.task);
-  options.task.maxAttempts = extendRetryBudget(options.task);
-  await transitionTaskEvent(options.task, 'retry');
-  options.task.error = null; options.task.leaseOwner = null; options.task.leaseExpiresAt = null; options.task.executionId = null;
-  options.task.updatedAt = now; delete options.task.blockedBy;
-  await options.store.saveTask(options.task);
-  return { replanning: false };
+  let result: { replanning: boolean; planTrigger?: PlanTrigger } | undefined;
+  const decision = await dispatchAuthoritativeUnblock(options.job.executionMode === 'autonomous', async actionId => {
+    if (actionId === 'unblock.replan') {
+      result = { replanning: true, planTrigger: await unblockAutonomousTasks({ store: options.store, job: options.job, tasks: [options.task], trigger: options.trigger, now: options.now }) };
+      return {};
+    }
+    if (actionId === 'unblock.retry') {
+      const now = options.now ?? new Date().toISOString();
+      const currentHeadSha = await options.store.headSha?.() ?? options.job.headSha ?? null;
+      const baseline = baselineFor(options.task); options.task.blockedBaseline = baseline;
+      const facts = unblockFacts(options.job, [options.task], currentHeadSha, options.trigger.reason);
+      options.task.unblock = { at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
+      await transitionTaskEvent(options.task, 'task.unblocked'); await options.store.saveTask(options.task);
+      await applyTaskUnblockRetryAction(options.task); options.task.updatedAt = now; await options.store.saveTask(options.task);
+      result = { replanning: false }; return {};
+    }
+    throw new Error('Unsupported authoritative unblock action ' + actionId);
+  });
+  if (!decision.accepted) throw new Error('Authoritative unblock graph rejected task.authoritative_unblock');
+  if (!result) throw new Error('Authoritative unblock graph completed without an action result');
+  return result;
 }

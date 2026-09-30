@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
+import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -12,6 +12,11 @@ import { nextPatchVersion } from '../scripts/npm-version.mjs';
 
 test('relayd scheduled heartbeat cadence is ten minutes', () => {
   assert.equal(SCHEDULE_HEARTBEAT_MS, 600_000);
+});
+test('relayd timer is a pure schedule.tick trigger and does not execute scheduled buckets directly', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /pool\.scheduleTickSignal\(bus, item\.job, now\)/);
+  assert.doesNotMatch(source, /runScheduledBucket\s*\(/);
 });
 test('relayd scheduled heartbeat selects only exact due open autonomous jobs from cache', () => {
   const now = new Date('2026-09-29T18:05:00Z');
@@ -23,6 +28,23 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
   const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
   assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
 });
+test('workspace dashboard/runtime summary refreshes cached jobs from local operational truth', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
+});
+
+test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {
+  const remoteJob = { id: 'job-1', title: 'remote', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'DRAFT', continuation: null, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
+  const localJob = { ...remoteJob, state: 'ACTIVE', updatedAt: '2026-09-29T00:01:00.000Z', tasks: [{ jobId:'job-1', id:'work', kind:'work', parentTaskId:null, dependencies:[], capabilities:[], adapter:'codex', attachments:[], output:{kind:'task_pr'}, continuation:null, continuationDeliveredAt:null, state:'RUNNING', attempt:1, maxAttempts:3, leaseOwner:'relay', leaseExpiresAt:null, executionId:'execution-1', threadId:null, result:null, plannerResult:null, error:null, timeoutMs:1000, createdAt:'2026-09-29T00:00:30.000Z', updatedAt:'2026-09-29T00:01:00.000Z', input:'work' }] };
+  const overview = { githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: remoteJob };
+  const hydrated = [];
+  const result = await overlayOperationalOverviews([overview], () => ({ hydrate: async job => hydrated.push(job.id), load: async () => structuredClone(localJob) }));
+  assert.deepEqual(hydrated, ['job-1']);
+  assert.equal(result[0].githubState, 'OPEN');
+  assert.equal(result[0].job.state, 'ACTIVE');
+  assert.equal(result[0].job.tasks[0].state, 'RUNNING');
+});
+
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
   const normalized = normalizeDaemonArguments(argv);
@@ -66,17 +88,39 @@ test('managed CLI reconciliation delegates through relayd and rejects a missing 
   assert.ok(source.indexOf("if (command === 'reconcile' && !localFile)") < source.lastIndexOf('const reconciler = runtime('));
 });
 
-test('workspace daemon establishes dashboard and event watch before remote refresh', async () => {
+test('managed CLI task mutations enter relayd control plane before local truth changes', async () => {
+  const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+  const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
+  assert.match(cli, /managed && \['create','complete','retry','cancel'\]\.includes\(action\)/);
+  assert.match(support, /\/api\/task-command/);
+  assert.match(relayd, /taskCreate: workspaceTaskCreate/);
+  assert.match(relayd, /taskComplete: workspaceTaskComplete/);
+  assert.match(relayd, /taskRetry: workspaceTaskAction\('retry'\)/);
+  assert.match(relayd, /taskCancel: workspaceTaskAction\('cancel'\)/);
+});
+
+test('workspace daemon restores local RelayStore jobs before best-effort remote refresh', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const cached = source.indexOf('const initial = cachedOverviews');
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
   const server = source.indexOf('const server = serveDashboard', watch);
-  const refresh = source.indexOf('const startupItems = await refreshAll(true, true)', watch);
+  const discover = source.indexOf('discoverLocalRelayStoreSnapshots', server);
+  const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', discover);
+  const schedule = source.indexOf('await scheduleHeartbeatSafely()', recover);
+  const timers = source.indexOf('interval=setInterval', schedule);
+  const projectionTimer = source.indexOf('projectionInterval=setInterval', timers);
+  const remote = source.indexOf('void refreshAll(true)', projectionTimer);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
   assert.ok(server > watch);
-  assert.ok(refresh > server);
-  assert.doesNotMatch(source, /\n  void refreshAll\(true\)/);
+  assert.ok(discover > server);
+  assert.ok(recover > discover);
+  assert.ok(schedule > recover);
+  assert.ok(timers > schedule);
+  assert.ok(projectionTimer > timers);
+  assert.ok(remote > projectionTimer);
+  assert.equal(source.includes('await refreshAll(true, true)'), false);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {
@@ -102,6 +146,7 @@ test('service defaults and package bins use stable package entrypoints', async (
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
+  assert.equal(SERVICE_DEFAULTS.projectionFlushMs, 1000);
 });
 
 test('publish workflow can write publication markers to pull requests', async () => {
@@ -182,6 +227,16 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('skills/agents-relay/contracts/task-job-contract.md'), true);
   assert.equal(files.has('workflow/job-lifecycle.mmd'), true);
   assert.equal(files.has('workflow/task-lifecycle.mmd'), true);
+  assert.equal(files.has('workflow/job-lifecycle-v2.mmd'), true);
+  assert.equal(files.has('workflow/task-lifecycle-v2.mmd'), true);
+  assert.equal(files.has('workflow/review-lifecycle-v2.mmd'), true);
+  assert.equal(files.has('workflow/planner-trigger-v2.mmd'), true);
+  assert.equal(files.has('workflow/planner-orchestration-v2.mmd'), true);
+  assert.equal(files.has('workflow/blocker-resolution-v2.mmd'), true);
+  assert.equal(files.has('workflow/authoritative-unblock-v2.mmd'), true);
+  assert.equal(files.has('workflow/scheduled-run-v2.mmd'), true);
+  assert.equal(files.has('workflow/schedule-cycle-v2.mmd'), true);
+  assert.equal(files.has('workflow/troubleshooter-v2.mmd'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);

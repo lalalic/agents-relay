@@ -1,4 +1,6 @@
 import { Job, Task, taskOverallTimeoutMs } from './types.js';
+import { dispatchTroubleshooter } from './workflow/troubleshooter-v2.js';
+import { createTaskEntity } from './workflow/entity-creation.js';
 
 function slug(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72) || 'task';
@@ -52,12 +54,19 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
   const existing = new Set(job.tasks.filter(task => task.agentName === 'troubleshooter').map(task => task.id));
   const recoveries: Task[] = [];
   for (const task of job.tasks) {
-    if (!['FAILED', 'BLOCKED'].includes(task.state) || task.kind === 'planner' || task.agentName === 'troubleshooter' || !belongsToCurrentRun(job, task)) continue;
-    if (task.state === 'BLOCKED' && task.unblock) continue;
     const id = troubleshooterTaskId(task);
-    if (existing.has(id) || hasRecoveryBarrier(job, task)) continue;
+    let create = false;
+    const decision = dispatchTroubleshooter({
+      failedOrBlocked: ['FAILED','BLOCKED'].includes(task.state),
+      ordinaryWork: task.kind !== 'planner' && task.agentName !== 'troubleshooter',
+      currentRun: belongsToCurrentRun(job, task),
+      needsRecovery: !(task.state === 'BLOCKED' && Boolean(task.unblock)),
+      idUnused: !existing.has(id),
+      noRecoveryBarrier: !hasRecoveryBarrier(job, task),
+    }, () => { create = true; });
+    if (!decision.accepted || !create) continue;
     const now = new Date().toISOString();
-    recoveries.push({
+    recoveries.push(createTaskEntity(job, {
       jobId: job.id,
       id,
       kind: 'work',
@@ -74,7 +83,6 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       output: { kind: 'task_pr' },
       continuation: null,
       continuationDeliveredAt: null,
-      state: 'QUEUED',
       attempt: 0,
       maxAttempts: 1,
       leaseOwner: null,
@@ -87,7 +95,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       timeoutMs: taskOverallTimeoutMs('M'),
       createdAt: now,
       updatedAt: now,
-    });
+    }));
   }
   return recoveries;
 }

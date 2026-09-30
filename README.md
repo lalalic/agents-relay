@@ -2,6 +2,8 @@
 
 Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. The PR body stores the durable Job marker plus human-readable Job objective, while PR comments store durable Task and other append-friendly records; correlated terminal events are authoritative for model-backed task lifecycle transitions.
 
+V2 separates **operational execution state** from that collaboration record. A local RelayStore may use SQLite/WAL for runtime snapshots, event idempotency and a durable GitHub projection outbox. ProjectedDurableStore bootstraps from the existing GitHub representation, commits Job/Plan/Task runtime changes locally, and lets GitHubProjectionWriter project them asynchronously. GitHub therefore remains the human-readable durable Job/Plan/Task/Review surface without being required for every high-frequency runtime transition.
+
 ## Quick start
 
 For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
@@ -48,9 +50,9 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
 
-Lifecycle transition authority lives in the directly renderable canonical sources [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd); see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
+Lifecycle transition authority lives in the directly renderable v2 flowchart sources [`workflow/job-lifecycle-v2.mmd`](workflow/job-lifecycle-v2.mmd) and [`workflow/task-lifecycle-v2.mmd`](workflow/task-lifecycle-v2.mmd). The legacy `stateDiagram-v2` files remain compatibility fixtures only; see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
 
-The canonical Mermaid Graph Engine is the single authoritative Job/Task lifecycle decision path. Lifecycle events, guards, deterministic mutations, and declarative effects are defined by the workflow graphs and executed through the shared graph runtime.
+The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, Schedule, and Troubleshooter orchestration branches are defined by the v2 workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 

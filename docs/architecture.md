@@ -31,12 +31,7 @@ markers is read as `fixed`. Fixed remains the default. Direct orchestrator work 
 when all currently runnable work is settled and no planner task is active,
 reconciliation appends one durable `kind: "planner"` `plan-N` task. Historical `planner-N` task IDs remain readable. The planner returns
 typed `objective_status`, `assessment`, and `next_tasks` values. Each
-`next_tasks` item becomes a normal work Task whose
-`planningDecisionId`/`planningRound` record provenance. Its optional
-`parentTaskId` is semantic ownership in the business Task tree and must point
-to an existing non-planner work Task (or another Task in the same batch), never
-to the `plan-N` round. `dependencies` remain independent execution
-prerequisites, including dependencies that cross ownership subtrees.
+`next_tasks` item becomes a normal work Task whose `planningDecisionId`/`planningRound` record provenance. Its optional `parentTaskId` is semantic ownership in the business Task tree and never points to a `plan-N` round; `dependencies` independently express execution prerequisites.
 
 Stable task IDs and append-if-same-definition behavior make planner retries
 idempotent. Leases, owner recovery, and completion decisions remain in the
@@ -44,15 +39,15 @@ reconciler; planner output never directly marks a job complete.
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." The daemon reloads the PR and task records, derives desired actions, and reconciles actual execution state. It never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
+Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL owns operational execution state and the projection outbox. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
 
 ## State
 
-Durable Job/Task lifecycle legality is defined by directly renderable Mermaid graphs in `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. Relay parses those files using the minimal executable profile documented in [workflow-engine.md](workflow-engine.md); there is no JSON/YAML mirror. Runtime status remains a separate derived projection.
+Durable Job/Task lifecycle legality is defined by directly renderable Mermaid graphs in `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd`. Review, planner, blocker/unblock, schedule, and troubleshooter orchestration policy is likewise defined by the dedicated `workflow/*-v2.mmd` graphs listed in [workflow-engine.md](workflow-engine.md). Relay parses all of them with the same minimal executable profile; there is no JSON/YAML mirror. Runtime status remains a separate derived projection.
 
 Job state is split into durable lifecycle and derived runtime status.
 
-Durable Job lifecycle is defined and rendered from [`workflow/job-lifecycle.mmd`](../workflow/job-lifecycle.mmd). This document explains the semantics but does not duplicate the transition table.
+Durable Job lifecycle is defined and rendered from [`workflow/job-lifecycle-v2.mmd`](../workflow/job-lifecycle-v2.mmd). This document explains the semantics but does not duplicate the transition table.
 
 - `DRAFT`: the Job exists but Relay must not execute it yet.
 - `ACTIVE`: Relay may reconcile it, evaluate triggers/schedules, release dependencies, and launch executable Tasks.
@@ -61,7 +56,7 @@ Durable Job lifecycle is defined and rendered from [`workflow/job-lifecycle.mmd`
 
 `RUNNING`, `WAITING`, `BLOCKED`, and `FAILED` are not durable Job lifecycle states. They are runtime projections derived from Task, Review, PR, and schedule facts. The current runtime statuses are `IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, and `CANCELLED`. Runtime status is recomputed; it is never persisted as Job lifecycle truth.
 
-Runtime-status projection intentionally remains TypeScript in `src/runtime-status.ts` rather than becoming a third executable Mermaid profile. Unlike Job/Task lifecycle, it does not describe legal transitions of one durable state machine; it folds several orthogonal fact sets into one observation. Making the projection executable would either duplicate those facts as fake states or expand the Graph Engine beyond its deliberately small `stateDiagram-v2` contract. Mermaid is still useful here as explanatory documentation:
+Runtime-status projection intentionally remains TypeScript in `src/runtime-status.ts` rather than becoming a third executable Mermaid profile. Unlike Job/Task lifecycle, it does not describe legal transitions of one durable state machine; it folds several orthogonal fact sets into one observation. Making the projection executable would either duplicate those facts as fake states or expand the Graph Engine beyond its deliberately small executable `flowchart` contract. Mermaid is still useful here as explanatory documentation:
 
 ```mermaid
 flowchart TD
@@ -84,7 +79,7 @@ flowchart TD
 
 Within Task activity, runnable/running work outranks blocked or failed siblings. `BLOCKED` or `FAILED` describes the Job only when no `RUNNING` or `QUEUED` work can still advance it. A scheduled `ACTIVE` Job with no current executable activity projects `WAITING` between runs.
 
-Task lifecycle is defined and rendered from [`workflow/task-lifecycle.mmd`](../workflow/task-lifecycle.mmd). This document explains the semantics but does not duplicate the transition table.
+Task lifecycle is defined and rendered from [`workflow/task-lifecycle-v2.mmd`](../workflow/task-lifecycle-v2.mmd). This document explains the semantics but does not duplicate the transition table.
 
 A task is DRAFT when it exists durably but is not executable yet. Dependency-backed DRAFT tasks move to QUEUED when their dependencies succeed; a DRAFT task with no dependencies requires an explicit release to QUEUED. QUEUED means executable now. Once RUNNING, a task must not return to DRAFT; an external condition discovered during execution is BLOCKED. Autonomous objective satisfaction and review/merge readiness are runtime/reconcile facts and do not rewrite an ACTIVE Job into intermediate lifecycle states.
 
@@ -164,7 +159,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 
 ## Non-goals for v1
 
-- Reimplement GitHub as a database.
+- Reimplement GitHub collaborative records as a competing database. V2 keeps GitHub as the durable collaboration projection while a small local Relay Store owns operational execution state.
 - Build a general workflow-language/DAG editor.
 - Require Redis, Postgres, Temporal, or Kubernetes.
 - Make NATS mandatory.

@@ -17,18 +17,21 @@ import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { extendRetryBudget, parseJobSchedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
+import { applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
+import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
   storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation,
+  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand,
 } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
@@ -47,7 +50,7 @@ export async function ensureManagedGitHubJob(
     if (!(error instanceof Error) || !error.message.startsWith('JOB_MARKER_MISSING:')) throw error;
   }
   const now = new Date().toISOString();
-  const job: Job = {
+  const job = createJobEntity({
     id: options.id,
     title: options.title || pr.title || 'Agents Relay job',
     objective: options.objective || pr.body || undefined,
@@ -60,13 +63,12 @@ export async function ensureManagedGitHubJob(
     reviewEnabled: options.reviewEnabled ?? true,
     prNumber: pr.number,
     repository: repositoryName,
-    state: options.schedule ? 'ACTIVE' : 'DRAFT',
     continuation: options.continuation ?? null,
     createdAt: now,
     updatedAt: now,
-    tasks: []
-  };
-  if (options.schedule) job.schedule = options.schedule;
+    tasks: [],
+    ...(options.schedule ? { schedule: options.schedule } : {}),
+  }, { activate: Boolean(options.schedule) });
   await store.saveJob(job);
   return { job: await store.load(options.id), pr };
 }
@@ -89,7 +91,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   const size = storySize(args);
   const dependencies = arg(args, '--deps').split(',').filter(Boolean);
   const timeoutMs = adapter === 'orchestrator' ? 0 : hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
-  return {
+  return createTaskEntity(job, {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
     priority: priority(args, job.priority ?? 'P2'),
@@ -109,7 +111,6 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     routing,
     continuation: continuation(args),
     continuationDeliveredAt: null,
-    state: hasArg(args, '--draft') || dependencies.length > 0 ? 'DRAFT' : 'QUEUED',
     attempt: 0,
     maxAttempts: Number(arg(args, '--max-attempts', '3')),
     leaseOwner: null,
@@ -121,10 +122,34 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     timeoutMs,
     createdAt: now,
     updatedAt: now
-  };
+  }, { defer: hasArg(args, '--draft') });
 }
+async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
+  const jobId = arg(args, '--id');
+  if (!jobId) throw new Error('--id is required for managed task commands');
+  const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
+  if (!id) throw new Error(`task ${action} requires --task-id`);
+  let result: Job;
+  if (action === 'create') {
+    const job = await relayControlJob(args, jobId);
+    if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
+    const task = await workerTaskFromArgs(job, args, new Date().toISOString());
+    task.id = id;
+    result = await relayTaskCommand(args, { jobId, action, task });
+  } else if (action === 'complete') {
+    const summary = arg(args, '--summary');
+    if (!summary) throw new Error('task complete requires --summary');
+    result = await relayTaskCommand(args, { jobId, taskId: id, action, summary });
+  } else result = await relayTaskCommand(args, { jobId, taskId: id, action });
+  const task = result.tasks.find(item => item.id === id);
+  if (!task) throw new Error(`Task ${id} missing after ${action}`);
+  console.log(JSON.stringify(task, null, 2));
+}
+
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
+  if (managed && ['create','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel'|'complete', args); return; }
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -136,7 +161,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     task.id = id;
     await store.appendTask(task);
     const refreshed = await store.load(job.id);
-    if (refreshed.state === 'DRAFT') { await transitionJobEvent(refreshed, 'activate'); await store.saveJob(refreshed); }
+    if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
     await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
@@ -148,35 +173,30 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
   if (action === 'complete') {
-    if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
-    if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
     const summary = arg(args, '--summary');
     if (!summary) throw new Error('task complete requires --summary');
-    if (task.state === 'QUEUED') await transitionTaskEvent(task, 'task.started');
-    task.attempt = Math.max(task.attempt, 1);
-    task.result = { summary };
-    task.error = null;
-    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-    await transitionTaskEvent(task, 'task.completed');
+    await applyOrchestratorCompleteAction(task, summary);
     await store.saveTask(task);
     await saveLocal(localFile, await store.load(job.id));
     console.log(JSON.stringify(task, null, 2));
     return;
   }
   if (action === 'retry' || action === 'cancel') {
+    let outputJob = job;
+    let outputTask = task;
     if (action === 'retry') {
-      if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of retry`); if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
-      task.maxAttempts = extendRetryBudget(task);
-      if (task.kind === 'planner' && task.error) task.plannerRetryFeedback = task.error;
+      const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: job.id, taskId: id });
+      if (result.job.state === 'DRAFT') { await applyJobActivateAction(result.job); await store.saveJob(result.job); }
+      outputJob = await store.load(job.id);
+      outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
+    } else {
+      const result = await dispatchTaskAction(store, { id: 'task.cancel', jobId: job.id, taskId: id });
+      outputJob = await store.load(job.id);
+      outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
     }
-    if (action === 'cancel' && task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and is immutable`); await transitionTaskEvent(task, action === 'retry' ? 'retry' : task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
-    task.error = action === 'retry' ? null : 'Cancelled by user';
-    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-    await store.saveTask(task);
-    if (action === 'retry' && job.state === 'DRAFT') { await transitionJobEvent(job, 'activate'); await store.saveJob(job); }
-    await saveLocal(localFile, job);
-    await publishWake(eventBus(args), job, task.id, `${task.id} ${action} requested`);
-    console.log(JSON.stringify(task, null, 2));
+    await saveLocal(localFile, outputJob);
+    await publishWake(eventBus(args), outputJob, outputTask.id, `${outputTask.id} ${action} requested`);
+    console.log(JSON.stringify(outputTask, null, 2));
     return;
   }
   if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
@@ -202,13 +222,11 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs);
   task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
   if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive');
-  if (hasArg(args, '--draft') && task.state === 'QUEUED') await transitionTaskEvent(task, 'hold');
+  if (hasArg(args, '--draft') && task.state === 'QUEUED') await applyTaskHoldAction(task);
   if (hasArg(args, '--queue')) {
-    const taskMap = new Map(job.tasks.map(item => [item.id, item]));
-    if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
-    if (task.state === 'DRAFT') await transitionTaskEvent(task, 'release');
-    else if (task.state === 'FAILED') await transitionTaskEvent(task, 'retry');
-    else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`); else if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and cannot be queued`);
+    await store.saveTask(task);
+    const result = await dispatchTaskAction(store, { id: 'task.queue', jobId: job.id, taskId: id });
+    Object.assign(task, result.task);
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
@@ -310,10 +328,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
-    if (job.state === 'COMPLETED') throw new Error(`Cannot cancel completed job ${job.id}`);
-    for (const task of job.tasks.filter(item => !['SUCCEEDED','UNBLOCKED','CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
+    await applyJobCancelAction(store, job);
     await store.closePullRequest();
-    await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (hasArg(args, '--title')) job.title = arg(args, '--title');
@@ -345,13 +361,10 @@ export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, 
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);
     if (action === 'start') {
-      if (job.state !== 'DRAFT') throw new Error(`Job ${job.id} is not startable (${job.state})`);
-      await transitionJobEvent(job, 'activate'); await store.saveJob(job);
+      await applyJobActivateAction(job); await store.saveJob(job);
     } else if (action === 'cancel') {
-      if (job.state === 'COMPLETED' || job.state === 'CANCELLED') throw new Error(`Job ${job.id} is not cancellable (${job.state})`);
-      for (const task of job.tasks.filter(item => !['SUCCEEDED', 'CANCELLED'].includes(item.state))) { await transitionTaskEvent(task, 'cancel'); task.error = 'Job cancelled'; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await store.saveTask(task); }
+      await applyJobCancelAction(store, job);
       await store.closePullRequest?.();
-      await transitionJobEvent(job, 'cancel'); await store.saveJob(job);
       return await store.load(job.id);
     }
     return await reconciler.wake(job.id);
@@ -426,7 +439,7 @@ async function main(): Promise<void> {
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: scheduleFromArgs(args) ? 'ACTIVE' : 'DRAFT', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const initialSchedule = scheduleFromArgs(args); const job = createJobEntity({ id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }, { activate: Boolean(initialSchedule) }); let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const bus = eventBus(args);
   if (command === 'status') {
     const host = arg(args, '--host', '127.0.0.1');

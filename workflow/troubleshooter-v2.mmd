@@ -1,0 +1,43 @@
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+checkOrdinary["state: check_ordinary"]
+checkRun["state: check_run"]
+checkNeeds["state: check_needs"]
+checkId["state: check_id"]
+checkBarrier["state: check_barrier"]
+skip["state: skip"]
+create["state: create"]
+
+failedOrBlocked["guard: failedOrBlocked"]
+ordinary["guard: ordinaryWork"]
+currentRun["guard: currentRun"]
+needsRecovery["guard: needsRecovery"]
+idUnused["guard: idUnused"]
+noBarrier["guard: noRecoveryBarrier"]
+createAction["action: troubleshooter.create"]
+
+idle -->|on: troubleshooter.reconcile| failedOrBlocked
+failedOrBlocked -->|false| skip
+failedOrBlocked -->|true| checkOrdinary
+
+checkOrdinary -->|on: troubleshooter.reconcile| ordinary
+ordinary -->|false| skip
+ordinary -->|true| checkRun
+
+checkRun -->|on: troubleshooter.reconcile| currentRun
+currentRun -->|false| skip
+currentRun -->|true| checkNeeds
+
+checkNeeds -->|on: troubleshooter.reconcile| needsRecovery
+needsRecovery -->|false| skip
+needsRecovery -->|true| checkId
+
+checkId -->|on: troubleshooter.reconcile| idUnused
+idUnused -->|false| skip
+idUnused -->|true| checkBarrier
+
+checkBarrier -->|on: troubleshooter.reconcile| noBarrier
+noBarrier -->|false| skip
+noBarrier -->|true| createAction
+createAction --> create

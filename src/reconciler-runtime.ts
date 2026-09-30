@@ -24,9 +24,34 @@ type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () 
 
 export function executionEventSource(jobId: string, taskId: string, executionId: string): string { return `job/${jobId}/task/${taskId}/execution/${executionId}`; }
 function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
+function executionIdFromSource(sourceId: string | undefined, jobId: string, taskId: string): string | undefined {
+  const prefix = `job/${jobId}/task/${taskId}/execution/`;
+  return sourceId?.startsWith(prefix) ? sourceId.slice(prefix.length) || undefined : undefined;
+}
 
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
+const executionBoundaryLocks = new Map<string, Promise<void>>();
+
+/**
+ * Serialize the durable execution-generation boundary across reconciler
+ * instances in one relay process. Launch, routing, and terminal persistence
+ * must not observe and write the same queued generation concurrently.
+ */
+export async function withExecutionBoundary<T>(jobId: string, taskId: string, work: () => Promise<T>): Promise<T> {
+  const key = `${jobId}/${taskId}`;
+  const previous = executionBoundaryLocks.get(key);
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  executionBoundaryLocks.set(key, current);
+  if (previous) await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (executionBoundaryLocks.get(key) === current) executionBoundaryLocks.delete(key);
+  }
+}
 function claimTerminalExecution(sourceId: string): void {
   terminalExecutionClaims.add(sourceId);
   const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
@@ -198,6 +223,18 @@ export abstract class ReconcilerRuntimeBase {
     activeExecutionOwners.set(executionEventSource(jobId, taskId, executionId), this);
   }
 
+  protected cancelExecutionGeneration(jobId: string, taskId: string, executionId: string | null | undefined): boolean {
+    if (!executionId) return false;
+    const sourceId = executionEventSource(jobId, taskId, executionId);
+    const owner = activeExecutionOwners.get(sourceId);
+    const live = owner?.live.get(taskId);
+    if (!owner || !live || live.executionId !== executionId) return false;
+    live.controller.abort();
+    live.execution.cancel();
+    owner.clearExecution(taskId, executionId);
+    return true;
+  }
+
   protected clearTerminalTimer(taskId: string, executionId: string): void {
     const live = this.live.get(taskId);
     if (!live || live.executionId !== executionId) return;
@@ -308,7 +345,7 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) live.processSettled = true;
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || task.executionId !== executionId) return;
+    if (!task || (task.executionId !== executionId && !terminalExecutionClaimed(jobId, taskId, executionId))) return;
     if (task.adapter !== 'chatgpt') this.clearTerminalTimer(taskId, executionId);
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
@@ -354,13 +391,21 @@ export abstract class ReconcilerRuntimeBase {
     );
     this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
   }
-
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
-    const transition = await this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
+    const liveAtTerminal = this.live.get(event.task_id); const terminalEventExecutionId = executionIdFromSource(eventSourceId(event), event.job_id, event.task_id);
+    const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
-        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) return false;
+        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
+          const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
+          const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
+          // A duplicate launch can leave one worker orphaned after another worker
+          // has already produced the terminal fact. Accept only a known execution
+          // from the same durable attempt and only when its fact is newer than its
+          // launch. A prior retry attempt cannot complete a newer generation.
+          if (!prior || prior.attempt !== task.attempt || !event.timestamp || new Date(event.timestamp).getTime() < new Date(prior.startedAt).getTime()) return false;
+        }
         const terminalWaiter = this.terminalWaiters.get(task.id);
         return !terminalWaiter || Boolean(event.timestamp && new Date(event.timestamp).getTime() >= terminalWaiter.launchBarrier);
       },
@@ -374,10 +419,16 @@ export abstract class ReconcilerRuntimeBase {
       mutate: (job, task) => {
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
         const acceptedExecutionId = task.executionId;
-        if (modelBacked && acceptedExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, acceptedExecutionId));
+        const eventExecutionId = executionIdFromSource(eventSourceId(event), job.id, task.id);
+        const terminalExecutionId = eventExecutionId ?? acceptedExecutionId;
+        if (modelBacked && terminalExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, terminalExecutionId));
+        if (eventExecutionId && acceptedExecutionId && eventExecutionId !== acceptedExecutionId) {
+          this.cancelExecutionGeneration(job.id, task.id, eventExecutionId);
+        }
         this.clearExecution(task.id, acceptedExecutionId);
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
+        task.executionId = null;
         task.updatedAt = event.timestamp || new Date().toISOString();
         this.terminalWaiters.get(task.id)?.resolve();
         this.terminalWaiters.delete(task.id);
@@ -406,8 +457,9 @@ export abstract class ReconcilerRuntimeBase {
           task.error = event.message || `Task ${task.id} cancelled`;
         }
       },
-    });
+    }));
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
+    if (transition.task.adapter === 'codex' && liveAtTerminal && !liveAtTerminal.processSettled && liveAtTerminal.jobId === event.job_id && (!terminalEventExecutionId || liveAtTerminal.executionId === terminalEventExecutionId)) { liveAtTerminal.controller.abort(); liveAtTerminal.execution.cancel(); }
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
     const reviewWorker = transition.task.agentName === 'reviewer';
     return { applied: true, reconcile: !reviewWorker, reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker ? undefined : 'detached' };

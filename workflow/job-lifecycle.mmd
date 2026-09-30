@@ -3,14 +3,14 @@ stateDiagram-v2
 
     DRAFT --> ACTIVE: activate
     DRAFT --> COMPLETED: pr.merged / effect.cancelActiveTasks
-    DRAFT --> CANCELLED: cancel
+    DRAFT --> CANCELLED: cancel / effect.cancelActiveTasks
     DRAFT --> CANCELLED: pr.closed [notMerged] / effect.cancelActiveTasks
 
     ACTIVE --> ACTIVE: review.approved [autoMerge] / effect.mergePullRequest
     ACTIVE --> ACTIVE: implementation.completed [autoMerge] / effect.mergePullRequest
     ACTIVE --> ACTIVE: effect.mergePullRequest.failed
     ACTIVE --> COMPLETED: pr.merged / effect.cancelActiveTasks
-    ACTIVE --> CANCELLED: cancel
+    ACTIVE --> CANCELLED: cancel / effect.cancelActiveTasks
     ACTIVE --> CANCELLED: pr.closed [notMerged] / effect.cancelActiveTasks
 
     CANCELLED --> COMPLETED: pr.merged / effect.cancelActiveTasks

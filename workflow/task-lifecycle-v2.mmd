@@ -1,0 +1,201 @@
+flowchart LR
+%% relay: initial draft
+draft["state: DRAFT"]
+queued["state: QUEUED"]
+running["state: RUNNING"]
+blocked["state: BLOCKED"]
+unblocked["state: UNBLOCKED"]
+succeeded["state: SUCCEEDED"]
+failed["state: FAILED"]
+cancelled["state: CANCELLED"]
+
+depSat["guard: dependenciesSatisfied"]
+depUnsat["guard: dependenciesUnsatisfied"]
+runnable["guard: runnable"]
+dispatchable["guard: dispatchable"]
+recoverStart["guard: recoverableExecution"]
+recoverComplete["guard: recoverableExecution"]
+recoverBlocked["guard: recoverableExecution"]
+recoverFailed["guard: recoverableExecution"]
+recoverCancelled["guard: recoverableExecution"]
+
+retryAvailableRunning["guard: retryAvailable"]
+plannerRetryAvailable["guard: retryAvailable"]
+plannerUnavailableMark["action: mutation.markPlannerUnavailable"]
+orphanRetryAvailable["guard: retryAvailable"]
+orphanRetryClearError["action: mutation.clearError"]
+orphanRetryClearLease["action: mutation.clearLease"]
+orphanRetryClearExecution["action: mutation.clearExecution"]
+orphanFailMark["action: mutation.markStartupOrphanedExhausted"]
+orphanFailClearLease["action: mutation.clearLease"]
+orphanFailClearExecution["action: mutation.clearExecution"]
+plannerRetryClearError["action: mutation.clearError"]
+plannerRetryClearLease["action: mutation.clearLease"]
+plannerRetryClearExecution["action: mutation.clearExecution"]
+plannerFailClearLease["action: mutation.clearLease"]
+plannerFailClearExecution["action: mutation.clearExecution"]
+retryAvailableQueued["guard: retryAvailable"]
+leaseRetryRunningClearError["action: mutation.clearError"]
+leaseRetryRunningClearLease["action: mutation.clearLease"]
+leaseRetryRunningClearExecution["action: mutation.clearExecution"]
+leaseFailRunningMark["action: mutation.markLeaseExpired"]
+leaseFailRunningClearLease["action: mutation.clearLease"]
+leaseFailRunningClearExecution["action: mutation.clearExecution"]
+leaseRetryQueuedClearError["action: mutation.clearError"]
+leaseRetryQueuedClearLease["action: mutation.clearLease"]
+leaseRetryQueuedClearExecution["action: mutation.clearExecution"]
+leaseFailQueuedMark["action: mutation.markLeaseExpired"]
+leaseFailQueuedClearLease["action: mutation.clearLease"]
+leaseFailQueuedClearExecution["action: mutation.clearExecution"]
+
+releaseClearError["action: mutation.clearError"]
+releaseClearReason["action: mutation.clearFailureReason"]
+reconcileDraftClearError["action: mutation.clearError"]
+reconcileDraftClearReason["action: mutation.clearFailureReason"]
+reconcileQueuedClearError["action: mutation.clearError"]
+reconcileQueuedClearReason["action: mutation.clearFailureReason"]
+dispatchLaunch["action: effect.launchTask"]
+startClearError["action: mutation.clearError"]
+startClearReason["action: mutation.clearFailureReason"]
+reviewStartClearError["action: mutation.clearError"]
+reviewStartClearReason["action: mutation.clearFailureReason"]
+reviewApproveQueuedClearError["action: mutation.clearError"]
+reviewApproveQueuedClearReason["action: mutation.clearFailureReason"]
+reviewChangesQueuedClearError["action: mutation.clearError"]
+reviewChangesQueuedClearReason["action: mutation.clearFailureReason"]
+reviewApproveRunningClearError["action: mutation.clearError"]
+reviewApproveRunningClearReason["action: mutation.clearFailureReason"]
+reviewChangesRunningClearError["action: mutation.clearError"]
+reviewChangesRunningClearReason["action: mutation.clearFailureReason"]
+completeClearError["action: mutation.clearError"]
+completeClearReason["action: mutation.clearFailureReason"]
+unblockRetryClearError["action: mutation.clearError"]
+unblockRetryClearReason["action: mutation.clearFailureReason"]
+failedRetryClearError["action: mutation.clearError"]
+failedRetryClearReason["action: mutation.clearFailureReason"]
+recoverStartClearError["action: mutation.clearError"]
+recoverStartClearReason["action: mutation.clearFailureReason"]
+recoverCompleteClearError["action: mutation.clearError"]
+recoverCompleteClearReason["action: mutation.clearFailureReason"]
+
+draft -->|on: release| releaseClearError
+releaseClearError --> releaseClearReason
+releaseClearReason --> queued
+draft -->|on: queue| depSat
+draft -->|on: reconcile| depSat
+depSat -->|true| reconcileDraftClearError
+reconcileDraftClearError --> reconcileDraftClearReason
+reconcileDraftClearReason --> queued
+draft -->|on: block| blocked
+draft -->|on: cancel| cancelled
+
+queued -->|on: hold| draft
+queued -->|on: reconcile| depUnsat
+depUnsat -->|true| draft
+queued -->|on: reconcile| runnable
+runnable -->|true| reconcileQueuedClearError
+reconcileQueuedClearError --> reconcileQueuedClearReason
+reconcileQueuedClearReason --> queued
+queued -->|on: dispatch| dispatchable
+dispatchable -->|true| dispatchLaunch
+dispatchLaunch --> queued
+queued -->|on: task.started| startClearError
+startClearError --> startClearReason
+startClearReason --> running
+queued -->|on: review.started| reviewStartClearError
+reviewStartClearError --> reviewStartClearReason
+reviewStartClearReason --> running
+queued -->|on: review.approved| reviewApproveQueuedClearError
+reviewApproveQueuedClearError --> reviewApproveQueuedClearReason
+reviewApproveQueuedClearReason --> succeeded
+queued -->|on: review.changes_required| reviewChangesQueuedClearError
+reviewChangesQueuedClearError --> reviewChangesQueuedClearReason
+reviewChangesQueuedClearReason --> succeeded
+queued -->|on: review.blocked| blocked
+queued -->|on: block| blocked
+queued -->|on: fail| failed
+queued -->|on: effect.launchTask.failed| failed
+queued -->|on: watchdog.failed| failed
+queued -->|on: worker.delivery_failed| failed
+queued -->|on: worker.start_ack_failed| failed
+queued -->|on: planner.unavailable| plannerUnavailableMark
+plannerUnavailableMark --> failed
+queued -->|on: lease.expired| retryAvailableQueued
+retryAvailableQueued -->|true| leaseRetryQueuedClearError
+leaseRetryQueuedClearError --> leaseRetryQueuedClearLease
+leaseRetryQueuedClearLease --> leaseRetryQueuedClearExecution
+leaseRetryQueuedClearExecution --> queued
+retryAvailableQueued -->|false| leaseFailQueuedMark
+leaseFailQueuedMark --> leaseFailQueuedClearLease
+leaseFailQueuedClearLease --> leaseFailQueuedClearExecution
+leaseFailQueuedClearExecution --> failed
+queued -->|on: cancel| cancelled
+
+running -->|on: task.blocked| blocked
+running -->|on: review.approved| reviewApproveRunningClearError
+reviewApproveRunningClearError --> reviewApproveRunningClearReason
+reviewApproveRunningClearReason --> succeeded
+running -->|on: review.changes_required| reviewChangesRunningClearError
+reviewChangesRunningClearError --> reviewChangesRunningClearReason
+reviewChangesRunningClearReason --> succeeded
+running -->|on: review.blocked| blocked
+running -->|on: task.completed| completeClearError
+completeClearError --> completeClearReason
+completeClearReason --> succeeded
+running -->|on: task.failed| failed
+running -->|on: watchdog.failed| failed
+running -->|on: planner.failed| plannerRetryAvailable
+running -->|on: execution.orphaned| orphanRetryAvailable
+orphanRetryAvailable -->|true| orphanRetryClearError
+orphanRetryClearError --> orphanRetryClearLease
+orphanRetryClearLease --> orphanRetryClearExecution
+orphanRetryClearExecution --> queued
+orphanRetryAvailable -->|false| orphanFailMark
+orphanFailMark --> orphanFailClearLease
+orphanFailClearLease --> orphanFailClearExecution
+orphanFailClearExecution --> failed
+plannerRetryAvailable -->|true| plannerRetryClearError
+plannerRetryClearError --> plannerRetryClearLease
+plannerRetryClearLease --> plannerRetryClearExecution
+plannerRetryClearExecution --> queued
+plannerRetryAvailable -->|false| plannerFailClearLease
+plannerFailClearLease --> plannerFailClearExecution
+plannerFailClearExecution --> failed
+running -->|on: lease.expired| retryAvailableRunning
+retryAvailableRunning -->|true| leaseRetryRunningClearError
+leaseRetryRunningClearError --> leaseRetryRunningClearLease
+leaseRetryRunningClearLease --> leaseRetryRunningClearExecution
+leaseRetryRunningClearExecution --> queued
+retryAvailableRunning -->|false| leaseFailRunningMark
+leaseFailRunningMark --> leaseFailRunningClearLease
+leaseFailRunningClearLease --> leaseFailRunningClearExecution
+leaseFailRunningClearExecution --> failed
+running -->|on: task.cancelled| cancelled
+running -->|on: cancel| cancelled
+
+blocked -->|on: task.unblocked| unblocked
+blocked -->|on: cancel| cancelled
+
+unblocked -->|on: retry| unblockRetryClearError
+unblockRetryClearError --> unblockRetryClearReason
+unblockRetryClearReason --> queued
+
+failed -->|on: queue| depSat
+failed -->|on: retry| failedRetryClearError
+failedRetryClearError --> failedRetryClearReason
+failedRetryClearReason --> queued
+failed -->|on: task.started| recoverStart
+recoverStart -->|true| recoverStartClearError
+recoverStartClearError --> recoverStartClearReason
+recoverStartClearReason --> running
+failed -->|on: task.completed| recoverComplete
+recoverComplete -->|true| recoverCompleteClearError
+recoverCompleteClearError --> recoverCompleteClearReason
+recoverCompleteClearReason --> succeeded
+failed -->|on: task.blocked| recoverBlocked
+recoverBlocked -->|true| blocked
+failed -->|on: task.failed| recoverFailed
+recoverFailed -->|true| failed
+failed -->|on: task.cancelled| recoverCancelled
+recoverCancelled -->|true| cancelled
+failed -->|on: cancel| cancelled

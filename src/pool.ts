@@ -1,12 +1,15 @@
-import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext, type GitHubPullRequestSeed, type ManagedGitHubPullRequestSnapshot } from './store.js';
+import { GitHubClient, GitHubStore, ManagedJobOverview, listManagedGitHubJobs, withGitHubRequestContext, type DurableStore, type GitHubPullRequestSeed, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
 import { GitHubWebhookWake } from './github-webhook.js';
+import { runScheduledBucket } from './scheduled-jobs.js';
+import { scheduleBucket } from './scheduler.js';
 import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordinator.js';
 import type { EventRecord } from './types.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.githubState === 'OPEN' && item.job.state === 'ACTIVE').map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
@@ -28,6 +31,7 @@ export class RepositoryWorkerPool {
   private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly coordinator: ReconcileCoordinator;
   private readonly githubSignalCoordinator: ReconcileCoordinator;
+  private readonly scheduleSignalCoordinator: ReconcileCoordinator;
   private watchedBus?: EventBus;
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   private readonly targetSeeds = new Map<string, GitHubPullRequestSeed>();
@@ -36,9 +40,10 @@ export class RepositoryWorkerPool {
     repository: string | readonly string[],
     private readonly trustedAuthors: ReadonlySet<string>,
     private readonly concurrency: number,
-    private readonly makeReconciler: (store: GitHubStore, maxConcurrent: number) => Reconciler,
+    private readonly makeReconciler: (store: DurableStore, maxConcurrent: number) => Reconciler,
     private readonly isRateLimited: () => boolean = () => false,
     private readonly refreshWebhookSnapshot?: (repository: string, prNumber: number, trigger: string) => Promise<ManagedGitHubPullRequestSnapshot>,
+    private readonly makeStore: (repository: string, prNumber: number, seed?: GitHubPullRequestSeed | null) => DurableStore = (repository, prNumber, seed) => new GitHubStore(this.client, repository, prNumber, this.trustedAuthors, seed),
   ) {
     this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)];
     const reportCoordinatorError = (error: unknown, signal: ReconcileSignal): void => {
@@ -46,6 +51,7 @@ export class RepositoryWorkerPool {
     };
     this.coordinator = new ReconcileCoordinator((jobId, signals) => this.consumeSignals(jobId, signals), reportCoordinatorError);
     this.githubSignalCoordinator = new ReconcileCoordinator((_key, signals) => this.consumeGitHubSignals(signals), reportCoordinatorError);
+    this.scheduleSignalCoordinator = new ReconcileCoordinator((jobId, signals) => this.consumeScheduleSignals(jobId, signals), reportCoordinatorError);
   }
   private readonly repositories: string[];
   private async reconcileExclusive(jobId: string, work: () => Promise<void>): Promise<void> {
@@ -66,6 +72,28 @@ export class RepositoryWorkerPool {
       return `github.webhook:${webhookEvent}${action}`;
     }
     return `event.${event.type}`;
+  }
+
+  private async consumeScheduleSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
+    if (this.isRateLimited() || signals.length === 0) return;
+    const signal = [...signals].reverse().find(item => item.event?.type === 'schedule.tick');
+    const event = signal?.event;
+    const repository = signal?.repository ?? (typeof event?.data?.repository === 'string' ? event.data.repository : undefined);
+    const prValue = signal?.prNumber ?? Number(event?.data?.prNumber);
+    const prNumber = Number.isInteger(prValue) && Number(prValue) > 0 ? Number(prValue) : undefined;
+    const bucket = typeof event?.data?.bucket === 'string' ? event.data.bucket : undefined;
+    const tickAt = typeof event?.data?.tickAt === 'string' ? new Date(event.data.tickAt) : new Date(event?.timestamp ?? Date.now());
+    if (!repository || !prNumber || !bucket || !this.repositories.includes(repository) || Number.isNaN(tickAt.getTime())) return;
+    this.jobTargets.set(jobId, { repository, prNumber });
+    await runScheduledBucket(
+      this.client,
+      repository,
+      this.trustedAuthors,
+      { prNumber, jobId, bucket },
+      { reconcile: async () => { await this.reconcileTarget(repository, prNumber, jobId, 'schedule.tick'); }, idle: async () => {} },
+      tickAt,
+      () => this.makeStore(repository, prNumber),
+    );
   }
 
   private async consumeGitHubSignals(signals: readonly ReconcileSignal[]): Promise<void> {
@@ -128,7 +156,6 @@ export class RepositoryWorkerPool {
   }
 
   private async consumeSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
-    if (this.isRateLimited()) return;
     for (const signal of signals) {
       if (signal.repository && signal.prNumber && this.repositories.includes(signal.repository)) {
         this.jobTargets.set(jobId, { repository: signal.repository, prNumber: signal.prNumber });
@@ -143,7 +170,7 @@ export class RepositoryWorkerPool {
     const mayConsumeSeed = signals.some(signal => signal.reason === 'target.request' || signal.reason.startsWith('github.webhook:'));
     const seed = mayConsumeSeed ? this.targetSeeds.get(seedKey) ?? null : null;
     if (mayConsumeSeed) this.targetSeeds.delete(seedKey);
-    const store = new GitHubStore(this.client, target.repository, target.prNumber, this.trustedAuthors, seed);
+    const store = this.makeStore(target.repository, target.prNumber, seed);
     const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
     let shouldReconcile = false;
     const reasons: string[] = [];
@@ -169,7 +196,8 @@ export class RepositoryWorkerPool {
     // OPEN-only runnable filter can strand durable jobs after GitHub merges/closes them.
     for (const job of terminalManagedJobs(discovered)) {
       await this.reconcileExclusive(job.id, async () => {
-        const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+        const store = this.makeStore(job.repository, job.prNumber);
+        await (store as HydratableStore).hydrate?.(job);
         await withGitHubRequestContext(this.client, 'pool.terminal-reconcile', () => this.makeReconciler(store, 0).reconcile(job.id));
       });
     }
@@ -177,7 +205,8 @@ export class RepositoryWorkerPool {
     let capacity = Math.max(1, this.concurrency);
     for (const job of jobs) {
       if (capacity <= 0) break;
-      const store = new GitHubStore(this.client, job.repository, job.prNumber, this.trustedAuthors);
+      const store = this.makeStore(job.repository, job.prNumber);
+      await (store as HydratableStore).hydrate?.(job);
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
       const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
@@ -189,15 +218,20 @@ export class RepositoryWorkerPool {
     }
   }
   async reconcileKnown(discovered: ManagedJobOverview[]): Promise<void> {
-    for (const item of discovered.filter(value => value.githubState === 'OPEN' && value.job.state === 'ACTIVE')) {
+    const recovered: ManagedJobOverview[] = [];
+    for (const item of discovered) {
+      if (item.githubState !== 'OPEN' || item.job.state !== 'ACTIVE') { recovered.push(item); continue; }
       this.jobTargets.set(item.job.id, { repository: item.job.repository, prNumber: item.job.prNumber });
-      const store = new GitHubStore(this.client, item.job.repository, item.job.prNumber, this.trustedAuthors);
+      const store = this.makeStore(item.job.repository, item.job.prNumber);
+      await (store as HydratableStore).hydrate?.(item.job);
       const reconciler = this.makeReconciler(store, 0);
+      let recoveredJob = item.job;
       if (typeof reconciler.recoverStartupOrphans === 'function') await this.reconcileExclusive(item.job.id, async () => {
-        await withGitHubRequestContext(this.client, 'pool.startup-orphan-recovery', () => reconciler.recoverStartupOrphans(item.job.id));
+        recoveredJob = await withGitHubRequestContext(this.client, 'pool.startup-orphan-recovery', () => reconciler.recoverStartupOrphans(item.job.id));
       });
+      recovered.push({ ...item, job: recoveredJob });
     }
-    await this.reconcileDiscovered(discovered);
+    await this.reconcileDiscovered(recovered);
   }
   async reconcile(): Promise<void> {
     if (this.isRateLimited()) return;
@@ -227,6 +261,10 @@ export class RepositoryWorkerPool {
       const prNumber = Number.isInteger(prValue) && prValue > 0 ? prValue : undefined;
       const routedWebhook = event.type === 'github.webhook' && event.data?.coordinatorRouted === true;
       const ingressWebhook = event.type === 'github.webhook' && event.data?.coordinatorIngress === true && !routedWebhook;
+      if (event.type === 'schedule.tick' && repository && prNumber) {
+        await this.scheduleSignalCoordinator.acceptTransport({ jobId: event.job_id, reason: this.signalReason(event), event, repository, prNumber });
+        return;
+      }
       if (ingressWebhook && repository && prNumber) {
         await this.githubSignalCoordinator.acceptTransport({
           jobId: `${repository}#${prNumber}`,
@@ -255,6 +293,24 @@ export class RepositoryWorkerPool {
       if (this.watchedBus === bus) this.watchedBus = undefined;
     };
   }
+  async scheduleTickSignal(bus: EventBus | undefined, job: Job, now = new Date()): Promise<void> {
+    if (!job.schedule) return;
+    const event = eventFor(
+      job.id,
+      'scheduler',
+      null,
+      'schedule.tick',
+      'queued',
+      `Schedule tick for ${job.schedule.nextRunAt}`,
+      'orchestrator',
+      { repository: job.repository, prNumber: job.prNumber, bucket: scheduleBucket(new Date(job.schedule.nextRunAt)), tickAt: now.toISOString() },
+      { agent: 'relay', component: 'scheduler-timer' },
+    );
+    // Use the same coordinator-owned schedule path whether transport is available or not.
+    if (bus) { await bus.publish(event); return; }
+    await this.scheduleSignalCoordinator.accept({ jobId: job.id, reason: this.signalReason(event), event, repository: job.repository, prNumber: job.prNumber });
+  }
+
   async webhookSignal(bus: EventBus | undefined, wake: GitHubWebhookWake): Promise<void> {
     if (!wake.repository || !wake.pullRequest) return;
     const source = { id: `github/${wake.repository}/delivery/${wake.deliveryId}`, component: 'github-webhook' };

@@ -29,10 +29,19 @@ export function graphWorkflowDecision<State extends string>(
   };
 }
 
-function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
+export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
   if (mutation === 'mutation.clearError') task.error = null;
   if (mutation === 'mutation.clearFailureReason') task.failureReason = undefined;
+  if (mutation === 'mutation.clearLease') { task.leaseOwner = null; task.leaseExpiresAt = null; }
+  if (mutation === 'mutation.clearExecution') task.executionId = null;
+  if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
+  if (mutation === 'mutation.markStartupOrphanedExhausted') task.error = 'Orphaned after relayd restart after maximum attempts';
+  if (mutation === 'mutation.markPlannerUnavailable') task.error = 'No objective planner configured';
 }
+
+
+export function applyTaskGraphTarget(task: Task, target: TaskState, timestamp = new Date().toISOString()): void { task.state = target; task.updatedAt = timestamp; }
+export function applyJobGraphTarget(job: Job, target: JobLifecycleState, timestamp = new Date().toISOString()): void { job.state = target; job.updatedAt = timestamp; }
 
 export function applyTaskWorkflowDecision(
   task: Task,

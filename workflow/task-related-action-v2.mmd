@@ -1,0 +1,28 @@
+flowchart LR
+%% relay: initial evaluate
+evaluate["state: evaluate"]
+checkOther["state: check_other"]
+checkRecovery["state: check_recovery"]
+skip["state: skip"]
+selected["state: selected"]
+
+otherTask["guard: otherTask"]
+recoveryForTask["guard: recoveryForTask"]
+candidateCancellable["guard: candidateCancellable"]
+cancelRelated["action: related.cancel"]
+
+evaluate -->|request: task.cancel| skip
+evaluate -->|request: task.unblock.retry| skip
+evaluate -->|request: task.queue| skip
+evaluate -->|request: task.release| skip
+evaluate -->|request: task.hold| skip
+evaluate -->|request: task.retry| otherTask
+otherTask -->|false| skip
+otherTask -->|true| checkOther
+checkOther -->|request: task.retry| recoveryForTask
+recoveryForTask -->|false| skip
+recoveryForTask -->|true| checkRecovery
+checkRecovery -->|request: task.retry| candidateCancellable
+candidateCancellable -->|false| skip
+candidateCancellable -->|true| cancelRelated
+cancelRelated --> selected

@@ -1,0 +1,15 @@
+flowchart LR
+%% relay: initial blocked
+blocked["state: blocked"]
+autonomous["state: autonomous_replan"]
+fixed["state: fixed_retry"]
+
+autonomousJob["guard: autonomousJob"]
+replan["action: unblock.replan"]
+retry["action: unblock.retry"]
+
+blocked -->|on: task.authoritative_unblock| autonomousJob
+autonomousJob -->|true| replan
+replan --> autonomous
+autonomousJob -->|false| retry
+retry --> fixed

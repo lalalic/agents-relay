@@ -707,14 +707,17 @@ test('GitHubStore reuses one PR snapshot per reconciliation-style store instance
   assert.equal(graphqlCalls, 3, 'one comments read + one PR node read + one task mutation; repeated reads must reuse snapshot');
 });
 
-test('GitHub GraphQL diagnostics expose operation and request-context attribution', async () => {
-  const source = await readFile(new URL('../src/github-client.ts', import.meta.url), 'utf8');
-  assert.match(source, /graphqlDiagnostics: GitHubGraphqlDiagnostics/);
-  assert.match(source, /requestContext = new AsyncLocalStorage<string>\(\)/);
-  assert.match(source, /graphqlDiagnostics\.operations\[operation\]/);
-  assert.match(source, /graphqlDiagnostics\.contexts\[context\]/);
-  assert.match(source, /'pr\.comments'/);
-  assert.match(source, /'pr\.node'/);
+test('GitHub GraphQL diagnostics live in the dedicated GitHub client implementation', async () => {
+  const storeSource = await readFile(new URL('../src/store.ts', import.meta.url), 'utf8');
+  const clientSource = await readFile(new URL('../src/github-client.ts', import.meta.url), 'utf8');
+  assert.match(storeSource, /export \{ GhApiClient, createGitHubAppJwt, type GitHubAppAuthOptions \} from '\.\/github-client\.js'/);
+  assert.doesNotMatch(storeSource, /class GhApiClient/);
+  assert.match(clientSource, /graphqlDiagnostics: GitHubGraphqlDiagnostics/);
+  assert.match(clientSource, /requestContext = new AsyncLocalStorage<string>\(\)/);
+  assert.match(clientSource, /graphqlDiagnostics\.operations\[operation\]/);
+  assert.match(clientSource, /graphqlDiagnostics\.contexts\[context\]/);
+  assert.match(clientSource, /'pr\.comments'/);
+  assert.match(clientSource, /'pr\.node'/);
 });
 
 

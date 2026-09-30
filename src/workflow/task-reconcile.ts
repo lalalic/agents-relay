@@ -1,6 +1,5 @@
 import type { Job, Task } from '../types.js';
-import { decideTaskLifecycle } from './lifecycle.js';
-import { applyTaskWorkflowDecision } from './runtime.js';
+import { dispatchTaskLifecycleSync } from './lifecycle.js';
 import type { WorkflowContext } from './mermaid.js';
 
 export function dependencyReady(task: Task, tasks: Map<string, Task>): boolean {
@@ -33,15 +32,16 @@ export function reconcileTaskDependencies(job: Job): Job {
   const scopedTasks = scheduledCycleTasks(job);
   const tasks = new Map(job.tasks.map(task => [task.id, task]));
   for (const task of scopedTasks) {
+    if (task.kind === 'planner') continue;
     const ready = dependencyReady(task, tasks);
     const facts: WorkflowContext = {
       dependenciesSatisfied: task.dependencies.length > 0 && ready,
       dependenciesUnsatisfied: task.dependencies.length > 0 && !ready,
       runnable: ready,
     };
-    const decision = decideTaskLifecycle(task, 'reconcile', facts);
-    if (decision.reason === 'ambiguous') throw new Error(`Ambiguous automatic task transition from ${task.state}`);
-    if (decision.accepted && decision.target) applyTaskWorkflowDecision(task, decision);
+    const from = task.state;
+    const decision = dispatchTaskLifecycleSync(task as Task & Record<string, unknown>, 'reconcile', facts);
+    if (decision.reason === 'ambiguous') throw new Error(`Ambiguous automatic task transition from ${from}`);
   }
   return job;
 }

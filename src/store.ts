@@ -1,13 +1,9 @@
 import { Job, Plan, Task } from './types.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
-import { spawn } from 'node:child_process';
-import { createSign } from 'node:crypto';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
 import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
 import { PackagePublication, parsePackagePublicationMarker } from './github-webhook.js';
-import { GitHubRuntimeRateUsage, GitHubTransportResponse, emptyGitHubRuntimeRateUsage, observeRuntimeRateLimit, parseGitHubCliHeaders, runtimeRejection } from './github-runtime-usage.js';
 export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
 function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAuthors: ReadonlySet<string>): PackagePublication | null {
@@ -128,8 +124,6 @@ export type GitHubClient = { request(path: string, init?: RequestInit): Promise<
 export async function withGitHubRequestContext<T>(client: GitHubClient, context: string, work: () => Promise<T>): Promise<T> { return client.withRequestContext ? client.withRequestContext(context, work) : work(); }
 export type GitHubRateLimitBucket = { limit: number; used: number; remaining: number; reset: number };
 export type GitHubRateLimitSnapshot = { observedAt: string; resources: { core?: GitHubRateLimitBucket; graphql?: GitHubRateLimitBucket; search?: GitHubRateLimitBucket } };
-export { createGitHubAppJwt, GhApiClient } from './github-client.js';
-export type { GitHubAppAuthOptions } from './github-client.js';
 export type PullRequest = { number: number; title: string; body: string; state: string; head: string; base: string };
 
 async function githubGraphql(client: GitHubClient, query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -265,6 +259,7 @@ export async function resolvePullRequest(client: GitHubClient, repository: strin
     throw error;
   }
 }
+export { GhApiClient, createGitHubAppJwt, type GitHubAppAuthOptions } from './github-client.js';
 
 export { GitHubStore } from './store-github.js';
 

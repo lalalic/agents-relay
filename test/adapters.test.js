@@ -40,7 +40,8 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
         status: 'submitted',
         verified: true,
         diagnostic_thread_id: 'diagnostic-only',
-        user_message_id: 'u-1', verified_by: 'user-turn',
+        user_message_id: 'u-1',
+        verified_by: 'user-turn',
       }, requests),
     });
     const execution = adapter.launch(task(), new AbortController().signal);
@@ -50,6 +51,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
     assert.equal(execution.threadId, undefined);
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'diagnostic-only');
+    assert.equal(result.data.verifiedBy, 'user-turn');
     assert.match(result.summary, /terminal task state is event-owned/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -117,6 +119,25 @@ test('ChatGptAdapter default runner invokes temporary one-shot driver', async ()
     const result = await new ChatGptAdapter({ agentPath }).launch(task(), new AbortController().signal).promise;
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'd-1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-composer-cleared-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: null, verified_by: 'composer-cleared' }),
+    });
+    const result = await adapter.launch(task(), new AbortController().signal).promise;
+    assert.equal(result.data.submitted, true);
+    assert.equal(result.data.userMessageId, null);
+    assert.equal(result.data.verifiedBy, 'composer-cleared');
+    assert.match(result.summary, /terminal task state is event-owned/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -232,6 +253,28 @@ test('CodexAdapter process exit is runtime-only, not a task result', async () =>
     await chmod(command, 0o700);
     const result = await new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm' } }, new AbortController().signal).promise;
     assert.match(result.summary, /terminal task state is event-owned/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CodexAdapter cancellation force-kills a process that ignores SIGTERM', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-cancel-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, [
+      '#!/bin/sh',
+      "trap '' TERM",
+      'sleep 10',
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const execution = new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm' } }, new AbortController().signal);
+    await execution.launched;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const startedAt = Date.now();
+    execution.cancel();
+    await assert.rejects(execution.promise);
+    assert.ok(Date.now() - startedAt < 3000, 'cancel should force the process to exit after the grace period');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

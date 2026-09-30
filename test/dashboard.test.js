@@ -574,14 +574,22 @@ test('dashboard usage API includes runtime-observed availability separately', as
   const server=managedDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>githubStatus,async()=>github,async()=>null);
   await once(server,'listening');
   const address=server.address();
-  const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
+  const response=await fetch('http://127.0.0.1:'+address.port+'/api/usage');
   const body=await response.json();
   assert.equal(response.status,200);
   assert.equal(body.github.resources.graphql.remaining,4998);
   assert.equal(body.githubStatus.runtimeRateUsage.rejection.kind,'secondary');
   assert.equal(body.githubStatus.runtimeRateUsage.resources.graphql.throttled,true);
+  server.close();
 });
 
+test('dashboard separates primary quota from observed request availability', () => {
+  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
+  assert.match(dashboardHtml, /githubObserved\('REST',observed\.core\)/);
+  assert.match(dashboardHtml, /githubObserved\('GraphQL',observed\.graphql\)/);
+  assert.match(dashboardHtml, /observed\.throttled\?'Throttled'/);
+  assert.match(dashboardHtml, /runtimeRateUsage\?\.rejection/);
+});
 test('dashboard GitHub usage shows GraphQL operation and context attribution', async () => {
   assert.match(dashboardHtml, /GraphQL operations/);
   assert.match(dashboardHtml, /GraphQL contexts/);
@@ -594,12 +602,4 @@ test('dashboard GitHub usage shows per-trigger refresh attribution and coalescin
   assert.match(dashboardHtml, /Coalesced/);
   assert.match(dashboardHtml, /prRefreshesByTrigger/);
   assert.match(dashboardHtml, /prRefreshCoalescedByTrigger/);
-});
-
-test('dashboard separates primary quota from observed request availability', () => {
-  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
-  assert.match(dashboardHtml, /githubObserved\('REST',observed\.core\)/);
-  assert.match(dashboardHtml, /githubObserved\('GraphQL',observed\.graphql\)/);
-  assert.match(dashboardHtml, /observed\.throttled\?'Throttled'/);
-  assert.match(dashboardHtml, /runtimeRateUsage\?\.rejection/);
 });
