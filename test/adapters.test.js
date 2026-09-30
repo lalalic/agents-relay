@@ -41,6 +41,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
         verified: true,
         diagnostic_thread_id: 'diagnostic-only',
         user_message_id: 'u-1',
+        verified_by: 'user-turn',
       }, requests),
     });
     const execution = adapter.launch(task(), new AbortController().signal);
@@ -50,6 +51,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
     assert.equal(execution.threadId, undefined);
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'diagnostic-only');
+    assert.equal(result.data.verifiedBy, 'user-turn');
     assert.match(result.summary, /terminal task state is event-owned/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -65,7 +67,7 @@ test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', as
     const requests = [];
     const adapter = new ChatGptAdapter({
       agentPath,
-      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: 'u-files' }, requests),
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: 'u-files', verified_by: 'user-turn' }, requests),
     });
     await adapter.launch(task({ attachments: ['/tmp/a.txt', '/tmp/b.png'] }), new AbortController().signal).promise;
     assert.deepEqual(requests[0].files, ['/tmp/a.txt', '/tmp/b.png']);
@@ -112,11 +114,30 @@ test('ChatGptAdapter default runner invokes temporary one-shot driver', async ()
     await writeFile(join(scripts, 'temporary_bh.py'), [
       '#!/usr/bin/env python3',
       'import json',
-      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1"}))',
+      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1","verified_by":"user-turn"}))',
     ].join('\n'), { mode: 0o700 });
     const result = await new ChatGptAdapter({ agentPath }).launch(task(), new AbortController().signal).promise;
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'd-1');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-composer-cleared-'));
+  try {
+    const agentPath = join(root, 'browser-worker.agent.md');
+    await writeFile(agentPath, '# fake browser worker');
+    const adapter = new ChatGptAdapter({
+      agentPath,
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: null, verified_by: 'composer-cleared' }),
+    });
+    const result = await adapter.launch(task(), new AbortController().signal).promise;
+    assert.equal(result.data.submitted, true);
+    assert.equal(result.data.userMessageId, null);
+    assert.equal(result.data.verifiedBy, 'composer-cleared');
+    assert.match(result.summary, /terminal task state is event-owned/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

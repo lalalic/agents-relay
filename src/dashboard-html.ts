@@ -397,16 +397,37 @@ function creditProvider(provider){const row=element('section','usage-provider');
 function shortReset(reset){if(!Number.isFinite(reset))return '';const at=new Date(reset*1000);const minutes=Math.max(0,Math.ceil((at.getTime()-Date.now())/60000));const relative=minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h '+minutes%60+'m':Math.floor(minutes/1440)+'d '+Math.floor((minutes%1440)/60)+'h';return 'Reset '+relative;}
 function githubBucket(label,bucket){const row=element('div','usage-row');const heading=element('div','usage-label');heading.append(element('span','',text(label)),element('span','',text(bucket.remaining+' / '+bucket.limit)));const percent=bucket.limit>0?Math.max(0,Math.min(100,100*bucket.remaining/bucket.limit)):0;const track=element('div','usage-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label',label+' remaining');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');track.setAttribute('aria-valuenow',String(Math.round(percent)));const fill=element('div','usage-fill');fill.style.width=percent+'%';track.append(fill);row.append(heading,track);const reset=shortReset(bucket.reset);if(reset){const hint=element('div','subtle',text(reset));hint.title=new Date(bucket.reset*1000).toLocaleString();row.append(hint);}return row;}
 function githubCounterLine(label,values){const entries=Object.entries(values||{}).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,8);return entries.length?element('div','subtle',text(label+' · '+entries.map(([key,count])=>key+' '+count).join(' · '))):null;}
+function githubObserved(label,observed){
+  if(!observed)return null;
+  const state=observed.throttled?'Throttled':observed.available===true?'Available':observed.available===false?'Unavailable':'Unknown';
+  const parts=[label+' observed',state];
+  if(observed.status!==null)parts.push('status '+observed.status);
+  if(observed.remaining!==null)parts.push('remaining '+observed.remaining);
+  if(observed.headersCaptured&&observed.reset!==null)parts.push(shortReset(observed.reset));
+  if(observed.retryAfterSeconds!==null)parts.push('retry '+observed.retryAfterSeconds+'s');
+  const row=element('div',observed.throttled?'usage-row error-state':'usage-row subtle');
+  row.textContent=parts.filter(Boolean).join(' · ');
+  if(observed.reason)row.title=observed.reason;
+  return row;
+}
 function githubDiagnostics(status){const body=element('div','usage-details-body');if(status?.calls)body.append(element('div','subtle',text('Calls · GraphQL '+(status.calls.graphql||0)+' · REST '+(status.calls.rest||0)+' · quota '+(status.calls.rateLimit||0))));const operations=githubCounterLine('GraphQL operations',status?.graphql?.operations);if(operations)body.append(operations);const contexts=githubCounterLine('GraphQL contexts',status?.graphql?.contexts);if(contexts)body.append(contexts);if(status?.readPaths){body.append(element('div','subtle',text('Reads · scans '+(status.readPaths.workspaceScans||0)+' · PR '+(status.readPaths.prRefreshes||0)+' · coalesced '+(status.readPaths.prRefreshCoalesced||0))));const triggers=githubCounterLine('Refresh triggers',status.readPaths.prRefreshesByTrigger);if(triggers)body.append(triggers);const coalesced=githubCounterLine('Coalesced',status.readPaths.prRefreshCoalescedByTrigger);if(coalesced)body.append(coalesced);}if(!body.children.length)return null;const details=element('details','usage-details');details.append(element('summary','',text('Diagnostics')),body);return details;}
 function githubUsageCard(snapshot,status){
   const card=element('section','usage-provider');
   card.append(element('h3','',text('GitHub API')));
   const resources=snapshot?.resources||{};
   const bars=element('div','usage-bars');
+  bars.append(element('div','usage-label',text('Primary quota (/rate_limit)')));
   if(resources.core)bars.append(githubBucket('REST',resources.core));
   if(resources.graphql)bars.append(githubBucket('GraphQL',resources.graphql));
   if(resources.search)bars.append(githubBucket('Search',resources.search));
   if(!bars.children.length)bars.append(element('p','empty',text('Quota unavailable')));
+  const observed=status?.runtimeRateUsage?.resources||{};
+  for(const row of [githubObserved('REST',observed.core),githubObserved('GraphQL',observed.graphql),githubObserved('Search',observed.search)])if(row)bars.append(row);
+  if(status?.runtimeRateUsage?.rejection){
+    const rejection=status.runtimeRateUsage.rejection;
+    const cooldown=rejection.cooldownUntil?' · cooldown '+new Date(rejection.cooldownUntil).toLocaleTimeString():'';
+    bars.append(element('div','error-state',text('Throttled · '+(rejection.kind==='unknown'?'rate limit':rejection.kind)+' limit'+cooldown)));
+  }
   if(status?.limited){
     const until=status.cooldownUntil?' until '+new Date(status.cooldownUntil).toLocaleTimeString():'';
     bars.append(element('div','error-state',text('Cooldown active'+until)));

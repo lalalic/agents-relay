@@ -50,7 +50,7 @@ test('Temporary Chat submits a normal text prompt', { timeout: SUBMIT_TIMEOUT_MS
     limit.setExecution(execution);
     const result = await limit.race(execution.promise);
     assert.equal(result.data.submitted, true);
-    assert.ok(result.data.userMessageId, 'submission must become a durable user turn');
+    assert.ok(['user-turn', 'composer-cleared'].includes(result.data.verifiedBy), 'submission must have an acceptance receipt');
   } finally { limit.cleanup(); }
 });
 
@@ -70,7 +70,7 @@ test('Temporary Chat submits a prompt with an attachment', { timeout: SUBMIT_TIM
     limit.setExecution(execution);
     const result = await limit.race(execution.promise);
     assert.equal(result.data.submitted, true);
-    assert.ok(result.data.userMessageId, 'attachment submission must become a durable user turn');
+    assert.ok(['user-turn', 'composer-cleared'].includes(result.data.verifiedBy), 'attachment submission must have an acceptance receipt');
   } finally {
     limit.cleanup();
     await rm(root, { recursive: true, force: true });

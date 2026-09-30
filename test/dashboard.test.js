@@ -560,6 +560,36 @@ test('dashboard usage remains available when GitHub quota telemetry fails', asyn
   assert.equal(body.githubStatus.limited,true);
 });
 
+test('dashboard usage API includes runtime-observed availability separately', async () => {
+  const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
+  const github={resources:{graphql:{limit:5000,used:2,remaining:4998,reset:1893456000}}};
+  const githubStatus={
+    limited:false,
+    cooldownUntil:null,
+    runtimeRateUsage:{
+      resources:{graphql:{resource:'graphql',observedAt:'2026-09-29T00:00:00.000Z',status:429,available:false,throttled:true,limit:null,used:null,remaining:null,reset:null,resetAt:null,retryAfterSeconds:30,reason:'graphql_rate_limit',headersCaptured:false}},
+      rejection:{resource:'graphql',kind:'secondary',observedAt:'2026-09-29T00:00:00.000Z',status:429,retryAfterSeconds:30,cooldownUntil:'2026-09-29T00:00:30.000Z',reason:'graphql_rate_limit'},
+    },
+  };
+  const server=managedDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>githubStatus,async()=>github,async()=>null);
+  await once(server,'listening');
+  const address=server.address();
+  const response=await fetch('http://127.0.0.1:'+address.port+'/api/usage');
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.github.resources.graphql.remaining,4998);
+  assert.equal(body.githubStatus.runtimeRateUsage.rejection.kind,'secondary');
+  assert.equal(body.githubStatus.runtimeRateUsage.resources.graphql.throttled,true);
+  server.close();
+});
+
+test('dashboard separates primary quota from observed request availability', () => {
+  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
+  assert.match(dashboardHtml, /githubObserved\('REST',observed\.core\)/);
+  assert.match(dashboardHtml, /githubObserved\('GraphQL',observed\.graphql\)/);
+  assert.match(dashboardHtml, /observed\.throttled\?'Throttled'/);
+  assert.match(dashboardHtml, /runtimeRateUsage\?\.rejection/);
+});
 test('dashboard GitHub usage shows GraphQL operation and context attribution', async () => {
   assert.match(dashboardHtml, /GraphQL operations/);
   assert.match(dashboardHtml, /GraphQL contexts/);
