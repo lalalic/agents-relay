@@ -22,8 +22,6 @@ import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
-import { runScheduledBucket } from './scheduled-jobs.js';
-import { scheduleBucket } from './scheduler.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
@@ -291,11 +289,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const scheduleHeartbeatSafely = async (): Promise<void> => {
     const now = new Date();
     for (const item of dueScheduledOverviews(cachedOverviews, now)) {
-      const repository = item.job.repository;
       try {
-        await runScheduledBucket(client, repository, trusted, { prNumber: item.job.prNumber, jobId: item.job.id, bucket: scheduleBucket(new Date(item.job.schedule!.nextRunAt)) }, { reconcile: async () => { await pool.reconcileTarget(repository, item.job.prNumber, item.job.id); }, idle: async () => {} }, now, () => runtimeStore(repository, item.job.prNumber));
+        await pool.scheduleTickSignal(bus, item.job, now);
       } catch (error) {
-        process.stderr.write(`warning: scheduled heartbeat unavailable for ${repository}#${item.job.prNumber}: ${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(`warning: scheduled heartbeat unavailable for ${item.job.repository}#${item.job.prNumber}: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
   };

@@ -3,6 +3,8 @@ import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
 import { GitHubWebhookWake } from './github-webhook.js';
+import { runScheduledBucket } from './scheduled-jobs.js';
+import { scheduleBucket } from './scheduler.js';
 import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordinator.js';
 import type { EventRecord } from './types.js';
 
@@ -29,6 +31,7 @@ export class RepositoryWorkerPool {
   private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly coordinator: ReconcileCoordinator;
   private readonly githubSignalCoordinator: ReconcileCoordinator;
+  private readonly scheduleSignalCoordinator: ReconcileCoordinator;
   private watchedBus?: EventBus;
   private readonly jobTargets = new Map<string, { repository: string; prNumber: number }>();
   private readonly targetSeeds = new Map<string, GitHubPullRequestSeed>();
@@ -48,6 +51,7 @@ export class RepositoryWorkerPool {
     };
     this.coordinator = new ReconcileCoordinator((jobId, signals) => this.consumeSignals(jobId, signals), reportCoordinatorError);
     this.githubSignalCoordinator = new ReconcileCoordinator((_key, signals) => this.consumeGitHubSignals(signals), reportCoordinatorError);
+    this.scheduleSignalCoordinator = new ReconcileCoordinator((jobId, signals) => this.consumeScheduleSignals(jobId, signals), reportCoordinatorError);
   }
   private readonly repositories: string[];
   private async reconcileExclusive(jobId: string, work: () => Promise<void>): Promise<void> {
@@ -68,6 +72,28 @@ export class RepositoryWorkerPool {
       return `github.webhook:${webhookEvent}${action}`;
     }
     return `event.${event.type}`;
+  }
+
+  private async consumeScheduleSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
+    if (this.isRateLimited() || signals.length === 0) return;
+    const signal = [...signals].reverse().find(item => item.event?.type === 'schedule.tick');
+    const event = signal?.event;
+    const repository = signal?.repository ?? (typeof event?.data?.repository === 'string' ? event.data.repository : undefined);
+    const prValue = signal?.prNumber ?? Number(event?.data?.prNumber);
+    const prNumber = Number.isInteger(prValue) && Number(prValue) > 0 ? Number(prValue) : undefined;
+    const bucket = typeof event?.data?.bucket === 'string' ? event.data.bucket : undefined;
+    const tickAt = typeof event?.data?.tickAt === 'string' ? new Date(event.data.tickAt) : new Date(event?.timestamp ?? Date.now());
+    if (!repository || !prNumber || !bucket || !this.repositories.includes(repository) || Number.isNaN(tickAt.getTime())) return;
+    this.jobTargets.set(jobId, { repository, prNumber });
+    await runScheduledBucket(
+      this.client,
+      repository,
+      this.trustedAuthors,
+      { prNumber, jobId, bucket },
+      { reconcile: async () => { await this.reconcileTarget(repository, prNumber, jobId, 'schedule.tick'); }, idle: async () => {} },
+      tickAt,
+      () => this.makeStore(repository, prNumber),
+    );
   }
 
   private async consumeGitHubSignals(signals: readonly ReconcileSignal[]): Promise<void> {
@@ -235,6 +261,10 @@ export class RepositoryWorkerPool {
       const prNumber = Number.isInteger(prValue) && prValue > 0 ? prValue : undefined;
       const routedWebhook = event.type === 'github.webhook' && event.data?.coordinatorRouted === true;
       const ingressWebhook = event.type === 'github.webhook' && event.data?.coordinatorIngress === true && !routedWebhook;
+      if (event.type === 'schedule.tick' && repository && prNumber) {
+        await this.scheduleSignalCoordinator.acceptTransport({ jobId: event.job_id, reason: this.signalReason(event), event, repository, prNumber });
+        return;
+      }
       if (ingressWebhook && repository && prNumber) {
         await this.githubSignalCoordinator.acceptTransport({
           jobId: `${repository}#${prNumber}`,
@@ -263,6 +293,24 @@ export class RepositoryWorkerPool {
       if (this.watchedBus === bus) this.watchedBus = undefined;
     };
   }
+  async scheduleTickSignal(bus: EventBus | undefined, job: Job, now = new Date()): Promise<void> {
+    if (!job.schedule) return;
+    const event = eventFor(
+      job.id,
+      'scheduler',
+      null,
+      'schedule.tick',
+      'queued',
+      `Schedule tick for ${job.schedule.nextRunAt}`,
+      'orchestrator',
+      { repository: job.repository, prNumber: job.prNumber, bucket: scheduleBucket(new Date(job.schedule.nextRunAt)), tickAt: now.toISOString() },
+      { agent: 'relay', component: 'scheduler-timer' },
+    );
+    // Use the same coordinator-owned schedule path whether transport is available or not.
+    if (bus) { await bus.publish(event); return; }
+    await this.scheduleSignalCoordinator.accept({ jobId: job.id, reason: this.signalReason(event), event, repository: job.repository, prNumber: job.prNumber });
+  }
+
   async webhookSignal(bus: EventBus | undefined, wake: GitHubWebhookWake): Promise<void> {
     if (!wake.repository || !wake.pullRequest) return;
     const source = { id: `github/${wake.repository}/delivery/${wake.deliveryId}`, component: 'github-webhook' };

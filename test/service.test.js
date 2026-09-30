@@ -13,6 +13,11 @@ import { nextPatchVersion } from '../scripts/npm-version.mjs';
 test('relayd scheduled heartbeat cadence is ten minutes', () => {
   assert.equal(SCHEDULE_HEARTBEAT_MS, 600_000);
 });
+test('relayd timer is a pure schedule.tick trigger and does not execute scheduled buckets directly', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /pool\.scheduleTickSignal\(bus, item\.job, now\)/);
+  assert.doesNotMatch(source, /runScheduledBucket\s*\(/);
+});
 test('relayd scheduled heartbeat selects only exact due open autonomous jobs from cache', () => {
   const now = new Date('2026-09-29T18:05:00Z');
   const base = { title: 'scheduled', priority: 'P0', autoMerge: false, reviewEnabled: false, continuation: null, createdAt: now.toISOString(), updatedAt: now.toISOString(), tasks: [] };

@@ -567,6 +567,40 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await stop();
 });
 
+test('scheduler timer enters through EventBus schedule.tick before scheduled graph reconciliation', async () => {
+  const bus=new MemoryEventBus();
+  const at=new Date('2026-09-29T18:05:00.000Z');
+  const root={...job([]),id:'scheduled-event-job',repository:'owner/repo',prNumber:48,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
+  const store=new InMemoryStore(root);
+  const seen=[]; let reconciles=0;
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async id=>{reconciles+=1; seen.push('reconcile:'+id);}}),()=>false,undefined,()=>store);
+  const stopAudit=await bus.subscribeAll(async event=>{if(event.type==='schedule.tick')seen.push('bus:'+event.type);});
+  const stopPool=await pool.watch(bus);
+  await pool.scheduleTickSignal(bus,root,at);
+  for(let i=0;i<20&&reconciles===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(seen[0],'bus:schedule.tick');
+  assert.equal(reconciles,1);
+  const durable=await store.load(root.id);
+  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
+  assert.equal(durable.schedule.lastRunAt,at.toISOString());
+  await stopPool(); await stopAudit();
+});
+
+test('scheduler timer without EventBus uses the same schedule coordinator path', async () => {
+  const at=new Date('2026-09-29T18:05:00.000Z');
+  const root={...job([]),id:'scheduled-local-job',repository:'owner/repo',prNumber:49,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
+  const store=new InMemoryStore(root);
+  let reconciles=0;
+  const client={request:async()=>{throw new Error('unexpected request');}};
+  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{reconciles+=1;}}),()=>false,undefined,()=>store);
+  await pool.scheduleTickSignal(undefined,root,at);
+  assert.equal(reconciles,1);
+  const durable=await store.load(root.id);
+  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
+  assert.equal(durable.schedule.lastRunAt,at.toISOString());
+});
+
 test('repository pool serializes same-job targeted reconcile with discovered reconcile', async () => {
   const queued=task('serialize-task','QUEUED');
   const root={...job([queued]),id:'serialize-job',repository:'owner/repo',prNumber:44};
