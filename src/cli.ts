@@ -30,7 +30,7 @@ export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
   storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation,
+  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand,
 } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
@@ -125,8 +125,32 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     updatedAt: now
   };
 }
+async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
+  const jobId = arg(args, '--id');
+  if (!jobId) throw new Error('--id is required for managed task commands');
+  const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
+  if (!id) throw new Error(`task ${action} requires --task-id`);
+  let result: Job;
+  if (action === 'create') {
+    const job = await relayControlJob(args, jobId);
+    if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
+    const task = await workerTaskFromArgs(job, args, new Date().toISOString());
+    task.id = id;
+    result = await relayTaskCommand(args, { jobId, action, task });
+  } else if (action === 'complete') {
+    const summary = arg(args, '--summary');
+    if (!summary) throw new Error('task complete requires --summary');
+    result = await relayTaskCommand(args, { jobId, taskId: id, action, summary });
+  } else result = await relayTaskCommand(args, { jobId, taskId: id, action });
+  const task = result.tasks.find(item => item.id === id);
+  if (!task) throw new Error(`Task ${id} missing after ${action}`);
+  console.log(JSON.stringify(task, null, 2));
+}
+
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
+  if (managed && ['create','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel'|'complete', args); return; }
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');

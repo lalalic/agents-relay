@@ -83,6 +83,18 @@ test('managed CLI reconciliation delegates through relayd and rejects a missing 
   assert.ok(source.indexOf("if (command === 'reconcile' && !localFile)") < source.lastIndexOf('const reconciler = runtime('));
 });
 
+test('managed CLI task mutations enter relayd control plane before local truth changes', async () => {
+  const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
+  const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
+  assert.match(cli, /managed && \['create','complete','retry','cancel'\]\.includes\(action\)/);
+  assert.match(support, /\/api\/task-command/);
+  assert.match(relayd, /taskCreate: workspaceTaskCreate/);
+  assert.match(relayd, /taskComplete: workspaceTaskComplete/);
+  assert.match(relayd, /taskRetry: workspaceTaskAction\('retry'\)/);
+  assert.match(relayd, /taskCancel: workspaceTaskAction\('cancel'\)/);
+});
+
 test('workspace daemon restores local RelayStore jobs before best-effort remote refresh', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const cached = source.indexOf('const initial = cachedOverviews');
