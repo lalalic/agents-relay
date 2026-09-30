@@ -169,13 +169,21 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
           if (!task || !['QUEUED', 'BLOCKED'].includes(task.state) || task.workerSelection || !task.output) return;
       const requirements = task.workerRequirements ?? { capabilities: [] };
       const taskFacts = {
-        id: task.id,
-        kind: task.kind ?? 'work',
+        job: {
+          id: freshJob.id, title: freshJob.title, objective: freshJob.objective ?? null,
+          description: freshJob.description ?? null, priority: freshJob.priority ?? null,
+          executionMode: freshJob.executionMode, repository: freshJob.repository,
+          prNumber: freshJob.prNumber, state: freshJob.state,
+        },
+        task: {
+          id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
+          priority: task.priority ?? null, agentName: task.agentName ?? null,
+          parentTaskId: task.parentTaskId, dependencies: task.dependencies,
+          capabilities: task.capabilities, input: task.input,
+          attachments: task.attachments ?? [], output: task.output ?? null,
+          state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
+        },
         storySize: task.storySize ?? 'M',
-        agentName: task.agentName ?? null,
-        input: task.input,
-        attachments: task.attachments ?? [],
-        output: task.output ?? null,
       };
       const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
       const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? freshJob.tasks.find(item => item.id === task.parentTaskId) : undefined;
