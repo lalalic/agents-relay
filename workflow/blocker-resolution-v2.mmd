@@ -1,0 +1,73 @@
+flowchart LR
+%% relay: initial waiting
+waiting["state: waiting"]
+checkTarget["state: check_target"]
+checkAutonomous["state: check_autonomous"]
+checkEffective["state: check_effective"]
+checkAlreadyUnblocked["state: check_already_unblocked"]
+checkDraft["state: check_draft"]
+checkBlocked["state: check_blocked"]
+checkFailed["state: check_failed"]
+checkUnblocked["state: check_unblocked"]
+wait["state: wait"]
+obsolete["state: obsolete"]
+resumed["state: resumed"]
+
+resolutionAllowed["guard: resolutionAllowed"]
+targetMatches["guard: targetMatches"]
+autonomousJob["guard: autonomousJob"]
+effectivelyBlocked["guard: effectivelyBlocked"]
+alreadyUnblocked["guard: alreadyUnblocked"]
+isDraft["guard: isDraft"]
+isBlocked["guard: isBlocked"]
+isFailed["guard: isFailed"]
+isUnblocked["guard: isUnblocked"]
+
+autonomousUnblock["action: blocker.autonomousUnblock"]
+acceptExisting["action: blocker.acceptExistingUnblock"]
+releaseDraft["action: blocker.releaseDraft"]
+unblockTask["action: blocker.unblockTask"]
+retryFailed["action: blocker.retryFailed"]
+retryUnblocked["action: blocker.retryUnblocked"]
+
+waiting -->|on: blocker.resolved| resolutionAllowed
+resolutionAllowed -->|false| wait
+resolutionAllowed -->|true| checkTarget
+
+checkTarget -->|on: blocker.resolved| targetMatches
+targetMatches -->|false| obsolete
+targetMatches -->|true| checkAutonomous
+
+checkAutonomous -->|on: blocker.resolved| autonomousJob
+autonomousJob -->|true| checkEffective
+autonomousJob -->|false| checkDraft
+
+checkEffective -->|on: blocker.resolved| effectivelyBlocked
+effectivelyBlocked -->|true| autonomousUnblock
+autonomousUnblock --> resumed
+effectivelyBlocked -->|false| checkAlreadyUnblocked
+
+checkAlreadyUnblocked -->|on: blocker.resolved| alreadyUnblocked
+alreadyUnblocked -->|true| acceptExisting
+acceptExisting --> resumed
+alreadyUnblocked -->|false| checkDraft
+
+checkDraft -->|on: blocker.resolved| isDraft
+isDraft -->|true| releaseDraft
+releaseDraft --> resumed
+isDraft -->|false| checkBlocked
+
+checkBlocked -->|on: blocker.resolved| isBlocked
+isBlocked -->|true| unblockTask
+unblockTask --> resumed
+isBlocked -->|false| checkFailed
+
+checkFailed -->|on: blocker.resolved| isFailed
+isFailed -->|true| retryFailed
+retryFailed --> resumed
+isFailed -->|false| checkUnblocked
+
+checkUnblocked -->|on: blocker.resolved| isUnblocked
+isUnblocked -->|true| retryUnblocked
+retryUnblocked --> resumed
+isUnblocked -->|false| obsolete

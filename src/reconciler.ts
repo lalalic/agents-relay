@@ -6,7 +6,8 @@ import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { createPlannerRoundTask, pendingPlanForPlannerTask, recoverPendingPlannerTask, parsePlannerResult, plannerInput, PlannerTaskSpec, validatePlannerHierarchy } from './planner.js';
+import { createPlannerRoundTask, materializePlannerChild, pendingPlanForPlannerTask, recoverPendingPlannerTask, parsePlannerResult, plannerInput, validatePlannerHierarchy } from './planner.js';
+import { decidePlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
@@ -20,7 +21,6 @@ import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js';
-import { isEffectivelyBlocked } from './unblock.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
@@ -115,7 +115,11 @@ export class Reconciler extends ReconcilerReviewBase {
       const previousState = job.state;
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
-      if (headSha) job.headSha = headSha;
+      if (headSha && job.headSha !== headSha) {
+        job.headSha = headSha;
+        job.updatedAt = new Date().toISOString();
+        await this.store.saveJob(job);
+      }
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
@@ -251,22 +255,28 @@ export class Reconciler extends ReconcilerReviewBase {
     return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, task) => this.launchPlanner(job, task));
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
-    if (job.executionMode !== 'autonomous') return job;
-    if (job.initialPlanning?.status === 'pending') return job; const recovered = recoverPendingPlannerTask(job, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M')); if (recovered) { await this.store.appendTask(recovered); await this.emit(eventFor(job.id, recovered.id, null, 'planner.created', 'queued', `Recovered pending Plan ${recovered.id}`, 'orchestrator')); return this.store.load(job.id); }
-    const allPlanners = job.tasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    if (allPlanners.length === 0 && job.tasks.length === 0) return job;
-    const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
-    const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
-    const planners = scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    if (planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING', 'FAILED'].includes(task.state))) return job;
-    if (scopedTasks.some(isEffectivelyBlocked)) return job;
-    if (scopedTasks.some(task => task.kind !== 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return job;
-    if (planners.length > 0 && planners.at(-1)?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === planners.at(-1)?.id)) return job;
-    const latest = planners.at(-1); if (latest?.plannerResult?.objective_status === 'satisfied') return job;
-    const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') }); await this.store.appendPlan(pendingPlanForPlannerTask(job, task)); await this.store.appendTask(task);
-    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', `Planner task ${task.id} created`, 'orchestrator'));
-    return this.store.load(job.id);
+    const recovered = recoverPendingPlannerTask(job, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'));
+    const decision = decidePlannerOrchestration(plannerOrchestrationFacts(job, Boolean(recovered)));
+    if (!decision.accepted) return job;
+
+    for (const action of decision.actions) {
+      if (action.id === 'planner.recoverPending') {
+        if (!recovered) throw new Error('Planner graph requested pending recovery without a recoverable Plan');
+        await this.store.appendTask(recovered);
+        await this.emit(eventFor(job.id, recovered.id, null, 'planner.created', 'queued', 'Recovered pending Plan ' + recovered.id, 'orchestrator'));
+        return this.store.load(job.id);
+      }
+      if (action.id === 'planner.createRound') {
+        const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
+        await this.store.appendPlan(pendingPlanForPlannerTask(job, task));
+        await this.store.appendTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', 'Planner task ' + task.id + ' created', 'orchestrator'));
+        return this.store.load(job.id);
+      }
+    }
+    return job;
   }
+
   private async recoverPlannerChildren(job: Job): Promise<void> {
     const contextTask = job.tasks.find(task => task.kind === 'planner') ?? job.tasks[0];
     if (!contextTask) return;
@@ -275,7 +285,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const result = planner.plannerResult!;
       const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', guidance: planner.plannerGuidance, objectiveStatus: result.objective_status, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
       if (!(job.plans ?? []).some(item => item.id === plan.id)) { await this.store.appendPlan(plan); (job.plans ??= []).push(plan); } else await this.store.savePlan(plan);
-      const children = result.next_tasks.map(spec => this.plannerChild(job, planner, spec, executionContext));
+      const children = result.next_tasks.map(spec => materializePlannerChild(job, planner, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing) {
@@ -445,9 +455,8 @@ export class Reconciler extends ReconcilerReviewBase {
     if (task.state === 'CANCELLED') return;
     if (error) {
       task.plannerRetryFeedback = error.message;
-      task.error = error.message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-      await transitionTaskEvent(task, 'task.failed');
-      if (task.attempt < task.maxAttempts) await applyTaskRetryAction(task);
+      task.error = error.message;
+      await transitionTaskEvent(task, 'planner.failed', { retryAvailable: task.attempt < task.maxAttempts });
       await this.store.saveTask(task);
       const pending = (job.plans ?? []).find(plan => plan.id === task.id) ?? pendingPlanForPlannerTask(job, task);
       await this.store.savePlan({ ...pending, status: task.state === 'FAILED' ? 'FAILED' : 'PLANNING', error: error.message, assessment: task.state === 'FAILED' ? `Planning failed: ${error.message}` : `Planning retry: ${error.message}`, updatedAt: new Date().toISOString() });
@@ -459,7 +468,7 @@ export class Reconciler extends ReconcilerReviewBase {
       validatePlannerHierarchy(job.tasks, result.next_tasks);
       if (result.unblocks.length > 0 && !this.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
       for (const unblock of result.unblocks) await this.store.registerBlockerDependent?.(job.id, unblock);
-      const children = result.next_tasks.map(spec => this.plannerChild(job, task, spec, executionContext));
+      const children = result.next_tasks.map(spec => materializePlannerChild(job, task, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing && !samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
@@ -479,15 +488,11 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.store.saveTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.children_failed', 'failed', `Planner ${task.id} child materialization failed: ${message}`, 'user'));
       } else {
-        task.plannerRetryFeedback = message; task.error = message; task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; await transitionTaskEvent(task, 'task.failed'); if (task.attempt < task.maxAttempts) await applyTaskRetryAction(task); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
+        task.plannerRetryFeedback = message; task.error = message; await transitionTaskEvent(task, 'planner.failed', { retryAvailable: task.attempt < task.maxAttempts }); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, task.state === 'FAILED' ? 'planner.failed' : 'planner.retry', task.state === 'FAILED' ? 'failed' : 'queued', `Planner ${task.id}: ${message}`, 'user'));
       }
       const pending = (await this.store.load(job.id)).plans?.find(plan => plan.id === task.id) ?? pendingPlanForPlannerTask(job, task); await this.store.savePlan({ ...pending, status: task.state === 'QUEUED' ? 'PLANNING' : 'FAILED', error: message, assessment: task.state === 'QUEUED' ? `Planning retry: ${message}` : `Planning failed: ${message}`, updatedAt: new Date().toISOString() });
     }
     if (!task.manualPlanning) this.detach(this.reconcile(jobId), jobId, task.id, 'planner follow-up reconciliation');
   }
-  private plannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
-    validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
-    const now = new Date().toISOString();
-    return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
-  }
+
 }

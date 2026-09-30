@@ -1,0 +1,32 @@
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+checkUnblock["state: check_unblock"]
+checkSchedule["state: check_schedule"]
+checkInitial["state: check_initial"]
+manual["state: manual"]
+unblock["state: unblock"]
+schedule["state: schedule"]
+initial["state: initial"]
+continuation["state: continuation"]
+
+manualGuard["guard: manualPlan"]
+unblockGuard["guard: hasUnblock"]
+scheduleGuard["guard: scheduledRun"]
+initialGuard["guard: initialPlan"]
+
+idle -->|on: plan.requested| manualGuard
+manualGuard -->|true| manual
+manualGuard -->|false| checkUnblock
+
+checkUnblock -->|on: plan.requested| unblockGuard
+unblockGuard -->|true| unblock
+unblockGuard -->|false| checkSchedule
+
+checkSchedule -->|on: plan.requested| scheduleGuard
+scheduleGuard -->|true| schedule
+scheduleGuard -->|false| checkInitial
+
+checkInitial -->|on: plan.requested| initialGuard
+initialGuard -->|true| initial
+initialGuard -->|false| continuation

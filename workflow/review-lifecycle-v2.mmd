@@ -1,0 +1,63 @@
+flowchart LR
+%% relay: initial none
+none["state: NONE"]
+pending["state: PENDING"]
+started["state: STARTED"]
+approved["state: APPROVED"]
+changes["state: CHANGES_REQUIRED"]
+blocked["state: BLOCKED"]
+stale["state: STALE"]
+
+eligibleNone["guard: reviewEligible"]
+eligibleStale["guard: reviewEligible"]
+autoMergePending["guard: autoMerge"]
+autoMergeStarted["guard: autoMerge"]
+createNone["action: review.create"]
+createStale["action: review.create"]
+cancelPending["action: review.cancelStale"]
+cancelStarted["action: review.cancelStale"]
+cancelApproved["action: review.cancelStale"]
+cancelChanges["action: review.cancelStale"]
+cancelBlocked["action: review.cancelStale"]
+fixPending["action: review.createFix"]
+fixStarted["action: review.createFix"]
+mergePending["action: review.requestMerge"]
+mergeStarted["action: review.requestMerge"]
+
+none -->|on: reconcile| eligibleNone
+eligibleNone -->|true| createNone
+createNone --> pending
+eligibleNone -->|false| none
+
+stale -->|on: reconcile| eligibleStale
+eligibleStale -->|true| createStale
+createStale --> pending
+eligibleStale -->|false| stale
+
+pending -->|on: review.started| started
+pending -->|on: review.approved| autoMergePending
+autoMergePending -->|true| mergePending
+mergePending --> approved
+autoMergePending -->|false| approved
+pending -->|on: review.changes_required| fixPending
+fixPending --> changes
+pending -->|on: review.blocked| blocked
+
+started -->|on: review.approved| autoMergeStarted
+autoMergeStarted -->|true| mergeStarted
+mergeStarted --> approved
+autoMergeStarted -->|false| approved
+started -->|on: review.changes_required| fixStarted
+fixStarted --> changes
+started -->|on: review.blocked| blocked
+
+pending -->|on: head.changed| cancelPending
+cancelPending --> stale
+started -->|on: head.changed| cancelStarted
+cancelStarted --> stale
+approved -->|on: head.changed| cancelApproved
+cancelApproved --> stale
+changes -->|on: head.changed| cancelChanges
+cancelChanges --> stale
+blocked -->|on: head.changed| cancelBlocked
+cancelBlocked --> stale

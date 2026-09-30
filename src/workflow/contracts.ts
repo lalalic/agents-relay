@@ -12,6 +12,8 @@ export const WORKFLOW_EVENT_NAMES = [
   'implementation.completed',
   'pr.closed',
   'pr.merged',
+  'plan.requested',
+  'planner.failed',
   'reconcile',
   'release',
   'retry',
@@ -39,6 +41,10 @@ export const WORKFLOW_FACT_NAMES = [
   'autoMerge',
   'recoverableExecution',
   'retryAvailable',
+  'initialPlan',
+  'scheduledRun',
+  'hasUnblock',
+  'manualPlan',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [

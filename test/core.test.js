@@ -238,6 +238,26 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   await rm(directory,{recursive:true,force:true});
 });
 
+test('reviewer specialist tasks without a preselected route are routed automatically', async () => {
+  const specialist = task('specialist-review', 'QUEUED');
+  delete specialist.routing;
+  specialist.agentName = 'reviewer';
+  specialist.workerRequirements = { capabilities: [] };
+  const store = new InMemoryStore(job([specialist]));
+  const events = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeChatGptAdapter()], maxConcurrent: 0, emit: event => events.push(event) });
+  await reconciler.reconcile('j');
+  const routed = (await store.load('j')).tasks.find(item => item.id === 'specialist-review');
+  assert.equal(routed?.adapter, 'chatgpt');
+  assert.equal(routed?.workerSelection?.adapter, 'chatgpt');
+  assert.equal(routed?.routing?.provider, 'chatgpt');
+  assert.equal(routed?.routing?.model, 'account-defaults');
+  const workerIndex = events.findIndex(event => event.type === 'worker.selected');
+  const modelIndex = events.findIndex(event => event.type === 'model.selected');
+  assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
+  await reconciler.close();
+});
+
 test('CLI explicit worker/model routing remains a supported compatibility constraint', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-explicit-route-'));
   const file = join(directory, 'job.json');
@@ -1432,6 +1452,38 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+});
+
+test('reconcile persists a newly observed head before final review approval can auto-merge', async () => {
+  const oldHead = 'old-head-before-push';
+  const newHead = 'new-head-after-push';
+  const work = task('work', 'SUCCEEDED');
+  const store = new InMemoryStore({ ...job([work]), headSha: oldHead });
+  store.pullRequestState = async () => 'OPEN';
+  store.headSha = async () => newHead;
+  let mergedHead = null;
+  store.mergePullRequest = async headSha => { mergedHead = headSha; };
+  const reconciler = managedReconciler(store, {
+    owner: 'test',
+    adapters: [new FakeAdapter()],
+    eventBus: new MemoryEventBus(),
+    maxConcurrent: 0,
+  });
+
+  await reconciler.reconcile('j');
+  const afterReview = await store.load('j');
+  const reviewer = afterReview.tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(reviewer);
+  assert.equal(afterReview.headSha, newHead);
+  assert.equal(reviewer.reviewHeadSha, newHead);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', {
+    review: { headSha: newHead, summary: 'approved', blockingFindings: [] },
+  }));
+  const completed = await store.load('j');
+  assert.equal(completed.review?.outcome, 'approved');
+  assert.equal(completed.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  assert.equal(mergedHead, newHead);
 });
 
 test('autonomous in-progress batch advances planner without creating final review', async () => {

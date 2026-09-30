@@ -5,6 +5,14 @@ import { join } from 'node:path';
 import { parseExecutableMermaid, WorkflowEngine } from '../dist/workflow/mermaid.js';
 import { parseGraphV2 } from '../dist/workflow/graph-v2.js';
 import { jobLifecycleV2, taskLifecycleV2 } from '../dist/workflow/definitions-v2.js';
+import { plannerTriggerV2 } from '../dist/workflow/planner-trigger-v2.js';
+import { plannerOrchestrationV2 } from '../dist/workflow/planner-orchestration-v2.js';
+import { blockerResolutionV2 } from '../dist/workflow/blocker-resolution-v2.js';
+import { authoritativeUnblockV2 } from '../dist/workflow/authoritative-unblock-v2.js';
+import { scheduledRunV2 } from '../dist/workflow/scheduled-run-v2.js';
+import { scheduleCycleV2 } from '../dist/workflow/schedule-cycle-v2.js';
+import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
+import { reviewLifecycleV2 } from '../dist/workflow/review-v2.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow, validateCanonicalWorkflowGraph } from '../dist/workflow/definitions.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
 
@@ -124,7 +132,20 @@ test('every repository lifecycle graph file parses and validates with the produc
     const source = await readFile(new URL(file, directory), 'utf8');
     if (source.trimStart().startsWith('flowchart ')) {
       assert.doesNotThrow(() => parseGraphV2(source), file);
-      const runtime = file.startsWith('job-lifecycle') ? jobLifecycleV2 : taskLifecycleV2;
+      const runtimes = new Map([
+        ['job-lifecycle-v2.mmd', jobLifecycleV2],
+        ['task-lifecycle-v2.mmd', taskLifecycleV2],
+        ['review-lifecycle-v2.mmd', reviewLifecycleV2],
+        ['planner-trigger-v2.mmd', plannerTriggerV2],
+        ['planner-orchestration-v2.mmd', plannerOrchestrationV2],
+        ['blocker-resolution-v2.mmd', blockerResolutionV2],
+        ['authoritative-unblock-v2.mmd', authoritativeUnblockV2],
+        ['scheduled-run-v2.mmd', scheduledRunV2],
+        ['schedule-cycle-v2.mmd', scheduleCycleV2],
+        ['troubleshooter-v2.mmd', troubleshooterV2],
+      ]);
+      const runtime = runtimes.get(file);
+      assert.ok(runtime, file+' must have a production v2 runtime');
       assert.equal(runtime.graph.source, source, file+' must be loaded by the production v2 runtime');
     } else {
       const graph = parseExecutableMermaid(source);

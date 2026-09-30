@@ -78,7 +78,7 @@ const taskRuntime = new GraphRuntime(taskSource, {
     recoverableExecution: boolGuard('recoverableExecution'),
     retryAvailable: boolGuard('retryAvailable'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed']),
   actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','effect.launchTask']),
 });
 

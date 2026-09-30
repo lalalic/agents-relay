@@ -20,6 +20,12 @@ recoverFailed["guard: recoverableExecution"]
 recoverCancelled["guard: recoverableExecution"]
 
 retryAvailableRunning["guard: retryAvailable"]
+plannerRetryAvailable["guard: retryAvailable"]
+plannerRetryClearError["action: mutation.clearError"]
+plannerRetryClearLease["action: mutation.clearLease"]
+plannerRetryClearExecution["action: mutation.clearExecution"]
+plannerFailClearLease["action: mutation.clearLease"]
+plannerFailClearExecution["action: mutation.clearExecution"]
 retryAvailableQueued["guard: retryAvailable"]
 leaseRetryRunningClearError["action: mutation.clearError"]
 leaseRetryRunningClearLease["action: mutation.clearLease"]
@@ -127,6 +133,14 @@ completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
 running -->|on: watchdog.failed| failed
+running -->|on: planner.failed| plannerRetryAvailable
+plannerRetryAvailable -->|true| plannerRetryClearError
+plannerRetryClearError --> plannerRetryClearLease
+plannerRetryClearLease --> plannerRetryClearExecution
+plannerRetryClearExecution --> queued
+plannerRetryAvailable -->|false| plannerFailClearLease
+plannerFailClearLease --> plannerFailClearExecution
+plannerFailClearExecution --> failed
 running -->|on: lease.expired| retryAvailableRunning
 retryAvailableRunning -->|true| leaseRetryRunningClearError
 leaseRetryRunningClearError --> leaseRetryRunningClearLease

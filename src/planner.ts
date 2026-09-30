@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
-import { parseAgentGraph } from './agent-graph.js';
+import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
+import { decidePlannerTrigger } from './workflow/planner-trigger-v2.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -34,24 +35,39 @@ export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortS
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
 
 function plannerTrigger(job: Job, manual = false): PlanTrigger {
-  if (manual) return { source: 'manual' };
   const consumed = new Set((job.plans ?? []).flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
   const unblocked = job.tasks.filter(task => task.state === 'UNBLOCKED' && task.unblock && !consumed.has(task.id));
-  if (unblocked.length > 0) {
-    const records = unblocked.map(task => task.unblock!);
-    const blockedHeadShas = [...new Set(records.map(record => record.baseline.headSha).filter((value): value is string => Boolean(value)))];
-    return {
-      source: 'unblock', taskIds: unblocked.map(task => task.id),
-      reason: [...new Set(records.map(record => record.reason))].join('; '),
-      blockedHeadShas,
-      currentHeadSha: records.map(record => record.currentHeadSha).find((value): value is string => Boolean(value)),
-      unblockSource: records[0].source,
-      facts: [...new Set(records.flatMap(record => record.facts ?? [`unblock: ${record.reason}`]))],
-    };
+  const hasUnblock = unblocked.length > 0 || Boolean(job.changeCycle && !job.changeCycle.consumedByPlannerTaskId);
+  const decision = decidePlannerTrigger({
+    manualPlan: manual,
+    hasUnblock,
+    scheduledRun: Boolean(job.schedule?.currentRunSlot),
+    initialPlan: (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner'),
+  });
+  if (!decision.accepted) throw new Error('Planner trigger graph rejected plan.requested');
+  const source = decision.target as PlanTrigger['source'];
+
+  if (source === 'manual') return { source: 'manual' };
+  if (source === 'unblock') {
+    if (unblocked.length > 0) {
+      const records = unblocked.map(task => task.unblock!);
+      const blockedHeadShas = [...new Set(records.map(record => record.baseline.headSha).filter((value): value is string => Boolean(value)))];
+      return {
+        source: 'unblock', taskIds: unblocked.map(task => task.id),
+        reason: [...new Set(records.map(record => record.reason))].join('; '),
+        blockedHeadShas,
+        currentHeadSha: records.map(record => record.currentHeadSha).find((value): value is string => Boolean(value)),
+        unblockSource: records[0].source,
+        facts: [...new Set(records.flatMap(record => record.facts ?? ['unblock: ' + record.reason]))],
+      };
+    }
+    const cycle = job.changeCycle;
+    if (!cycle || cycle.consumedByPlannerTaskId) throw new Error('Planner trigger graph selected unblock without unblock facts');
+    return { source: 'unblock', taskIds: cycle.taskIds, reason: cycle.reason, facts: cycle.facts, blockedHeadShas: cycle.baselineHeadShas, currentHeadSha: cycle.currentHeadSha, unblockSource: cycle.source };
   }
-  if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId) return { source: 'unblock', taskIds: job.changeCycle.taskIds, reason: job.changeCycle.reason, facts: job.changeCycle.facts, blockedHeadShas: job.changeCycle.baselineHeadShas, currentHeadSha: job.changeCycle.currentHeadSha, unblockSource: job.changeCycle.source };
-  if (job.schedule?.currentRunSlot) return { source: 'schedule' };
-  return (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner') ? { source: 'initial' } : { source: 'continuation' };
+  if (source === 'schedule') return { source: 'schedule' };
+  if (source === 'initial') return { source: 'initial' };
+  return { source: 'continuation' };
 }
 
 export function plannerRoundNumber(task: Task): number | null {
@@ -106,6 +122,12 @@ export function recoverPendingPlannerTask(job: Job, timeoutMs: number): Task | n
   task.previousPlannerTaskId = pending.previousPlanId; task.planTrigger = pending.trigger; task.planningSource = pending.source; task.planningDecisionId = pending.id;
   task.input = plannerInput({ job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: pending.previousPlanId, trigger: pending.trigger, guidance: pending.guidance });
   return task;
+}
+
+export function materializePlannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
+  validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
+  const now = new Date().toISOString();
+  return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {

@@ -5,6 +5,7 @@ import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from '
 import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
 export { dependencyReady, detectCycles } from './workflow/task-reconcile.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
+import { decideScheduleCycle } from './workflow/schedule-cycle-v2.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
@@ -20,7 +21,11 @@ export function schedule(job: Job): Job {
   if (job.schedule) {
     const planners = scopedTasks.filter(task => task.kind === 'planner');
     const latest = planners.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
-    if (latest?.state === 'SUCCEEDED' && latest.plannerResult?.objective_status === 'satisfied') {
+    const decision = decideScheduleCycle({
+      hasCurrentSlot: Boolean(job.schedule.currentRunSlot),
+      plannerSatisfied: latest?.state === 'SUCCEEDED' && latest.plannerResult?.objective_status === 'satisfied',
+    });
+    if (decision.accepted && decision.actions.some(action => action.id === 'schedule.finishSlot')) {
       const slot = job.schedule.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
       const lastRun = job.schedule.lastRunAt ? Date.parse(job.schedule.lastRunAt) : Number.NaN;
       if (Number.isFinite(slot) && (!Number.isFinite(lastRun) || lastRun < slot)) job.schedule.lastRunAt = new Date().toISOString();
