@@ -555,17 +555,12 @@ test('dashboard header exposes in-memory runtime summary', () => {
 });
 
 
-test('dashboard Usage prioritizes secondary cooldown and request-time X headers before primary snapshot', () => {
+test('dashboard Usage renders only the lowest available GitHub quota', () => {
   assert.match(dashboardHtml, /GitHub API/);
-  assert.match(dashboardHtml, /Secondary cooldown/);
-  assert.match(dashboardHtml, /Secondary protection/);
-  assert.match(dashboardHtml, /Request-time X-RateLimit headers/);
-  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
-  assert.ok(dashboardHtml.indexOf('githubSecondary(status)') < dashboardHtml.indexOf("text('Primary quota (/rate_limit)')"));
-  assert.match(dashboardHtml, /Number\.isFinite\(observed\.limit\).*githubBucket\(label,observed\)/s);
+  assert.match(dashboardHtml, /githubBucket\('Available',effective\)/);
+  assert.match(dashboardHtml, /overview\.githubEffective/);
   assert.match(dashboardHtml, /bucket\.remaining\+' \/ '\+bucket\.limit/);
-  assert.match(dashboardHtml, /Retry '\+new Date\(until\)\.toLocaleString\(\)/);
-  assert.doesNotMatch(dashboardHtml, /Relay cooldown inactive/);
+  assert.doesNotMatch(dashboardHtml, /Secondary cooldown|Secondary protection|Request-time X-RateLimit headers|Primary quota \(\/rate_limit\)|Cooldown active|Throttled ·/);
 });
 
 
@@ -577,7 +572,7 @@ test('dashboard Usage folds GitHub diagnostics behind details', () => {
 });
 
 test('dashboard keeps GitHub API card visible when only githubStatus is available', () => {
-  assert.match(dashboardHtml, /if\(overview\.github\|\|overview\.githubStatus\)grid\.append\(githubUsageCard/);
+  assert.match(dashboardHtml, /if\(overview\.githubEffective\|\|overview\.githubStatus\)grid\.append\(githubUsageCard/);
   assert.match(dashboardHtml, /Quota unavailable/);
 });
 
@@ -589,7 +584,7 @@ test('dashboard usage remains available when GitHub quota telemetry fails', asyn
   const response=await fetch(`http://127.0.0.1:${address.port}/api/usage`);
   assert.equal(response.status,200);
   const body=await response.json();
-  assert.equal(body.github,null);
+  assert.equal(body.githubEffective,null);
   assert.equal(body.githubStatus.limited,true);
 });
 
@@ -610,19 +605,26 @@ test('dashboard usage API includes runtime-observed availability separately', as
   const response=await fetch('http://127.0.0.1:'+address.port+'/api/usage');
   const body=await response.json();
   assert.equal(response.status,200);
-  assert.equal(body.github.resources.graphql.remaining,4998);
+  assert.equal(body.githubEffective.remaining,4998);
   assert.equal(body.githubStatus.runtimeRateUsage.rejection.kind,'secondary');
   assert.equal(body.githubStatus.runtimeRateUsage.resources.graphql.throttled,true);
   server.close();
 });
 
-test('dashboard separates primary quota from observed request availability', () => {
-  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
-  assert.match(dashboardHtml, /githubObserved\('REST',observed\.core\)/);
-  assert.match(dashboardHtml, /githubObserved\('GraphQL',observed\.graphql\)/);
-  assert.match(dashboardHtml, /observed\.throttled\?'Throttled'/);
-  assert.match(dashboardHtml, /runtimeRateUsage\?\.rejection/);
+
+test('dashboard usage API selects the lowest remaining GitHub percentage across snapshot and runtime headers', async () => {
+  const usageRegistry={snapshot:async()=>({providers:[],credits:[]})};
+  const github={observedAt:'2026-09-30T00:00:00.000Z',resources:{core:{limit:5000,used:500,remaining:4500,reset:1893456000},graphql:{limit:5000,used:1000,remaining:4000,reset:1893456100}}};
+  const githubStatus={limited:false,cooldownUntil:null,runtimeRateUsage:{resources:{graphql:{resource:'graphql',observedAt:'2026-09-30T00:00:00.000Z',status:200,available:true,throttled:false,limit:5000,used:4500,remaining:500,reset:1893456200,resetAt:null,retryAfterSeconds:null,reason:null,headersCaptured:true}},rejection:null}};
+  const server=managedDashboard(new InMemoryStore(),0,undefined,300000,undefined,usageRegistry,undefined,undefined,()=>githubStatus,async()=>github,async()=>null);
+  await once(server,'listening');
+  const address=server.address();
+  const response=await fetch('http://127.0.0.1:'+address.port+'/api/usage');
+  const body=await response.json();
+  assert.deepEqual(body.githubEffective,{limit:5000,remaining:500,reset:1893456200});
+  server.close();
 });
+
 test('dashboard GitHub usage shows GraphQL operation and context attribution', async () => {
   assert.match(dashboardHtml, /GraphQL operations/);
   assert.match(dashboardHtml, /GraphQL contexts/);
