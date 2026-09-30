@@ -109,7 +109,8 @@ test('workspace daemon restores local RelayStore jobs before best-effort remote 
   const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', discover);
   const schedule = source.indexOf('await scheduleHeartbeatSafely()', recover);
   const timers = source.indexOf('interval=setInterval', schedule);
-  const remote = source.indexOf('void refreshAll(true)', timers);
+  const projectionTimer = source.indexOf('projectionInterval=setInterval', timers);
+  const remote = source.indexOf('void refreshAll(true)', projectionTimer);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
   assert.ok(server > watch);
@@ -117,7 +118,8 @@ test('workspace daemon restores local RelayStore jobs before best-effort remote 
   assert.ok(recover > discover);
   assert.ok(schedule > recover);
   assert.ok(timers > schedule);
-  assert.ok(remote > timers);
+  assert.ok(projectionTimer > timers);
+  assert.ok(remote > projectionTimer);
   assert.equal(source.includes('await refreshAll(true, true)'), false);
 });
 
@@ -144,6 +146,7 @@ test('service defaults and package bins use stable package entrypoints', async (
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.dashboardRefreshMs, 300000);
+  assert.equal(SERVICE_DEFAULTS.projectionFlushMs, 1000);
 });
 
 test('publish workflow can write publication markers to pull requests', async () => {

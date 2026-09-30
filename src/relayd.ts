@@ -65,6 +65,7 @@ Options:
   --port PORT             Dashboard port (default: 8787)
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
+  --projection-ms MS      GitHub projection flush interval (default: 1000)
   --events nats            Enable event wakeups
 
 Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
@@ -338,7 +339,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
   let interval: NodeJS.Timeout | undefined;
   let scheduleInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  let projectionInterval: NodeJS.Timeout | undefined;
+  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   const localSnapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
   const knownRepositories = new Set(repositories);
   const localOverviews: ManagedJobOverview[] = localSnapshots.flatMap(snapshot => {
@@ -355,6 +357,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   await scheduleHeartbeatSafely();
   await flushProjectionsSafely();
   interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
+  projectionInterval=setInterval(()=>void flushProjectionsSafely(),Number(value(argv,'--projection-ms',String(SERVICE_DEFAULTS.projectionFlushMs)))); projectionInterval.unref();
   scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)
