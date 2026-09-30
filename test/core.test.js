@@ -138,6 +138,22 @@ test('legacy planner Task is read-only under shared task.retry action', async ()
   assert.equal(persisted.error, 'invalid planner output');
 });
 
+test('dashboard CANCELLED state uses job cancel semantics and closes the PR idempotently', async () => {
+  class ClosingStore extends InMemoryStore {
+    closes = 0;
+    async closePullRequest() { this.closes += 1; }
+  }
+  const queued = task('queued', 'QUEUED');
+  const store = new ClosingStore(job([queued]));
+  let durable = await dashboardJobSetState(store)('j', 'CANCELLED');
+  assert.equal(durable.state, 'CANCELLED');
+  assert.equal(durable.tasks[0].state, 'CANCELLED');
+  assert.equal(store.closes, 1);
+  durable = await dashboardJobSetState(store)('j', 'CANCELLED');
+  assert.equal(durable.state, 'CANCELLED');
+  assert.equal(store.closes, 2);
+});
+
 test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {
   const store = new InMemoryStore(job([]));
   const durable = await dashboardJobSetState(store)('j', 'COMPLETED');

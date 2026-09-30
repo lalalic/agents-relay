@@ -5,6 +5,7 @@ import { applyJobGraphTarget, applyTaskGraphTarget } from './workflow/runtime.js
 import { jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
 import { dispatchWorkflowTargetOverride } from './workflow/dispatcher.js';
 import { dispatchTaskAction } from './task-actions.js';
+import { applyJobCancelAction } from './job-actions.js';
 
 export function dashboardTaskAction(
   store: DurableStore,
@@ -28,6 +29,11 @@ export function dashboardTaskAction(
 export function dashboardJobSetState(store: DurableStore): (jobId: string, state: JobLifecycleState) => Promise<Job> {
   return async (jobId: string, state: JobLifecycleState): Promise<Job> => {
     const job = await store.load(jobId);
+    if (state === 'CANCELLED') {
+      if (job.state !== 'CANCELLED') await applyJobCancelAction(store, job);
+      await store.closePullRequest?.();
+      return await store.load(job.id);
+    }
     if (job.state === state) return job;
     await dispatchWorkflowTargetOverride(jobLifecycleV2, {
       currentState: job.state, targetState: state, kind: 'job',
