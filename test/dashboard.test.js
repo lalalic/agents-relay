@@ -679,6 +679,6 @@ test('Router Rules tab exposes router evals and latest audit log', () => {
   assert.match(dashboardHtml, /id="audit-log"/);
   assert.match(dashboardHtml, /Rules Editor/);
   assert.match(dashboardHtml, /Audit Log/);
-  assert.match(dashboardHtml, /fetch\('\/api\/router-evals'/);
+  assert.match(dashboardHtml, /fetch\('\/api\/router-test'/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/decision-audit'/);
 });

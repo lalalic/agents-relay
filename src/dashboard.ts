@@ -13,7 +13,6 @@ import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import { eventsBusHistory } from './events-bus-runtime.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
-import type { RouterEvalReport } from './router-evals.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
@@ -84,7 +83,7 @@ export function serveDashboard(
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
   actions?: DashboardActions,
-  routerEvalProvider?: () => Promise<RouterEvalReport>,
+  routerTestProvider?: () => Promise<Record<string, unknown>>,
   decisionAuditProvider?: () => Promise<DecisionAuditRecord[]>,
 ): Server {
   const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
@@ -369,13 +368,13 @@ export function serveDashboard(
       res.end('Method not allowed');
       return;
     }
-    if (req.url === '/api/router-evals') {
+    if (req.url === '/api/router-test') {
       if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end('Method not allowed'); return; }
-      if (!routerEvalProvider) { res.writeHead(503); res.end('Router evals unavailable'); return; }
+      if (!routerTestProvider) { res.writeHead(503); res.end('Router test unavailable'); return; }
       try {
-        const report = await routerEvalProvider();
+        const result = await routerTestProvider();
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(report));
+        res.end(JSON.stringify(result));
       } catch (error) {
         res.writeHead(500);
         res.end(error instanceof Error ? error.message : String(error));

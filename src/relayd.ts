@@ -25,7 +25,8 @@ import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
-import { runRouterEvals } from './router-evals.js';
+import { workerCandidates } from './worker-routing.js';
+import { routeExecution } from './execution-routing.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
@@ -329,7 +330,42 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     taskCancel: workspaceTaskAction('cancel'),
     taskComplete: workspaceTaskComplete,
     taskSetState: workspaceTaskSetState,
-  }, async () => await runRouterEvals(new LayaCliDecisionEngine()),
+  }, async () => {
+    const usage = await usageRegistry.snapshot();
+    const runtime = summarizeRuntime(cachedOverviews.map(item => item.job));
+    const workers = workerCandidates([
+      { name: 'codex', id: 'codex', capabilities: ['model', 'codex'] },
+      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-harness'] },
+    ], [], usage);
+    const result = await routeExecution(workers, { capabilities: [] }, {
+      decisionEngine: new LayaCliDecisionEngine(),
+      decisionMode: 'active',
+      taskFacts: { storySize: 'M', role: 'router-test' },
+      usage,
+      chatgptRunning: runtime.workers.chatgpt,
+    });
+    return {
+      selected: {
+        route: result.audit?.selected?.id,
+        worker: result.selection.workerId,
+        adapter: result.selection.adapter,
+        provider: result.candidate.routing.provider,
+        model: result.candidate.routing.model,
+        profile: result.candidate.routing.profile,
+        reasoning: result.candidate.routing.reasoning,
+      },
+      probabilities: result.candidate.routing.decisionEvidence?.probabilities ?? {},
+      fallback: result.candidate.routing.decisionEvidence?.fallback ?? false,
+      current: {
+        chatgptRunning: runtime.workers.chatgpt,
+        browserWorkspace: usage.browserWorkspace ?? null,
+        providers: usage.providers,
+        credits: usage.credits,
+      },
+      decisionInput: result.audit?.decision_input ?? null,
+      gates: result.audit?.gate_results ?? [],
+    };
+  },
   async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5));
 
   await once(server,'listening');
