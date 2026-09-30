@@ -27,6 +27,18 @@ import { scheduleBucket } from './scheduler.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
+export async function overlayOperationalOverviews(
+  overviews: readonly ManagedJobOverview[],
+  storeFor: (repository: string, prNumber: number) => DurableStore,
+): Promise<ManagedJobOverview[]> {
+  return await Promise.all(overviews.map(async item => {
+    const store = storeFor(item.job.repository, item.job.prNumber) as DurableStore & { hydrate?: (job: import('./types.js').Job) => Promise<void> };
+    await store.hydrate?.(item.job);
+    const job = await store.load(item.job.id);
+    return { ...item, job };
+  }));
+}
+
 export type GitHubReadPathDiagnostics = {
   workspaceScans: number;
   prRefreshes: number;
@@ -140,7 +152,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       githubReadPaths.workspaceScans += 1;
       const refreshed = await withGitHubRequestContext(client, 'relayd.workspace-refresh', () => aggregateManagedGitHubJobs(client, scanRepositories, trusted));
       const scanned = new Set(scanRepositories);
-      cachedOverviews = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
+      const merged = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
+      cachedOverviews = await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber));
       try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
       return cachedOverviews;
     } catch (error) {
@@ -174,12 +187,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const flight = (async (): Promise<ManagedGitHubPullRequestSnapshot> => {
       githubReadPaths.prRefreshes += 1;
       const snapshot = await withGitHubRequestContext(client, `relayd.pr-refresh:${trigger}`, () => loadManagedGitHubPullRequestSnapshotGraphql(client, repository, prNumber, trusted));
+      const operational = await overlayOperationalOverviews(snapshot.overviews, (repo, pr) => runtimeStore(repo, pr, repo === repository && pr === prNumber ? snapshot.seed : null));
       cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
-      cachedOverviews.push(...snapshot.overviews);
+      cachedOverviews.push(...operational);
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
       await persistCache();
-      pullRequestRefreshCache.set(key, { snapshot, completedAt: Date.now() });
-      return snapshot;
+      const operationalSnapshot = { ...snapshot, overviews: operational };
+      pullRequestRefreshCache.set(key, { snapshot: operationalSnapshot, completedAt: Date.now() });
+      return operationalSnapshot;
     })();
     pullRequestRefreshFlights.set(key, flight);
     try { return await flight; }

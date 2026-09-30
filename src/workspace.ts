@@ -1,5 +1,5 @@
 import { mkdir, readdir, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -69,6 +69,10 @@ export function resolveRepositoryProjectPath(repositoryRoot: string, projectPath
   const root = resolve(repositoryRoot);
   if (!projectPath) return root;
   if (isAbsolute(projectPath)) throw new Error('Job projectPath must be repository-relative');
+  // Legacy Jobs sometimes stored the repository folder name itself (for example
+  // projectPath='agents-relay' for the agents-relay repository). Interpret that
+  // historical form as the repository root instead of appending it twice.
+  if (projectPath === basename(root)) return root;
   const target = resolve(root, projectPath);
   const rel = relative(root, target);
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Job projectPath escapes repository root');

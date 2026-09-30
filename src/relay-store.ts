@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import type { AgentRegistration, Job } from './types.js';
+import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
 
 export type PullRequestFacts = {
@@ -46,6 +46,7 @@ export type ProjectionOutboxItem = {
 export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   saveJob(job: Job): Promise<void>;
+  ingestJobSnapshot(job: Job): Promise<Job>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
   loadAgents(): Promise<AgentRegistration[] | null>;
   saveAgents(agents: readonly AgentRegistration[]): Promise<void>;
@@ -76,6 +77,32 @@ type OutboxRow = {
 };
 
 const SCHEMA_VERSION = 3;
+
+function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
+  if (!local) return structuredClone(remote);
+  return remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
+}
+
+function mergeRecords<T extends { id: string; updatedAt: string }>(local: readonly T[], remote: readonly T[]): T[] {
+  const remoteById = new Map(remote.map(item => [item.id, item]));
+  const merged = local.map(item => newerRecord(item, remoteById.get(item.id) ?? item));
+  const localIds = new Set(local.map(item => item.id));
+  for (const item of remote) if (!localIds.has(item.id)) merged.push(structuredClone(item));
+  return merged;
+}
+
+export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
+  const base = remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
+  base.tasks = mergeRecords<Task>(local.tasks, remote.tasks);
+  const localPlans = local.plans ?? [];
+  const remotePlans = remote.plans ?? [];
+  if (localPlans.length > 0 || remotePlans.length > 0) {
+    base.plans = mergeRecords<Plan>(localPlans, remotePlans).sort((a, b) => a.round - b.round);
+  } else {
+    delete base.plans;
+  }
+  return base;
+}
 
 function rowToProjection(row: OutboxRow): ProjectionOutboxItem {
   return {
@@ -167,6 +194,22 @@ export class SQLiteRelayStore implements RelayStore {
 
   async saveJob(job: Job): Promise<void> {
     this.writeJobSnapshot(job, new Date().toISOString());
+  }
+
+  async ingestJobSnapshot(job: Job): Promise<Job> {
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(job.id) as { json?: string } | undefined;
+      const local = row?.json ? JSON.parse(row.json) as Job : null;
+      const merged = local ? mergeInboundJobSnapshot(local, job) : structuredClone(job);
+      this.writeJobSnapshot(merged, now);
+      this.db.exec('COMMIT');
+      return structuredClone(merged);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   async saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void> {

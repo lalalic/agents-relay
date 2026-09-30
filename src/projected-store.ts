@@ -99,9 +99,9 @@ export class ProjectedDurableStore implements DurableStore {
     if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
   }
 
-  /** Seed local operational truth from a trusted discovery snapshot without creating a projection echo. */
+  /** Ingest trusted GitHub records without echoing them back through the projection outbox. */
   async hydrate(job: Job): Promise<void> {
-    if (!(await this.relay.loadJob(job.id))) await this.relay.saveJob(structuredClone(job));
+    await this.relay.ingestJobSnapshot(structuredClone(job));
   }
 
   async load(jobId: string): Promise<Job> {

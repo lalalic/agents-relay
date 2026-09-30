@@ -46,6 +46,7 @@ test('repository path resolution uses managed repository identity instead of lau
 
 test('job project paths are repository-relative and cannot escape the repository', () => {
   assert.equal(resolveRepositoryProjectPath('/tmp/repo', undefined), '/tmp/repo');
+  assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'repo'), '/tmp/repo');
   assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'neo-build-log'), '/tmp/repo/neo-build-log');
   assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '/etc'), /repository-relative/);
   assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '../outside'), /escapes repository root/);

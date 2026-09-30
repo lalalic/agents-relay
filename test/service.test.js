@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
+import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
 import { nextPatchVersion } from '../scripts/npm-version.mjs';
@@ -23,6 +23,18 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
   const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
   assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
 });
+test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {
+  const remoteJob = { id: 'job-1', title: 'remote', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'DRAFT', continuation: null, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
+  const localJob = { ...remoteJob, state: 'ACTIVE', updatedAt: '2026-09-29T00:01:00.000Z', tasks: [{ jobId:'job-1', id:'work', kind:'work', parentTaskId:null, dependencies:[], capabilities:[], adapter:'codex', attachments:[], output:{kind:'task_pr'}, continuation:null, continuationDeliveredAt:null, state:'RUNNING', attempt:1, maxAttempts:3, leaseOwner:'relay', leaseExpiresAt:null, executionId:'execution-1', threadId:null, result:null, plannerResult:null, error:null, timeoutMs:1000, createdAt:'2026-09-29T00:00:30.000Z', updatedAt:'2026-09-29T00:01:00.000Z', input:'work' }] };
+  const overview = { githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: remoteJob };
+  const hydrated = [];
+  const result = await overlayOperationalOverviews([overview], () => ({ hydrate: async job => hydrated.push(job.id), load: async () => structuredClone(localJob) }));
+  assert.deepEqual(hydrated, ['job-1']);
+  assert.equal(result[0].githubState, 'OPEN');
+  assert.equal(result[0].job.state, 'ACTIVE');
+  assert.equal(result[0].job.tasks[0].state, 'RUNNING');
+});
+
 test('daemon arguments require and normalize durable identifiers', () => {
   const argv = ['--repo', 'OWNER/REPO', '--pr', '1', '--id', 'JOB_ID', '--port', '9000'];
   const normalized = normalizeDaemonArguments(argv);

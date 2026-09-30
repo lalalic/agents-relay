@@ -57,6 +57,32 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   await tmp.close(store);
 });
 
+test('RelayStore inbound snapshots merge new remote records without regressing newer local execution', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const localTask = { ...makeTask('RUNNING'), id: 'existing', executionId: 'exec-1', updatedAt: '2026-09-30T00:02:00.000Z' };
+  const localJob = { ...makeJob(), state: 'ACTIVE', updatedAt: '2026-09-30T00:02:00.000Z', tasks: [localTask] };
+  await relay.saveJob(localJob);
+
+  const remoteExisting = { ...localTask, state: 'QUEUED', executionId: null, updatedAt: '2026-09-30T00:01:00.000Z' };
+  const remoteNew = { ...makeTask('QUEUED'), id: 'external-new', updatedAt: '2026-09-30T00:03:00.000Z' };
+  const remoteJob = { ...localJob, state: 'DRAFT', updatedAt: '2026-09-30T00:01:00.000Z', tasks: [remoteExisting, remoteNew] };
+  const projected = new ProjectedDurableStore(relay, new InMemoryStore(remoteJob));
+  await projected.hydrate(remoteJob);
+  let merged = await relay.loadJob('job-1');
+  assert.equal(merged.state, 'ACTIVE');
+  assert.equal(merged.tasks.find(task => task.id === 'existing').state, 'RUNNING');
+  assert.equal(merged.tasks.find(task => task.id === 'existing').executionId, 'exec-1');
+  assert.equal(merged.tasks.find(task => task.id === 'external-new').state, 'QUEUED');
+
+  const remoteTerminal = { ...remoteExisting, state: 'SUCCEEDED', result: { summary: 'external terminal evidence' }, updatedAt: '2026-09-30T00:04:00.000Z' };
+  await projected.hydrate({ ...remoteJob, tasks: [remoteTerminal, remoteNew] });
+  merged = await relay.loadJob('job-1');
+  assert.equal(merged.tasks.find(task => task.id === 'existing').state, 'SUCCEEDED');
+  assert.equal(merged.tasks.find(task => task.id === 'existing').result.summary, 'external terminal evidence');
+  await tmp.close(relay);
+});
+
 test('ProjectedDurableStore reconciles from durable PR facts while GitHub reads are unavailable', async () => {
   const tmp = await tempDb();
   const relay = new SQLiteRelayStore(tmp.path);
