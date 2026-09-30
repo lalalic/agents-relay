@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from './test-runtime.js';
 import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
-import { requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
+import { publishOrchestratorTaskCompletion, requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
 
 
@@ -137,6 +137,38 @@ test('managed CLI reconciliation delegates through relayd and rejects a missing 
   assert.deepEqual(events[0].data, { repository: 'owner/repo', prNumber: 106 });
   const source = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   assert.ok(source.indexOf("if (command === 'reconcile' && !localFile)") < source.lastIndexOf('const reconciler = runtime('));
+});
+
+test('orchestrator task completion publishes correlated lifecycle events best-effort', async () => {
+  const events = [];
+  const job = { id: 'self-job', repository: 'owner/repo', prNumber: 220 };
+  const task = { id: 'self-task', parentTaskId: null };
+  const bus = {
+    publish: async event => { events.push(event); },
+    subscribe: async () => async () => {},
+    subscribeAll: async () => async () => {},
+  };
+  await publishOrchestratorTaskCompletion(bus, job, task, 'done');
+  assert.deepEqual(events.map(event => [event.type, event.status, event.job_id, event.task_id]), [
+    ['task.started', 'running', 'self-job', 'self-task'],
+    ['task.completed', 'succeeded', 'self-job', 'self-task'],
+  ]);
+  assert.equal(events[1].data.summary, 'done');
+  assert.deepEqual(events[0].source, { agent: 'relay', component: 'agents-relay' });
+
+  let attempts = 0;
+  await assert.doesNotReject(() => publishOrchestratorTaskCompletion({
+    publish: async () => { attempts += 1; throw new Error('transport down'); },
+    subscribe: async () => async () => {},
+    subscribeAll: async () => async () => {},
+  }, job, task, 'durable already'));
+  assert.equal(attempts, 2);
+
+  const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const save = relayd.indexOf('await store.saveTask(task);', relayd.indexOf('const workspaceTaskComplete'));
+  const publish = relayd.indexOf('await publishOrchestratorTaskCompletion(bus, job, task, summary);', save);
+  assert.ok(save >= 0);
+  assert.ok(publish > save);
 });
 
 test('managed CLI task mutations enter relayd control plane before local truth changes', async () => {

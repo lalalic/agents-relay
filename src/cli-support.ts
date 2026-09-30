@@ -100,6 +100,17 @@ export async function eventBus(args: string[]): Promise<EventBus | undefined> {
 }
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.unblocked', 'unblocked', `Task ${taskId} unblocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason })); } catch (error) { process.stderr.write(`warning: unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
+export async function publishOrchestratorTaskCompletion(bus: EventBus | undefined, job: Job, task: Task, summary: string): Promise<void> {
+  if (!bus) return;
+  const events = [
+    eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started by orchestrator`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }),
+    eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed by orchestrator`, 'orchestrator', { adapter: 'orchestrator', summary }, { agent: 'relay', component: 'agents-relay' }),
+  ];
+  for (const event of events) {
+    try { await bus.publish(event); }
+    catch (error) { process.stderr.write(`warning: orchestrator task event unavailable for ${job.id}/${task.id}: ${error instanceof Error ? error.message : String(error)}\n`); }
+  }
+}
 export async function publishDependentUnblocked(bus: EventBus | undefined, targets: readonly { repository: string; prNumber: number; jobId: string; taskId: string }[], reason: string): Promise<void> { if (!bus) return; for (const target of targets) { try { await bus.publish(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Task ${target.taskId} unblocked: ${reason}`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, reason })); } catch (error) { process.stderr.write(`warning: dependent unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } } }
 export async function requestManagedReconciliation(bus: EventBus | undefined, job: Job): Promise<void> {
   if (!bus) throw new Error('Managed GitHub reconciliation requires a reachable NATS event bus (auto-detected when available, or explicit with --events nats)');
