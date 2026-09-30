@@ -18,7 +18,7 @@ test('relayd timer is a pure schedule.tick trigger and does not execute schedule
   assert.match(source, /pool\.scheduleTickSignal\(bus, item\.job, now\)/);
   assert.doesNotMatch(source, /runScheduledBucket\s*\(/);
 });
-test('relayd scheduled heartbeat selects only exact due open autonomous jobs from cache', () => {
+test('relayd scheduled heartbeat selects only exact due open autonomous jobs from local view', () => {
   const now = new Date('2026-09-29T18:05:00Z');
   const base = { title: 'scheduled', priority: 'P0', autoMerge: false, reviewEnabled: false, continuation: null, createdAt: now.toISOString(), updatedAt: now.toISOString(), tasks: [] };
   const overview = (id, nextRunAt, overrides = {}) => ({ githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: { ...base, id, repository: 'owner/repo', prNumber: 1, state: 'ACTIVE', executionMode: 'autonomous', schedule: { cron: '0 * * * *', timezone: 'UTC', nextRunAt, missedRunPolicy: 'skip', concurrencyPolicy: 'skip', lastScheduledSlot: null, currentRunSlot: null, lastRunAt: null }, ...overrides } });
@@ -28,7 +28,7 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
   const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
   assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
 });
-test('workspace dashboard/runtime summary refreshes cached jobs from local operational truth', async () => {
+test('workspace dashboard/runtime summary refreshes the disposable local view from SQLite operational truth', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
 });
@@ -100,27 +100,33 @@ test('managed CLI task mutations enter relayd control plane before local truth c
   assert.match(relayd, /taskCancel: workspaceTaskAction\('cancel'\)/);
 });
 
-test('workspace daemon restores local RelayStore jobs before best-effort remote refresh', async () => {
+test('workspace daemon restores SQLite RelayStore jobs before dashboard and best-effort remote refresh', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  const cached = source.indexOf('const initial = cachedOverviews');
-  const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
+  const discover = source.indexOf('discoverLocalRelayStoreSnapshots');
+  const initial = source.indexOf('const initial = cachedOverviews', discover);
+  const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)', initial);
   const server = source.indexOf('const server = serveDashboard', watch);
-  const discover = source.indexOf('discoverLocalRelayStoreSnapshots', server);
-  const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', discover);
+  const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', server);
   const schedule = source.indexOf('await scheduleHeartbeatSafely()', recover);
   const timers = source.indexOf('interval=setInterval', schedule);
   const projectionTimer = source.indexOf('projectionInterval=setInterval', timers);
   const remote = source.indexOf('void refreshAll(true)', projectionTimer);
-  assert.ok(cached >= 0);
-  assert.ok(watch > cached);
+  assert.ok(discover >= 0);
+  assert.ok(initial > discover);
+  assert.ok(watch > initial);
   assert.ok(server > watch);
-  assert.ok(discover > server);
-  assert.ok(recover > discover);
+  assert.ok(recover > server);
   assert.ok(schedule > recover);
   assert.ok(timers > schedule);
   assert.ok(projectionTimer > timers);
   assert.ok(remote > projectionTimer);
-  assert.equal(source.includes('await refreshAll(true, true)'), false);
+});
+
+test('workspace daemon has no persistent dashboard job JSON cache', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.equal(source.includes('dashboard-jobs.json'), false);
+  assert.equal(source.includes('persistCache'), false);
+  assert.match(source, /discoverLocalRelayStoreSnapshots/);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {

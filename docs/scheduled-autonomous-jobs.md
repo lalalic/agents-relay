@@ -41,7 +41,7 @@ cron expression and timezone.
 ## Heartbeat
 
 The always-on `agents-relayd` process is the only scheduler heartbeat. On daemon
-startup and every ten minutes it filters its cached managed Job overviews for
+startup and every ten minutes it filters its disposable in-process managed Job view, restored from SQLite, for
 open autonomous Jobs whose exact durable `nextRunAt` is due, reloads the Job to
 revalidate the slot, claims it idempotently, advances durable schedule state,
 and reconciles the Job directly through the local worker pool.
@@ -52,7 +52,7 @@ instance that manages the repository.
 
 ## Slot semantics
 
-For each due cached Job, `agents-relayd` reloads the job marker and:
+For each due locally known Job, `agents-relayd` reloads the SQLite-backed Job state and:
 
 1. ignores or repairs a stale label when durable `nextRunAt` no longer matches
    that slot;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { once } from 'node:events';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ChatGptAdapter, CodexAdapter } from './adapters.js';
@@ -137,14 +137,16 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     projectionWriters.set(key, projected.projection);
     return projected;
   };
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   if (repositories.length === 0) throw new Error(`No Git repositories with GitHub origins found under ${normalized.workspaceRoot ?? defaultWorkspaceRoot()}`);
-  const cacheDirectory = join(homedir(), '.agents-relay');
-  const cacheFile = join(cacheDirectory, 'dashboard-jobs.json');
-  try {
-    const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as ManagedJobOverview[];
-    if (Array.isArray(parsed)) cachedOverviews = parsed;
-  } catch { /* first run or invalid cache */ }
+  const localSnapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+  const knownRepositories = new Set(repositories);
+  cachedOverviews = dashboardManagedJobs(localSnapshots.flatMap(snapshot => {
+    if (!snapshot.facts) return [];
+    return snapshot.jobs.filter(job => knownRepositories.has(job.repository)).map(job => ({
+      job, githubState: snapshot.facts!.state, draft: false, mergedAt: null, closedAt: null, publication: null,
+    }));
+  }));
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   const refreshAll = async (full = false): Promise<ManagedJobOverview[]> => {
     if (client.rateLimitStatus().limited) return cachedOverviews;
     const scanRepositories = full ? repositories : recoveryScanRepositories(repositories, cachedOverviews, dormantProbeIndex++);
@@ -155,7 +157,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const scanned = new Set(scanRepositories);
       const merged = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
       cachedOverviews = await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber));
-      try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
       return cachedOverviews;
     } catch (error) {
       process.stderr.write(`warning: workspace job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -166,9 +167,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (forceRefresh) return refreshAll(true);
     cachedOverviews = await overlayOperationalOverviews(cachedOverviews, (repository, prNumber) => runtimeStore(repository, prNumber));
     return cachedOverviews;
-  };
-  const persistCache = async (): Promise<void> => {
-    try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };
   const pullRequestRefreshFlights = new Map<string, Promise<ManagedGitHubPullRequestSnapshot>>();
   const pullRequestRefreshCache = new Map<string, { snapshot: ManagedGitHubPullRequestSnapshot; completedAt: number }>();
@@ -196,7 +194,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       cachedOverviews = cachedOverviews.filter(item => item.job.repository !== repository || item.job.prNumber !== prNumber);
       cachedOverviews.push(...operational);
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
-      await persistCache();
       const operationalSnapshot = { ...snapshot, overviews: operational };
       pullRequestRefreshCache.set(key, { snapshot: operationalSnapshot, completedAt: Date.now() });
       return operationalSnapshot;
@@ -341,18 +338,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
   const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
-  const localSnapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
-  const knownRepositories = new Set(repositories);
-  const localOverviews: ManagedJobOverview[] = localSnapshots.flatMap(snapshot => {
-    if (!snapshot.facts) return [];
-    return snapshot.jobs.filter(job => knownRepositories.has(job.repository)).map(job => ({
-      job, githubState: snapshot.facts!.state, draft: false, mergedAt: null, closedAt: null, publication: null,
-    }));
-  });
-  const byJob = new Map<string, ManagedJobOverview>();
-  for (const item of cachedOverviews) byJob.set(item.job.repository + '#' + item.job.prNumber + ':' + item.job.id, item);
-  for (const item of localOverviews) byJob.set(item.job.repository + '#' + item.job.prNumber + ':' + item.job.id, item);
-  cachedOverviews = dashboardManagedJobs([...byJob.values()]);
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();
   await flushProjectionsSafely();
