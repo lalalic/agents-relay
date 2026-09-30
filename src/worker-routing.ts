@@ -6,7 +6,7 @@ import { AdapterName, AgentAvailability, AgentRegistration, BrowserWorkspaceCapa
 export const DEFAULT_CHATGPT_PREFERRED_CONCURRENCY = 10;
 
 export const DEFAULT_WORKER_ROUTER_PRINCIPLES = [
-  'User-provided environment_rules are higher-priority routing guidance than these built-in defaults. Follow user guidance when it conflicts with a default unless doing so would violate an authoritative hard constraint.',
+  'User-provided user_input_rules are higher-priority routing guidance than these built-in defaults. Follow user guidance when it conflicts with a default unless doing so would violate an authoritative hard constraint.',
   'Worker Router chooses only the execution worker. Model Router chooses provider/model/profile after worker selection.',
   'Prefer ChatGPT when both workers can execute the task because it does not consume Codex coding-plan tokens and normally has access to a stronger ChatGPT Sol model.',
   'Prefer Codex when the task requires native/local execution or computer-use abilities that are unavailable through ChatGPT plus MacBridge.',
@@ -187,8 +187,8 @@ export async function routeWorker(
   const facts = JSON.parse(JSON.stringify({
     task: options.taskFacts ?? {},
     explicit_constraints: { runtime: requirements.runtime ?? null },
-    decision_precedence: ['authoritative_hard_constraints', 'environment_rules', 'routing_principles', 'resource_and_runtime_preferences'],
-    environment_rules: rules.text,
+    decision_precedence: ['authoritative_hard_constraints', 'user_input_rules', 'routing_principles', 'resource_and_runtime_preferences'],
+    user_input_rules: rules.text,
     routing_principles: DEFAULT_WORKER_ROUTER_PRINCIPLES,
     usage_snapshot: options.usage ?? null,
     runtime_load: {
@@ -218,7 +218,7 @@ export async function routeWorker(
     { facts },
     {
       type: 'choice',
-      question: 'Choose the best execution worker for this task. Authoritative hard constraints come first. Then follow user-provided environment rules ahead of built-in routing principles when they conflict. Use task facts, reviewer-diversity context when present, current usage, and runtime load as supporting evidence. Do not choose a provider or model here.',
+      question: 'Choose the best execution worker for this task. Authoritative hard constraints come first. Then follow user_input_rules ahead of built-in routing principles when they conflict. Use task facts, reviewer-diversity context when present, current usage, and runtime load as supporting evidence. Do not choose a provider or model here.',
       choices: eligible.map(item => item.workerId),
     },
     () => deterministic.workerId,

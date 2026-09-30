@@ -79,7 +79,7 @@ test('free-text execution router rules are passed verbatim to the decision engin
     decisionMode: 'active',
     taskFacts: { kind: 'implementation' },
   });
-  assert.equal(seen.environment_policy.rules, rules);
+  assert.equal(seen.user_input_rules, rules);
 });
 
 
@@ -148,8 +148,8 @@ test('unified execution audit records full worker+model routes and selected rout
     assert.ok(audit.candidates.some(item => item.worker.adapter === 'chatgpt' && item.model.provider === 'chatgpt'));
     assert.equal(audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker').eligible, true);
     assert.deepEqual(audit.decision_input.contract.choices.sort(), audit.eligible_candidates.map(item => item.id).sort());
-    assert.equal(audit.decision_input.facts.runtime_load.chatgpt_running, 0);
-    assert.equal(audit.decision_input.facts.candidates.length, audit.eligible_candidates.length);
+    assert.equal(audit.decision_input.facts.runtime.chatgpt_running, 0);
+    assert.equal(audit.decision_input.facts.eligible_routes.length, audit.eligible_candidates.length);
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }

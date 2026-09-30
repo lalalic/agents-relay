@@ -108,7 +108,48 @@ test('free-text rules never create an unconfigured non-OpenAI provider or model'
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
-test('configured non-OpenAI profile requires concrete model authorization in free-text rules', async () => {
+test('Codex runtime catalog expands OpenAI models and reasoning into complete execution routes', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-codex-catalog-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'models_cache.json'), JSON.stringify({
+      models: [
+        { slug: 'gpt-6-astra', visibility: 'list', supported_in_api: true, priority: 1, default_reasoning_level: 'low', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] },
+        { slug: 'gpt-5.6-sol', visibility: 'list', supported_in_api: true, priority: 2, default_reasoning_level: 'medium', supported_reasoning_levels: [{ effort: 'medium' }, { effort: 'high' }] },
+        { slug: 'hidden-model', visibility: 'hide', supported_in_api: true, supported_reasoning_levels: [{ effort: 'high' }] },
+      ],
+    }));
+    const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
+    const models = await discoverModelCandidates(worker, [], undefined, home);
+    assert.ok(models.some(item => item.model === 'gpt-6-astra' && item.reasoning === 'high'));
+    assert.ok(models.some(item => item.model === 'gpt-5.6-sol' && item.reasoning === 'medium'));
+    assert.ok(!models.some(item => item.model === 'hidden-model'));
+
+    const calls = [];
+    const engine = {
+      name: 'capture',
+      async decide(request, contract) {
+        calls.push({ request, contract });
+        const choice = contract.choices.find(item => item.includes('gpt-6-astra@high')) ?? contract.choices[0];
+        return { type: 'choice', choice };
+      },
+    };
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active' });
+    assert.ok(calls[0].contract.choices.includes('codex::catalog:openai/gpt-6-astra@high'));
+    assert.ok(calls[0].contract.choices.includes('codex::catalog:openai/gpt-5.6-sol@medium'));
+    assert.equal(new Set(calls[0].contract.choices).size, calls[0].contract.choices.length);
+    assert.equal(calls[0].request.facts.eligible_routes.length, calls[0].contract.choices.length);
+    assert.equal(result.candidate.routing.model, 'gpt-6-astra');
+    assert.equal(result.candidate.routing.reasoning, 'high');
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('configured non-OpenAI profiles are discovered independently of free-text rules', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-codex-'));
   try {
     await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
@@ -118,10 +159,10 @@ test('configured non-OpenAI profile requires concrete model authorization in fre
     const explicitRules = join(home, 'explicit-rules.md');
     await writeFile(explicitRules, 'zai只用 5.3 flash high thinking');
     const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
-    assert.deepEqual((await discoverModelCandidates(worker, [], undefined, home, genericRules)).map(item => item.id), ['default:openai/gpt-main']);
+    assert.deepEqual((await discoverModelCandidates(worker, [], undefined, home, genericRules)).map(item => item.id), ['default:openai/gpt-main', 'zai:zai/glm-5.3-flash']);
     const candidates = await discoverModelCandidates(worker, [], undefined, home, explicitRules);
     assert.deepEqual(candidates.map(item => item.id), ['default:openai/gpt-main', 'zai:zai/glm-5.3-flash']);
-    const engine = new FakeDecisionEngine('zai:zai/glm-5.3-flash');
+    const engine = new FakeDecisionEngine('zai:zai/glm-5.3-flash@high');
     const routed = await routeModel(worker, candidates, { rulesPath: explicitRules, decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'implementation' } });
     assert.equal(routed.routing.provider, 'zai');
     assert.equal(routed.routing.model, 'glm-5.3-flash');
@@ -140,7 +181,7 @@ test('authorized non-OpenAI profile still obeys zero-credit hard gate', async ()
     const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
     const candidates = await discoverModelCandidates(worker, [], usage, home, rulesPath);
     assert.equal(candidates.find(item => item.provider === 'deepseek').resourceHealthy, false);
-    const engine = new FakeDecisionEngine('zai:zai/glm-test');
+    const engine = new FakeDecisionEngine('zai:zai/glm-test@high');
     const routed = await routeModel(worker, candidates, { rulesPath, decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'review' } });
     assert.equal(routed.routing.provider, 'zai');
     assert.ok(!engine.calls[0].contract.choices.includes('deepseek:deepseek/deepseek-flash'));
@@ -153,7 +194,7 @@ test('model router passes reset-aware resource facts and burn guidance to the de
     { id: 'standard', provider: 'openai', model: 'standard', reasoning: 'medium', resourceHealthy: true, resourceUsedPercent: 20, resourceRemainingPercent: 80, resourceResetAt: 1000, resourceResetInMinutes: 30, resourceWindows: { fiveHour: { remainingPercent: 80, resetAt: 1000, resetInMinutes: 30 }, weekly: { remainingPercent: 60, resetAt: 9000, resetInMinutes: 3000 } } },
     { id: 'strong', provider: 'openai', model: 'strong', reasoning: 'high', resourceHealthy: true, resourceUsedPercent: 20, resourceRemainingPercent: 80, resourceResetAt: 1000, resourceResetInMinutes: 30, resourceWindows: { fiveHour: { remainingPercent: 80, resetAt: 1000, resetInMinutes: 30 }, weekly: { remainingPercent: 60, resetAt: 9000, resetInMinutes: 3000 } } },
   ];
-  const engine = new FakeDecisionEngine('strong');
+  const engine = new FakeDecisionEngine('strong@high');
   const routed = await routeModel(worker, candidates, { decisionEngine: engine, decisionMode: 'active', taskFacts: { kind: 'implementation' } });
   const facts = engine.calls[0].request.facts.candidates[0];
   assert.equal(facts.resourceRemainingPercent, 80);
@@ -286,9 +327,9 @@ test('worker decide receives task, usage, principles, and local rules without qu
     assert.equal(engine.calls[0].request.facts.usage_snapshot.generatedAt, usage.generatedAt);
     assert.match(engine.calls[0].request.facts.routing_principles, /Prefer ChatGPT/);
     assert.match(engine.calls[0].request.facts.routing_principles, /native\/local execution/);
-    assert.match(engine.calls[0].request.facts.environment_rules, /Prefer Codex for native app work/);
-    assert.deepEqual(engine.calls[0].request.facts.decision_precedence, ['authoritative_hard_constraints', 'environment_rules', 'routing_principles', 'resource_and_runtime_preferences']);
-    assert.match(engine.calls[0].contract.question, /environment rules ahead of built-in routing principles/);
+    assert.match(engine.calls[0].request.facts.user_input_rules, /Prefer Codex for native app work/);
+    assert.deepEqual(engine.calls[0].request.facts.decision_precedence, ['authoritative_hard_constraints', 'user_input_rules', 'routing_principles', 'resource_and_runtime_preferences']);
+    assert.match(engine.calls[0].contract.question, /user_input_rules ahead of built-in routing principles/);
     assert.match(engine.calls[0].request.facts.routing_principles, /higher-priority routing guidance/);
     assert.equal(engine.calls[0].request.facts.candidates[0].resourceHealthy, false);
   } finally {
@@ -356,8 +397,8 @@ test('execution router makes one decision over complete routes with compact task
     assert.equal(calls.length, 1);
     assert.ok(calls[0].contract.choices.some(item => item.startsWith('codex::')));
     assert.ok(calls[0].contract.choices.some(item => item.startsWith('chatgpt/browser-worker::')));
-    assert.equal(calls[0].request.facts.task_shape.story_size, 'M');
-    assert.equal(calls[0].request.facts.task_shape.preferred_worker, 'chatgpt');
+    assert.equal(calls[0].request.facts.context.task_shape.story_size, 'M');
+    assert.equal(calls[0].request.facts.context.task_shape.preferred_worker, 'chatgpt');
     assert.equal(calls[0].request.facts.preferred_routes, undefined);
     assert.equal(calls[0].request.facts.worker_requirements, undefined);
     assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
@@ -425,10 +466,10 @@ test('final review uses normal Worker Router decision with current user guidance
     assert.equal(result.selection.workerId, 'codex');
     assert.equal(result.selection.selectedBy, 'execution-router:laya');
     assert.equal(calls.length, 1);
-    assert.match(calls[0].request.facts.environment_rules, /don't use chatgpt worker/);
-    assert.equal(calls[0].request.facts.reviewer_context.role, 'reviewer');
-    assert.deepEqual(calls[0].request.facts.reviewer_context.reviewer_diversity.implementation_workers, ['codex']);
-    assert.match(calls[0].request.facts.reviewer_context.reviewer_diversity.preference, /soft preference below user environment rules/);
+    assert.match(calls[0].request.facts.user_input_rules, /don't use chatgpt worker/);
+    assert.equal(calls[0].request.facts.context.reviewer.role, 'reviewer');
+    assert.deepEqual(calls[0].request.facts.context.reviewer.reviewer_diversity.implementation_workers, ['codex']);
+    assert.match(calls[0].request.facts.context.reviewer.reviewer_diversity.preference, /soft preference below user environment rules/);
   } finally {
     if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
     if (oldRules === undefined) delete process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES; else process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = oldRules;
@@ -466,16 +507,16 @@ test('execution router exposes explicit five-hour and weekly code-plan windows t
       credits: [],
     },
   });
-  const openai = calls[0].request.facts.candidates.find(item => item.model.provider === 'openai');
-  assert.deepEqual(openai.model.code_plan.five_hour, {
+  const openai = calls[0].request.facts.eligible_routes.find(item => item.provider === 'openai');
+  assert.deepEqual(openai.code_plan.five_hour, {
     remaining_percent: 80,
     reset_at: 1790000000,
-    reset_in_minutes: openai.model.code_plan.five_hour.reset_in_minutes,
+    reset_in_minutes: openai.code_plan.five_hour.reset_in_minutes,
   });
-  assert.equal(openai.model.code_plan.weekly.remaining_percent, 40);
-  assert.equal(openai.model.usage, undefined);
-  assert.equal(openai.model.resourceRemainingPercent, undefined);
-  assert.equal(openai.model.resourceWindows, undefined);
+  assert.equal(openai.code_plan.weekly.remaining_percent, 40);
+  assert.equal(openai.usage, undefined);
+  assert.equal(openai.resourceRemainingPercent, undefined);
+  assert.equal(openai.resourceWindows, undefined);
 });
 
 test('execution task shape keeps router policy simple', () => {

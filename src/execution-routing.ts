@@ -109,7 +109,7 @@ function modelGateReasons(
 }
 
 function routeId(worker: WorkerCandidate, model: ModelCandidate): string {
-  return `${worker.workerId}::${model.id}`;
+  return worker.workerId + '::' + model.id + (model.reasoning ? '@' + model.reasoning : '');
 }
 
 function fallbackRoute(routes: readonly ExecutionRouteCandidate[]): ExecutionRouteCandidate {
@@ -176,53 +176,50 @@ export async function routeExecution(
 
   const fallback = fallbackRoute(routes);
   const rules = await loadExecutionRouterRules(options.rulesPath);
-  const environmentRules = rules.text;
+  const userInputRules = rules.text;
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
 
   const taskFacts = options.taskFacts ?? {};
   const taskShape = executionTaskShape(taskFacts);
   const facts = JSON.parse(JSON.stringify({
-    job: taskFacts.job ?? null,
-    task: taskFacts.task ?? taskFacts,
-    task_shape: {
-      story_size: taskShape.storySize,
-      sustained_work: taskShape.sustainedWork,
-      preferred_worker: taskShape.preferredWorker,
-      reason: taskShape.reason,
+    context: {
+      job: taskFacts.job ?? null,
+      task: taskFacts.task ?? taskFacts,
+      task_shape: {
+        story_size: taskShape.storySize,
+        sustained_work: taskShape.sustainedWork,
+        preferred_worker: taskShape.preferredWorker,
+        reason: taskShape.reason,
+      },
+      reviewer: taskFacts.reviewer_diversity ? {
+        role: taskFacts.role ?? null,
+        reviewer_diversity: taskFacts.reviewer_diversity,
+      } : null,
     },
-    environment_rules: environmentRules,
-    reviewer_context: taskFacts.reviewer_diversity ? {
-      role: taskFacts.role ?? null,
-      reviewer_diversity: taskFacts.reviewer_diversity,
-    } : null,
-    runtime_load: {
+    user_input_rules: userInputRules,
+    runtime: {
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
-    candidates: routes.map(route => ({
+    eligible_routes: routes.map(route => ({
       id: route.id,
-      worker: {
-        adapter: route.worker.adapter,
-      },
-      model: {
-        provider: route.model.provider,
-        model: route.model.model,
-        profile: route.model.profile ?? null,
-        reasoning: route.model.reasoning ?? null,
-        resourceHealthy: route.model.resourceHealthy ?? null,
-        code_plan: {
-          five_hour: route.model.resourceWindows?.fiveHour ? {
-            remaining_percent: route.model.resourceWindows.fiveHour.remainingPercent ?? null,
-            reset_at: route.model.resourceWindows.fiveHour.resetAt ?? null,
-            reset_in_minutes: route.model.resourceWindows.fiveHour.resetInMinutes ?? null,
-          } : null,
-          weekly: route.model.resourceWindows?.weekly ? {
-            remaining_percent: route.model.resourceWindows.weekly.remainingPercent ?? null,
-            reset_at: route.model.resourceWindows.weekly.resetAt ?? null,
-            reset_in_minutes: route.model.resourceWindows.weekly.resetInMinutes ?? null,
-          } : null,
-        },
+      worker: route.worker.adapter,
+      provider: route.model.provider,
+      model: route.model.model,
+      profile: route.model.profile ?? null,
+      reasoning: route.model.reasoning ?? null,
+      code_plan: {
+        five_hour: route.model.resourceWindows?.fiveHour ? {
+          remaining_percent: route.model.resourceWindows.fiveHour.remainingPercent ?? null,
+          reset_at: route.model.resourceWindows.fiveHour.resetAt ?? null,
+          reset_in_minutes: route.model.resourceWindows.fiveHour.resetInMinutes ?? null,
+        } : null,
+        weekly: route.model.resourceWindows?.weekly ? {
+          remaining_percent: route.model.resourceWindows.weekly.remainingPercent ?? null,
+          reset_at: route.model.resourceWindows.weekly.resetAt ?? null,
+          reset_in_minutes: route.model.resourceWindows.weekly.resetInMinutes ?? null,
+        } : null,
       },
     })),
   })) as JsonValue;
@@ -230,7 +227,7 @@ export async function routeExecution(
   const decisionRequest = { facts };
   const decisionContract = {
     type: 'choice' as const,
-    question: 'Choose the best complete execution route from the eligible choices. Use task shape, environment rules, runtime load, and code-plan quota windows as decision facts. Choose worker+model together in one decision.',
+    question: 'Choose one eligible complete execution route. Treat context.task_shape.preferred_worker as the default worker-fit signal; user_input_rules and concrete runtime or code-plan resource facts may override it. The choice identifies worker, provider, model, profile, and reasoning together.',
     choices: routes.map(route => route.id),
   };
   const choice = await chooseWithDecision(

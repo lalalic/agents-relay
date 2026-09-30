@@ -38,7 +38,7 @@ export const ROUTER_EVAL_CASES: readonly RouterEvalCase[] = [
   { id: 'large-workspace-available', storySize: 'L', task: 'Implement a large feature even though ChatGPT workspace capacity is healthy.', chatgptAvailable: true, expectedWorker: 'codex' },
 ];
 
-const CODEX_ROUTE = 'codex::default:openai/gpt-5.6-sol';
+const CODEX_ROUTE = 'codex::default:openai/gpt-5.6-sol@medium';
 const CHATGPT_ROUTE = 'chatgpt/browser-worker::chatgpt/account-defaults';
 
 function workerForRoute(route: string): 'chatgpt' | 'codex' | 'unknown' {
@@ -53,36 +53,48 @@ export async function runRouterEvals(engine: DecisionEngine, rulesPath?: string)
   for (const testCase of ROUTER_EVAL_CASES) {
     const taskShape = executionTaskShape({ storySize: testCase.storySize });
     const available = testCase.chatgptAvailable;
-    const slots = testCase.chatgptSlots ?? (available ? 5 : 0);
     const choices = available ? [CODEX_ROUTE, CHATGPT_ROUTE] : [CODEX_ROUTE];
-    const facts = {
-      task_shape: {
-        story_size: taskShape.storySize,
-        sustained_work: taskShape.sustainedWork,
-        preferred_worker: taskShape.preferredWorker,
-        reason: taskShape.reason,
+    const eligibleRoutes = [
+      {
+        id: CODEX_ROUTE,
+        worker: 'codex',
+        provider: 'openai',
+        model: 'gpt-5.6-sol',
+        profile: null,
+        reasoning: 'medium',
+        code_plan: { five_hour: null, weekly: null },
       },
-      environment_rules: rules.text,
-      runtime_load: { chatgpt_running: testCase.chatgptRunning ?? 0, preferred_chatgpt_concurrency: 10 },
-      preferred_routes: choices.filter(route => taskShape.preferredWorker === 'chatgpt' ? route.startsWith('chatgpt/') : route.startsWith('codex::')),
-      candidates: [
-        {
-          id: CODEX_ROUTE,
-          worker: { adapter: 'codex' },
-          model: { provider: 'openai', model: 'gpt-5.6-sol', profile: 'default', resourceHealthy: true },
+      ...(available ? [{
+        id: CHATGPT_ROUTE,
+        worker: 'chatgpt',
+        provider: 'chatgpt',
+        model: 'account-defaults',
+        profile: null,
+        reasoning: null,
+        code_plan: { five_hour: null, weekly: null },
+      }] : []),
+    ];
+    const facts = {
+      context: {
+        job: { id: 'router-eval', title: 'Router eval', objective: 'Evaluate worker and model route selection.' },
+        task: { id: testCase.id, kind: 'work', storySize: testCase.storySize, input: testCase.task },
+        task_shape: {
+          story_size: taskShape.storySize,
+          sustained_work: taskShape.sustainedWork,
+          preferred_worker: taskShape.preferredWorker,
+          reason: taskShape.reason,
         },
-        ...(available ? [{
-          id: CHATGPT_ROUTE,
-          worker: { adapter: 'chatgpt' },
-          model: { provider: 'chatgpt', model: 'account-defaults', profile: 'account-defaults', resourceHealthy: true },
-        }] : []),
-      ],
+        reviewer: null,
+      },
+      user_input_rules: rules.text,
+      runtime: { chatgpt_running: testCase.chatgptRunning ?? 0, preferred_chatgpt_concurrency: 10 },
+      eligible_routes: eligibleRoutes,
     };
     const decision = await engine.decide(
       { facts },
       {
         type: 'choice',
-        question: 'Choose the best complete execution route. If preferred_routes is non-empty, choose from preferred_routes unless environment_rules explicitly override it or a preferred route is unhealthy/unavailable.',
+        question: 'Choose one eligible complete execution route. Treat context.task_shape.preferred_worker as the default worker-fit signal; user_input_rules and concrete runtime or code-plan resource facts may override it. The choice identifies worker, provider, model, profile, and reasoning together.',
         choices,
       },
     );
