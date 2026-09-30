@@ -17,7 +17,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     job.review = { ...job.review, outcome: 'stale', updatedAt: new Date().toISOString() };
     const staleTask = job.review.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     if (staleTask && ['DRAFT', 'QUEUED', 'RUNNING'].includes(staleTask.state)) {
-      this.live.get(staleTask.id)?.execution.cancel();
+      this.cancelExecutionGeneration(job.id, staleTask.id, staleTask.executionId ?? staleTask.executionHistory?.at(-1)?.id);
       await transitionTaskEvent(staleTask, 'cancel');
       staleTask.error = 'Review evidence became stale after the PR head changed';
       staleTask.leaseOwner = null;

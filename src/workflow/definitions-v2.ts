@@ -38,6 +38,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   runnable: boolGuard('runnable'),
   dispatchable: boolGuard('dispatchable'),
   recoverableExecution: boolGuard('recoverableExecution'),
+  retryAvailable: boolGuard('retryAvailable'),
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {

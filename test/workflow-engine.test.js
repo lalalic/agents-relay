@@ -19,7 +19,7 @@ test('existing Job and Task lifecycle legality is driven by Mermaid graphs', () 
   assert.doesNotThrow(() => assertJobLifecycleTransition('DRAFT','ACTIVE'));
   assert.doesNotThrow(() => assertJobLifecycleTransition('CANCELLED','COMPLETED'));
   assert.throws(() => assertJobLifecycleTransition('COMPLETED','ACTIVE'), /Invalid job transition/);
-  assert.throws(() => assertTaskTransition('RUNNING','QUEUED'), /Invalid task transition/);
+  assert.throws(() => assertTaskTransition('RUNNING','DRAFT'), /Invalid task transition/);
   assert.doesNotThrow(() => assertTaskTransition('FAILED','RUNNING'));
   assert.throws(() => assertTaskTransition('SUCCEEDED','QUEUED'), /Invalid task transition/);
 });

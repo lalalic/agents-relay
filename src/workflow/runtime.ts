@@ -32,6 +32,9 @@ export function graphWorkflowDecision<State extends string>(
 function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
   if (mutation === 'mutation.clearError') task.error = null;
   if (mutation === 'mutation.clearFailureReason') task.failureReason = undefined;
+  if (mutation === 'mutation.clearLease') { task.leaseOwner = null; task.leaseExpiresAt = null; }
+  if (mutation === 'mutation.clearExecution') task.executionId = null;
+  if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
 }
 
 export function applyTaskWorkflowDecision(

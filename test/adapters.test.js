@@ -237,6 +237,28 @@ test('CodexAdapter process exit is runtime-only, not a task result', async () =>
   }
 });
 
+test('CodexAdapter cancellation force-kills a process that ignores SIGTERM', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-cancel-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, [
+      '#!/bin/sh',
+      "trap '' TERM",
+      'sleep 10',
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const execution = new CodexAdapter(command).launch({ id: 'task', input: 'prompt', routing: { provider: 'zai', model: 'glm' } }, new AbortController().signal);
+    await execution.launched;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const startedAt = Date.now();
+    execution.cancel();
+    await assert.rejects(execution.promise);
+    assert.ok(Date.now() - startedAt < 3000, 'cancel should force the process to exit after the grace period');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('CodexAdapter still exposes diagnostic thread id without making it completion evidence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-thread-'));
   try {

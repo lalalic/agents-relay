@@ -8,6 +8,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'effect.mergePullRequest.failed',
   'fail',
   'hold',
+  'lease.expired',
   'implementation.completed',
   'pr.closed',
   'pr.merged',
@@ -37,11 +38,15 @@ export const WORKFLOW_FACT_NAMES = [
   'notMerged',
   'autoMerge',
   'recoverableExecution',
+  'retryAvailable',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [
   'mutation.clearError',
   'mutation.clearFailureReason',
+  'mutation.clearLease',
+  'mutation.clearExecution',
+  'mutation.markLeaseExpired',
 ] as const;
 
 export const WORKFLOW_EFFECT_NAMES = [

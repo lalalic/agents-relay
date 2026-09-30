@@ -19,6 +19,21 @@ recoverBlocked["guard: recoverableExecution"]
 recoverFailed["guard: recoverableExecution"]
 recoverCancelled["guard: recoverableExecution"]
 
+retryAvailableRunning["guard: retryAvailable"]
+retryAvailableQueued["guard: retryAvailable"]
+leaseRetryRunningClearError["action: mutation.clearError"]
+leaseRetryRunningClearLease["action: mutation.clearLease"]
+leaseRetryRunningClearExecution["action: mutation.clearExecution"]
+leaseFailRunningMark["action: mutation.markLeaseExpired"]
+leaseFailRunningClearLease["action: mutation.clearLease"]
+leaseFailRunningClearExecution["action: mutation.clearExecution"]
+leaseRetryQueuedClearError["action: mutation.clearError"]
+leaseRetryQueuedClearLease["action: mutation.clearLease"]
+leaseRetryQueuedClearExecution["action: mutation.clearExecution"]
+leaseFailQueuedMark["action: mutation.markLeaseExpired"]
+leaseFailQueuedClearLease["action: mutation.clearLease"]
+leaseFailQueuedClearExecution["action: mutation.clearExecution"]
+
 releaseClearError["action: mutation.clearError"]
 releaseClearReason["action: mutation.clearFailureReason"]
 reconcileDraftClearError["action: mutation.clearError"]
@@ -88,6 +103,15 @@ queued -->|on: effect.launchTask.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
+queued -->|on: lease.expired| retryAvailableQueued
+retryAvailableQueued -->|true| leaseRetryQueuedClearError
+leaseRetryQueuedClearError --> leaseRetryQueuedClearLease
+leaseRetryQueuedClearLease --> leaseRetryQueuedClearExecution
+leaseRetryQueuedClearExecution --> queued
+retryAvailableQueued -->|false| leaseFailQueuedMark
+leaseFailQueuedMark --> leaseFailQueuedClearLease
+leaseFailQueuedClearLease --> leaseFailQueuedClearExecution
+leaseFailQueuedClearExecution --> failed
 queued -->|on: cancel| cancelled
 
 running -->|on: task.blocked| blocked
@@ -103,6 +127,15 @@ completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
 running -->|on: watchdog.failed| failed
+running -->|on: lease.expired| retryAvailableRunning
+retryAvailableRunning -->|true| leaseRetryRunningClearError
+leaseRetryRunningClearError --> leaseRetryRunningClearLease
+leaseRetryRunningClearLease --> leaseRetryRunningClearExecution
+leaseRetryRunningClearExecution --> queued
+retryAvailableRunning -->|false| leaseFailRunningMark
+leaseFailRunningMark --> leaseFailRunningClearLease
+leaseFailRunningClearLease --> leaseFailRunningClearExecution
+leaseFailRunningClearExecution --> failed
 running -->|on: task.cancelled| cancelled
 
 blocked -->|on: task.unblocked| unblocked

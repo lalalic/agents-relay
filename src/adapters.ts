@@ -44,6 +44,15 @@ function parseThreadStarted(line: string): string | undefined {
     return undefined;
   }
 }
+function terminateChild(child: import('node:child_process').ChildProcess, graceMs = 750): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGTERM');
+  const force = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }, graceMs);
+  force.unref();
+}
+
 function appendTail(current: string, chunk: string, maxBytes = 16384): string {
   const combined = current + chunk;
   return Buffer.byteLength(combined) <= maxBytes
@@ -101,9 +110,9 @@ export class CodexAdapter implements WorkerAdapter {
           reject(new Error(stderrTail.trim() || `Codex exited ${code}`));
         }
       });
-      signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
+      signal.addEventListener('abort', () => terminateChild(child), { once: true });
     });
-    execution = { id: randomUUID(), promise, launched, cancel: () => child.kill('SIGTERM') };
+    execution = { id: randomUUID(), promise, launched, cancel: () => terminateChild(child) };
     execution.threadId = bufferedThreadId;
     return execution;
   }

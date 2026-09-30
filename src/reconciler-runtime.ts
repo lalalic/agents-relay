@@ -223,6 +223,18 @@ export abstract class ReconcilerRuntimeBase {
     activeExecutionOwners.set(executionEventSource(jobId, taskId, executionId), this);
   }
 
+  protected cancelExecutionGeneration(jobId: string, taskId: string, executionId: string | null | undefined): boolean {
+    if (!executionId) return false;
+    const sourceId = executionEventSource(jobId, taskId, executionId);
+    const owner = activeExecutionOwners.get(sourceId);
+    const live = owner?.live.get(taskId);
+    if (!owner || !live || live.executionId !== executionId) return false;
+    live.controller.abort();
+    live.execution.cancel();
+    owner.clearExecution(taskId, executionId);
+    return true;
+  }
+
   protected clearTerminalTimer(taskId: string, executionId: string): void {
     const live = this.live.get(taskId);
     if (!live || live.executionId !== executionId) return;
@@ -410,7 +422,9 @@ export abstract class ReconcilerRuntimeBase {
         const eventExecutionId = executionIdFromSource(eventSourceId(event), job.id, task.id);
         const terminalExecutionId = eventExecutionId ?? acceptedExecutionId;
         if (modelBacked && terminalExecutionId) claimTerminalExecution(executionEventSource(job.id, task.id, terminalExecutionId));
-        if (eventExecutionId && acceptedExecutionId && eventExecutionId !== acceptedExecutionId) this.live.get(task.id)?.execution.cancel();
+        if (eventExecutionId && acceptedExecutionId && eventExecutionId !== acceptedExecutionId) {
+          this.cancelExecutionGeneration(job.id, task.id, eventExecutionId);
+        }
         this.clearExecution(task.id, acceptedExecutionId);
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
