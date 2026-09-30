@@ -358,7 +358,7 @@ test('execution router makes one decision over complete routes with compact task
     assert.ok(calls[0].contract.choices.some(item => item.startsWith('chatgpt/browser-worker::')));
     assert.equal(calls[0].request.facts.task_shape.story_size, 'M');
     assert.equal(calls[0].request.facts.task_shape.preferred_worker, 'chatgpt');
-    assert.ok(calls[0].request.facts.preferred_routes.every(item => item.startsWith('chatgpt/browser-worker::')));
+    assert.equal(calls[0].request.facts.preferred_routes, undefined);
     assert.equal(calls[0].request.facts.worker_requirements, undefined);
     assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
     assert.equal(result.candidate.routing.provider, 'chatgpt');

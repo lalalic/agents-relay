@@ -53,9 +53,7 @@ export function executionTaskShape(taskFacts: Record<string, unknown> = {}): {
 export const EXECUTION_ROUTING_PRINCIPLES = [
   'Choose one complete executable route: worker plus provider/model/profile/reasoning.',
   'ChatGPT with MacBridge and Codex have broadly overlapping execution capabilities.',
-  'preferred_routes is the primary soft worker-fit preference derived from task size: S/M prefer ChatGPT, L prefers Codex.',
   "Browser Workspace exhaustion is ChatGPT's primary hard execution constraint.",
-  'Concrete user rules, resource health, quota, or load facts may override preferred_routes.',
   'Codex is only the deterministic fallback when the decision engine fails.',
 ] as const;
 
@@ -199,7 +197,6 @@ export async function routeExecution(
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
-    preferred_routes: routes.filter(route => route.worker.adapter === taskShape.preferredWorker).map(route => route.id),
     candidates: routes.map(route => ({
       id: route.id,
       worker: {
@@ -230,7 +227,7 @@ export async function routeExecution(
   const decisionRequest = { facts };
   const decisionContract = {
     type: 'choice' as const,
-    question: 'Choose the best complete execution route. If preferred_routes is non-empty, choose from preferred_routes unless environment_rules explicitly override it or a preferred route is unhealthy/unavailable. Choose worker+model together in one decision.',
+    question: 'Choose the best complete execution route from the eligible choices. Use task shape, environment rules, runtime load, and code-plan quota windows as decision facts. Choose worker+model together in one decision.',
     choices: routes.map(route => route.id),
   };
   const choice = await chooseWithDecision(
