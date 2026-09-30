@@ -41,7 +41,7 @@ A running agent MUST use the canonical Neo `events-bus` protocol and publish exa
 - `task.failed` when the task cannot complete;
 - `task.blocked` when external or human action is required.
 
-Event publishing is not an Agents Relay CLI responsibility. Sandboxed Codex and hosted ChatGPT workers use the federated `events__publish` MCP tool from `events-bus`; direct non-sandbox local workers may use the caller-provided `NEO_EVENTS_EMIT`. Agents Relay subscribes to the canonical `neo.events.job.<job_id>.>` stream and maps terminal events into durable task state.
+Event publishing is not an Agents Relay CLI responsibility. Sandboxed Codex and hosted ChatGPT workers use the federated `events__publish` MCP tool from `events-bus`; direct non-sandbox local workers may use the caller-provided `NEO_EVENTS_EMIT`. Agents Relay subscribes to the canonical `neo.events.job.<job_id>.>` stream and maps terminal events into durable task state. Relay resolves its native NATS endpoint and subject prefix from the canonical events-bus runtime configuration (with explicit Relay CLI flags remaining authoritative). The same runtime configuration supplies the events-bus HTTP API used for replay/history. Relay and its dashboard must not read the events-bus private history file or maintain a second event-history backend.
 
 The event must carry the exact durable `job_id` and `task_id`. Progress events are optional.
 
