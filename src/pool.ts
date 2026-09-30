@@ -113,8 +113,13 @@ export class RepositoryWorkerPool {
     }
     const seedKey = `${target.repository}#${target.prNumber}:${jobId}`;
     const mayConsumeSeed = signals.some(signal => signal.reason === 'target.request' || signal.reason.startsWith('github.webhook:'));
-    const seed = mayConsumeSeed ? this.targetSeeds.get(seedKey) ?? null : null;
+    let seed = mayConsumeSeed ? this.targetSeeds.get(seedKey) ?? null : null;
     if (mayConsumeSeed) this.targetSeeds.delete(seedKey);
+    const needsFreshPullRequestFacts = signals.some(signal => !signal.event || signal.event.type === 'task.completed');
+    if (!seed && needsFreshPullRequestFacts && this.refreshWebhookSnapshot && !this.isRateLimited()) {
+      const trigger = `coordinator.${signals.map(signal => signal.reason).join('+') || 'reconcile'}`;
+      seed = (await this.refreshWebhookSnapshot(target.repository, target.prNumber, trigger)).seed;
+    }
     const store = this.makeStore(target.repository, target.prNumber, seed);
     const reconciler = this.makeReconciler(store, Math.max(1, this.concurrency));
     let shouldReconcile = false;

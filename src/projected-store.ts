@@ -280,7 +280,11 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   private async ensurePullRequestFacts(): Promise<PullRequestFacts> {
-    const local = await localPullRequestFacts(this.relay, this.seededFacts);
+    const local = await this.relay.loadPullRequestFacts();
+    if (this.seededFacts && (!local || this.seededFacts.observedAt >= local.observedAt)) {
+      await this.relay.savePullRequestFacts(structuredClone(this.seededFacts));
+      return this.seededFacts;
+    }
     if (local) return local;
     if (!this.github.pullRequestState || !this.github.pullRequestHead) throw new Error('Pull request facts have not been observed locally');
     const [state, head] = await Promise.all([this.github.pullRequestState(), this.github.pullRequestHead()]);
