@@ -437,7 +437,7 @@ test('final review uses normal Worker Router decision with current user guidance
 });
 
 
-test('execution router exposes explicit five-hour and weekly usage windows to Laya', async () => {
+test('execution router exposes explicit five-hour and weekly code-plan windows to Laya', async () => {
   const calls = [];
   const engine = { decide: async (request, contract) => {
     calls.push({ request, contract });
@@ -467,12 +467,13 @@ test('execution router exposes explicit five-hour and weekly usage windows to La
     },
   });
   const openai = calls[0].request.facts.candidates.find(item => item.model.provider === 'openai');
-  assert.deepEqual(openai.model.usage.five_hour, {
+  assert.deepEqual(openai.model.code_plan.five_hour, {
     remaining_percent: 80,
     reset_at: 1790000000,
-    reset_in_minutes: openai.model.usage.five_hour.reset_in_minutes,
+    reset_in_minutes: openai.model.code_plan.five_hour.reset_in_minutes,
   });
-  assert.equal(openai.model.usage.weekly.remaining_percent, 40);
+  assert.equal(openai.model.code_plan.weekly.remaining_percent, 40);
+  assert.equal(openai.model.usage, undefined);
   assert.equal(openai.model.resourceRemainingPercent, undefined);
   assert.equal(openai.model.resourceWindows, undefined);
 });
