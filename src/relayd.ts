@@ -24,6 +24,7 @@ import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
+import { executionRouterRulesPath } from './routing-policy.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
@@ -66,6 +67,8 @@ Options:
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
   --projection-ms MS      GitHub projection flush interval (default: 1000)
+  --execution-router-rules PATH
+                         Router Rules file (default: ~/.agents-relay/execution-router-rules.md)
   --events nats            Enable event wakeups
 
 Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
@@ -100,8 +103,15 @@ export function recoveryScanRepositories(repositories: readonly string[], cached
   return [...activeOrUnknown, dormant[Math.abs(dormantProbeIndex) % dormant.length]];
 }
 
+export function configureExecutionRouterRulesPath(argv: readonly string[]): string {
+  const explicitRulesPath = value(argv, '--execution-router-rules') || undefined;
+  if (explicitRulesPath) process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = executionRouterRulesPath(explicitRulesPath);
+  return executionRouterRulesPath();
+}
+
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
+  configureExecutionRouterRulesPath(argv);
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
   const auth = await githubAuthContext(argv); const client = auth.client;

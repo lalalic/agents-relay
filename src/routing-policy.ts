@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export type RoutingPolicy = {
@@ -66,7 +67,7 @@ async function saveRouterRules(path: string, text: string): Promise<RouterRules>
 }
 
 export function executionRouterRulesPath(explicit?: string): string {
-  return explicit ?? process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES ?? join(process.cwd(), '.agents-relay-execution-router-rules.md');
+  return explicit ?? process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES ?? join(homedir(), '.agents-relay', 'execution-router-rules.md');
 }
 
 export async function loadExecutionRouterRules(explicit?: string): Promise<RouterRules> {
