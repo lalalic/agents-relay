@@ -83,7 +83,7 @@ export function serveDashboard(
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
   actions?: DashboardActions,
-  routerTestProvider?: () => Promise<Record<string, unknown>>,
+  routerTestProvider?: (selection: { jobId: string; taskId: string }) => Promise<Record<string, unknown>>,
   decisionAuditProvider?: () => Promise<DecisionAuditRecord[]>,
 ): Server {
   const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
@@ -372,7 +372,11 @@ export function serveDashboard(
       if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end('Method not allowed'); return; }
       if (!routerTestProvider) { res.writeHead(503); res.end('Router test unavailable'); return; }
       try {
-        const result = await routerTestProvider();
+        let body = '';
+        for await (const chunk of req) body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+        const parsed = JSON.parse(body || '{}') as { jobId?: string; taskId?: string };
+        if (!parsed.jobId || !parsed.taskId) { res.writeHead(400); res.end('Select a Job and Task first'); return; }
+        const result = await routerTestProvider({ jobId: parsed.jobId, taskId: parsed.taskId });
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (error) {

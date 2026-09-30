@@ -330,17 +330,38 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     taskCancel: workspaceTaskAction('cancel'),
     taskComplete: workspaceTaskComplete,
     taskSetState: workspaceTaskSetState,
-  }, async () => {
+  }, async ({ jobId, taskId }) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error('Selected Job '+jobId+' is not available');
+    const job = overview.job;
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error('Selected Task '+taskId+' is not available in Job '+jobId);
     const usage = await usageRegistry.snapshot();
     const runtime = summarizeRuntime(cachedOverviews.map(item => item.job));
     const workers = workerCandidates([
       { name: 'codex', id: 'codex', capabilities: ['model', 'codex'] },
       { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-harness'] },
     ], [], usage);
-    const result = await routeExecution(workers, { capabilities: [] }, {
+    const result = await routeExecution(workers, task.workerRequirements ?? { capabilities: task.capabilities ?? [] }, {
       decisionEngine: new LayaCliDecisionEngine(),
       decisionMode: 'active',
-      taskFacts: { storySize: 'M', role: 'router-test' },
+      taskFacts: {
+        job: {
+          id: job.id, title: job.title, objective: job.objective ?? null,
+          description: job.description ?? null, priority: job.priority ?? null,
+          executionMode: job.executionMode, repository: job.repository,
+          prNumber: job.prNumber, state: job.state,
+        },
+        task: {
+          id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
+          priority: task.priority ?? null, agentName: task.agentName ?? null,
+          parentTaskId: task.parentTaskId, dependencies: task.dependencies,
+          capabilities: task.capabilities, input: task.input,
+          attachments: task.attachments ?? [], output: task.output ?? null,
+          state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
+        },
+        storySize: task.storySize ?? 'M',
+      },
       usage,
       chatgptRunning: runtime.workers.chatgpt,
     });

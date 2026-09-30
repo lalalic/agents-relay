@@ -37,7 +37,8 @@ export function executionTaskShape(taskFacts: Record<string, unknown> = {}): {
   preferredWorker: 'chatgpt' | 'codex';
   reason: string;
 } {
-  const raw = taskFacts.storySize;
+  const nestedTask = taskFacts.task && typeof taskFacts.task === 'object' ? taskFacts.task as Record<string, unknown> : undefined;
+  const raw = taskFacts.storySize ?? nestedTask?.storySize;
   const storySize = raw === 'S' || raw === 'L' ? raw : 'M';
   const sustainedWork = storySize === 'L';
   return {
@@ -182,6 +183,8 @@ export async function routeExecution(
   const taskFacts = options.taskFacts ?? {};
   const taskShape = executionTaskShape(taskFacts);
   const facts = JSON.parse(JSON.stringify({
+    job: taskFacts.job ?? null,
+    task: taskFacts.task ?? taskFacts,
     task_shape: {
       story_size: taskShape.storySize,
       sustained_work: taskShape.sustainedWork,

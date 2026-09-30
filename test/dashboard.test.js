@@ -683,4 +683,5 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.match(dashboardHtml, /loadJSON\('\/api\/decision-audit'/);
   assert.match(dashboardHtml, /laya_input/);
   assert.match(dashboardHtml, /hard_gates/);
+  assert.match(dashboardHtml, /Select a Job and Task first/);
 });
