@@ -4,12 +4,24 @@ import { discoverModelCandidates, ModelCandidate } from './model-routing.js';
 import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, RoutingDecision, Task, WorkerRequirements, WorkerSelection } from './types.js';
-import { DEFAULT_CHATGPT_PREFERRED_CONCURRENCY, eligibleWorkerCandidates, WorkerCandidate } from './worker-routing.js';
+import { DEFAULT_CHATGPT_PREFERRED_CONCURRENCY, WorkerCandidate } from './worker-routing.js';
 
 export type ExecutionRouteCandidate = {
   id: string;
   worker: WorkerCandidate;
   model: ModelCandidate;
+};
+
+export type ExecutionRouteEvaluation = {
+  route: ExecutionRouteCandidate;
+  eligible: boolean;
+  rejectionReasons: string[];
+};
+
+export type WorkerGateEvaluation = {
+  workerId: string;
+  eligible: boolean;
+  rejectionReasons: string[];
 };
 
 export type ExecutionRoutingDecision = {
@@ -41,20 +53,32 @@ function sameModelRoute(candidate: ModelCandidate, route: Partial<Pick<RoutingDe
     && (route.profile === undefined || candidate.profile === route.profile);
 }
 
-function modelUsable(
+function workerGateReasons(worker: WorkerCandidate, requirements: WorkerRequirements): string[] {
+  const reasons: string[] = [];
+  if (worker.availability === 'offline') reasons.push('worker_offline');
+  if (requirements.runtime && worker.runtime !== requirements.runtime) reasons.push('runtime_constraint');
+  if (worker.adapter === 'chatgpt' && worker.browserWorkspaceCapacity?.available === 0) reasons.push('browser_workspace_exhausted');
+  return reasons;
+}
+
+function modelGateReasons(
   candidate: ModelCandidate,
   constraints: ExecutionRoutingOptions['routingConstraints'],
   excludedRoutes: ExecutionRoutingOptions['excludedRoutes'],
   policy: Awaited<ReturnType<typeof loadRoutingPolicy>>,
-): boolean {
-  if (candidate.resourceHealthy === false) return false;
-  if ((excludedRoutes ?? []).some(route => sameModelRoute(candidate, route))) return false;
-  if (!policyAllows(candidate, policy.policy)) return false;
-  if (constraints?.provider && candidate.provider !== constraints.provider) return false;
-  if (constraints?.model && candidate.model !== constraints.model) return false;
-  if (constraints?.profile && candidate.profile !== constraints.profile) return false;
-  if (constraints?.reasoning && candidate.reasoning && candidate.reasoning !== constraints.reasoning) return false;
-  return true;
+): string[] {
+  const reasons: string[] = [];
+  if (candidate.resourceHealthy === false) reasons.push('resource_unhealthy');
+  if ((excludedRoutes ?? []).some(route => sameModelRoute(candidate, route))) reasons.push('prior_failed_route');
+  if (!policyAllows(candidate, policy.policy)) {
+    if (policy.policy.disabledProviders?.includes(candidate.provider)) reasons.push('policy_disabled_provider');
+    if (candidate.profile && policy.policy.disabledProfiles?.includes(candidate.profile)) reasons.push('policy_disabled_profile');
+  }
+  if (constraints?.provider && candidate.provider !== constraints.provider) reasons.push('provider_constraint');
+  if (constraints?.model && candidate.model !== constraints.model) reasons.push('model_constraint');
+  if (constraints?.profile && candidate.profile !== constraints.profile) reasons.push('profile_constraint');
+  if (constraints?.reasoning && candidate.reasoning && candidate.reasoning !== constraints.reasoning) reasons.push('reasoning_constraint');
+  return reasons;
 }
 
 function routeId(worker: WorkerCandidate, model: ModelCandidate): string {
@@ -89,19 +113,30 @@ export async function discoverExecutionRoutes(
   workers: readonly WorkerCandidate[],
   requirements: WorkerRequirements,
   options: ExecutionRoutingOptions = {},
-): Promise<{ routes: ExecutionRouteCandidate[]; policy: Awaited<ReturnType<typeof loadRoutingPolicy>> }> {
-  const legalWorkers = eligibleWorkerCandidates(workers, requirements);
+): Promise<{
+  routes: ExecutionRouteCandidate[];
+  evaluations: ExecutionRouteEvaluation[];
+  workerGateEvaluations: WorkerGateEvaluation[];
+  policy: Awaited<ReturnType<typeof loadRoutingPolicy>>;
+}> {
   const registered = options.registered ?? [];
   const policy = await loadRoutingPolicy(options.policyPath, options.rulesPath);
-  const routes: ExecutionRouteCandidate[] = [];
-  for (const worker of legalWorkers) {
+  const workerGateEvaluations = workers.map(worker => {
+    const rejectionReasons = workerGateReasons(worker, requirements);
+    return { workerId: worker.workerId, eligible: rejectionReasons.length === 0, rejectionReasons };
+  });
+  const evaluations: ExecutionRouteEvaluation[] = [];
+  for (const worker of workers) {
+    const workerReasons = workerGateEvaluations.find(item => item.workerId === worker.workerId)?.rejectionReasons ?? [];
     const models = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
     for (const model of models) {
-      if (!modelUsable(model, options.routingConstraints, options.excludedRoutes, policy)) continue;
-      routes.push({ id: routeId(worker, model), worker, model });
+      const rejectionReasons = [...workerReasons, ...modelGateReasons(model, options.routingConstraints, options.excludedRoutes, policy)];
+      const route = { id: routeId(worker, model), worker, model };
+      evaluations.push({ route, eligible: rejectionReasons.length === 0, rejectionReasons });
     }
   }
-  return { routes, policy };
+  const routes = evaluations.filter(item => item.eligible).map(item => item.route);
+  return { routes, evaluations, workerGateEvaluations, policy };
 }
 
 export async function routeExecution(
@@ -109,7 +144,7 @@ export async function routeExecution(
   requirements: WorkerRequirements,
   options: ExecutionRoutingOptions = {},
 ): Promise<ExecutionRoutingDecision> {
-  const { routes, policy } = await discoverExecutionRoutes(workers, requirements, options);
+  const { routes, evaluations, workerGateEvaluations, policy } = await discoverExecutionRoutes(workers, requirements, options);
   if (routes.length === 0) throw new Error('No executable worker+model route satisfies authoritative constraints');
 
   const fallback = fallbackRoute(routes);
@@ -163,15 +198,17 @@ export async function routeExecution(
     })),
   })) as JsonValue;
 
+  const decisionRequest = { facts };
+  const decisionContract = {
+    type: 'choice' as const,
+    question: 'Choose the best complete execution route for this task. The listed candidates are already executable. Treat all non-impossibility signals as soft facts, follow free-text user guidance, and choose worker+model together in this one decision.',
+    choices: routes.map(route => route.id),
+  };
   const choice = await chooseWithDecision(
     options.decisionEngine,
     options.decisionMode ?? 'off',
-    { facts },
-    {
-      type: 'choice',
-      question: 'Choose the best complete execution route for this task. The listed candidates are already executable. Treat all non-impossibility signals as soft facts, follow free-text user guidance, and choose worker+model together in this one decision.',
-      choices: routes.map(route => route.id),
-    },
+    decisionRequest,
+    decisionContract,
     () => fallback.id,
   );
 
@@ -191,7 +228,8 @@ export async function routeExecution(
     task: options.auditTask,
     workers,
     requirements,
-    routes,
+    evaluations,
+    workerGateEvaluations,
     selected,
     contract: {
       question: 'execution-route-selection',
@@ -203,6 +241,8 @@ export async function routeExecution(
     },
     policy,
     routing,
+    decisionRequest,
+    decisionContract,
   });
   routing.decisionId = audit.decision_id;
   if (options.auditStore) await options.auditStore.append(audit);

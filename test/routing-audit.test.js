@@ -140,13 +140,16 @@ test('unified execution audit records full worker+model routes and selected rout
     assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
 
     const [audit] = await store.read();
-    assert.equal(audit.schema_version, 3);
+    assert.equal(audit.schema_version, 5);
     assert.equal(audit.contract.question, 'execution-route-selection');
     assert.equal(audit.selected.worker.adapter, 'chatgpt');
     assert.equal(audit.selected.model.provider, 'chatgpt');
     assert.ok(audit.candidates.some(item => item.worker.adapter === 'codex' && item.model.provider === 'openai'));
     assert.ok(audit.candidates.some(item => item.worker.adapter === 'chatgpt' && item.model.provider === 'chatgpt'));
     assert.equal(audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker').eligible, true);
+    assert.deepEqual(audit.decision_input.contract.choices.sort(), audit.eligible_candidates.map(item => item.id).sort());
+    assert.equal(audit.decision_input.facts.runtime_load.chatgpt_running, 0);
+    assert.equal(audit.decision_input.facts.candidates.length, audit.eligible_candidates.length);
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }
@@ -170,8 +173,49 @@ test('unified execution audit explains ChatGPT exclusion when Browser Workspace 
     const chatgptGate = audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker');
     assert.equal(chatgptGate.eligible, false);
     assert.ok(chatgptGate.rejection_reasons.includes('browser_workspace_exhausted'));
-    assert.equal(audit.candidates.some(item => item.worker.adapter === 'chatgpt'), false);
+    assert.equal(audit.candidates.some(item => item.worker.adapter === 'chatgpt'), true);
+    const chatgptRouteGate = audit.gate_results.find(item => item.candidate_id.startsWith('chatgpt/browser-worker::'));
+    assert.equal(chatgptRouteGate.eligible, false);
+    assert.ok(chatgptRouteGate.rejection_reasons.includes('browser_workspace_exhausted'));
     assert.equal(audit.worker_candidates.find(item => item.id === 'chatgpt/browser-worker').browserWorkspaceCapacity.available, 0);
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+  }
+});
+
+
+test('unified execution audit persists authoritative model gate reasons before decide', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-execution-audit-model-gates-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  try {
+    await writeFile(join(root, 'config.toml'), 'model = "gpt-primary"\nmodel_provider = "openai"\nmodel_reasoning_effort = "high"\n');
+    await writeFile(join(root, 'alt.config.toml'), 'model = "gpt-alt"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const store = new JsonlDecisionAuditStore(join(root, 'audit.jsonl'));
+    const workers = [
+      { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model', 'codex'] },
+      { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model', 'chatgpt'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 5, leased: 0, available: 5, observedAt: new Date().toISOString(), reason: null } },
+    ];
+
+    const result = await routeExecution(workers, { capabilities: [] }, {
+      decisionMode: 'active',
+      auditStore: store,
+      routingConstraints: { provider: 'openai', reasoning: 'high' },
+      excludedRoutes: [{ provider: 'openai', model: 'gpt-alt', profile: 'alt' }],
+      taskFacts: { kind: 'implementation' },
+    });
+    assert.equal(result.selection.workerId, 'codex');
+
+    const [audit] = await store.read();
+    const altGate = audit.gate_results.find(item => item.candidate_id.includes('alt:openai/gpt-alt'));
+    assert.equal(altGate.eligible, false);
+    assert.ok(altGate.rejection_reasons.includes('prior_failed_route'));
+    assert.ok(altGate.rejection_reasons.includes('reasoning_constraint'));
+
+    const chatgptGate = audit.gate_results.find(item => item.candidate_id.startsWith('chatgpt/browser-worker::'));
+    assert.equal(chatgptGate.eligible, false);
+    assert.ok(chatgptGate.rejection_reasons.includes('provider_constraint'));
+    assert.equal(audit.eligible_candidates.some(item => item.worker.adapter === 'chatgpt'), false);
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }
