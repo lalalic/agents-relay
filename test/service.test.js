@@ -139,9 +139,18 @@ test('daemon arguments default to workspace mode without changing --repo mode', 
   assert.throws(() => normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--workspace', '/tmp/Workspace']), /mutually exclusive/);
 });
 
+test('daemon package bin uses an unconditional launcher that remains PM2-loadable', async () => {
+  const launcher = await readFile(new URL('../src/relayd-main.ts', import.meta.url), 'utf8');
+  assert.match(launcher, /runDaemon\(process\.argv\.slice\(2\)\)/);
+  assert.doesNotMatch(launcher, /isEntrypoint/);
+
+  const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(relayd, /if \(isEntrypoint\(import\.meta\.url\)\)/);
+});
+
 test('service defaults and package bins use stable package entrypoints', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd.js' });
+  assert.deepEqual(pkg.bin, { 'agents-relay': 'dist/cli.js', 'agents-relayd': 'dist/relayd-main.js' });
   assert.equal(SERVICE_DEFAULTS.port, 8787);
   assert.equal(SERVICE_DEFAULTS.watchdogMs, 300000);
   assert.equal(SERVICE_DEFAULTS.webhookWatchdogMs, 300000);
@@ -190,7 +199,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['serve', '--help'], 'Run the dashboard and reconciliation service'],
     ['dist/cli.js', ['agent-register', '--help'], 'Register an agent role'],
     ['dist/cli.js', ['agent-discover', '--help'], 'Find registered agents'],
-    ['dist/relayd.js', ['--help'], 'npx agents-relayd [options]']
+    ['dist/relayd-main.js', ['--help'], 'npx agents-relayd [options]']
   ]) {
     const result = spawnSync(process.execPath, [entry, ...args], { encoding: 'utf8' });
     assert.equal(result.status, 0, `${entry} ${args.join(' ')} failed: ${result.stderr}`);
@@ -217,11 +226,13 @@ test('job create help is create-only and rejects task execution flags', () => {
 test('published bin files are executable after build and npm pack', async () => {
   assert.equal((await stat('dist/cli.js')).mode & 0o111, 0o111);
   assert.equal((await stat('dist/relayd.js')).mode & 0o111, 0o111);
+  assert.equal((await stat('dist/relayd-main.js')).mode & 0o111, 0o111);
   const packed = spawnSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8' });
   assert.equal(packed.status, 0, packed.stderr);
   const files = new Map(JSON.parse(packed.stdout)[0].files.map(file => [file.path, file.mode]));
   assert.equal(files.get('dist/cli.js'), 0o755);
   assert.equal(files.get('dist/relayd.js'), 0o755);
+  assert.equal(files.get('dist/relayd-main.js'), 0o755);
   assert.equal(files.has('skills/agents-relay/SKILL.md'), true);
   assert.equal(files.has('skills/agents-relay/agents/planner.agent.md'), true);
   assert.equal(files.has('skills/chatgpt-browser-worker/SKILL.md'), false);
