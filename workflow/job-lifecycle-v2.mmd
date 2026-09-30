@@ -26,7 +26,9 @@ cancelCancelledMerge["action: effect.cancelActiveTasks"]
 draft -->|on: activate| active
 draft -->|on: pr.merged| cancelDraftMerge
 cancelDraftMerge --> completed
-draft -->|on: cancel| cancelled
+draft -->|on: cancel| cancelDraft
+cancelDraft["action: effect.cancelActiveTasks"]
+cancelDraft --> cancelled
 draft -->|on: pr.closed| notMergedDraft
 notMergedDraft -->|true| cancelDraftClose
 cancelDraftClose --> cancelled
@@ -55,7 +57,9 @@ mergeImplementation --> active
 active -->|on: effect.mergePullRequest.failed| active
 active -->|on: pr.merged| cancelActiveMerge
 cancelActiveMerge --> completed
-active -->|on: cancel| cancelled
+active -->|on: cancel| cancelActive
+cancelActive["action: effect.cancelActiveTasks"]
+cancelActive --> cancelled
 active -->|on: pr.closed| notMergedActive
 notMergedActive -->|true| cancelActiveClose
 cancelActiveClose --> cancelled

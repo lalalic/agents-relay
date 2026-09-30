@@ -57,6 +57,7 @@ const taskCases = [
   ['RUNNING','task.failed',{},'FAILED'],
   ['RUNNING','watchdog.failed',{},'FAILED'],
   ['RUNNING','task.cancelled',{},'CANCELLED'],
+  ['RUNNING','cancel',{},'CANCELLED'],
   ['BLOCKED','task.unblocked',{},'UNBLOCKED'],
   ['BLOCKED','cancel',{},'CANCELLED'],
   ['UNBLOCKED','retry',{},'QUEUED'],
@@ -136,6 +137,15 @@ test('Job reconcile graph owns the no-review merge gate', () => {
     assert.deepEqual(denied.effects,[],key);
   }
 });
+test('job cancel graph owns active-work cancellation effect', () => {
+  for (const state of ['DRAFT','ACTIVE']) {
+    const decision=decideJobLifecycle(job(state),'cancel');
+    assert.equal(decision.accepted,true);
+    assert.equal(decision.target,'CANCELLED');
+    assert.deepEqual(decision.effects,['effect.cancelActiveTasks']);
+  }
+});
+
 test('graph reconcile releases satisfied dependencies', () => {
   const dep={...task('SUCCEEDED'),id:'dep'};
   const child={...task('DRAFT'),id:'child',dependencies:['dep']};
@@ -166,13 +176,30 @@ test('command and adapter mutation surfaces do not bypass shared Action boundari
   assert.doesNotMatch(dashboard,/applyTaskCancelAction\s*\(/,'dashboard task cancel must use shared task action dispatcher');
 });
 
-test('task action dispatcher executes workflow-selected related mutations without owning recovery scope policy', async () => {
+test('related task scope is graph-driven while TypeScript only supplies facts', async () => {
   const actions = await readFile(new URL('../src/task-actions.ts', import.meta.url), 'utf8');
   const policy = await readFile(new URL('../src/workflow/task-action-policy.ts', import.meta.url), 'utf8');
+  const facts = await readFile(new URL('../src/workflow/task-related-action-v2.ts', import.meta.url), 'utf8');
+  const graph = await readFile(new URL('../workflow/task-related-action-v2.mmd', import.meta.url), 'utf8');
   assert.match(actions, /selectRelatedTaskMutations\s*\(/);
   assert.doesNotMatch(actions, /agentName\s*===\s*['"]troubleshooter['"]/);
   assert.doesNotMatch(actions, /startsWith\(`troubleshoot-/);
-  assert.match(policy, /agentName\s*!==\s*['"]troubleshooter['"]/);
-  assert.match(policy, /parentTaskId\s*===\s*task\.id/);
-  assert.match(policy, /startsWith\(`troubleshoot-\$\{task\.id\}-a`\)/);
+  assert.doesNotMatch(policy, /agentName|parentTaskId|startsWith\(`troubleshoot-/);
+  assert.match(policy, /decideRelatedTaskAction\s*\(/);
+  assert.match(facts, /recoveryForTask:/);
+  assert.match(facts, /candidateCancellable:\s*decideTaskLifecycle\(candidate, 'cancel'\)\.accepted/);
+  assert.match(graph, /request: task\.retry/);
+  assert.match(graph, /guard: recoveryForTask/);
+  assert.match(graph, /guard: candidateCancellable/);
+  assert.match(graph, /action: related\.cancel/);
+});
+
+test('action helpers do not duplicate lifecycle state allow-lists', async () => {
+  const tasks = await readFile(new URL('../src/task-actions.ts', import.meta.url), 'utf8');
+  const jobs = await readFile(new URL('../src/job-actions.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(tasks, /task\.state\s*!==\s*['"]FAILED['"]/);
+  assert.doesNotMatch(tasks, /\['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'\]/);
+  assert.doesNotMatch(tasks, /task\.state\s*!==\s*['"]DRAFT['"]/);
+  assert.doesNotMatch(tasks, /task\.state\s*!==\s*['"]QUEUED['"]/);
+  assert.doesNotMatch(jobs, /job\.state\s*===\s*['"]COMPLETED['"]|job\.state\s*===\s*['"]CANCELLED['"]/);
 });

@@ -13,6 +13,7 @@ import { scheduledRunV2 } from '../dist/workflow/scheduled-run-v2.js';
 import { scheduleCycleV2 } from '../dist/workflow/schedule-cycle-v2.js';
 import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
 import { reviewLifecycleV2 } from '../dist/workflow/review-v2.js';
+import { taskRelatedActionV2 } from '../dist/workflow/task-related-action-v2.js';
 import { jobLifecycleWorkflow, taskLifecycleWorkflow, validateCanonicalWorkflowGraph } from '../dist/workflow/definitions.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
 
@@ -143,6 +144,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['scheduled-run-v2.mmd', scheduledRunV2],
         ['schedule-cycle-v2.mmd', scheduleCycleV2],
         ['troubleshooter-v2.mmd', troubleshooterV2],
+        ['task-related-action-v2.mmd', taskRelatedActionV2],
       ]);
       const runtime = runtimes.get(file);
       assert.ok(runtime, file+' must have a production v2 runtime');
@@ -263,5 +265,6 @@ test('legacy planner Tasks are read-only compatibility records', async () => {
   assert.match(recovery, /item\.kind !== 'planner'/);
   assert.match(recovery, /task\.kind !== 'planner'/);
   assert.match(taskReconcile, /if \(task\.kind === 'planner'\) continue/);
-  assert.match(jobs, /item\.kind !== 'planner'/);
+  assert.match(jobs, /tryApplyTaskCancelAction\s*\(task, reason\)/);
+  assert.match(actions, /if \(task\.kind === 'planner'\) return false/);
 });

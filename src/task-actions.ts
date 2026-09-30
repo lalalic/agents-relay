@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
-import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
@@ -20,70 +20,88 @@ export type TaskActionRequest = {
 export type TaskActionResult = { job: Job; task: Task };
 export type TaskRetryPolicy = { extendBudget?: boolean };
 
-/** Shared task.retry mutation. The canonical lifecycle graph remains the transition authority. */
-export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy = {}): Promise<Task> {
-  if (task.state === 'BLOCKED') throw new Error(`Task ${task.id} is BLOCKED; use task unblock --reason instead of retry`);
-  if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
-  if (task.state !== 'FAILED') throw new Error(`Task ${task.id} is not restartable (${task.state})`);
+function lifecycleRejection(task: Task, action: string): Error {
+  return new Error(`Task ${task.id} is not ${action} (${task.state})`);
+}
 
-  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
-  await transitionTaskEvent(task, 'retry');
-  if (policy.extendBudget) task.maxAttempts = extendRetryBudget(task);
+async function transitionTaskAction(task: Task, event: string, action: string): Promise<void> {
+  try {
+    await transitionTaskEvent(task, event);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
+      throw lifecycleRejection(task, action);
+    }
+    throw error;
+  }
+}
+
+function clearExecution(task: Task): void {
   task.error = null;
   task.leaseOwner = null;
   task.leaseExpiresAt = null;
   task.executionId = null;
+}
+
+/** Shared task.retry mutation. The canonical lifecycle graph is the sole legality authority. */
+export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy = {}): Promise<Task> {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
+  await transitionTaskAction(task, 'retry', 'restartable');
+  if (policy.extendBudget) task.maxAttempts = extendRetryBudget(task);
+  clearExecution(task);
   return task;
 }
 
-/** Fixed-job authoritative unblock continuation: UNBLOCKED -> QUEUED through the canonical graph. */
+/** Fixed-job authoritative unblock continuation: legality is owned by the lifecycle graph. */
 export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
-  if (task.state !== 'UNBLOCKED') throw new Error(`Task ${task.id} must be UNBLOCKED before task.unblock.retry (${task.state})`);
-  await transitionTaskEvent(task, 'retry');
+  await transitionTaskAction(task, 'retry', 'retryable after unblock');
   task.maxAttempts = extendRetryBudget(task);
-  task.error = null;
-  task.leaseOwner = null;
-  task.leaseExpiresAt = null;
-  task.executionId = null;
+  clearExecution(task);
   delete task.blockedBy;
   return task;
 }
 
-export async function applyTaskCancelAction(task: Task, reason: string): Promise<Task> {
-  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only`);
-  if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work and is immutable`);
-  if (!['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
-  await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
+export function tryApplyTaskCancelAction(task: Task, reason: string): boolean {
+  if (task.kind === 'planner') return false;
+  const decision = tryTransitionTaskEvent(task, 'cancel');
+  if (!decision.accepted) return false;
   task.error = reason;
   task.leaseOwner = null;
   task.leaseExpiresAt = null;
   task.executionId = null;
+  return true;
+}
+
+export async function applyTaskCancelAction(task: Task, reason: string): Promise<Task> {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only`);
+  if (!tryApplyTaskCancelAction(task, reason)) throw lifecycleRejection(task, 'cancellable');
   return task;
 }
 
 export async function applyTaskReleaseAction(task: Task): Promise<Task> {
-  if (task.state !== 'DRAFT') throw new Error(`Task ${task.id} is not releasable (${task.state})`);
-  await transitionTaskEvent(task, 'release');
+  await transitionTaskAction(task, 'release', 'releasable');
   return task;
 }
 
 export async function applyTaskHoldAction(task: Task): Promise<Task> {
-  if (task.state !== 'QUEUED') throw new Error(`Task ${task.id} is not holdable (${task.state})`);
-  await transitionTaskEvent(task, 'hold');
+  await transitionTaskAction(task, 'hold', 'holdable');
   return task;
 }
 
 export async function applyOrchestratorCompleteAction(task: Task, summary: string): Promise<Task> {
   if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
-  if (!['QUEUED', 'RUNNING'].includes(task.state)) throw new Error(`Task ${task.id} is ${task.state}; only QUEUED or RUNNING orchestrator tasks can be completed`);
-  if (task.state === 'QUEUED') await transitionTaskEvent(task, 'task.started');
+  const originalState = task.state;
+  tryTransitionTaskEvent(task, 'task.started');
   task.attempt = Math.max(task.attempt, 1);
   task.result = { summary };
-  task.error = null;
-  task.leaseOwner = null;
-  task.leaseExpiresAt = null;
-  task.executionId = null;
-  await transitionTaskEvent(task, 'task.completed');
+  clearExecution(task);
+  try {
+    await transitionTaskEvent(task, 'task.completed');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
+      throw new Error(`Task ${task.id} is ${originalState}; only QUEUED or RUNNING orchestrator tasks can be completed`);
+    }
+    throw error;
+  }
   return task;
 }
 

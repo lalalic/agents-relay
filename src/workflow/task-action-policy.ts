@@ -1,4 +1,5 @@
-import type { Job, Task, TaskState } from '../types.js';
+import type { Job, Task } from '../types.js';
+import { decideRelatedTaskAction } from './task-related-action-v2.js';
 
 export type RelatedTaskMutation = {
   taskId: string;
@@ -6,33 +7,24 @@ export type RelatedTaskMutation = {
   reason: string;
 };
 
-const SUPERSEDEABLE_RECOVERY_STATES = new Set<TaskState>(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED']);
-
-function isRecoveryFor(task: Task, candidate: Task): boolean {
-  if (candidate.agentName !== 'troubleshooter') return false;
-  return candidate.parentTaskId === task.id
-    || (!candidate.parentTaskId && candidate.id.startsWith(`troubleshoot-${task.id}-a`));
-}
-
 /**
- * Canonical related-task policy for explicit task actions.
+ * Graph-driven related-task scope for explicit task actions.
  *
- * This function selects targets only. Mutation helpers must not rediscover task
- * relationships or decide workflow scope themselves.
+ * TypeScript provides relationship/lifecycle facts; the executable workflow
+ * decides whether each candidate receives a related mutation.
  */
 export function selectRelatedTaskMutations(
   job: Job,
   task: Task,
   actionId: string,
 ): RelatedTaskMutation[] {
-  if (actionId !== 'task.retry') return [];
-  return job.tasks
-    .filter(candidate => candidate.id !== task.id)
-    .filter(candidate => isRecoveryFor(task, candidate))
-    .filter(candidate => SUPERSEDEABLE_RECOVERY_STATES.has(candidate.state))
-    .map(candidate => ({
+  return job.tasks.flatMap(candidate => {
+    const decision = decideRelatedTaskAction(task, candidate, actionId);
+    if (!decision.accepted || decision.target !== 'selected') return [];
+    return [{
       taskId: candidate.id,
       mutation: 'cancel' as const,
       reason: `Superseded by manual retry of ${task.id}`,
-    }));
+    }];
+  });
 }

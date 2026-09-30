@@ -31,6 +31,7 @@ stateDiagram-v2
     RUNNING --> FAILED: task.failed
     RUNNING --> FAILED: watchdog.failed
     RUNNING --> CANCELLED: task.cancelled
+    RUNNING --> CANCELLED: cancel
 
     BLOCKED --> UNBLOCKED: task.unblocked
     BLOCKED --> CANCELLED: cancel

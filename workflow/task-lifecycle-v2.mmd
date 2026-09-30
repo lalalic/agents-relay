@@ -170,6 +170,7 @@ leaseFailRunningMark --> leaseFailRunningClearLease
 leaseFailRunningClearLease --> leaseFailRunningClearExecution
 leaseFailRunningClearExecution --> failed
 running -->|on: task.cancelled| cancelled
+running -->|on: cancel| cancelled
 
 blocked -->|on: task.unblocked| unblocked
 blocked -->|on: cancel| cancelled
