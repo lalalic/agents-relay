@@ -2,10 +2,12 @@ import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { ModelCandidate } from './model-routing.js';
+import type { WorkerCandidate } from './worker-routing.js';
+import type { WorkerRequirements } from './types.js';
 import { DecisionEvidence, RoutingDecision, Task } from './types.js';
 import { LoadedRoutingPolicy } from './routing-policy.js';
 
-export const DECISION_AUDIT_SCHEMA_VERSION = 2;
+export const DECISION_AUDIT_SCHEMA_VERSION = 3;
 export type AuditFailureEvidence = { classification: string; summary: string; sources: string[]; details?: Record<string, unknown> };
 export type DecisionAuditRecord = {
   record_type: 'decision'; schema_version: number; decision_id: string; prior_decision_id?: string; timestamp: string;
@@ -16,6 +18,8 @@ export type DecisionAuditRecord = {
   eligible_candidates: Array<Record<string, unknown>>;
   selected: Record<string, unknown>; engine: string; fallback: { used: boolean; reason?: string };
   decision_evidence?: DecisionEvidence; prior_failure?: AuditFailureEvidence;
+  worker_candidates?: Array<Record<string, unknown>>;
+  worker_gate_results?: Array<{ worker_id: string; eligible: boolean; rejection_reasons: string[] }>;
 };
 export type DecisionOutcomeRecord = {
   record_type: 'outcome'; schema_version: number; outcome_id: string; decision_id: string; timestamp: string;
@@ -66,4 +70,101 @@ export function makeDecisionAudit(input: { task?: Pick<Task, 'jobId' | 'id' | 'a
     return { candidate_id: item.id, eligible: eligibleIds.has(item.id), rejection_reasons: reasons };
   });
   return { record_type: 'decision', schema_version: DECISION_AUDIT_SCHEMA_VERSION, decision_id: decisionAuditId(), prior_decision_id: input.priorDecisionId, timestamp: input.routing.decidedAt, correlation: { job_id: input.task?.jobId, task_id: input.task?.id, execution_id: input.task?.executionId, attempt: input.task?.attempt }, task: taskAuditFacts(input.task), worker: input.worker, contract: input.contract, policy: { path: input.policy.path, hash: input.policy.hash, snapshot: input.policy.snapshot as Record<string, unknown>, rules: input.policy.rules }, candidates: input.candidates.map(candidate), gate_results, eligible_candidates: input.eligibleCandidates.map(candidate), selected: candidate(input.selected), engine: input.routing.decidedBy, fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error }, decision_evidence: input.routing.decisionEvidence, prior_failure: input.priorFailure };
+}
+
+
+type ExecutionAuditRoute = { id: string; worker: WorkerCandidate; model: ModelCandidate };
+
+function workerAuditCandidate(worker: WorkerCandidate): Record<string, unknown> {
+  return {
+    id: worker.workerId,
+    adapter: worker.adapter,
+    runtime: worker.runtime ?? null,
+    availability: worker.availability ?? null,
+    capabilities: [...worker.capabilities],
+    trustDomains: worker.trustDomains ?? [],
+    region: worker.region ?? null,
+    labels: worker.labels ?? {},
+    resourceProvider: worker.resourceProvider ?? null,
+    resourceHealthy: worker.resourceHealthy ?? null,
+    resourceUsedPercent: worker.resourceUsedPercent ?? null,
+    resourceRemainingPercent: worker.resourceRemainingPercent ?? null,
+    resourceResetAt: worker.resourceResetAt ?? null,
+    resourceResetInMinutes: worker.resourceResetInMinutes ?? null,
+    resourceWindows: worker.resourceWindows ?? null,
+    browserWorkspaceCapacity: worker.browserWorkspaceCapacity ?? null,
+  };
+}
+
+function workerGateResult(worker: WorkerCandidate, requirements: WorkerRequirements): { worker_id: string; eligible: boolean; rejection_reasons: string[] } {
+  const rejectionReasons: string[] = [];
+  if (worker.availability === 'offline') rejectionReasons.push('worker_offline');
+  if (requirements.runtime && worker.runtime !== requirements.runtime) rejectionReasons.push('runtime_constraint');
+  if (worker.adapter === 'chatgpt' && worker.browserWorkspaceCapacity?.available === 0) rejectionReasons.push('browser_workspace_exhausted');
+  return { worker_id: worker.workerId, eligible: rejectionReasons.length === 0, rejection_reasons: rejectionReasons };
+}
+
+function executionRouteAuditCandidate(route: ExecutionAuditRoute): Record<string, unknown> {
+  return {
+    id: route.id,
+    worker: workerAuditCandidate(route.worker),
+    model: {
+      id: route.model.id,
+      provider: route.model.provider,
+      model: route.model.model,
+      profile: route.model.profile ?? null,
+      reasoning: route.model.reasoning ?? null,
+      resourceHealthy: route.model.resourceHealthy ?? null,
+      resourceUsedPercent: route.model.resourceUsedPercent ?? null,
+      resourceRemainingPercent: route.model.resourceRemainingPercent ?? null,
+      resourceResetAt: route.model.resourceResetAt ?? null,
+      resourceResetInMinutes: route.model.resourceResetInMinutes ?? null,
+      resourceWindows: route.model.resourceWindows ?? null,
+    },
+  };
+}
+
+export function makeExecutionDecisionAudit(input: {
+  task?: Pick<Task, 'jobId' | 'id' | 'attempt' | 'executionId' | 'capabilities' | 'input'>;
+  workers: readonly WorkerCandidate[];
+  requirements: WorkerRequirements;
+  routes: readonly ExecutionAuditRoute[];
+  selected: ExecutionAuditRoute;
+  contract: Record<string, unknown>;
+  policy: LoadedRoutingPolicy;
+  routing: RoutingDecision;
+}): DecisionAuditRecord {
+  const routeRecords = input.routes.map(executionRouteAuditCandidate);
+  const selectedRecord = executionRouteAuditCandidate(input.selected);
+  const workerGateResults = input.workers.map(worker => workerGateResult(worker, input.requirements));
+  return {
+    record_type: 'decision',
+    schema_version: DECISION_AUDIT_SCHEMA_VERSION,
+    decision_id: decisionAuditId(),
+    timestamp: input.routing.decidedAt,
+    correlation: {
+      job_id: input.task?.jobId,
+      task_id: input.task?.id,
+      execution_id: input.task?.executionId,
+      attempt: input.task?.attempt,
+    },
+    task: taskAuditFacts(input.task),
+    worker: workerAuditCandidate(input.selected.worker),
+    contract: input.contract,
+    policy: {
+      path: input.policy.path,
+      hash: input.policy.hash,
+      snapshot: input.policy.snapshot as Record<string, unknown>,
+      rules: input.policy.rules,
+    },
+    candidates: routeRecords,
+    gate_results: routeRecords.map(record => ({ candidate_id: String(record.id), eligible: true, rejection_reasons: [] })),
+    eligible_candidates: routeRecords,
+    selected: selectedRecord,
+    engine: input.routing.decidedBy,
+    fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error },
+    decision_evidence: input.routing.decisionEvidence,
+    worker_candidates: input.workers.map(workerAuditCandidate),
+    worker_gate_results: workerGateResults,
+  };
 }

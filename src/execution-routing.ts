@@ -1,5 +1,5 @@
 import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
-import { DecisionAuditRecord, DecisionAuditStore, makeDecisionAudit } from './decision-audit.js';
+import { DecisionAuditRecord, DecisionAuditStore, makeExecutionDecisionAudit } from './decision-audit.js';
 import { discoverModelCandidates, ModelCandidate } from './model-routing.js';
 import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
@@ -187,9 +187,12 @@ export async function routeExecution(
     decisionEvidence: choice.evidence,
   };
 
-  const audit = makeDecisionAudit({
+  const audit = makeExecutionDecisionAudit({
     task: options.auditTask,
-    worker: { id: selected.worker.workerId, adapter: selected.worker.adapter, capabilities: [...selected.worker.capabilities], route_id: selected.id },
+    workers,
+    requirements,
+    routes,
+    selected,
     contract: {
       question: 'execution-route-selection',
       task: options.taskFacts ?? {},
@@ -199,9 +202,6 @@ export async function routeExecution(
       candidateRoutes: routes.map(route => ({ id: route.id, workerId: route.worker.workerId, adapter: route.worker.adapter })),
     },
     policy,
-    candidates: routes.map(route => ({ ...route.model, id: route.id })),
-    eligibleCandidates: routes.map(route => ({ ...route.model, id: route.id })),
-    selected: { ...selected.model, id: selected.id },
     routing,
   });
   routing.decisionId = audit.decision_id;

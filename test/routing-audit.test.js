@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { JsonlDecisionAuditStore } from '../dist/decision-audit.js';
 import { classifyFailureEvidence, redecideFailedTask } from '../dist/model-redecision.js';
 import { routeModel } from '../dist/model-routing.js';
+import { routeExecution } from '../dist/execution-routing.js';
 
 const worker = { workerId: 'codex', adapter: 'codex', capabilities: ['model'] };
 const candidate = (id, provider, profile) => ({ id, provider, model: id, profile, resourceHealthy: true, resourceRemainingPercent: 80 });
@@ -111,6 +112,66 @@ test('failed route is a hard negative during model re-decision and is visible in
     const failedGate = decision.gate_results.find(item => item.candidate_id.includes('zai'));
     assert.equal(failedGate.eligible, false);
     assert.ok(failedGate.rejection_reasons.includes('prior_failed_route'));
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+  }
+});
+
+
+test('unified execution audit records full worker+model routes and selected route', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-execution-audit-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  try {
+    await writeFile(join(root, 'config.toml'), 'model = "gpt-test"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const store = new JsonlDecisionAuditStore(join(root, 'audit.jsonl'));
+    const engine = {
+      name: 'capture',
+      decide: async (_request, contract) => ({
+        type: 'choice',
+        choice: contract.choices.find(item => item.startsWith('chatgpt/browser-worker::')) ?? contract.choices[0],
+      }),
+    };
+    const workers = [
+      { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model', 'codex'] },
+      { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 3, leased: 2, available: 3, observedAt: new Date().toISOString(), reason: null } },
+    ];
+    const result = await routeExecution(workers, { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', auditStore: store, taskFacts: { kind: 'review' } });
+    assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
+
+    const [audit] = await store.read();
+    assert.equal(audit.schema_version, 3);
+    assert.equal(audit.contract.question, 'execution-route-selection');
+    assert.equal(audit.selected.worker.adapter, 'chatgpt');
+    assert.equal(audit.selected.model.provider, 'chatgpt');
+    assert.ok(audit.candidates.some(item => item.worker.adapter === 'codex' && item.model.provider === 'openai'));
+    assert.ok(audit.candidates.some(item => item.worker.adapter === 'chatgpt' && item.model.provider === 'chatgpt'));
+    assert.equal(audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker').eligible, true);
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+  }
+});
+
+test('unified execution audit explains ChatGPT exclusion when Browser Workspace is exhausted', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-execution-audit-gate-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = root;
+  try {
+    await writeFile(join(root, 'config.toml'), 'model = "gpt-test"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const store = new JsonlDecisionAuditStore(join(root, 'audit.jsonl'));
+    const workers = [
+      { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model', 'codex'] },
+      { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 0, leased: 5, available: 0, observedAt: new Date().toISOString(), reason: null } },
+    ];
+    const result = await routeExecution(workers, { capabilities: [] }, { decisionMode: 'active', auditStore: store, taskFacts: { kind: 'implementation' } });
+    assert.equal(result.selection.workerId, 'codex');
+
+    const [audit] = await store.read();
+    const chatgptGate = audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker');
+    assert.equal(chatgptGate.eligible, false);
+    assert.ok(chatgptGate.rejection_reasons.includes('browser_workspace_exhausted'));
+    assert.equal(audit.candidates.some(item => item.worker.adapter === 'chatgpt'), false);
+    assert.equal(audit.worker_candidates.find(item => item.id === 'chatgpt/browser-worker').browserWorkspaceCapacity.available, 0);
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }
