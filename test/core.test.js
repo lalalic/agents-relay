@@ -95,6 +95,20 @@ test('internal task.retry preserves retry budget while manual dispatch extends i
   assert.equal(result.task.maxAttempts, 6);
 });
 
+test('manual task.retry supersedes active automatic troubleshooter recovery for the same task', async () => {
+  const failed={...task('root','FAILED'),error:'boom'};
+  const recovery={...task('troubleshoot-root-a0','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const store=new InMemoryStore(job([failed,recovery]));
+  await dispatchTaskAction(store,{id:'task.retry',jobId:'j',taskId:'root'});
+  const saved=await store.load('j');
+  const root=saved.tasks.find(item=>item.id==='root');
+  const superseded=saved.tasks.find(item=>item.id==='troubleshoot-root-a0');
+  assert.equal(root.state,'QUEUED');
+  assert.equal(superseded.state,'CANCELLED');
+  assert.equal(superseded.executionId,null);
+  assert.match(superseded.error,/Superseded by manual retry of root/);
+});
+
 test('shared task.retry action preserves planner feedback and clears durable execution identity', async () => {
   const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
   const store = new InMemoryStore(job([failed]));
