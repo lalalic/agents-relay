@@ -558,13 +558,16 @@ test('dashboard header exposes in-memory runtime summary', () => {
 });
 
 
-test('dashboard Usage keeps GitHub quota primary and compact', () => {
+test('dashboard Usage prioritizes secondary cooldown and request-time X headers before primary snapshot', () => {
   assert.match(dashboardHtml, /GitHub API/);
-  assert.match(dashboardHtml, /githubBucket\('REST'/);
-  assert.match(dashboardHtml, /githubBucket\('GraphQL'/);
-  assert.match(dashboardHtml, /githubBucket\('Search'/);
+  assert.match(dashboardHtml, /Secondary cooldown/);
+  assert.match(dashboardHtml, /Secondary protection/);
+  assert.match(dashboardHtml, /Request-time X-RateLimit headers/);
+  assert.match(dashboardHtml, /Primary quota \(\/rate_limit\)/);
+  assert.ok(dashboardHtml.indexOf('githubSecondary(status)') < dashboardHtml.indexOf("text('Primary quota (/rate_limit)')"));
+  assert.match(dashboardHtml, /Number\.isFinite\(observed\.limit\).*githubBucket\(label,observed\)/s);
   assert.match(dashboardHtml, /bucket\.remaining\+' \/ '\+bucket\.limit/);
-  assert.match(dashboardHtml, /shortReset\(bucket\.reset\)/);
+  assert.match(dashboardHtml, /Retry '\+new Date\(until\)\.toLocaleString\(\)/);
   assert.doesNotMatch(dashboardHtml, /Relay cooldown inactive/);
 });
 

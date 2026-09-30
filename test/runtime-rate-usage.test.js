@@ -81,7 +81,7 @@ test('Runtime rejection remains visible while the primary snapshot reports quota
 
 test('GraphQL secondary throttling captures retry evidence without remaining capacity', async t => {
   const fake = await fakeGhPath(() => {
-    process.stdout.write('HTTP/2 429\r\nretry-after: 30\r\n\r\n{"errors":[{"type":"RATE_LIMITED","message":"graphql_rate_limit"}]}\r\n');
+    process.stdout.write('HTTP/2 429\r\nretry-after: 30\r\n\r\n{"errors":[{"type":"RATE_LIMITED","message":"secondary rate limit"}]}\r\n');
     return 0;
   });
   await withPath(fake, async () => {
@@ -92,6 +92,21 @@ test('GraphQL secondary throttling captures retry evidence without remaining cap
     assert.equal(observed.resources.graphql.remaining, null);
     assert.equal(observed.rejection.kind, 'secondary');
     assert.equal(observed.rejection.retryAfterSeconds, 30);
+  });
+});
+
+test('GraphQL primary exhaustion is not mislabeled secondary when X-RateLimit remaining is zero', async t => {
+  const fake = await fakeGhPath(() => {
+    process.stdout.write(headers('graphql', { remaining: 0 }));
+    process.stderr.write('gh: API rate limit already exceeded: graphql_rate_limit');
+    return 1;
+  });
+  await withPath(fake, async () => {
+    const client = new GhApiClient();
+    await assert.rejects(client.graphql('query { viewer { login } }'));
+    const observed = client.rateLimitStatus().runtimeRateUsage;
+    assert.equal(observed.resources.graphql.remaining, 0);
+    assert.equal(observed.rejection.kind, 'primary');
   });
 });
 

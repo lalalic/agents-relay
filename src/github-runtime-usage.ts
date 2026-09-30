@@ -51,9 +51,10 @@ function transportResource(requestChannel: 'rest' | 'graphql', headers: Record<s
 }
 
 function rejectionKind(headers: Record<string, string>, reason: string): GitHubRateLimitRejection['kind'] {
-  if (/secondary rate|graphql_rate_limit/i.test(reason)) return 'secondary';
-  if (/rate limit/i.test(reason) && headerNumber(headers['x-ratelimit-remaining']) !== 0) return 'secondary';
-  if (/rate limit/i.test(reason)) return 'primary';
+  const remaining = headerNumber(headers['x-ratelimit-remaining']);
+  if (remaining === 0) return 'primary';
+  if (/secondary rate/i.test(reason) || headerNumber(headers['retry-after']) !== null) return 'secondary';
+  if (/rate limit/i.test(reason) && remaining !== null && remaining > 0) return 'secondary';
   return 'unknown';
 }
 
@@ -90,6 +91,7 @@ export function runtimeRejection(observation: GitHubObservedRateLimit): GitHubRa
   if (!observation.throttled) return null;
   const headers: Record<string, string> = {};
   if (observation.remaining !== null) headers['x-ratelimit-remaining'] = String(observation.remaining);
+  if (observation.retryAfterSeconds !== null) headers['retry-after'] = String(observation.retryAfterSeconds);
   const retryAfterSeconds = observation.retryAfterSeconds;
   return {
     resource: observation.resource,
