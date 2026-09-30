@@ -4,7 +4,7 @@ This document records the design, implementation flow, recovery semantics, and v
 
 ## Objective
 
-Existing jobs remain `fixed` by default. An `autonomous` job may grow its own durable task tree until the objective is satisfied. Planning is represented by real durable planning decisions rather than hidden generations or a second state store. GitHub-backed durable state remains authoritative.
+Existing jobs remain `fixed` by default. An `autonomous` job may grow its own durable task tree until the objective is satisfied. Planning is represented by real durable planning decisions rather than hidden generations or a second workflow state store. In V2, operational execution state is committed to RelayStore and projected to the GitHub Job/Plan/Task collaboration record.
 
 ## Design principles
 

@@ -139,7 +139,7 @@ Configure the daemon or CLI service with `--chatgpt-tab-close-policy after-start
 
 Continuations are adapters, separate from worker adapters. v1 supports Codex-thread continuation plus a generic command/webhook contract. Hosted web chat continuations may rely on their host integration; their durable state remains recoverable from the PR.
 
-## v1 acceptance criteria
+## Core runtime acceptance criteria
 
 1. A reusable TypeScript package/CLI named `agents-relay`.
 2. GitHub PR/comment durable store with job/task marker parsing and updates.
@@ -157,7 +157,7 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 14. Documentation and a runnable local dogfood example.
 15. Browser-level verification of the dashboard before merge.
 
-## Non-goals for v1
+## Core runtime non-goals
 
 - Reimplement GitHub collaborative records as a competing database. V2 keeps GitHub as the durable collaboration projection while a small local Relay Store owns operational execution state.
 - Build a general workflow-language/DAG editor.
@@ -167,9 +167,9 @@ Continuations are adapters, separate from worker adapters. v1 supports Codex-thr
 - Encode domain-specific agent roles in the core runtime.
 - Build a broad public agent marketplace or unauthenticated remote HTTP API.
 
-## Dogfood
+## Historical dogfood note
 
-This PR is the first top-level Agents Relay job. Development, review, fixes, and verification remain on this PR until the v1 acceptance criteria are met.
+The original V1 implementation PR was the first top-level Agents Relay job. That statement is historical context only; current architecture and acceptance criteria are defined by the V2 runtime, workflow graphs, RelayStore, and projection model documented here and in [`architecture-v2.md`](architecture-v2.md).
 
 
 ## Shared execution context
