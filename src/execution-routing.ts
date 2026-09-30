@@ -211,7 +211,7 @@ export async function routeExecution(
         profile: route.model.profile ?? null,
         reasoning: route.model.reasoning ?? null,
         resourceHealthy: route.model.resourceHealthy ?? null,
-        usage: {
+        code_plan: {
           five_hour: route.model.resourceWindows?.fiveHour ? {
             remaining_percent: route.model.resourceWindows.fiveHour.remainingPercent ?? null,
             reset_at: route.model.resourceWindows.fiveHour.resetAt ?? null,
