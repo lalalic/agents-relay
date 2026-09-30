@@ -26,7 +26,7 @@ async function recoverTask(task: Task, event: 'lease.expired' | 'execution.orpha
 }
 
 export async function recoverExpiredExecutions(job: Job, now: number, ports: ExecutionRecoveryPorts): Promise<void> {
-  const candidates = job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null));
+  const candidates = job.tasks.filter(item => item.kind !== 'planner' && (item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null)));
   for (const stale of candidates) {
     if (stale.leaseExpiresAt === null || new Date(stale.leaseExpiresAt).getTime() > now) continue;
     const task = await currentGeneration(ports.store, job, stale);
@@ -37,7 +37,7 @@ export async function recoverExpiredExecutions(job: Job, now: number, ports: Exe
 }
 
 export async function recoverStartupOrphans(job: Job, ports: ExecutionRecoveryPorts): Promise<void> {
-  const candidates = job.tasks.filter(task => task.state === 'RUNNING' && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt');
+  const candidates = job.tasks.filter(task => task.kind !== 'planner' && task.state === 'RUNNING' && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt');
   for (const stale of candidates) {
     const task = await currentGeneration(ports.store, job, stale);
     if (!task || task.state !== 'RUNNING' || task.adapter === 'chatgpt' || !task.executionId || !task.leaseOwner || task.leaseOwner === ports.owner) continue;

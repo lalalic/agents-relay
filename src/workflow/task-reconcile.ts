@@ -32,6 +32,7 @@ export function reconcileTaskDependencies(job: Job): Job {
   const scopedTasks = scheduledCycleTasks(job);
   const tasks = new Map(job.tasks.map(task => [task.id, task]));
   for (const task of scopedTasks) {
+    if (task.kind === 'planner') continue;
     const ready = dependencyReady(task, tasks);
     const facts: WorkflowContext = {
       dependenciesSatisfied: task.dependencies.length > 0 && ready,

@@ -14,7 +14,11 @@ export async function applyJobActivateAction(job: Job): Promise<Job> {
 
 export async function applyJobCancelAction(store: DurableStore, job: Job, reason = 'Job cancelled'): Promise<Job> {
   if (job.state === 'COMPLETED' || job.state === 'CANCELLED') throw new Error(`Job ${job.id} is not cancellable (${job.state})`);
-  for (const task of job.tasks.filter(item => !['SUCCEEDED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) {
+  for (const plan of (job.plans ?? []).filter(item => item.status === 'PLANNING')) {
+    plan.status = 'FAILED'; plan.error = reason; plan.assessment = `Planning failed: ${reason}`; plan.leaseOwner = null; plan.leaseExpiresAt = null; plan.executionId = null; plan.updatedAt = new Date().toISOString();
+    await store.savePlan(plan);
+  }
+  for (const task of job.tasks.filter(item => item.kind !== 'planner' && !['SUCCEEDED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) {
     await applyTaskCancelAction(task, reason);
     await store.saveTask(task);
   }
