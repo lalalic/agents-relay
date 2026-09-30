@@ -13,7 +13,7 @@ import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -269,6 +269,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (!task) throw new Error(`Task ${taskId} not found`);
     await applyOrchestratorCompleteAction(task, summary);
     await store.saveTask(task);
+    await publishOrchestratorTaskCompletion(bus, job, task, summary);
     await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId, 'control.task.complete');
     return await store.load(jobId);
   };
