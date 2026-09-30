@@ -74,23 +74,41 @@ jobs:
           npm pack --dry-run --json > pack.json
           node -e 'const pack = require("./pack.json")[0]; const bins = new Map(pack.files.map(file => [file.path, file.mode])); for (const file of ["dist/cli.js", "dist/relayd.js"]) { if (bins.get(file) !== 0o755) throw new Error(`${file} is not executable in the package`); }'
       - name: Publish package
+        id: publish
         shell: bash
         run: |
           set -o pipefail
+          version="${{ steps.version.outputs.version }}"
           publish_error="$(mktemp)"
           trap 'rm -f "$publish_error"' EXIT
-          if npm publish --access public 2> >(tee "$publish_error" >&2); then
-            exit 0
-          fi
-          if grep -Eq 'EPUBLISH|previously published|cannot publish over|previously staged version' "$publish_error"; then
-            echo "agents-relay@${{ steps.version.outputs.version }} is already published or staged; treating this run as idempotent."
-            exit 0
-          fi
+          for attempt in 1 2 3 4 5; do
+            : > "$publish_error"
+            echo "Publishing agents-relay@$version (attempt $attempt)"
+            if npm publish --access public 2> >(tee "$publish_error" >&2); then
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            observed="$(npm view "agents-relay@$version" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            if [ "$observed" = "$version" ]; then
+              echo "agents-relay@$version is already pullable; treating the publish as idempotent."
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            if grep -q 'previously staged version' "$publish_error"; then
+              version="$(node scripts/npm-version.mjs "$version")"
+              npm version "$version" --no-git-tag-version --ignore-scripts
+              continue
+            fi
+            exit 1
+          done
+          echo 'Unable to publish after five staged-version retries' >&2
           exit 1
       - name: Wait until exact published version is pullable
         shell: bash
         run: |
-          expected="${{ steps.version.outputs.version }}"
+          expected="${{ steps.publish.outputs.version }}"
           for attempt in $(seq 1 150); do
             observed="$(npm view "agents-relay@$expected" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
             if [ "$observed" = "$expected" ]; then
@@ -104,7 +122,7 @@ jobs:
       - name: Tag published version
         shell: bash
         run: |
-          tag="v${{ steps.version.outputs.version }}"
+          tag="v${{ steps.publish.outputs.version }}"
           if git ls-remote --exit-code --refs origin "refs/tags/$tag" >/dev/null 2>&1; then
             echo "$tag already exists; leaving the existing release tag in place."
             exit 0
@@ -115,5 +133,5 @@ jobs:
         run: node scripts/report-package-published.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.publish.outputs.version }}
           PACKAGE_REGISTRY: https://registry.npmjs.org
