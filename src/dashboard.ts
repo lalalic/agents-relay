@@ -2,7 +2,7 @@ import { createServer, Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DurableStore, ManagedJobOverview } from './store.js';
+import { DurableStore, GitHubRateLimitBucket, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
 import { Job, JobLifecycleState, Task, TaskState } from './types.js';
@@ -10,11 +10,22 @@ import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './github-webhook.js';
 import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-policy.js';
 import { summarizeRuntime } from './runtime-summary.js';
+import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
 type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
+
+type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
+
+function effectiveGitHubUsage(snapshot: GitHubRateLimitSnapshot | null, runtime: GitHubRuntimeRateUsage | null): EffectiveGitHubUsage | null {
+  const candidates = [snapshot?.resources.core, snapshot?.resources.graphql, snapshot?.resources.search, runtime?.resources.core, runtime?.resources.graphql, runtime?.resources.search]
+    .filter((candidate): candidate is GitHubRateLimitBucket | NonNullable<GitHubRuntimeRateUsage['resources']['core']> => candidate !== undefined && candidate !== null)
+    .filter(candidate => Number.isFinite(candidate.limit) && Number(candidate.limit) > 0 && Number.isFinite(candidate.remaining) && Number.isFinite(candidate.reset));
+  const lowest = candidates.reduce<typeof candidates[number] | null>((current, candidate) => !current || Number(candidate.remaining) / Number(candidate.limit) < Number(current.remaining) / Number(current.limit) ? candidate : current, null);
+  return lowest ? { limit: Number(lowest.limit), remaining: Number(lowest.remaining), reset: Number(lowest.reset) } : null;
+}
 
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
@@ -148,9 +159,11 @@ export function serveDashboard(
     if (!usageRegistry) throw new Error('Account usage telemetry is unavailable');
     const account = await readUsageSnapshot(usageRegistry);
     const githubStatus = statusProvider ? statusProvider() : { limited: false, cooldownUntil: null };
-    let github: unknown = null;
-    if (resolvedGithubUsageProvider) { try { github = await resolvedGithubUsageProvider(); } catch { /* quota telemetry is best-effort during GitHub degradation */ } }
-    return JSON.stringify({ ...account, github, githubStatus });
+    let github: GitHubRateLimitSnapshot | null = null;
+    if (resolvedGithubUsageProvider) { try { github = await resolvedGithubUsageProvider() as GitHubRateLimitSnapshot; } catch { /* quota telemetry is best-effort during GitHub degradation */ } }
+    const runtime = (githubStatus.runtimeRateUsage ?? null) as GitHubRuntimeRateUsage | null;
+    const githubEffective = effectiveGitHubUsage(github, runtime);
+    return JSON.stringify({ ...account, githubEffective, githubStatus });
   };
 
   const server = createServer(async (req, res) => {
