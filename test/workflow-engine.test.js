@@ -181,3 +181,25 @@ test('production lifecycle state assignments stay inside graph application bound
     { path: 'workflow/runtime.ts', text: 'job.state = target;' },
   ]);
 });
+
+test('production orchestration entry points stay bound to v2 graph authorities', async () => {
+  const expectations = new Map([
+    ['reconciler-review.ts', ['decideReviewLifecycle']],
+    ['reconciler.ts', ['decidePlannerOrchestration', 'decideJobReconcile']],
+    ['blockers.ts', ['decideBlockerResolution']],
+    ['unblock.ts', ['decideAuthoritativeUnblock']],
+    ['scheduled-jobs.ts', ['decideScheduledRun']],
+    ['scheduler.ts', ['decideScheduleCycle']],
+    ['troubleshooter.ts', ['decideTroubleshooter']],
+  ]);
+  for (const [name, symbols] of expectations) {
+    const source = await readFile(new URL('../src/' + name, import.meta.url), 'utf8');
+    for (const symbol of symbols) assert.match(source, new RegExp('\\b' + symbol + '\\b'), name + ' must use ' + symbol);
+  }
+
+  const review = await readFile(new URL('../src/reconciler-review.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(review, /reviewEligible\s*\(/, 'review eligibility must remain explicit graph guards');
+  const reconciler = await readFile(new URL('../src/reconciler.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(reconciler, /task\.attempt\s*=\s*task\.maxAttempts/, 'planner availability must not force attempts procedurally');
+  assert.doesNotMatch(reconciler, /reviewEnabled\s*===\s*false[^\n]+implementationComplete/, 'no-review merge policy must stay in the Job graph');
+});

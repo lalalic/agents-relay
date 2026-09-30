@@ -10,10 +10,25 @@ by Relay. There is no generated JSON/YAML workflow definition.
 | v2 | Strict Mermaid `flowchart` | Production | Canonical Job/Task lifecycle authority |
 | v1 | Mermaid `stateDiagram-v2` | Compatibility fixture | Regression/parity oracle only |
 
-Production canonical graphs:
+Production durable lifecycle graphs:
 
 - `workflow/job-lifecycle-v2.mmd`
 - `workflow/task-lifecycle-v2.mmd`
+
+Production orchestration-policy graphs:
+
+- `workflow/review-lifecycle-v2.mmd`
+- `workflow/planner-trigger-v2.mmd`
+- `workflow/planner-orchestration-v2.mmd`
+- `workflow/blocker-resolution-v2.mmd`
+- `workflow/authoritative-unblock-v2.mmd`
+- `workflow/scheduled-run-v2.mmd`
+- `workflow/schedule-cycle-v2.mmd`
+- `workflow/troubleshooter-v2.mmd`
+
+Job/Task graphs own durable lifecycle state transitions. Orchestration graphs
+own durable workflow branching and declared next actions without inventing
+additional Job/Task lifecycle states.
 
 Legacy compatibility fixtures remain at:
 
@@ -38,7 +53,9 @@ queued["state: QUEUED"]
 
 State input edges use `on: event` or `request: action`. Guards use explicit
 `true`/`false` branches; a missing branch means that candidate is not
-enabled. Multiple guarded candidates for the same state/input are allowed so
+enabled. A guard branch may lead to another guard, which keeps multi-fact
+eligibility policy visible in the graph instead of collapsing it into a
+procedural composite boolean. Multiple guarded candidates for the same state/input are allowed so
 the runtime preserves deterministic `no_transition` / `ambiguous`
 semantics. Actions may form an unlabelled chain before the target state, which
 preserves ordered mutation/effect lists without adding another DSL construct.
@@ -82,7 +99,7 @@ These boundaries keep the executable Mermaid profile small while preventing life
 
 ## Integration verification checklist
 
-- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production lifecycle transition sources; the legacy files are compatibility fixtures.
+- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery branching; the legacy files are compatibility fixtures.
 - Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.
