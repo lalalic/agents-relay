@@ -2,7 +2,7 @@
 
 ## Objective
 
-Evolve Agents Relay from task adapters into a minimal network of independently registered, result-owning agents while retaining GitHub PR state as durable truth and preserving Codex/ChatGPT agent-worker support while keeping shell commands as tools rather than managed workers.
+Evolve Agents Relay from task adapters into a minimal network of independently registered, result-owning agents while retaining the V2 split between SQLite-backed operational execution truth and the GitHub PR collaboration/audit projection and preserving Codex/ChatGPT agent-worker support while keeping shell commands as tools rather than managed workers.
 
 ## Scope shipped
 
