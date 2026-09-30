@@ -70,21 +70,25 @@ export async function relayTaskCommand(args: string[], body: { jobId: string; ta
   if (!response.ok) throw new Error(`Agents Relay task command failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
-export type EventBusResolution = { bus: EventBus | undefined; transport: 'nats' | 'none'; source: 'explicit' | 'auto' | 'unavailable'; natsUrl: string };
+export type EventBusResolution = { bus: EventBus | undefined; transport: 'nats' | 'none'; source: 'explicit' | 'auto' | 'unavailable' | 'local'; natsUrl: string };
 export async function resolveEventBus(args: string[], probe?: (bus: NatsEventBus) => Promise<boolean>): Promise<EventBusResolution> {
   const explicit = hasArg(args, '--events');
   const requested = arg(args, '--events');
   const natsUrl = arg(args, '--nats-url', process.env.NEO_NATS_URL || 'nats://127.0.0.1:4222');
+  if (!explicit && hasArg(args, '--file')) return { bus: undefined, transport: 'none', source: 'local', natsUrl };
   if (explicit && requested !== 'nats') return { bus: undefined, transport: 'none', source: 'explicit', natsUrl };
   const bus = new NatsEventBus(natsUrl, arg(args, '--subject-prefix', 'neo.events.job'));
   if (explicit) return { bus, transport: 'nats', source: 'explicit', natsUrl };
   const reachable = probe ? await probe(bus) : await bus.ping().then(() => true, () => false);
-  if (!reachable) { await bus.close().catch(() => undefined); return { bus: undefined, transport: 'none', source: 'unavailable', natsUrl }; }
-  return { bus, transport: 'nats', source: 'auto', natsUrl };
+  await bus.close().catch(() => undefined);
+  if (!reachable) return { bus: undefined, transport: 'none', source: 'unavailable', natsUrl };
+  return { bus: new NatsEventBus(natsUrl, arg(args, '--subject-prefix', 'neo.events.job')), transport: 'nats', source: 'auto', natsUrl };
 }
 export function eventBusResolutionMessage(resolution: EventBusResolution): string {
   if (resolution.transport === 'nats') return `event transport: nats (${resolution.source === 'auto' ? 'auto-detected' : 'explicit'})`;
-  return resolution.source === 'explicit' ? 'event transport: none (explicit)' : 'event transport: none (NATS unavailable)';
+  if (resolution.source === 'explicit') return 'event transport: none (explicit)';
+  if (resolution.source === 'local') return 'event transport: none (local mode)';
+  return 'event transport: none (NATS unavailable)';
 }
 export async function eventBus(args: string[]): Promise<EventBus | undefined> {
   const resolution = await resolveEventBus(args);

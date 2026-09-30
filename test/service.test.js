@@ -103,6 +103,12 @@ test('event transport resolution preserves explicit choice and auto-detects reac
   assert.equal(unavailable.source, 'unavailable');
   assert.equal(probes, 2);
   assert.equal(eventBusResolutionMessage(unavailable), 'event transport: none (NATS unavailable)');
+
+  const local = await resolveEventBus(['--file','job.json'], async () => { probes += 1; return true; });
+  assert.equal(local.transport, 'none');
+  assert.equal(local.source, 'local');
+  assert.equal(probes, 2);
+  assert.equal(eventBusResolutionMessage(local), 'event transport: none (local mode)');
 });
 
 test('event transport resolution honors NEO_NATS_URL when no CLI URL is supplied', async () => {
