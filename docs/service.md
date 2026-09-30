@@ -44,3 +44,7 @@ npx --package agents-relay --package pm2 pm2 start agents-relayd --name agents-r
 PM2 forwards `SIGINT` and `SIGTERM`. The service clears its watchdog, unsubscribes from wake events, closes the local dashboard server, and exits only after cleanup.
 
 GitHub App installation authentication and the webhook/cache consumption model are documented in [github-app-rate-limit.md](github-app-rate-limit.md).
+
+## Fact-only GitHub webhooks
+
+GitHub webhooks are external fact inputs, not cache-invalidation signals. Relay consumes a webhook only when the payload is sufficient to apply a deterministic local fact without a follow-up GitHub API read. Currently this includes package publication markers, pull-request close/merge state, and pull-request synchronize head changes. Ordinary PR edits, normal comments, reviews, checks, suites, and workflow notifications are ignored unless a future explicit consumer can handle them entirely from the payload. A webhook must never trigger a PR snapshot refresh.

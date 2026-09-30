@@ -96,63 +96,8 @@ export class RepositoryWorkerPool {
     );
   }
 
-  private async consumeGitHubSignals(signals: readonly ReconcileSignal[]): Promise<void> {
-    if (this.isRateLimited() || signals.length === 0) return;
-    const repository = signals.find(signal => signal.repository)?.repository;
-    const prNumber = signals.find(signal => signal.prNumber)?.prNumber;
-    if (!repository || !prNumber || !this.repositories.includes(repository)) return;
-    if (!this.refreshWebhookSnapshot) {
-      process.stderr.write(`warning: GitHub webhook signal refresh unavailable for ${repository}#${prNumber}\n`);
-      return;
-    }
-    const reasons = [...new Set(signals.map(signal => signal.reason))];
-    const trigger = reasons.join('+') || 'github.webhook';
-    const snapshot = await this.refreshWebhookSnapshot(repository, prNumber, trigger);
-    const sourceEvents = signals.map(signal => signal.event).filter((event): event is EventRecord => Boolean(event));
-
-    for (const item of snapshot.overviews) {
-      this.jobTargets.set(item.job.id, { repository, prNumber });
-      this.seedTargetSnapshot(repository, prNumber, item.job.id, snapshot.seed);
-      if (this.watchedBus) {
-        for (const event of sourceEvents) {
-          const publication = event.data?.publication;
-          if (publication && typeof publication === 'object') {
-            const value = publication as Record<string, unknown>;
-            await this.watchedBus.publish(eventFor(
-              item.job.id,
-              'release',
-              null,
-              'package.published',
-              'succeeded',
-              `Published ${String(value.package ?? 'package')}@${String(value.version ?? 'unknown')}`,
-              'orchestrator',
-              {
-                deliveryId: event.data?.deliveryId,
-                repository,
-                prNumber,
-                package: value.package,
-                version: value.version,
-                registry: value.registry,
-                sha: value.sha,
-              },
-              event.source,
-            ));
-          }
-          await this.watchedBus.publish(eventFor(
-            item.job.id,
-            'github',
-            null,
-            'github.webhook',
-            'queued',
-            event.message,
-            'orchestrator',
-            { ...(event.data ?? {}), coordinatorIngress: false, coordinatorRouted: true },
-            event.source,
-          ));
-        }
-      }
-      await this.coordinator.accept({ jobId: item.job.id, reason: trigger, repository, prNumber });
-    }
+  private async consumeGitHubSignals(_signals: readonly ReconcileSignal[]): Promise<void> {
+    // GitHub webhooks are fact-only inputs. They must never trigger a GitHub reread.
   }
 
   private async consumeSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
@@ -265,16 +210,7 @@ export class RepositoryWorkerPool {
         await this.scheduleSignalCoordinator.acceptTransport({ jobId: event.job_id, reason: this.signalReason(event), event, repository, prNumber });
         return;
       }
-      if (ingressWebhook && repository && prNumber) {
-        await this.githubSignalCoordinator.acceptTransport({
-          jobId: `${repository}#${prNumber}`,
-          reason: this.signalReason(event),
-          event,
-          repository,
-          prNumber,
-        });
-        return;
-      }
+      if (ingressWebhook) return;
       if (routedWebhook) return;
       const lifecycle = ['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
       const wake = event.type === 'job.wake' || event.type === 'github.webhook';
@@ -311,39 +247,9 @@ export class RepositoryWorkerPool {
     await this.scheduleSignalCoordinator.accept({ jobId: job.id, reason: this.signalReason(event), event, repository: job.repository, prNumber: job.prNumber });
   }
 
-  async webhookSignal(bus: EventBus | undefined, wake: GitHubWebhookWake): Promise<void> {
-    if (!wake.repository || !wake.pullRequest) return;
-    const source = { id: `github/${wake.repository}/delivery/${wake.deliveryId}`, component: 'github-webhook' };
-    const event = eventFor(
-      'github-webhook',
-      'github',
-      null,
-      'github.webhook',
-      'queued',
-      `GitHub webhook ${wake.event}${wake.action ? ':' + wake.action : ''}`,
-      'orchestrator',
-      {
-        deliveryId: wake.deliveryId,
-        event: wake.event,
-        action: wake.action,
-        repository: wake.repository,
-        prNumber: wake.pullRequest,
-        publication: wake.publication ?? null,
-        coordinatorIngress: true,
-      },
-      source,
-    );
-    if (bus) {
-      await bus.publish(event);
-      return;
-    }
-    await this.githubSignalCoordinator.accept({
-      jobId: `${wake.repository}#${wake.pullRequest}`,
-      reason: this.signalReason(event),
-      event,
-      repository: wake.repository,
-      prNumber: wake.pullRequest,
-    });
+  async webhookSignal(_bus: EventBus | undefined, _wake: GitHubWebhookWake): Promise<void> {
+    // Uncorrelated webhook wakeups are intentionally ignored. A caller must first
+    // resolve the target from local cached state and then call webhookWake().
   }
 
   async webhookWake(bus: EventBus | undefined, job: Job, wake: GitHubWebhookWake): Promise<void> {

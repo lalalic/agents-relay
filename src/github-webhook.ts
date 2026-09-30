@@ -2,9 +2,17 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { IncomingHttpHeaders } from 'node:http';
 
 export type PackagePublication = { package: string; version: string; registry: string | null; sha: string | null };
-export type GitHubWebhookWake = { deliveryId: string; event: string; action: string | null; repository: string | null; pullRequest: number | null; publication: PackagePublication | null };
+export type GitHubPullRequestFacts = { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: { ref: string; sha: string } | null };
+export type GitHubWebhookWake = {
+  deliveryId: string;
+  event: 'pull_request' | 'issue_comment';
+  action: string | null;
+  repository: string;
+  pullRequest: number;
+  publication: PackagePublication | null;
+  pullRequestFacts: GitHubPullRequestFacts | null;
+};
 export const PACKAGE_PUBLISHED_MARKER = 'agents-relay:package-published:v1';
-const WAKE_EVENTS = new Set(['pull_request', 'issue_comment', 'pull_request_review', 'pull_request_review_comment', 'check_run', 'check_suite', 'workflow_run']);
 
 export function parsePackagePublicationMarker(body: unknown): PackagePublication | null {
   if (typeof body !== 'string') return null;
@@ -31,26 +39,42 @@ export function verifyGitHubWebhook(secret: string, body: Buffer, signature: str
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function pullRequestFacts(payload: Record<string, unknown>, action: string | null): GitHubPullRequestFacts | null {
+  if (action !== 'synchronize' && action !== 'closed') return null;
+  const pr = payload.pull_request as Record<string, unknown> | undefined;
+  if (!pr) return null;
+  const head = pr.head as Record<string, unknown> | undefined;
+  const ref = typeof head?.ref === 'string' ? head.ref : null;
+  const sha = typeof head?.sha === 'string' ? head.sha : null;
+  if (!ref || !sha) return null;
+  if (action === 'closed') return { state: pr.merged === true ? 'MERGED' : 'CLOSED', head: { ref, sha } };
+  return { state: 'OPEN', head: { ref, sha } };
+}
+
 export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): GitHubWebhookWake | null {
   const deliveryId = String(headers['x-github-delivery'] ?? '');
   const event = String(headers['x-github-event'] ?? '');
-  if (!deliveryId || !WAKE_EVENTS.has(event)) return null;
+  if (!deliveryId || (event !== 'pull_request' && event !== 'issue_comment')) return null;
   let payload: Record<string, unknown>;
   try { payload = JSON.parse(body.toString('utf8')) as Record<string, unknown>; } catch { return null; }
   const repository = payload.repository as Record<string, unknown> | undefined;
-  const pullRequest = payload.pull_request as Record<string, unknown> | undefined;
+  const repositoryName = typeof repository?.full_name === 'string' ? repository.full_name : null;
+  const action = typeof payload.action === 'string' ? payload.action : null;
+  const pr = payload.pull_request as Record<string, unknown> | undefined;
   const issue = payload.issue as Record<string, unknown> | undefined;
-  const number = Number(pullRequest?.number ?? (issue?.pull_request ? issue.number : 0));
-  const comment = payload.comment as Record<string, unknown> | undefined;
-  const publication = event === 'issue_comment' ? parsePackagePublicationMarker(comment?.body) : null;
-  return {
-    deliveryId,
-    event,
-    action: typeof payload.action === 'string' ? payload.action : null,
-    repository: typeof repository?.full_name === 'string' ? repository.full_name : null,
-    pullRequest: Number.isInteger(number) && number > 0 ? number : null,
-    publication,
-  };
+  const number = Number(pr?.number ?? (issue?.pull_request ? issue.number : 0));
+  if (!repositoryName || !Number.isInteger(number) || number <= 0) return null;
+
+  if (event === 'issue_comment') {
+    const comment = payload.comment as Record<string, unknown> | undefined;
+    const publication = parsePackagePublicationMarker(comment?.body);
+    if (!publication) return null;
+    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication, pullRequestFacts: null };
+  }
+
+  const facts = pullRequestFacts(payload, action);
+  if (!facts) return null;
+  return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication: null, pullRequestFacts: facts };
 }
 
 export class DeliveryDeduper {

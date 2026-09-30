@@ -481,34 +481,31 @@ test('dashboard SSE sends short keepalive comments independent of durable snapsh
   assert.match(source, /clearInterval\(heartbeat\)/);
 });
 
-test('webhook refresh broadcasts the targeted snapshot before wake errors', async () => {
-  const job = { id: 'webhook-job', title: 'Fresh webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+test('dashboard webhook accepts only self-contained facts and does not refresh GitHub', async () => {
+  const job = { id: 'webhook-job', title: 'Webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  let wakes=0;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
     secret: 'test-secret',
     repositories: new Set(['owner/repo']),
-    refresh: async () => [job.id],
-    wake: async () => { throw new Error('reconciliation unavailable'); }
+    wake: async event => { wakes+=1; assert.equal(event.pullRequestFacts?.head?.sha,'new-sha'); }
   });
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}`;
-  const stream = await fetch(`${base}/events`);
-  assert.equal(stream.status, 200);
-  const reader = stream.body?.getReader();
-  assert.ok(reader);
-  await reader.read();
-  const body = Buffer.from(JSON.stringify({ action: 'synchronize', repository: { full_name: 'owner/repo' }, pull_request: { number: 50 } }));
+  const body = Buffer.from(JSON.stringify({ action: 'synchronize', repository: { full_name: 'owner/repo' }, pull_request: { number: 50, head: { ref: 'feat/test', sha: 'new-sha' } } }));
   const signature = 'sha256=' + createHmac('sha256', 'test-secret').update(body).digest('hex');
   const webhook = await fetch(`${base}/webhooks/github`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-github-delivery': 'delivery-1', 'x-github-event': 'pull_request', 'x-hub-signature-256': signature }, body });
   assert.equal(webhook.status, 202);
-  let delivered = '';
-  for (let attempt = 0; attempt < 20 && !delivered.includes('Fresh webhook state'); attempt += 1) {
-    const chunk = await reader.read();
-    delivered += new TextDecoder().decode(chunk.value);
-  }
-  assert.match(delivered, /Fresh webhook state/);
-  await reader.cancel();
+  for(let i=0;i<20&&wakes===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(wakes,1);
+
+  const edited = Buffer.from(JSON.stringify({ action: 'edited', repository: { full_name: 'owner/repo' }, pull_request: { number: 50, head: { ref: 'feat/test', sha: 'newer-sha' } } }));
+  const editedSignature = 'sha256=' + createHmac('sha256', 'test-secret').update(edited).digest('hex');
+  const ignored = await fetch(`${base}/webhooks/github`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-github-delivery': 'delivery-2', 'x-github-event': 'pull_request', 'x-hub-signature-256': editedSignature }, body: edited });
+  assert.equal(ignored.status,202);
+  assert.equal(await ignored.text(),'Ignored');
+  assert.equal(wakes,1);
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 

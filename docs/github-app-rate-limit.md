@@ -122,3 +122,7 @@ Coverage includes App-config validation, RS256 JWT signature/claims, existing fi
 ```bash
 npm test
 ```
+
+### Webhook zero-read invariant
+
+Webhook delivery never authorizes a GitHub reread. Relay accepts only self-contained webhook facts that can be applied directly to the local Relay Store or emitted as an event. Events that would require fetching PR/comments/reviews/checks are ignored. This prevents Relay-originated GitHub projections from feeding back through `pull_request:edited` into GraphQL snapshot reads.

@@ -347,7 +347,10 @@ test('relayd single-flights concurrent pull-request refreshes', async () => {
 
 test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /new RepositoryWorkerPool\([\s\S]*\(\) => client\.rateLimitStatus\(\)\.limited,[\s\S]*refreshPullRequestSnapshot/);
+  assert.match(source, /new RepositoryWorkerPool\([\s\S]*\(\) => client\.rateLimitStatus\(\)\.limited/);
+  assert.match(source, /event\.pullRequestFacts && store\.applyPullRequestFacts/);
+  const poolSource = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
+  assert.match(poolSource, /GitHub webhooks are fact-only inputs\. They must never trigger a GitHub reread/);
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return \{ overviews: cachedOverviews\.filter/);
   assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
   assert.match(source, /return cachedJob\(\);\n    }\n  };/);
