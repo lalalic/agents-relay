@@ -6,6 +6,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'effect.cancelActiveTasks.failed',
   'effect.launchTask.failed',
   'effect.mergePullRequest.failed',
+  'execution.orphaned',
   'fail',
   'hold',
   'lease.expired',
@@ -53,6 +54,7 @@ export const WORKFLOW_MUTATION_NAMES = [
   'mutation.clearLease',
   'mutation.clearExecution',
   'mutation.markLeaseExpired',
+  'mutation.markStartupOrphanedExhausted',
 ] as const;
 
 export const WORKFLOW_EFFECT_NAMES = [

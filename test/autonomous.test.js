@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, validatePlannerHierarchy } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlannerRoundTask, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -157,6 +157,18 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
   assert.equal(observed.guidance, 'original guidance');
   assert.equal(result.job.plans.filter(item => item.id === 'plan-1').length, 1);
   assert.equal(result.job.plans[0].status, 'SUCCEEDED');
+});
+
+test('planner input exposes semantic ownership separately from plan provenance', () => {
+  const milestone={...task('milestone','SUCCEEDED'),planningDecisionId:'plan-1',planningRound:1};
+  const review={...task('review','SUCCEEDED'),parentTaskId:'milestone',dependencies:['milestone'],planningDecisionId:'plan-1',planningRound:1};
+  const plan={...task('plan-2','SUCCEEDED'),kind:'planner',planningRound:2};
+  const payload=JSON.parse(plannerInput({job:job([milestone,review,plan]),tasks:[milestone,review,plan],objective:'finish',previousPlannerTaskId:'plan-2'}));
+  assert.deepEqual(payload.semantic_task_tree.roots,['milestone']);
+  assert.deepEqual(payload.semantic_task_tree.tasks.map(item=>item.id),['milestone','review']);
+  assert.equal(payload.semantic_task_tree.tasks.find(item=>item.id==='review').parent_task_id,'milestone');
+  assert.equal(payload.semantic_task_tree.tasks.some(item=>item.id==='plan-2'),false);
+  assert.deepEqual(semanticTaskTree([milestone,review,plan]).roots,['milestone']);
 });
 
 test('planner input carries explicit retry feedback for corrective retries', () => {

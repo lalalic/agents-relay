@@ -78,17 +78,25 @@ test('managed CLI reconciliation delegates through relayd and rejects a missing 
   assert.ok(source.indexOf("if (command === 'reconcile' && !localFile)") < source.lastIndexOf('const reconciler = runtime('));
 });
 
-test('workspace daemon establishes dashboard and event watch before remote refresh', async () => {
+test('workspace daemon restores local RelayStore jobs before best-effort remote refresh', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const cached = source.indexOf('const initial = cachedOverviews');
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)');
   const server = source.indexOf('const server = serveDashboard', watch);
-  const refresh = source.indexOf('void refreshAll(true)', watch);
+  const discover = source.indexOf('discoverLocalRelayStoreSnapshots', server);
+  const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', discover);
+  const schedule = source.indexOf('await scheduleHeartbeatSafely()', recover);
+  const timers = source.indexOf('interval=setInterval', schedule);
+  const remote = source.indexOf('void refreshAll(true)', timers);
   assert.ok(cached >= 0);
   assert.ok(watch > cached);
   assert.ok(server > watch);
-  assert.ok(refresh > server);
-  assert.doesNotMatch(source, /const initial = await refreshAll\(\)/);
+  assert.ok(discover > server);
+  assert.ok(recover > discover);
+  assert.ok(schedule > recover);
+  assert.ok(timers > schedule);
+  assert.ok(remote > timers);
+  assert.equal(source.includes('await refreshAll(true, true)'), false);
 });
 
 test('daemon arguments support repository pool mode and validate legacy pairing', () => {

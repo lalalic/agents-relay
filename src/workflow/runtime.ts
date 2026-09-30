@@ -35,6 +35,7 @@ function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
   if (mutation === 'mutation.clearLease') { task.leaseOwner = null; task.leaseExpiresAt = null; }
   if (mutation === 'mutation.clearExecution') task.executionId = null;
   if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
+  if (mutation === 'mutation.markStartupOrphanedExhausted') task.error = 'Orphaned after relayd restart after maximum attempts';
 }
 
 export function applyTaskWorkflowDecision(

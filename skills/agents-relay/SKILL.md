@@ -101,7 +101,7 @@ Direct orchestrator-created Tasks do not require a Plan. The orchestrator may cr
 
 For explicit `plan` and autonomous continuation, Relay invokes the same planner agent as a pure decision function. The planner receives durable Job/Task state, previous planner rounds, and resolved execution context, then returns structured `{ objective_status, assessment, next_tasks }` output. The planner does not call Relay CLI and does not persist Tasks itself.
 
-Each successful planner invocation is one real `plan-N` planning round. Relay persists that planner result, then creates the returned Tasks with lineage back to that planning round. Historical `planner-N` records remain readable. Only planner execution creates planner rounds; Relay never manufactures synthetic `plan-*` records for direct Task creation. In the dashboard, planner rounds are organizational/grouping nodes for the Tasks they produced.
+Each successful planner invocation is one real `plan-N` planning round. Relay persists that planner result, then creates returned work Tasks with provenance back to that planning round. `parentTaskId` expresses semantic ownership among work Tasks; it is not inherited from the Plan and must never point to a `plan-N` record. `dependencies` independently express execution prerequisites. Historical `planner-N` records remain readable. Only planner execution creates planner rounds; Relay never manufactures synthetic `plan-*` records for direct Task creation. In the dashboard, planner rounds remain provenance/grouping metadata, not semantic parents.
 
 A zero-task autonomous Job remains idle. After a direct orchestrator-created initial batch completes, Relay may start the first real planner round. Fixed Jobs do not automatically create planner rounds.
 

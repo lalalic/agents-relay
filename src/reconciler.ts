@@ -22,6 +22,7 @@ import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
+import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
@@ -153,7 +154,7 @@ export class Reconciler extends ReconcilerReviewBase {
         return this.store.load(jobId);
       }
       if (job.state !== 'ACTIVE') return job;
-      await this.recoverLostExecutions(job, now);
+      await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await this.recoverPlannerChildren(job);
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
@@ -231,26 +232,25 @@ export class Reconciler extends ReconcilerReviewBase {
     }
   }
 
-  private async recoverLostExecutions(job: Job, now: number): Promise<void> {
-    const candidates = job.tasks.filter(item => item.state === 'RUNNING' || (item.state === 'QUEUED' && item.executionId !== null));
-    for (const staleTask of candidates) {
-      if (staleTask.leaseExpiresAt === null || new Date(staleTask.leaseExpiresAt).getTime() > now) continue;
-      // Re-read durable state before applying lease recovery: another reconciler may have accepted a terminal event or launched a newer execution.
-      const task = (await this.store.load(job.id)).tasks.find(item => item.id === staleTask.id);
-      if (!task) continue;
-      const sameGeneration = task.executionId === staleTask.executionId && task.leaseOwner === staleTask.leaseOwner && task.leaseExpiresAt === staleTask.leaseExpiresAt;
-      const recoverable = task.state === 'RUNNING' || (task.state === 'QUEUED' && task.executionId !== null);
-      if (!sameGeneration || !recoverable || task.leaseExpiresAt === null || new Date(task.leaseExpiresAt).getTime() > now) continue;
-      this.cancelExecutionGeneration(job.id, task.id, task.executionId);
-      const planner = this.plannerLive.get(task.id);
-      if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(task.id); }
-      const decision = await transitionTaskEvent(task, 'lease.expired', { retryAvailable: task.attempt < task.maxAttempts });
-      await this.store.saveTask(task);
-      if (decision.target === 'FAILED') {
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error ?? 'Lease expired after maximum attempts', 'user', { reason: 'lease_expired' }));
-      }
-    }
+  private executionRecoveryPorts(job: Job): ExecutionRecoveryPorts {
+    return {
+      store: this.store,
+      owner: this.options.owner,
+      cancelGeneration: task => { this.cancelExecutionGeneration(job.id, task.id, task.executionId); },
+      cancelPlanner: taskId => { const planner = this.plannerLive.get(taskId); if (planner) { clearTimeout(planner.timer); planner.controller.abort(); this.plannerLive.delete(taskId); } },
+      emitFailed: async (task, reason) => { await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.failed', 'failed', task.error ?? reason, 'user', { reason })); },
+    };
   }
+
+  async recoverLostExecutions(job: Job, now: number): Promise<void> { await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
+  async recoverStartupOrphans(jobId: string): Promise<Job> {
+    const job = await this.store.load(jobId);
+    if (job.state === 'ACTIVE' && (await this.store.pullRequestState?.() ?? 'OPEN') === 'OPEN') {
+      await recoverStartupExecutionOrphans(job, this.executionRecoveryPorts(job));
+    }
+    return this.store.load(jobId);
+  }
+
   async planJob(jobId: string, guidance?: string): Promise<{ job: Job; round: Task }> {
     return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, task) => this.launchPlanner(job, task));
   }

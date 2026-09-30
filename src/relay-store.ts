@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
 
@@ -45,6 +46,7 @@ export type ProjectionOutboxItem = {
 
 export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
+  listJobs(): Promise<Job[]>;
   saveJob(job: Job): Promise<void>;
   ingestJobSnapshot(job: Job): Promise<Job>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
@@ -190,6 +192,11 @@ export class SQLiteRelayStore implements RelayStore {
   async loadJob(jobId: string): Promise<Job | null> {
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
     return row?.json ? JSON.parse(row.json) as Job : null;
+  }
+
+  async listJobs(): Promise<Job[]> {
+    const rows = this.db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as unknown as Array<{ json: string }>;
+    return rows.map(row => JSON.parse(row.json) as Job);
   }
 
   async saveJob(job: Job): Promise<void> {
@@ -397,4 +404,25 @@ export class SQLiteRelayStore implements RelayStore {
   }
 
   close(): void { this.db.close(); }
+}
+
+export type LocalRelayStoreSnapshot = { path: string; jobs: Job[]; facts: PullRequestFacts | null };
+
+export async function discoverLocalRelayStoreSnapshots(directory: string): Promise<LocalRelayStoreSnapshot[]> {
+  let names: string[];
+  try { names = await readdir(directory); } catch { return []; }
+  const snapshots: LocalRelayStoreSnapshot[] = [];
+  for (const name of names.filter(item => item.endsWith('.db')).sort()) {
+    const path = directory + '/' + name;
+    let store: SQLiteRelayStore | undefined;
+    try {
+      store = new SQLiteRelayStore(path);
+      snapshots.push({ path, jobs: await store.listJobs(), facts: await store.loadPullRequestFacts() });
+    } catch {
+      // Ignore unrelated/corrupt files so one bad file cannot block daemon startup.
+    } finally {
+      store?.close();
+    }
+  }
+  return snapshots;
 }

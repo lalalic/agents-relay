@@ -1,9 +1,9 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SQLiteRelayStore } from '../dist/relay-store.js';
+import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from '../dist/relay-store.js';
 import { ProjectedDurableStore, GitHubProjectionWriter, githubProjectionRetryAt } from '../dist/projected-store.js';
 import { InMemoryStore } from '../dist/store.js';
 
@@ -55,6 +55,27 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   await store.completeProjection(recovered.id);
   assert.equal(await store.pendingProjectionCount(), 0);
   await tmp.close(store);
+});
+
+test('RelayStore discovery rebuilds local operational inventory without GitHub', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-relay-store-discovery-'));
+  const a = new SQLiteRelayStore(join(dir, 'a.db'));
+  const first = makeJob();
+  first.id = 'first'; first.prNumber = 11; first.repository = 'owner/one';
+  await a.saveJob(first);
+  await a.savePullRequestFacts({ state: 'OPEN', head: { ref: 'feat/one', sha: 'sha-one' }, observedAt: now() });
+  a.close();
+  const b = new SQLiteRelayStore(join(dir, 'b.db'));
+  const second = makeJob();
+  second.id = 'second'; second.prNumber = 22; second.repository = 'owner/two';
+  await b.saveJob(second);
+  await b.savePullRequestFacts({ state: 'CLOSED', head: null, observedAt: now() });
+  b.close();
+  await writeFile(join(dir, 'not-a-db.db'), 'invalid');
+  const snapshots = await discoverLocalRelayStoreSnapshots(dir);
+  assert.deepEqual(snapshots.map(item => item.jobs[0]?.id).filter(Boolean).sort(), ['first','second']);
+  assert.deepEqual(snapshots.map(item => item.facts?.state).filter(Boolean).sort(), ['CLOSED','OPEN']);
+  await rm(dir, { recursive: true, force: true });
 });
 
 test('RelayStore inbound snapshots merge new remote records without regressing newer local execution', async () => {

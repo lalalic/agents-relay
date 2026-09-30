@@ -21,6 +21,13 @@ recoverCancelled["guard: recoverableExecution"]
 
 retryAvailableRunning["guard: retryAvailable"]
 plannerRetryAvailable["guard: retryAvailable"]
+orphanRetryAvailable["guard: retryAvailable"]
+orphanRetryClearError["action: mutation.clearError"]
+orphanRetryClearLease["action: mutation.clearLease"]
+orphanRetryClearExecution["action: mutation.clearExecution"]
+orphanFailMark["action: mutation.markStartupOrphanedExhausted"]
+orphanFailClearLease["action: mutation.clearLease"]
+orphanFailClearExecution["action: mutation.clearExecution"]
 plannerRetryClearError["action: mutation.clearError"]
 plannerRetryClearLease["action: mutation.clearLease"]
 plannerRetryClearExecution["action: mutation.clearExecution"]
@@ -134,6 +141,15 @@ completeClearReason --> succeeded
 running -->|on: task.failed| failed
 running -->|on: watchdog.failed| failed
 running -->|on: planner.failed| plannerRetryAvailable
+running -->|on: execution.orphaned| orphanRetryAvailable
+orphanRetryAvailable -->|true| orphanRetryClearError
+orphanRetryClearError --> orphanRetryClearLease
+orphanRetryClearLease --> orphanRetryClearExecution
+orphanRetryClearExecution --> queued
+orphanRetryAvailable -->|false| orphanFailMark
+orphanFailMark --> orphanFailClearLease
+orphanFailClearLease --> orphanFailClearExecution
+orphanFailClearExecution --> failed
 plannerRetryAvailable -->|true| plannerRetryClearError
 plannerRetryClearError --> plannerRetryClearLease
 plannerRetryClearLease --> plannerRetryClearExecution

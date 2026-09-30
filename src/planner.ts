@@ -31,6 +31,17 @@ export type PlannerTaskSpec = {
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
 export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
+export type SemanticTaskTreeEntry = { id: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
+
+export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
+  const work = tasks.filter(task => task.kind !== 'planner');
+  const ids = new Set(work.map(task => task.id));
+  return {
+    roots: work.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId)).map(task => task.id),
+    tasks: work.map(task => ({ id: task.id, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review })),
+  };
+}
+
 export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult>; }
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
 
@@ -326,6 +337,7 @@ export function plannerInput(context: PlannerContext): string {
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
     legacy_change_cycle: context.job.changeCycle,
+    semantic_task_tree: semanticTaskTree(context.tasks),
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],
     tasks: context.tasks.map(task => ({

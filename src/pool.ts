@@ -191,7 +191,22 @@ export class RepositoryWorkerPool {
       capacity -= allowance;
     }
   }
-  async reconcileKnown(discovered: ManagedJobOverview[]): Promise<void> { await this.reconcileDiscovered(discovered); }
+  async reconcileKnown(discovered: ManagedJobOverview[]): Promise<void> {
+    const recovered: ManagedJobOverview[] = [];
+    for (const item of discovered) {
+      if (item.githubState !== 'OPEN' || item.job.state !== 'ACTIVE') { recovered.push(item); continue; }
+      this.jobTargets.set(item.job.id, { repository: item.job.repository, prNumber: item.job.prNumber });
+      const store = this.makeStore(item.job.repository, item.job.prNumber);
+      await (store as HydratableStore).hydrate?.(item.job);
+      const reconciler = this.makeReconciler(store, 0);
+      let recoveredJob = item.job;
+      if (typeof reconciler.recoverStartupOrphans === 'function') await this.reconcileExclusive(item.job.id, async () => {
+        recoveredJob = await withGitHubRequestContext(this.client, 'pool.startup-orphan-recovery', () => reconciler.recoverStartupOrphans(item.job.id));
+      });
+      recovered.push({ ...item, job: recoveredJob });
+    }
+    await this.reconcileDiscovered(recovered);
+  }
   async reconcile(): Promise<void> {
     if (this.isRateLimited()) return;
     if (this.running) { this.pending = true; return; }

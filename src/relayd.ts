@@ -11,7 +11,7 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type DurableStore, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
 import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store.js';
-import { SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -306,12 +306,29 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
-  const interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
-  const scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
-  const stop=()=>{clearInterval(interval);clearInterval(scheduleInterval);void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  let interval: NodeJS.Timeout | undefined;
+  let scheduleInterval: NodeJS.Timeout | undefined;
+  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const localSnapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+  const knownRepositories = new Set(repositories);
+  const localOverviews: ManagedJobOverview[] = localSnapshots.flatMap(snapshot => {
+    if (!snapshot.facts) return [];
+    return snapshot.jobs.filter(job => knownRepositories.has(job.repository)).map(job => ({
+      job, githubState: snapshot.facts!.state, draft: false, mergedAt: null, closedAt: null, publication: null,
+    }));
+  });
+  const byJob = new Map<string, ManagedJobOverview>();
+  for (const item of cachedOverviews) byJob.set(item.job.repository + '#' + item.job.prNumber + ':' + item.job.id, item);
+  for (const item of localOverviews) byJob.set(item.job.repository + '#' + item.job.prNumber + ':' + item.job.id, item);
+  cachedOverviews = dashboardManagedJobs([...byJob.values()]);
+  await pool.reconcileKnown(cachedOverviews);
+  await scheduleHeartbeatSafely();
+  await flushProjectionsSafely();
+  interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
+  scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)
-    .then(async items => { await scheduleHeartbeatSafely(); await pool.reconcileKnown(items); await flushProjectionsSafely(); })
-    .catch(error => process.stderr.write(`warning: startup reconciliation unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
+    .then(items => pool.reconcileKnown(items))
+    .catch(error => process.stderr.write('warning: startup remote refresh unavailable: ' + (error instanceof Error ? error.message : String(error)) + '\n'));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
