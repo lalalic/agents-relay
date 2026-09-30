@@ -436,6 +436,47 @@ test('final review uses normal Worker Router decision with current user guidance
   }
 });
 
+
+test('execution router exposes explicit five-hour and weekly usage windows to Laya', async () => {
+  const calls = [];
+  const engine = { decide: async (request, contract) => {
+    calls.push({ request, contract });
+    return { choice: contract.choices[0], probabilities: Object.fromEntries(contract.choices.map((choice, index) => [choice, index === 0 ? 1 : 0])) };
+  } };
+  await routeExecution([
+    { workerId: 'codex', adapter: 'codex', capabilities: [], runtime: 'codex' },
+    { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', capabilities: [], runtime: 'chatgpt', browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 5, leased: 0, available: 5, observedAt: new Date().toISOString(), reason: null } },
+  ], { capabilities: [] }, {
+    decisionEngine: engine,
+    decisionMode: 'active',
+    taskFacts: { storySize: 'M' },
+    usage: {
+      generatedAt: new Date().toISOString(),
+      providers: [{
+        id: 'openai',
+        label: 'OpenAI',
+        usage: {
+          available: true,
+          generatedAt: new Date().toISOString(),
+          fiveHour: { usedPercent: 20, windowMinutes: 300, resetsAt: 1790000000 },
+          weekly: { usedPercent: 60, windowMinutes: 10080, resetsAt: 1790500000 },
+          reason: null,
+        },
+      }],
+      credits: [],
+    },
+  });
+  const openai = calls[0].request.facts.candidates.find(item => item.model.provider === 'openai');
+  assert.deepEqual(openai.model.usage.five_hour, {
+    remaining_percent: 80,
+    reset_at: 1790000000,
+    reset_in_minutes: openai.model.usage.five_hour.reset_in_minutes,
+  });
+  assert.equal(openai.model.usage.weekly.remaining_percent, 40);
+  assert.equal(openai.model.resourceRemainingPercent, undefined);
+  assert.equal(openai.model.resourceWindows, undefined);
+});
+
 test('execution task shape keeps router policy simple', () => {
   assert.deepEqual(executionTaskShape({ storySize: 'S' }), {
     storySize: 'S', sustainedWork: false, preferredWorker: 'chatgpt',

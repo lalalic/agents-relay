@@ -211,11 +211,18 @@ export async function routeExecution(
         profile: route.model.profile ?? null,
         reasoning: route.model.reasoning ?? null,
         resourceHealthy: route.model.resourceHealthy ?? null,
-        resourceUsedPercent: route.model.resourceUsedPercent ?? null,
-        resourceRemainingPercent: route.model.resourceRemainingPercent ?? null,
-        resourceResetAt: route.model.resourceResetAt ?? null,
-        resourceResetInMinutes: route.model.resourceResetInMinutes ?? null,
-        resourceWindows: route.model.resourceWindows ?? null,
+        usage: {
+          five_hour: route.model.resourceWindows?.fiveHour ? {
+            remaining_percent: route.model.resourceWindows.fiveHour.remainingPercent ?? null,
+            reset_at: route.model.resourceWindows.fiveHour.resetAt ?? null,
+            reset_in_minutes: route.model.resourceWindows.fiveHour.resetInMinutes ?? null,
+          } : null,
+          weekly: route.model.resourceWindows?.weekly ? {
+            remaining_percent: route.model.resourceWindows.weekly.remainingPercent ?? null,
+            reset_at: route.model.resourceWindows.weekly.resetAt ?? null,
+            reset_in_minutes: route.model.resourceWindows.weekly.resetInMinutes ?? null,
+          } : null,
+        },
       },
     })),
   })) as JsonValue;
