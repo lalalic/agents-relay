@@ -674,11 +674,13 @@ test('dashboard GitHub usage shows per-trigger refresh attribution and coalescin
   assert.match(dashboardHtml, /prRefreshCoalescedByTrigger/);
 });
 
-test('Router Rules tab exposes router evals and latest audit log', () => {
+test('Router Rules tab exposes current router test and latest audit log', () => {
   assert.match(dashboardHtml, /id="rules-test"[^>]*>Test Router<\/button>/);
   assert.match(dashboardHtml, /id="audit-log"/);
   assert.match(dashboardHtml, /Rules Editor/);
   assert.match(dashboardHtml, /Audit Log/);
   assert.match(dashboardHtml, /fetch\('\/api\/router-test'/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/decision-audit'/);
+  assert.match(dashboardHtml, /laya_input/);
+  assert.match(dashboardHtml, /hard_gates/);
 });
