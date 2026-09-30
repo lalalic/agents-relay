@@ -40,7 +40,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
         status: 'submitted',
         verified: true,
         diagnostic_thread_id: 'diagnostic-only',
-        user_message_id: 'u-1',
+        user_message_id: 'u-1', verified_by: 'user-turn',
       }, requests),
     });
     const execution = adapter.launch(task(), new AbortController().signal);
@@ -65,7 +65,7 @@ test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', as
     const requests = [];
     const adapter = new ChatGptAdapter({
       agentPath,
-      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: 'u-files' }, requests),
+      agentRunner: fakeRunner({ operation: 'submit', status: 'submitted', verified: true, user_message_id: 'u-files', verified_by: 'user-turn' }, requests),
     });
     await adapter.launch(task({ attachments: ['/tmp/a.txt', '/tmp/b.png'] }), new AbortController().signal).promise;
     assert.deepEqual(requests[0].files, ['/tmp/a.txt', '/tmp/b.png']);
@@ -112,7 +112,7 @@ test('ChatGptAdapter default runner invokes temporary one-shot driver', async ()
     await writeFile(join(scripts, 'temporary_bh.py'), [
       '#!/usr/bin/env python3',
       'import json',
-      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1"}))',
+      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1","verified_by":"user-turn"}))',
     ].join('\n'), { mode: 0o700 });
     const result = await new ChatGptAdapter({ agentPath }).launch(task(), new AbortController().signal).promise;
     assert.equal(result.data.submitted, true);

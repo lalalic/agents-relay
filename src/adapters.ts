@@ -116,6 +116,7 @@ export type BrowserWorkerResponse = {
   temporary?: boolean;
   diagnostic_thread_id?: string | null;
   user_message_id?: string | null;
+  verified_by?: 'user-turn' | 'composer-cleared';
   verified?: boolean;
   error?: { code?: string; message?: string; retryable?: boolean } | null;
 };
@@ -286,6 +287,7 @@ export class ChatGptAdapter implements WorkerAdapter {
             submitted: true,
             diagnosticThreadId: response.diagnostic_thread_id ?? null,
             userMessageId: response.user_message_id ?? null,
+            verifiedBy: response.verified_by ?? null,
           },
         };
       } catch (error) {
