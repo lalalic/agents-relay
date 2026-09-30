@@ -157,7 +157,10 @@ test('command and adapter mutation surfaces do not bypass shared Action boundari
     assert.doesNotMatch(source,/transitionTaskEvent\s*\(/,name+' must route task command mutations through task-actions');
     assert.doesNotMatch(source,/transitionJobEvent\s*\([^\n]*['"](?:activate|cancel)['"]/,name+' must route job command mutations through job-actions');
   }
+  const cli=readFileSync(new URL('../src/cli.ts',import.meta.url),'utf8');
+  assert.doesNotMatch(cli,/applyTaskCancelAction\s*\(/,'CLI task cancel must use shared task action dispatcher');
   const dashboard=readFileSync(new URL('../src/dashboard-actions.ts',import.meta.url),'utf8');
   assert.match(dashboard,/assertJobLifecycleTransition\s*\(/,'dashboard job override must be bounded by canonical graph topology');
   assert.match(dashboard,/assertTaskTransition\s*\(/,'dashboard task override must be bounded by canonical graph topology');
+  assert.doesNotMatch(dashboard,/applyTaskCancelAction\s*\(/,'dashboard task cancel must use shared task action dispatcher');
 });

@@ -2,7 +2,7 @@ import type { DurableStore } from './store.js';
 import { assertJobLifecycleTransition, assertTaskTransition, type Job, type JobLifecycleState, type TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
-import { applyTaskCancelAction, dispatchTaskAction } from './task-actions.js';
+import { dispatchTaskAction } from './task-actions.js';
 
 export function dashboardTaskAction(
   store: DurableStore,
@@ -16,8 +16,7 @@ export function dashboardTaskAction(
     if (action === 'retry') {
       await dispatchTaskAction(store, { id: 'task.retry', jobId, taskId });
     } else {
-      await applyTaskCancelAction(task, 'Cancelled by user');
-      await store.saveTask(task);
+      await dispatchTaskAction(store, { id: 'task.cancel', jobId, taskId });
     }
     return await reconciler.wake(job.id);
   };

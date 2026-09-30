@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
-import { applyOrchestratorCompleteAction, applyTaskCancelAction, applyTaskHoldAction, applyTaskReleaseAction, applyTaskRetryAction, dispatchTaskAction } from './task-actions.js';
+import { applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskReleaseAction, applyTaskRetryAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -167,8 +167,9 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
       outputJob = await store.load(job.id);
       outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
     } else {
-      await applyTaskCancelAction(task, 'Cancelled by user');
-      await store.saveTask(task);
+      const result = await dispatchTaskAction(store, { id: 'task.cancel', jobId: job.id, taskId: id });
+      outputJob = await store.load(job.id);
+      outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
     }
     await saveLocal(localFile, outputJob);
     await publishWake(eventBus(args), outputJob, outputTask.id, `${outputTask.id} ${action} requested`);
