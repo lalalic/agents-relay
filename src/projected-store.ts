@@ -222,6 +222,10 @@ export class ProjectedDurableStore implements DurableStore {
   }
 
   async comments(): Promise<Comment[]> { return this.github.comments(); }
+  async applyPullRequestFacts(facts: PullRequestFacts): Promise<void> {
+    await this.relay.savePullRequestFacts(structuredClone(facts));
+  }
+
   async pullRequestState(): Promise<PullRequestState> {
     return (await this.ensurePullRequestFacts()).state;
   }

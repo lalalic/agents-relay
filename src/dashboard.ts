@@ -68,7 +68,7 @@ export function serveDashboard(
   jobId?: string,
   usageRegistry?: UsageSnapshotProvider,
   overviewProvider?: (forceRefresh?: boolean, trigger?: string) => Promise<ManagedJobOverview[]>,
-  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; refresh?: (event: import('./github-webhook.js').GitHubWebhookWake) => Promise<readonly string[]>; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
+  webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null; [key: string]: unknown },
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
@@ -176,13 +176,7 @@ export function serveDashboard(
       if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
       res.writeHead(202); res.end('Accepted');
       queueMicrotask(() => {
-        const refreshDashboard = webhook.refresh
-          ? webhook.refresh(event)
-            .then(jobIds => broadcastSnapshots(jobIds))
-            .catch(error => process.stderr.write(`warning: webhook dashboard snapshot unavailable: ${error instanceof Error ? error.message : String(error)}\n`))
-          : Promise.resolve();
-        void refreshDashboard
-          .then(() => webhook.wake(event))
+        void Promise.resolve(webhook.wake(event))
           .catch(error => process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
       });
       return;

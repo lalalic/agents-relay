@@ -728,50 +728,26 @@ test('repository pool coalesces concurrent targeted reconciles for the same job'
   assert.deepEqual(calls,['burst-job']);
 });
 
-test('GitHub webhook enters through EventBus before coordinator refreshes and reconciles the discovered job', async () => {
+test('uncorrelated GitHub webhook signals never trigger GitHub refreshes', async () => {
   const bus=new MemoryEventBus();
-  const root={...job([]),id:'webhook-signal-job',repository:'owner/repo',prNumber:82};
-  const observed=[];
   let refreshCalls=0;
   let reconcileCalls=0;
-  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{throw new Error('coordinator must consume the refreshed seed');}};
+  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{throw new Error('unexpected GraphQL');}};
   const pool=new RepositoryWorkerPool(
     client,
     ['owner/repo'],
     new Set(['bot']),
     2,
-    store=>({
-      applyEvent:async event=>({applied:true,reconcile:false,reason:event.type}),
-      reconcile:async id=>{
-        reconcileCalls+=1;
-        const loaded=await store.load(id);
-        assert.equal(loaded.id,'webhook-signal-job');
-      }
-    }),
+    ()=>({reconcile:async()=>{reconcileCalls+=1;}}),
     ()=>false,
-    async (repository,prNumber,trigger)=>{
-      refreshCalls+=1;
-      observed.push(`refresh:${trigger}`);
-      assert.equal(repository,'owner/repo');
-      assert.equal(prNumber,82);
-      return {
-        overviews:[{job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],
-        seed:{
-          prNode:{id:'PR_webhook_signal',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/webhook-signal',headRefOid:'webhook-signal-sha'},
-          comments:[],
-        },
-      };
-    },
+    async ()=>{refreshCalls+=1; throw new Error('webhook must not refresh GitHub');},
   );
-  const stopAudit=await bus.subscribeAll(async event=>{ observed.push(`bus:${event.job_id}:${event.type}`); });
   const stopPool=await pool.watch(bus);
-  await pool.webhookSignal(bus,{deliveryId:'delivery-signal',event:'pull_request',action:'edited',repository:'owner/repo',pullRequest:82});
-  for(let i=0;i<20&&reconcileCalls===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
-  assert.equal(refreshCalls,1);
-  assert.equal(reconcileCalls,1);
-  assert.equal(observed[0],'bus:github-webhook:github.webhook');
-  assert.ok(observed.some(value=>value==='bus:webhook-signal-job:github.webhook'));
-  await stopPool(); await stopAudit();
+  await pool.webhookSignal(bus,{deliveryId:'delivery-signal',event:'pull_request',action:'synchronize',repository:'owner/repo',pullRequest:82,publication:null,pullRequestFacts:{state:'OPEN',head:{ref:'feat/webhook',sha:'abc123'}}});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(refreshCalls,0);
+  assert.equal(reconcileCalls,0);
+  await stopPool();
 });
 
 test('repository pool emits package.published from a correlated publication webhook without service actions', async () => {
@@ -781,7 +757,7 @@ test('repository pool emits package.published from a correlated publication webh
   const root={...job([]),id:'release-job',repository:'owner/repo',prNumber:83};
   const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{}}));
   const stop=await bus.subscribe('release-job',async event=>events.push(event));
-  await pool.webhookWake(bus,root,{deliveryId:'delivery-123',event:'issue_comment',action:'created',repository:'owner/repo',pullRequest:83,publication:{package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'}});
+  await pool.webhookWake(bus,root,{deliveryId:'delivery-123',event:'issue_comment',action:'created',repository:'owner/repo',pullRequest:83,publication:{package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'},pullRequestFacts:null});
   assert.deepEqual(events.map(event=>event.type),['package.published','github.webhook']);
   const published=events[0];
   assert.deepEqual(published.data,{deliveryId:'delivery-123',repository:'owner/repo',prNumber:83,package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'});
@@ -1445,7 +1421,7 @@ test('event bus wakes reconciliation and dashboard serves durable state', async 
 test('dashboard selected-job refresh serves the requested durable overview without a page reload', async () => { const selected={...job([task('selected','SUCCEEDED')]),id:'selected'}; const refreshed={...selected,tasks:[...selected.tasks,task('new-durable-task','QUEUED')]}; const store=new InMemoryStore(selected); const server=managedDashboard(store,0,undefined,10000,'selected',undefined,async()=>[{job:selected,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}],undefined,undefined,async id=>id==='selected'?refreshed:null); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job?id=selected`); assert.equal(response.status,200); const body=await response.text(); assert.match(body,/selected/); assert.match(body,/new-durable-task/); const missing=await fetch(`http://127.0.0.1:${port}/api/job?id=missing`); assert.equal(missing.status,404); server.close(); });
 
 
-test('workspace webhook accepts configured repositories and forwards exact PR identity', async () => {
+test('workspace webhook forwards only self-contained PR facts for configured repositories', async () => {
   const selected={...job([task('webhook-task','SUCCEEDED')]),id:'webhook-job',repository:'lalalic/agents-relay',prNumber:9};
   const store=new InMemoryStore(selected);
   const received=[];
@@ -1453,36 +1429,24 @@ test('workspace webhook accepts configured repositories and forwards exact PR id
   const server=managedDashboard(store,0,undefined,10000,'webhook-job',undefined,async()=>[{job:selected,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay','lalalic/neo']),wake:async event=>{received.push(event);}});
   await new Promise(resolve=>server.once('listening',resolve));
   const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
-  const body=JSON.stringify({action:'created',repository:{full_name:'lalalic/agents-relay'},issue:{number:9,pull_request:{url:'x'}}});
+  const body=JSON.stringify({action:'synchronize',repository:{full_name:'lalalic/agents-relay'},pull_request:{number:9,head:{ref:'feat/webhook',sha:'abc123'}}});
   const signature='sha256='+createHmac('sha256',secret).update(body).digest('hex');
-  const response=await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'workspace-delivery','x-github-event':'issue_comment','x-hub-signature-256':signature},body});
+  const response=await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'workspace-delivery','x-github-event':'pull_request','x-hub-signature-256':signature},body});
   assert.equal(response.status,202);
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(received.length,1);
   assert.equal(received[0].repository,'lalalic/agents-relay');
   assert.equal(received[0].pullRequest,9);
+  assert.deepEqual(received[0].pullRequestFacts,{state:'OPEN',head:{ref:'feat/webhook',sha:'abc123'}});
+
+  const ignoredBody=JSON.stringify({action:'created',repository:{full_name:'lalalic/agents-relay'},issue:{number:9,pull_request:{url:'x'}},comment:{body:'normal human comment'}});
+  const ignoredSignature='sha256='+createHmac('sha256',secret).update(ignoredBody).digest('hex');
+  const ignored=await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'workspace-ignored','x-github-event':'issue_comment','x-hub-signature-256':ignoredSignature},body:ignoredBody});
+  assert.equal(await ignored.text(),'Ignored');
+  assert.equal(received.length,1);
   server.close();
 });
 
-test('webhook refresh immediately pushes the refreshed dashboard snapshot even when reconciliation fails', async () => {
-  const selected={...job([task('webhook-task','SUCCEEDED')]),id:'webhook-job',repository:'lalalic/agents-relay',prNumber:9};
-  const refreshed={...selected,tasks:[...selected.tasks,task('fresh-task','QUEUED')]};
-  const secret='workspace-secret'; let reconciliationFailed=false; let current=selected; let wakeResolve;
-  const wakeDone=new Promise(resolve=>{wakeResolve=resolve;});
-  const server=managedDashboard(new InMemoryStore(selected),0,undefined,300000,'webhook-job',undefined,async()=>[{job:current,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],{secret,repositories:new Set(['lalalic/agents-relay']),refresh:async()=>{current=refreshed; return ['webhook-job'];},wake:async()=>{
-    try { throw new Error('reconciliation failed'); } catch { reconciliationFailed=true; throw new Error('reconciliation failed'); } finally { wakeResolve(); }
-  }});
-  await new Promise(resolve=>server.once('listening',resolve));
-  const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
-  const stream=await fetch(`http://127.0.0.1:${port}/events`); const reader=stream.body.getReader(); await reader.read();
-  const body=JSON.stringify({action:'synchronize',repository:{full_name:'lalalic/agents-relay'},pull_request:{number:9}});
-  const signature='sha256='+createHmac('sha256',secret).update(body).digest('hex');
-  await fetch(`http://127.0.0.1:${port}/webhooks/github`,{method:'POST',headers:{'content-type':'application/json','x-github-delivery':'freshness-delivery','x-github-event':'pull_request','x-hub-signature-256':signature},body});
-  let received=''; const readFreshSnapshot=(async()=>{for (;;) { const chunk=await reader.read(); received+=Buffer.from(chunk.value??[]).toString(); if (received.includes('fresh-task')) return; if (chunk.done) throw new Error('dashboard event stream ended before refreshed snapshot'); }})();
-  await Promise.race([readFreshSnapshot,new Promise((_,reject)=>setTimeout(()=>reject(new Error('timed out waiting for refreshed dashboard snapshot')),1000))]);
-  await Promise.race([wakeDone,new Promise((_,reject)=>setTimeout(()=>reject(new Error('timed out waiting for webhook wake')),1000))]);
-  assert.equal(reconciliationFailed,true); assert.match(received,/fresh-task/); await reader.cancel(); server.close();
-});
 
 test('memory event bus supports explicit all-job subscriptions without weakening subject safety', async () => {
   const bus=new MemoryEventBus(); const seen=[]; const unsubscribe=await bus.subscribeAll(async event=>{seen.push(event.job_id);});

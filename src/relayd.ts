@@ -281,12 +281,18 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     secret,
     repositories: new Set(repositories),
     wake: async (event: GitHubWebhookWake): Promise<void> => {
-      if (!event.repository || !event.pullRequest) return;
-      try {
-        await pool.webhookSignal(bus, event);
-      } catch (error) {
-        process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
+      if (targets.length === 0) return;
+      for (const target of targets) {
+        const store = runtimeStore(event.repository, event.pullRequest);
+        if (event.pullRequestFacts && store.applyPullRequestFacts) {
+          await store.applyPullRequestFacts({ ...event.pullRequestFacts, observedAt: new Date().toISOString() });
+          target.githubState = event.pullRequestFacts.state;
+        }
+        await pool.webhookWake(bus, target.job, event);
       }
+      cachedOverviews = dashboardManagedJobs(cachedOverviews);
+      await persistCache();
     }
   } : undefined;
   const exactJob = async (jobId: string) => {
