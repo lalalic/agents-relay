@@ -8,9 +8,9 @@ import { dispatchScheduleCycle } from './workflow/schedule-cycle-v2.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
-  const planners = job.tasks.filter(task => task.kind === 'planner');
-  return planners.some(task => task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied')
-    && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
+  const planSatisfied = (job.plans ?? []).some(plan => plan.status === 'SUCCEEDED' && plan.objectiveStatus === 'satisfied');
+  const legacySatisfied = (job.plans?.length ?? 0) === 0 && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied');
+  return (planSatisfied || legacySatisfied) && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
 }
 export function schedule(job: Job): Job {
   reconcileTaskDependencies(job);
@@ -18,11 +18,13 @@ export function schedule(job: Job): Job {
     ? job.tasks.filter(task => Date.parse(task.createdAt) >= Date.parse(job.schedule?.currentRunSlot ?? ''))
     : job.tasks;
   if (job.schedule) {
-    const planners = scopedTasks.filter(task => task.kind === 'planner');
-    const latest = planners.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
+    const slot = Date.parse(job.schedule.currentRunSlot ?? '');
+    const scopedPlans = (job.plans ?? []).filter(plan => !Number.isFinite(slot) || Date.parse(plan.createdAt) >= slot).sort((a, b) => a.round - b.round || a.createdAt.localeCompare(b.createdAt));
+    const latestPlan = scopedPlans.at(-1);
+    const legacyLatest = scopedPlans.length === 0 ? scopedTasks.filter(task => task.kind === 'planner').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1) : undefined;
     dispatchScheduleCycle({
       hasCurrentSlot: Boolean(job.schedule.currentRunSlot),
-      plannerSatisfied: latest?.state === 'SUCCEEDED' && latest.plannerResult?.objective_status === 'satisfied',
+      plannerSatisfied: latestPlan ? latestPlan.status === 'SUCCEEDED' && latestPlan.objectiveStatus === 'satisfied' : legacyLatest?.state === 'SUCCEEDED' && legacyLatest.plannerResult?.objective_status === 'satisfied',
     }, () => {
       const slot = job.schedule!.currentRunSlot ? Date.parse(job.schedule!.currentRunSlot) : Number.NaN;
       const lastRun = job.schedule!.lastRunAt ? Date.parse(job.schedule!.lastRunAt) : Number.NaN;

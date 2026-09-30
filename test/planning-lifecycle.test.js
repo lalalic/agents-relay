@@ -87,7 +87,8 @@ test('cancelled planner history does not freeze an active autonomous job', async
   await settle(reconciler);
   const result = await store.load('planning');
   assert.equal(plannerCalls, 1);
-  assert.equal(result.tasks.find(task => task.id === 'plan-2')?.state, 'SUCCEEDED');
+  assert.equal(result.tasks.some(task => task.id === 'plan-2'), false);
+  assert.equal(result.plans?.find(plan => plan.id === 'plan-2')?.status, 'SUCCEEDED');
   await stop();
 });
 
@@ -100,6 +101,7 @@ test('planner failure after an orchestrator-started batch does not invent execut
   await settle(reconciler);
   const result = await store.load('planning');
   assert.equal(result.tasks.filter(task => task.kind !== 'planner').length, 1);
-  assert.equal(result.tasks.find(task => task.id === 'plan-1')?.state, 'FAILED');
+  assert.equal(result.tasks.some(task => task.id === 'plan-1'), false);
+  assert.equal(result.plans?.find(plan => plan.id === 'plan-1')?.status, 'FAILED');
   await stop();
 });

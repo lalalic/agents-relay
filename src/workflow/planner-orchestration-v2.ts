@@ -44,21 +44,26 @@ export function decidePlannerOrchestration(facts:Readonly<Record<string,unknown>
 
 
 export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: boolean): Readonly<Record<string, unknown>> {
-  const allPlanners = job.tasks.filter(task => task.kind === 'planner');
   const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
   const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
-  const planners = scopedTasks.filter(task => task.kind === 'planner')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const latest = planners.at(-1);
+  const scopedPlans = (job.plans ?? []).filter(plan => !Number.isFinite(slot) || Date.parse(plan.createdAt) >= slot)
+    .sort((a, b) => a.round - b.round || a.createdAt.localeCompare(b.createdAt));
+  const latestPlan = scopedPlans.at(-1);
+  const legacyLatest = scopedPlans.length === 0
+    ? scopedTasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1)
+    : undefined;
+  const latestId = latestPlan?.id ?? legacyLatest?.id;
+  const latestObjective = latestPlan?.objectiveStatus ?? legacyLatest?.plannerResult?.objective_status;
   return {
     autonomousJob: job.executionMode === 'autonomous',
     legacyPlanningPending: job.initialPlanning?.status === 'pending',
     recoverablePendingPlan,
-    hasSeedWork: !(allPlanners.length === 0 && job.tasks.length === 0),
-    noActivePlanner: !planners.some(task => ['DRAFT', 'QUEUED', 'RUNNING', 'FAILED'].includes(task.state)),
-    noBlockedWork: !scopedTasks.some(isEffectivelyBlocked),
+    hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),
+    noActivePlanner: !scopedPlans.some(plan => plan.status === 'PLANNING'),
+    noBlockedWork: !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
-    continuationMaterialized: !(planners.length > 0 && latest?.plannerResult?.objective_status === 'in_progress' && !job.tasks.some(task => task.planningDecisionId === latest?.id)),
-    objectiveUnsatisfied: latest?.plannerResult?.objective_status !== 'satisfied',
+    continuationMaterialized: !(latestObjective === 'in_progress' && latestId && !job.tasks.some(task => task.kind !== 'planner' && task.planningDecisionId === latestId)),
+    objectiveUnsatisfied: latestObjective !== 'satisfied',
   };
 }

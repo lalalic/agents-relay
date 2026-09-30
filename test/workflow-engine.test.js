@@ -229,3 +229,39 @@ test('new entity constructors cannot choose lifecycle state outside workflow cre
   }
   assert.deepEqual(violations, []);
 });
+
+test('production cannot create synthetic planner Tasks', async () => {
+  const root = new URL('../src', import.meta.url).pathname;
+  const violations = [];
+  for (const path of await sourceFiles(root)) {
+    const relative = path.slice(root.length + 1);
+    const source = await readFile(path, 'utf8');
+    for (const match of source.matchAll(/kind\s*:\s*['"]planner['"]/g)) violations.push(relative + ':' + match[0]);
+  }
+  assert.deepEqual(violations, []);
+});
+
+
+test('production creates planning rounds only as Plan entities', async () => {
+  const root = new URL('../src', import.meta.url).pathname;
+  const violations = [];
+  for (const path of await sourceFiles(root)) {
+    const relative = path.slice(root.length + 1);
+    const source = await readFile(path, 'utf8');
+    for (const match of source.matchAll(/kind\s*:\s*['"]planner['"]/g)) violations.push(relative + ':' + match[0]);
+    assert.doesNotMatch(source, /createPlannerRoundTask|pendingPlanForPlannerTask/, relative + ' must not expose synthetic planner Task creation/migration helpers');
+  }
+  assert.deepEqual(violations, []);
+});
+
+test('legacy planner Tasks are read-only compatibility records', async () => {
+  const actions = await readFile(new URL('../src/task-actions.ts', import.meta.url), 'utf8');
+  const recovery = await readFile(new URL('../src/execution-recovery.ts', import.meta.url), 'utf8');
+  const taskReconcile = await readFile(new URL('../src/workflow/task-reconcile.ts', import.meta.url), 'utf8');
+  const jobs = await readFile(new URL('../src/job-actions.ts', import.meta.url), 'utf8');
+  assert.match(actions, /Legacy planner Task .* read-only/);
+  assert.match(recovery, /item\.kind !== 'planner'/);
+  assert.match(recovery, /task\.kind !== 'planner'/);
+  assert.match(taskReconcile, /if \(task\.kind === 'planner'\) continue/);
+  assert.match(jobs, /item\.kind !== 'planner'/);
+});

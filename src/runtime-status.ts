@@ -7,7 +7,8 @@ function isSuperseded(task: Task): boolean {
 }
 
 export function implementationTasks(job: Job): Task[] {
-  return job.tasks.filter(task => task.agentName !== 'reviewer'
+  return job.tasks.filter(task => task.kind !== 'planner'
+    && task.agentName !== 'reviewer'
     && task.agentName !== 'troubleshooter'
     && !isSuperseded(task)
     && task.state !== 'UNBLOCKED');

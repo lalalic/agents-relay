@@ -109,23 +109,13 @@ test('manual task.retry supersedes active automatic troubleshooter recovery for 
   assert.match(superseded.error,/Superseded by manual retry of root/);
 });
 
-test('shared task.retry action preserves planner feedback and clears durable execution identity', async () => {
+test('legacy planner Task is read-only under shared task.retry action', async () => {
   const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
   const store = new InMemoryStore(job([failed]));
-  const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: 'j', taskId: 'planner-retry' });
-  assert.equal(result.task.state, 'QUEUED');
-  assert.equal(result.task.maxAttempts, 6);
-  assert.equal(result.task.plannerRetryFeedback, 'invalid planner output');
-  assert.equal(result.task.error, null);
-  assert.equal(result.task.executionId, null);
-  assert.equal(result.task.leaseOwner, null);
-  assert.equal(result.task.leaseExpiresAt, null);
+  await assert.rejects(() => dispatchTaskAction(store, { id: 'task.retry', jobId: 'j', taskId: 'planner-retry' }), /read-only/);
   const persisted = (await store.load('j')).tasks[0];
-  assert.equal(persisted.state, result.task.state);
-  assert.equal(persisted.maxAttempts, result.task.maxAttempts);
-  assert.equal(persisted.plannerRetryFeedback, result.task.plannerRetryFeedback);
-  assert.equal(persisted.error, null);
-  assert.equal(persisted.executionId, null);
+  assert.equal(persisted.state, 'FAILED');
+  assert.equal(persisted.error, 'invalid planner output');
 });
 
 test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {
@@ -215,9 +205,10 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   assert.equal(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.state, 'ACTIVE');
-  assert.equal(saved.tasks[0].id, 'plan-1');
-  assert.equal(saved.tasks[0].plannerGuidance, 'additional planning guidance');
-  assert.equal(saved.tasks[0].plannerResult.objective_status, 'satisfied');
+  assert.equal(saved.tasks.some(item => item.kind === 'planner'), false);
+  assert.equal(saved.plans[0].id, 'plan-1');
+  assert.equal(saved.plans[0].guidance, 'additional planning guidance');
+  assert.equal(saved.plans[0].plannerResult.objective_status, 'satisfied');
 });
 test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
@@ -422,16 +413,15 @@ test('CLI task create and retry keep ACTIVE lifecycle while runtime changes', as
   [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
-test('manual planner retry preserves the previous planner error as retry feedback', async () => {
+test('CLI refuses mutation of legacy planner Task history', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-planner-retry-')); const file=join(directory,'job.json');
   const failedTask={...task('planner-1','FAILED'),kind:'planner',adapter:'orchestrator',error:'Planner next_tasks[0].output is required',attempt:3,maxAttempts:3};
   await writeFile(file, JSON.stringify(job([failedTask])));
   const child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','planner-1'],{cwd:process.cwd()});
-  const [code]=await once(child,'exit'); assert.equal(code,0);
+  const [code]=await once(child,'exit'); assert.notEqual(code,0);
   const saved=JSON.parse(await readFile(file,'utf8')); const planner=saved.tasks.find(t=>t.id==='planner-1');
-  assert.equal(planner.state,'QUEUED');
-  assert.equal(planner.error,null);
-  assert.equal(planner.plannerRetryFeedback,'Planner next_tasks[0].output is required');
+  assert.equal(planner.state,'FAILED');
+  assert.equal(planner.error,'Planner next_tasks[0].output is required');
   await rm(directory,{recursive:true,force:true});
 });
 
@@ -1225,15 +1215,15 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
   const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
   const store=new InMemoryStore(root);
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'current slot done',next_tasks:[]})}});
   await reconciler.reconcile('j');
+  await reconciler.idle();
   const saved=await store.load('j');
-  const fresh=saved.tasks.find(item=>item.id==='plan-2');
+  const fresh=saved.plans?.find(item=>item.id==='plan-2');
   assert.ok(fresh);
-  assert.equal(fresh.kind,'planner');
-  assert.equal(fresh.parentTaskId,null);
-  assert.equal(fresh.previousPlannerTaskId,'planner-1');
-  assert.equal(fresh.state,'QUEUED');
+  assert.equal(fresh.previousPlanId,'planner-1');
+  assert.equal(fresh.status,'SUCCEEDED');
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history only
   assert.notEqual(saved.state,'FAILED');
 });
 
@@ -1606,8 +1596,8 @@ test('autonomous in-progress batch advances planner without creating final revie
   await reconciler.reconcile('j');
   const saved=await store.load('j');
   assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
-  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,2);
-  assert.equal(saved.tasks.filter(item=>item.kind==='planner').at(-1).id,'plan-2');
+  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history remains read-only
+  assert.equal(saved.plans?.some(item=>item.id==='plan-2'),true);
 });
 
 test('autonomous satisfied objective ignores failed troubleshooter history for final review', async () => {

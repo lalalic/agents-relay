@@ -39,13 +39,14 @@ test('maybeCreatePlanner gates on effective BLOCKED but not FAILED work', async(
   const store=new InMemoryStore(makeJob([plan,failed]));
   const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]})}});
   const after=await reconciler.maybeCreatePlanner(await store.load('dependent'));
-  assert.ok(after.tasks.some(t=>t.id==='plan-2'));
+  assert.ok(after.plans?.some(p=>p.id==='plan-2'));
+  assert.equal(after.tasks.some(t=>t.id==='plan-2'),false);
 
   const blocked={...baseTask('blocked','BLOCKED'),planningDecisionId:'plan-1'};
   const blockedStore=new InMemoryStore(makeJob([plan,blocked]));
   const blockedReconciler=managedReconciler(blockedStore,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]})}});
   const unchanged=await blockedReconciler.maybeCreatePlanner(await blockedStore.load('dependent'));
-  assert.equal(unchanged.tasks.some(t=>t.id==='plan-2'),false);
+  assert.equal(unchanged.plans?.some(p=>p.id==='plan-2') ?? false,false);
 });
 
 test('blocker Job resolution sends autonomous BLOCKED dependents to replanning, while FAILED keeps direct retry', async()=>{
@@ -136,9 +137,10 @@ test('autonomous reconcile consumes UNBLOCKED evidence into exactly one durable 
   await reconciler.reconcile('dependent');
   let saved=await store.load('dependent');
   for(let i=0;i<40 && saved.plans?.find(p=>p.id==='plan-2')?.status==='PLANNING';i++){ await new Promise(r=>setTimeout(r,10)); saved=await store.load('dependent'); }
-  assert.ok(saved.tasks.some(t=>t.id==='plan-2'));
+  assert.equal(saved.tasks.some(t=>t.id==='plan-2'),false);
   const plan=saved.plans.find(p=>p.id==='plan-2');
-  assert.equal(plan.status,'PLANNING');
+  assert.ok(plan);
+  assert.equal(plan.status,'SUCCEEDED');
   assert.equal(plan.trigger.source,'unblock');
   assert.deepEqual(plan.trigger.taskIds,['release']);
   assert.equal(saved.tasks.some(t=>t.agentName==='troubleshooter'),false);

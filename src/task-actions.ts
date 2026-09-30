@@ -26,10 +26,9 @@ export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy =
   if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work; only fixed-job authoritative unblock may requeue it`);
   if (task.state !== 'FAILED') throw new Error(`Task ${task.id} is not restartable (${task.state})`);
 
-  const previousError = task.error;
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
   await transitionTaskEvent(task, 'retry');
   if (policy.extendBudget) task.maxAttempts = extendRetryBudget(task);
-  if (task.kind === 'planner' && previousError) task.plannerRetryFeedback = previousError;
   task.error = null;
   task.leaseOwner = null;
   task.leaseExpiresAt = null;
@@ -51,6 +50,7 @@ export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
 }
 
 export async function applyTaskCancelAction(task: Task, reason: string): Promise<Task> {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only`);
   if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work and is immutable`);
   if (!['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'FAILED'].includes(task.state)) throw new Error(`Task ${task.id} is not cancellable (${task.state})`);
   await transitionTaskEvent(task, task.state === 'RUNNING' ? 'task.cancelled' : 'cancel');
