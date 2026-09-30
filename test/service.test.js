@@ -7,7 +7,7 @@ import test from './test-runtime.js';
 import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation } from '../dist/cli-support.js';
-import { nextPatchVersion } from '../scripts/npm-version.mjs';
+import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
 
 
 test('relayd scheduled heartbeat cadence is ten minutes', () => {
@@ -155,11 +155,12 @@ test('publish workflow can write publication markers to pull requests', async ()
   assert.match(workflow, /pull-requests: write/);
 });
 
-test('release version selection starts at 1.0.0 and increments only the patch', () => {
-  assert.equal(nextPatchVersion(''), '1.0.0');
-  assert.equal(nextPatchVersion('1.0.0'), '1.0.1');
+test('release version selection honors an explicit newer major baseline then increments patches', () => {
+  assert.equal(nextPublishVersion('', '2.0.0'), '2.0.0');
+  assert.equal(nextPublishVersion('1.0.177', '2.0.0'), '2.0.0');
+  assert.equal(nextPublishVersion('2.0.0', '2.0.0'), '2.0.1');
   assert.equal(nextPatchVersion('2.7.9'), '2.7.10');
-  assert.throws(() => nextPatchVersion('latest'), /Unsupported npm version/);
+  assert.throws(() => nextPublishVersion('latest', '2.0.0'), /Unsupported npm version/);
 });
 
 test('CLI and daemon help are successful and do not require job storage', () => {
