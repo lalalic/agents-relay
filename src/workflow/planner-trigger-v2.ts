@@ -4,7 +4,7 @@ import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type PlannerTriggerGraphState = 'idle' | 'check_unblock' | 'check_schedule' | 'check_initial' | 'manual' | 'unblock' | 'schedule' | 'initial' | 'continuation';
 
-const source = readFileSync(new URL('../../workflow/planner-trigger-v2.mmd', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../workflow/planner-trigger.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => facts.durableFacts[name] === true;
 
 export const plannerTriggerV2 = new GraphRuntime(source, {

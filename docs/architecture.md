@@ -43,11 +43,11 @@ Every wake-up means only: "the durable state may have changed." In v2 the daemon
 
 ## State
 
-Durable Job/Task lifecycle legality is defined by directly renderable Mermaid graphs in `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd`. Review, planner, blocker/unblock, schedule, and troubleshooter orchestration policy is likewise defined by the dedicated `workflow/*-v2.mmd` graphs listed in [workflow-engine.md](workflow-engine.md). Relay parses all of them with the same minimal executable profile; there is no JSON/YAML mirror. Runtime status remains a separate derived projection.
+Durable Job/Task lifecycle legality is defined by directly renderable Mermaid graphs in `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`. Review, planner, blocker/unblock, schedule, and troubleshooter orchestration policy is likewise defined by the dedicated `workflow/*.mmd` graphs listed in [workflow-engine.md](workflow-engine.md). Relay parses all of them with the same minimal executable profile; there is no JSON/YAML mirror. Runtime status remains a separate derived projection.
 
 Job state is split into durable lifecycle and derived runtime status.
 
-Durable Job lifecycle is defined and rendered from [`workflow/job-lifecycle-v2.mmd`](../workflow/job-lifecycle-v2.mmd). This document explains the semantics but does not duplicate the transition table.
+Durable Job lifecycle is defined and rendered from [`workflow/job-lifecycle.mmd`](../workflow/job-lifecycle.mmd). This document explains the semantics but does not duplicate the transition table.
 
 - `DRAFT`: the Job exists but Relay must not execute it yet.
 - `ACTIVE`: Relay may reconcile it, evaluate triggers/schedules, release dependencies, and launch executable Tasks.
@@ -79,7 +79,7 @@ flowchart TD
 
 Within Task activity, runnable/running work outranks blocked or failed siblings. `BLOCKED` or `FAILED` describes the Job only when no `RUNNING` or `QUEUED` work can still advance it. A scheduled `ACTIVE` Job with no current executable activity projects `WAITING` between runs.
 
-Task lifecycle is defined and rendered from [`workflow/task-lifecycle-v2.mmd`](../workflow/task-lifecycle-v2.mmd). This document explains the semantics but does not duplicate the transition table.
+Task lifecycle is defined and rendered from [`workflow/task-lifecycle.mmd`](../workflow/task-lifecycle.mmd). This document explains the semantics but does not duplicate the transition table.
 
 A task is DRAFT when it exists durably but is not executable yet. Dependency-backed DRAFT tasks move to QUEUED when their dependencies succeed; a DRAFT task with no dependencies requires an explicit release to QUEUED. QUEUED means executable now. Once RUNNING, a task must not return to DRAFT; an external condition discovered during execution is BLOCKED. Autonomous objective satisfaction and review/merge readiness are runtime/reconcile facts and do not rewrite an ACTIVE Job into intermediate lifecycle states.
 

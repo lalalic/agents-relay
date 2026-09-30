@@ -5,40 +5,32 @@ truth for durable lifecycle graphs. The same `.mmd` file is intended to be
 rendered by Mermaid, reviewed and edited by humans/agents, and parsed directly
 by Relay. There is no generated JSON/YAML workflow definition.
 
-| Version | Profile | Status | Authority |
-| --- | --- | --- | --- |
-| v2 | Strict Mermaid `flowchart` | Production | Canonical Job/Task lifecycle authority |
-| v1 | Mermaid `stateDiagram-v2` | Compatibility fixture | Regression/parity oracle only |
+The working tree contains one current canonical graph for each workflow. Graph history and prior formats are retrieved from Git commits or tags rather than kept as parallel versioned files.
 
 Production durable lifecycle graphs:
 
-- `workflow/job-lifecycle-v2.mmd`
-- `workflow/task-lifecycle-v2.mmd`
+- `workflow/job-lifecycle.mmd`
+- `workflow/task-lifecycle.mmd`
 
 Production orchestration-policy graphs:
 
-- `workflow/review-lifecycle-v2.mmd`
-- `workflow/planner-trigger-v2.mmd`
-- `workflow/planner-orchestration-v2.mmd`
-- `workflow/blocker-resolution-v2.mmd`
-- `workflow/authoritative-unblock-v2.mmd`
-- `workflow/scheduled-run-v2.mmd`
-- `workflow/schedule-cycle-v2.mmd`
-- `workflow/troubleshooter-v2.mmd`
-- `workflow/task-related-action-v2.mmd`
+- `workflow/review-lifecycle.mmd`
+- `workflow/planner-trigger.mmd`
+- `workflow/planner-orchestration.mmd`
+- `workflow/blocker-resolution.mmd`
+- `workflow/authoritative-unblock.mmd`
+- `workflow/scheduled-run.mmd`
+- `workflow/schedule-cycle.mmd`
+- `workflow/troubleshooter.mmd`
+- `workflow/task-related-action.mmd`
 
 Job/Task graphs own durable lifecycle state transitions. Orchestration graphs
 own durable workflow branching and declared next actions without inventing
 additional Job/Task lifecycle states.
 
-Legacy compatibility fixtures remain at:
-
-- `workflow/job-lifecycle.mmd`
-- `workflow/task-lifecycle.mmd`
-
 ## Supported production profile
 
-Production lifecycle graphs use the strict v2 `flowchart` subset defined in
+Production lifecycle graphs use the strict executable `flowchart` subset defined in
 [`architecture-v2.md`](architecture-v2.md) and implemented by
 [`src/workflow/graph-v2.ts`](../src/workflow/graph-v2.ts). The executable
 concepts remain intentionally small: state, guard, action, emit, and labeled
@@ -62,8 +54,8 @@ semantics. Actions may form an unlabelled chain before the target state, which
 preserves ordered mutation/effect lists without adding another DSL construct.
 
 Semantic identifiers are registry-bound names, never embedded code. Display
-text has no executable meaning. The legacy `stateDiagram-v2` parser remains
-available only to verify compatibility against the pre-v2 lifecycle fixtures.
+text has no executable meaning. Historical graph syntax belongs to Git history,
+not to a parallel graph file in the current workflow directory.
 
 ## Engine boundary
 
@@ -100,7 +92,7 @@ These boundaries keep the executable Mermaid profile small while preventing life
 
 ## Integration verification checklist
 
-- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery/related-task branching; the legacy files are compatibility fixtures.
+- `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery/related-task branching.
 - Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.

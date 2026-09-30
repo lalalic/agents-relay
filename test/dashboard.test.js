@@ -86,6 +86,7 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
 
 test('dashboard exposes a top-level Graphs browser backed by the workflow graph API', () => {
   assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Graphs<\/button>/);
+  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Graphs<\/button>/);
   assert.match(dashboardHtml, /id="graphs-view"/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
@@ -97,7 +98,7 @@ test('dashboard exposes a top-level Graphs browser backed by the workflow graph 
 test('dashboard discovers workflow Mermaid files dynamically', async () => {
   const graphs = await dashboardWorkflowGraphs();
   assert.ok(graphs.length >= 10);
-  assert.ok(graphs.some(graph => graph.id === 'job-lifecycle-v2'));
+  assert.ok(graphs.some(graph => graph.id === 'job-lifecycle' && graph.name === 'Job Lifecycle'));
   assert.ok(graphs.every(graph => graph.path.startsWith('workflow/') && graph.path.endsWith('.mmd')));
   assert.ok(graphs.every(graph => graph.source.trim().length > 0));
 });
@@ -112,7 +113,7 @@ test('dashboard exposes workflow graphs through a no-store API', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   const graphs = await response.json();
-  assert.ok(graphs.some(graph => graph.id === 'task-lifecycle-v2'));
+  assert.ok(graphs.some(graph => graph.id === 'task-lifecycle' && graph.name === 'Task Lifecycle'));
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 

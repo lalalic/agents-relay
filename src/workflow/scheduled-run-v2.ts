@@ -6,7 +6,7 @@ export type ScheduledRunGraphState =
   | 'idle' | 'check_unclaimed' | 'check_job' | 'check_active' | 'check_concurrency'
   | 'check_queue' | 'check_missed' | 'skip_idempotent' | 'skip_active' | 'claimed';
 
-const source=readFileSync(new URL('../../workflow/scheduled-run-v2.mmd',import.meta.url),'utf8');
+const source=readFileSync(new URL('../../workflow/scheduled-run.mmd',import.meta.url),'utf8');
 const boolGuard=(name:string)=>(facts:{readonly durableFacts:Readonly<Record<string,unknown>>})=>facts.durableFacts[name]===true;
 
 export const scheduledRunV2=new GraphRuntime(source,{
