@@ -20,6 +20,10 @@ function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
 }
 
+function isTaskId(candidate: string): boolean {
+  return candidate.length > 0;
+}
+
 function isSafeRepositorySegment(segment: string): boolean {
   return segment !== '.' && segment !== '..';
 }
@@ -223,9 +227,9 @@ export function serveDashboard(
         if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
         let result: Job;
         if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task);
-        else if (body.action === 'retry' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
-        else if (body.action === 'cancel' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);
-        else if (body.action === 'complete' && /^[A-Za-z0-9_-]+$/.test(requestedTaskId) && typeof body.summary === 'string' && body.summary.trim() && resolvedActions?.taskComplete) result = await resolvedActions.taskComplete(requestedJobId, requestedTaskId, body.summary);
+        else if (body.action === 'retry' && isTaskId(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
+        else if (body.action === 'cancel' && isTaskId(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);
+        else if (body.action === 'complete' && isTaskId(requestedTaskId) && typeof body.summary === 'string' && body.summary.trim() && resolvedActions?.taskComplete) result = await resolvedActions.taskComplete(requestedJobId, requestedTaskId, body.summary);
         else throw new Error('Task command unavailable');
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));
@@ -241,7 +245,7 @@ export function serveDashboard(
       const requestedTaskId = url.searchParams.get('task') ?? '';
       const action = url.searchParams.get('action') ?? '';
       const handler = action === 'retry' ? resolvedActions?.taskRetry : action === 'cancel' ? resolvedActions?.taskCancel : undefined;
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !/^[A-Za-z0-9_-]+$/.test(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
       try {
         const result = await handler(requestedJobId, requestedTaskId);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
@@ -274,7 +278,7 @@ export function serveDashboard(
       const requestedTaskId = url.searchParams.get('task') ?? '';
       const requestedState = url.searchParams.get('state') ?? '';
       const validState = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'].includes(requestedState);
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !/^[A-Za-z0-9_-]+$/.test(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
       try {
         const result = await resolvedActions.taskSetState(requestedJobId, requestedTaskId, requestedState as TaskState);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });

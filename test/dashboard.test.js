@@ -342,6 +342,39 @@ test('dashboard task actions invoke the supplied runtime handler', async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
+test('dashboard task controls preserve durable task ids with spaces and brackets', async () => {
+  const task = { id: '[2026-09-29 17]', jobId: 'task-control-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
+  const job = { id: 'task-control-job', title: 'Task controls', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  const invocations = [];
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    taskRetry: async (jobId, taskId) => { invocations.push(['retry', jobId, taskId]); return job; },
+    taskSetState: async (jobId, taskId, state) => { invocations.push(['state', jobId, taskId, state]); return job; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const commandResponse = await fetch(`http://127.0.0.1:${address.port}/api/task-command`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: job.id, taskId: task.id, action: 'retry' })
+  });
+  assert.equal(commandResponse.status, 200);
+
+  const actionResponse = await fetch(`http://127.0.0.1:${address.port}/api/task-action?id=${job.id}&task=${encodeURIComponent(task.id)}&action=retry`, { method: 'POST' });
+  assert.equal(actionResponse.status, 200);
+
+  const stateResponse = await fetch(`http://127.0.0.1:${address.port}/api/task-state?id=${job.id}&task=${encodeURIComponent(task.id)}&state=QUEUED`, { method: 'POST' });
+  assert.equal(stateResponse.status, 200);
+
+  assert.deepEqual(invocations, [
+    ['retry', job.id, task.id],
+    ['retry', job.id, task.id],
+    ['state', job.id, task.id, 'QUEUED']
+  ]);
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
 test('hidden dashboard views cannot be overridden by layout display rules', () => {
   assert.match(dashboardHtml, /\[hidden\] \{ display:none !important; \}/);
   assert.match(dashboardHtml, /jobsWorkspace\.hidden=!isJobs/);
