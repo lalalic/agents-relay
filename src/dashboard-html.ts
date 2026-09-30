@@ -189,7 +189,7 @@ export const dashboardHtml = `<!doctype html>
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
     <button id="graphs-tab" type="button" role="tab" aria-selected="false" aria-controls="graphs-view">Graphs</button>
-    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Execution Rules</button>
+    <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Router Rules</button>
     <button id="shortcuts-tab" type="button" role="tab" aria-selected="false" aria-controls="shortcuts-view">Shortcuts</button>
   </nav>
 </header>
@@ -237,7 +237,7 @@ export const dashboardHtml = `<!doctype html>
   </section>
   <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden>
     <div class="panel">
-      <div class="panel-head"><h2>Execution Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
+      <div class="panel-head"><h2>Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
       <div class="panel-body">
         <div class="rules-editor">
           <p class="rules-help">Free-text soft policy loaded by the Execution Router for every worker+model routing decision. Impossible routes remain excluded by code; Codex remains the deterministic fallback if decision fails.</p>

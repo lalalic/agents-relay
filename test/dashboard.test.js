@@ -116,8 +116,8 @@ test('dashboard exposes workflow graphs through a no-store API', async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
-test('dashboard exposes a top-level ChatGPT Shortcuts editor beside Execution Rules', () => {
-  assert.match(dashboardHtml, /id="rules-tab"[\s\S]*>Execution Rules<\/button>[\s\S]*id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>/);
+test('dashboard exposes a top-level ChatGPT Shortcuts editor beside Router Rules', () => {
+  assert.match(dashboardHtml, /id="rules-tab"[\s\S]*>Router Rules<\/button>[\s\S]*id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>/);
   assert.match(dashboardHtml, /id="shortcuts-view"/);
   assert.match(dashboardHtml, /id="shortcuts-text"/);
   assert.match(dashboardHtml, /id="shortcuts-save"/);
@@ -570,7 +570,7 @@ test('dashboard exposes reviewer approval, changes-required, stale, and merge-re
 
 
 test('dashboard exposes one free-text Execution Router rules editor', () => {
-  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Execution Rules</);
+  assert.match(dashboardHtml, /id="rules-tab"[^>]*>Router Rules</);
   assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
   assert.match(dashboardHtml, /Free-text soft policy loaded by the Execution Router/);
   assert.match(dashboardHtml, /fetch\('\/api\/execution-router-rules'/);
