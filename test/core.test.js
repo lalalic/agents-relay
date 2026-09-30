@@ -95,6 +95,26 @@ test('internal task.retry preserves retry budget while manual dispatch extends i
   assert.equal(result.task.maxAttempts, 6);
 });
 
+test('task.queue uses one graph/action dependency gate for draft and failed work', async () => {
+  const done = task('done', 'SUCCEEDED');
+  const draft = task('draft', 'DRAFT', ['done']);
+  const failed = { ...task('failed', 'FAILED', ['done']), error: 'boom', executionId: 'old-exec', leaseOwner: 'old-owner' };
+  const blockedByDep = task('waiting', 'DRAFT', ['missing']);
+  const store = new InMemoryStore(job([done, draft, failed, blockedByDep]));
+
+  assert.equal((await dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'draft' })).task.state, 'QUEUED');
+  const failedResult = await dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'failed' });
+  assert.equal(failedResult.task.state, 'QUEUED');
+  assert.equal(failedResult.task.error, null);
+  assert.equal(failedResult.task.executionId, null);
+  assert.equal(failedResult.task.leaseOwner, null);
+  await assert.rejects(
+    () => dispatchTaskAction(store, { id: 'task.queue', jobId: 'j', taskId: 'waiting' }),
+    /not queueable/,
+  );
+  assert.equal((await store.load('j')).tasks.find(item => item.id === 'waiting').state, 'DRAFT');
+});
+
 test('manual task.retry supersedes active automatic troubleshooter recovery for the same task', async () => {
   const failed={...task('root','FAILED'),error:'boom'};
   const recovery={...task('troubleshoot-root-a0','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec',leaseOwner:'relay',error:null};

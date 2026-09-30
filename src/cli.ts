@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
-import { applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskReleaseAction, applyTaskRetryAction, dispatchTaskAction } from './task-actions.js';
+import { applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -224,11 +224,9 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive');
   if (hasArg(args, '--draft') && task.state === 'QUEUED') await applyTaskHoldAction(task);
   if (hasArg(args, '--queue')) {
-    const taskMap = new Map(job.tasks.map(item => [item.id, item]));
-    if (!task.dependencies.every(dep => taskMap.get(dep)?.state === 'SUCCEEDED')) throw new Error('Task dependencies must succeed before queueing');
-    if (task.state === 'DRAFT') await applyTaskReleaseAction(task);
-    else if (task.state === 'FAILED') await applyTaskRetryAction(task);
-    else if (task.state === 'BLOCKED') throw new Error(`Task ${id} is BLOCKED; use task unblock --reason instead of --queue`); else if (task.state === 'UNBLOCKED') throw new Error(`Task ${id} is historical UNBLOCKED work and cannot be queued`);
+    await store.saveTask(task);
+    const result = await dispatchTaskAction(store, { id: 'task.queue', jobId: job.id, taskId: id });
+    Object.assign(task, result.task);
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];

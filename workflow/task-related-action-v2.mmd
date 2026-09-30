@@ -13,6 +13,9 @@ cancelRelated["action: related.cancel"]
 
 evaluate -->|request: task.cancel| skip
 evaluate -->|request: task.unblock.retry| skip
+evaluate -->|request: task.queue| skip
+evaluate -->|request: task.release| skip
+evaluate -->|request: task.hold| skip
 evaluate -->|request: task.retry| otherTask
 otherTask -->|false| skip
 otherTask -->|true| checkOther

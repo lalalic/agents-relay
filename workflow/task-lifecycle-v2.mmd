@@ -81,6 +81,7 @@ recoverCompleteClearReason["action: mutation.clearFailureReason"]
 draft -->|on: release| releaseClearError
 releaseClearError --> releaseClearReason
 releaseClearReason --> queued
+draft -->|on: queue| depSat
 draft -->|on: reconcile| depSat
 depSat -->|true| reconcileDraftClearError
 reconcileDraftClearError --> reconcileDraftClearReason
@@ -179,6 +180,7 @@ unblocked -->|on: retry| unblockRetryClearError
 unblockRetryClearError --> unblockRetryClearReason
 unblockRetryClearReason --> queued
 
+failed -->|on: queue| depSat
 failed -->|on: retry| failedRetryClearError
 failedRetryClearError --> failedRetryClearReason
 failedRetryClearReason --> queued

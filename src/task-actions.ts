@@ -9,7 +9,8 @@ export const TASK_CANCEL_ACTION = 'task.cancel' as const;
 export const TASK_RELEASE_ACTION = 'task.release' as const;
 export const TASK_HOLD_ACTION = 'task.hold' as const;
 export const TASK_COMPLETE_ACTION = 'task.complete' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_COMPLETE_ACTION;
+export const TASK_QUEUE_ACTION = 'task.queue' as const;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_COMPLETE_ACTION | typeof TASK_QUEUE_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
@@ -24,9 +25,9 @@ function lifecycleRejection(task: Task, action: string): Error {
   return new Error(`Task ${task.id} is not ${action} (${task.state})`);
 }
 
-async function transitionTaskAction(task: Task, event: string, action: string): Promise<void> {
+async function transitionTaskAction(task: Task, event: string, action: string, facts = {}): Promise<void> {
   try {
-    await transitionTaskEvent(task, event);
+    await transitionTaskEvent(task, event, facts);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
       throw lifecycleRejection(task, action);
@@ -87,6 +88,14 @@ export async function applyTaskHoldAction(task: Task): Promise<Task> {
   return task;
 }
 
+export async function applyTaskQueueAction(job: Job, task: Task): Promise<Task> {
+  const taskMap = new Map(job.tasks.map(item => [item.id, item]));
+  const dependenciesSatisfied = task.dependencies.every(id => taskMap.get(id)?.state === 'SUCCEEDED');
+  await transitionTaskAction(task, 'queue', 'queueable', { dependenciesSatisfied });
+  clearExecution(task);
+  return task;
+}
+
 export async function applyOrchestratorCompleteAction(task: Task, summary: string): Promise<Task> {
   if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
   const originalState = task.state;
@@ -131,6 +140,9 @@ export async function dispatchTaskAction(
   if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
+  else if (request.id === TASK_RELEASE_ACTION) await applyTaskReleaseAction(task);
+  else if (request.id === TASK_HOLD_ACTION) await applyTaskHoldAction(task);
+  else if (request.id === TASK_QUEUE_ACTION) await applyTaskQueueAction(job, task);
   else throw new Error(`Unsupported task action ${request.id}`);
   const changedRelated = await applySelectedRelatedTaskMutations(job, relatedMutations);
   await store.saveTask(task);

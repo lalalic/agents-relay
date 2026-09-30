@@ -13,6 +13,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'implementation.completed',
   'pr.closed',
   'pr.merged',
+  'queue',
   'plan.requested',
   'planner.failed',
   'planner.unavailable',

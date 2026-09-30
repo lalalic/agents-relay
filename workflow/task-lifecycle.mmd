@@ -2,6 +2,7 @@ stateDiagram-v2
     [*] --> DRAFT
 
     DRAFT --> QUEUED: release / mutation.clearError,mutation.clearFailureReason
+    DRAFT --> QUEUED: queue [dependenciesSatisfied] / mutation.clearError,mutation.clearFailureReason
     DRAFT --> QUEUED: reconcile [dependenciesSatisfied] / mutation.clearError,mutation.clearFailureReason
     DRAFT --> BLOCKED: block
     DRAFT --> CANCELLED: cancel
@@ -38,6 +39,7 @@ stateDiagram-v2
 
     UNBLOCKED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
 
+    FAILED --> QUEUED: queue [dependenciesSatisfied] / mutation.clearError,mutation.clearFailureReason
     FAILED --> QUEUED: retry / mutation.clearError,mutation.clearFailureReason
     FAILED --> RUNNING: task.started [recoverableExecution] / mutation.clearError,mutation.clearFailureReason
     FAILED --> SUCCEEDED: task.completed [recoverableExecution] / mutation.clearError,mutation.clearFailureReason
