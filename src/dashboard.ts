@@ -1,7 +1,8 @@
 import { createServer, Server } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DurableStore, GitHubRateLimitBucket, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
@@ -15,6 +16,19 @@ import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
+const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
+
+export type DashboardWorkflowGraph = { id: string; name: string; path: string; source: string };
+
+export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
+  const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort();
+  return Promise.all(names.map(async name => ({
+    id: name.replace(/\.mmd$/, ''),
+    name: name.replace(/\.mmd$/, '').split('-').map(part => part === 'v2' ? 'V2' : part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
+    path: `workflow/${name}`,
+    source: await readFile(join(WORKFLOW_DIR, name), 'utf8'),
+  })));
+}
 type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
@@ -175,6 +189,17 @@ export function serveDashboard(
     if (req.url === '/api/version') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ version: dashboardVersion }));
+      return;
+    }
+    if (req.url === '/api/graphs') {
+      try {
+        const graphs = await dashboardWorkflowGraphs();
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(graphs));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (req.url === '/webhooks/github' && req.method === 'POST') {
