@@ -122,6 +122,12 @@ test('dashboard direct job lifecycle state override persists without changing ru
   assert.equal(deriveJobRuntimeStatus(durable, 'OPEN'), 'IDLE');
 });
 
+test('dashboard job lifecycle override cannot invent a transition absent from the canonical graph', async () => {
+  const store = new InMemoryStore(job([]));
+  await assert.rejects(() => dashboardJobSetState(store)('j', 'DRAFT'), /Invalid job transition ACTIVE -> DRAFT/);
+  assert.equal((await store.load('j')).state, 'ACTIVE');
+});
+
 test('dashboard direct task state override is durable, audited, and does not reconcile', async () => {
   const manual = task('manual', 'FAILED');
   manual.error = 'historical failure';
@@ -140,6 +146,13 @@ test('dashboard direct task state override is durable, audited, and does not rec
   assert.equal(updatedTask.manualStateOverrides[0].to, 'SUCCEEDED');
   assert.equal(updatedTask.manualStateOverrides[0].actor, 'dashboard-user');
   assert.equal(updatedTask.error, 'historical failure');
+});
+
+test('dashboard task state override cannot invent a transition absent from the canonical graph', async () => {
+  const manual = task('manual-invalid', 'SUCCEEDED');
+  const store = new InMemoryStore(job([manual]));
+  await assert.rejects(() => dashboardTaskSetState(store)('j', 'manual-invalid', 'RUNNING'), /Invalid task transition SUCCEEDED -> RUNNING/);
+  assert.equal((await store.load('j')).tasks[0].state, 'SUCCEEDED');
 });
 
 test('dashboard cancel transitions RUNNING through task.cancelled and clears execution identity', async () => {

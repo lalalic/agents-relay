@@ -1,5 +1,5 @@
 import type { DurableStore } from './store.js';
-import type { Job, JobLifecycleState, TaskState } from './types.js';
+import { assertJobLifecycleTransition, assertTaskTransition, type Job, type JobLifecycleState, type TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
 import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
 import { applyTaskCancelAction, dispatchTaskAction } from './task-actions.js';
@@ -28,6 +28,7 @@ export function dashboardJobSetState(store: DurableStore): (jobId: string, state
   return async (jobId: string, state: JobLifecycleState): Promise<Job> => {
     const job = await store.load(jobId);
     if (job.state === state) return job;
+    assertJobLifecycleTransition(job.state, state);
     applyJobWorkflowDecision(job, {
       accepted: true,
       target: state,
@@ -54,6 +55,7 @@ export function dashboardTaskSetState(store: DurableStore): (jobId: string, task
 
     const now = new Date().toISOString();
     const from = task.state;
+    assertTaskTransition(from, state);
     applyTaskWorkflowDecision(task, {
       accepted: true,
       target: state,
