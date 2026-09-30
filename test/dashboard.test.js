@@ -129,7 +129,9 @@ test('job detail exposes ChatGPT shortcuts as an empty-first select that resets 
   assert.match(dashboardHtml, /function chatShortcutField\(job\)/);
   assert.match(dashboardHtml, /select\.append\(new Option\('',''\)\)/);
   assert.match(dashboardHtml, /job-chat-shortcut-select/);
-  assert.match(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),'_blank','noopener'\)/);
+  assert.match(dashboardHtml, /const CHAT_SHORTCUT_TARGET='agents-relay-shortcut';/);
+  assert.match(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),CHAT_SHORTCUT_TARGET,'noopener'\)/);
+  assert.doesNotMatch(dashboardHtml, /window\.open\(chatShortcutUrl\(prompt\),'_blank','noopener'\)/);
   assert.match(dashboardHtml, /select\.value='';/);
   assert.match(dashboardHtml, /chatShortcutField\(job\)/);
 });
