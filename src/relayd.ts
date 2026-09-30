@@ -25,6 +25,7 @@ import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
+import { runRouterEvals } from './router-evals.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 export type PullRequestRefreshTrigger = string;
@@ -328,7 +329,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     taskCancel: workspaceTaskAction('cancel'),
     taskComplete: workspaceTaskComplete,
     taskSetState: workspaceTaskSetState,
-  });
+  }, async () => await runRouterEvals(new LayaCliDecisionEngine()),
+  async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5));
+
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }

@@ -6,7 +6,7 @@ import test, { managedReconciler } from './test-runtime.js';
 import { decisionMode, LayaCliDecisionEngine, parseChoiceDecision, validateDecisionRequest } from '../dist/decision.js';
 import { discoverModelCandidates, routeModel } from '../dist/model-routing.js';
 import { routeWorker, workerCandidates } from '../dist/worker-routing.js';
-import { routeExecution } from '../dist/execution-routing.js';
+import { executionTaskShape, routeExecution } from '../dist/execution-routing.js';
 import { MemoryEventBus } from '../dist/events.js';
 
 const contract = { type: 'choice', question: 'Pick one', choices: ['a', 'b'] };
@@ -333,7 +333,7 @@ test('worker fallback always chooses Codex when Codex is legal', async () => {
   assert.equal(routed.selection.decisionEvidence.fallback, true);
 });
 
-test('execution router makes one decision over complete routes and forwards all worker requirements as soft facts', async () => {
+test('execution router makes one decision over complete routes with compact task-shape facts', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-unified-route-'));
   const oldHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = home;
@@ -356,7 +356,10 @@ test('execution router makes one decision over complete routes and forwards all 
     assert.equal(calls.length, 1);
     assert.ok(calls[0].contract.choices.some(item => item.startsWith('codex::')));
     assert.ok(calls[0].contract.choices.some(item => item.startsWith('chatgpt/browser-worker::')));
-    assert.deepEqual(calls[0].request.facts.worker_requirements, requirements);
+    assert.equal(calls[0].request.facts.task_shape.story_size, 'M');
+    assert.equal(calls[0].request.facts.task_shape.preferred_worker, 'chatgpt');
+    assert.ok(calls[0].request.facts.preferred_routes.every(item => item.startsWith('chatgpt/browser-worker::')));
+    assert.equal(calls[0].request.facts.worker_requirements, undefined);
     assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
     assert.equal(result.candidate.routing.provider, 'chatgpt');
   } finally {
@@ -423,12 +426,21 @@ test('final review uses normal Worker Router decision with current user guidance
     assert.equal(result.selection.selectedBy, 'execution-router:laya');
     assert.equal(calls.length, 1);
     assert.match(calls[0].request.facts.environment_rules, /don't use chatgpt worker/);
-    assert.equal(calls[0].request.facts.task.role, 'reviewer');
-    assert.deepEqual(calls[0].request.facts.task.reviewer_diversity.implementation_workers, ['codex']);
-    assert.match(calls[0].request.facts.task.reviewer_diversity.preference, /soft preference below user environment rules/);
+    assert.equal(calls[0].request.facts.reviewer_context.role, 'reviewer');
+    assert.deepEqual(calls[0].request.facts.reviewer_context.reviewer_diversity.implementation_workers, ['codex']);
+    assert.match(calls[0].request.facts.reviewer_context.reviewer_diversity.preference, /soft preference below user environment rules/);
   } finally {
     if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome;
     if (oldRules === undefined) delete process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES; else process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = oldRules;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('execution task shape keeps router policy simple', () => {
+  assert.deepEqual(executionTaskShape({ storySize: 'S' }), {
+    storySize: 'S', sustainedWork: false, preferredWorker: 'chatgpt',
+    reason: 'Small/medium tasks favor ChatGPT when Browser Workspace capacity is available.',
+  });
+  assert.equal(executionTaskShape({ storySize: 'M' }).preferredWorker, 'chatgpt');
+  assert.equal(executionTaskShape({ storySize: 'L' }).preferredWorker, 'codex');
 });

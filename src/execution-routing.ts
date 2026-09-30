@@ -31,6 +31,34 @@ export type ExecutionRoutingDecision = {
   audit?: DecisionAuditRecord;
 };
 
+export function executionTaskShape(taskFacts: Record<string, unknown> = {}): {
+  storySize: 'S' | 'M' | 'L';
+  sustainedWork: boolean;
+  preferredWorker: 'chatgpt' | 'codex';
+  reason: string;
+} {
+  const raw = taskFacts.storySize;
+  const storySize = raw === 'S' || raw === 'L' ? raw : 'M';
+  const sustainedWork = storySize === 'L';
+  return {
+    storySize,
+    sustainedWork,
+    preferredWorker: sustainedWork ? 'codex' : 'chatgpt',
+    reason: sustainedWork
+      ? 'Large/sustained tasks favor Codex.'
+      : 'Small/medium tasks favor ChatGPT when Browser Workspace capacity is available.',
+  };
+}
+
+export const EXECUTION_ROUTING_PRINCIPLES = [
+  'Choose one complete executable route: worker plus provider/model/profile/reasoning.',
+  'ChatGPT with MacBridge and Codex have broadly overlapping execution capabilities.',
+  'preferred_routes is the primary soft worker-fit preference derived from task size: S/M prefer ChatGPT, L prefers Codex.',
+  "Browser Workspace exhaustion is ChatGPT's primary hard execution constraint.",
+  'Concrete user rules, resource health, quota, or load facts may override preferred_routes.',
+  'Codex is only the deterministic fallback when the decision engine fails.',
+] as const;
+
 export type ExecutionRoutingOptions = {
   decisionEngine?: DecisionEngine;
   decisionMode?: DecisionMode;
@@ -153,35 +181,29 @@ export async function routeExecution(
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
 
+  const taskFacts = options.taskFacts ?? {};
+  const taskShape = executionTaskShape(taskFacts);
   const facts = JSON.parse(JSON.stringify({
-    task: options.taskFacts ?? {},
-    worker_requirements: requirements,
-    explicit_routing_constraints: options.routingConstraints ?? {},
+    task_shape: {
+      story_size: taskShape.storySize,
+      sustained_work: taskShape.sustainedWork,
+      preferred_worker: taskShape.preferredWorker,
+      reason: taskShape.reason,
+    },
     environment_rules: environmentRules,
-    structured_policy: policy.snapshot,
-    usage_snapshot: options.usage ?? null,
+    reviewer_context: taskFacts.reviewer_diversity ? {
+      role: taskFacts.role ?? null,
+      reviewer_diversity: taskFacts.reviewer_diversity,
+    } : null,
     runtime_load: {
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
-    routing_principles: [
-      'Choose one complete executable route: worker plus provider/model/profile/reasoning.',
-      'Only authoritative impossibility constraints are hard gates; all other task fit, capability, trust, region, labels, quota, cost, latency, load, reviewer diversity, and quality signals are soft facts.',
-      'User free-text environment rules are soft routing guidance and should be followed when they express a clear preference.',
-      'Codex is only the deterministic fallback when the decision engine fails; Codex is not a normal preference when decide() succeeds.',
-    ],
+    preferred_routes: routes.filter(route => route.worker.adapter === taskShape.preferredWorker).map(route => route.id),
     candidates: routes.map(route => ({
       id: route.id,
       worker: {
-        id: route.worker.workerId,
         adapter: route.worker.adapter,
-        runtime: route.worker.runtime ?? null,
-        availability: route.worker.availability ?? null,
-        capabilities: [...route.worker.capabilities],
-        trustDomains: route.worker.trustDomains ?? [],
-        region: route.worker.region ?? null,
-        labels: route.worker.labels ?? {},
-        browserWorkspaceCapacity: route.worker.browserWorkspaceCapacity ?? null,
       },
       model: {
         provider: route.model.provider,
@@ -201,7 +223,7 @@ export async function routeExecution(
   const decisionRequest = { facts };
   const decisionContract = {
     type: 'choice' as const,
-    question: 'Choose the best complete execution route for this task. The listed candidates are already executable. Treat all non-impossibility signals as soft facts, follow free-text user guidance, and choose worker+model together in this one decision.',
+    question: 'Choose the best complete execution route. If preferred_routes is non-empty, choose from preferred_routes unless environment_rules explicitly override it or a preferred route is unhealthy/unavailable. Choose worker+model together in one decision.',
     choices: routes.map(route => route.id),
   };
   const choice = await chooseWithDecision(

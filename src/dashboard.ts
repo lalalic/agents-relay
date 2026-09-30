@@ -12,6 +12,8 @@ import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-po
 import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import { eventsBusHistory } from './events-bus-runtime.js';
+import type { DecisionAuditRecord } from './decision-audit.js';
+import type { RouterEvalReport } from './router-evals.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
@@ -82,6 +84,8 @@ export function serveDashboard(
   githubUsageProvider?: () => Promise<unknown>,
   exactJobProvider?: (jobId: string) => Promise<Job | null>,
   actions?: DashboardActions,
+  routerEvalProvider?: () => Promise<RouterEvalReport>,
+  decisionAuditProvider?: () => Promise<DecisionAuditRecord[]>,
 ): Server {
   const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
   const legacyExactJobProvider = !exactJobProvider && githubUsageProvider ? githubUsageProvider as unknown as ((jobId: string) => Promise<Job | null>) : undefined;
@@ -363,6 +367,32 @@ export function serveDashboard(
       }
       res.writeHead(405, { allow: 'GET, PUT' });
       res.end('Method not allowed');
+      return;
+    }
+    if (req.url === '/api/router-evals') {
+      if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end('Method not allowed'); return; }
+      if (!routerEvalProvider) { res.writeHead(503); res.end('Router evals unavailable'); return; }
+      try {
+        const report = await routerEvalProvider();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(report));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (req.url === '/api/decision-audit') {
+      if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end('Method not allowed'); return; }
+      if (!decisionAuditProvider) { res.writeHead(200, { 'content-type': 'application/json' }); res.end('[]'); return; }
+      try {
+        const records = await decisionAuditProvider();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(records.slice(-30).reverse()));
+      } catch (error) {
+        res.writeHead(500);
+        res.end(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
     if (req.url === '/api/runtime-summary') {
