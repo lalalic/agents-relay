@@ -4,6 +4,44 @@ Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs
 
 V2 separates **operational execution state** from that collaboration record. A local RelayStore may use SQLite/WAL for runtime snapshots, event idempotency and a durable GitHub projection outbox. ProjectedDurableStore bootstraps from the existing GitHub representation, commits Job/Plan/Task runtime changes locally, and lets GitHubProjectionWriter project them asynchronously. GitHub therefore remains the human-readable durable Job/Plan/Task/Review surface without being required for every high-frequency runtime transition.
 
+## V2 architecture
+
+```mermaid
+flowchart LR
+    Human[Human / orchestrator] --> GH[GitHub PR + comments<br/>collaboration + audit surface]
+    GH --> Inbound[Typed inbound GitHub facts]
+    Worker[Workers / adapters] --> Events[Event Bus<br/>lifecycle + progress facts]
+    Inbound --> Coord[ReconcileCoordinator]
+    Events --> Coord
+    Coord --> Graphs[Executable Mermaid graphs<br/>workflow authority]
+    Graphs --> Runtime[TypeScript primitives<br/>facts + guards + effects]
+    Runtime --> Store[(SQLite/WAL RelayStore<br/>operational execution truth)]
+    Store --> Outbox[Projection outbox]
+    Outbox --> Writer[GitHubProjectionWriter]
+    Writer --> GH
+    Store --> Views[Dashboard / scheduler / recovery]
+```
+
+RelayStore owns local operational execution facts; GitHub remains the human-readable collaboration and audit projection. Worker events are authoritative lifecycle inputs for model-backed tasks, but they are not a separate durable database. The graph engine owns workflow branching; TypeScript owns facts, persistence, locking/claims, I/O, and primitive guard/action implementations.
+
+### Workflow graph navigation
+
+| Area | Canonical graph |
+| --- | --- |
+| Job lifecycle | [`workflow/job-lifecycle-v2.mmd`](workflow/job-lifecycle-v2.mmd) |
+| Task lifecycle | [`workflow/task-lifecycle-v2.mmd`](workflow/task-lifecycle-v2.mmd) |
+| Review lifecycle | [`workflow/review-lifecycle-v2.mmd`](workflow/review-lifecycle-v2.mmd) |
+| Planner trigger | [`workflow/planner-trigger-v2.mmd`](workflow/planner-trigger-v2.mmd) |
+| Planner orchestration | [`workflow/planner-orchestration-v2.mmd`](workflow/planner-orchestration-v2.mmd) |
+| Blocker resolution | [`workflow/blocker-resolution-v2.mmd`](workflow/blocker-resolution-v2.mmd) |
+| Authoritative unblock | [`workflow/authoritative-unblock-v2.mmd`](workflow/authoritative-unblock-v2.mmd) |
+| Scheduled run | [`workflow/scheduled-run-v2.mmd`](workflow/scheduled-run-v2.mmd) |
+| Schedule cycle | [`workflow/schedule-cycle-v2.mmd`](workflow/schedule-cycle-v2.mmd) |
+| Troubleshooter | [`workflow/troubleshooter-v2.mmd`](workflow/troubleshooter-v2.mmd) |
+| Related-task action policy | [`workflow/task-related-action-v2.mmd`](workflow/task-related-action-v2.mmd) |
+
+Legacy [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd) are compatibility/parity fixtures only. See [`docs/workflow-engine.md`](docs/workflow-engine.md) and [`docs/architecture-v2.md`](docs/architecture-v2.md).
+
 ## Quick start
 
 For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
@@ -50,7 +88,7 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
 
-Lifecycle transition authority lives in the directly renderable v2 flowchart sources [`workflow/job-lifecycle-v2.mmd`](workflow/job-lifecycle-v2.mmd) and [`workflow/task-lifecycle-v2.mmd`](workflow/task-lifecycle-v2.mmd). The legacy `stateDiagram-v2` files remain compatibility fixtures only; see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
+Lifecycle transition authority lives in the directly renderable V2 flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). The legacy `stateDiagram-v2` files remain compatibility fixtures only; see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
 
 The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, Schedule, and Troubleshooter orchestration branches are defined by the v2 workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
@@ -86,10 +124,7 @@ Task producers must follow `skills/agents-relay/contracts/task-job-contract.md`;
 Execution routing is code-driven: Relay builds complete executable worker+model routes from authoritative runtime/model/resource facts, removes only impossible routes, then calls the generic typed `decide(request, contract)` boundary once. Free-text routing guidance and task/resource/capability signals are soft decision facts; decision failure falls back deterministically to a usable Codex default route. See [Execution Router and typed decisions](docs/worker-model-routers.md).
 All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 minutes, and `L`≈45 minutes of normal-reasoning execution, with `M` as the default. `high` reasoning doubles that overall window. ChatGPT Browser Worker start-ack timeout is derived as one third of the effective overall timeout, clamped between 1 and 5 minutes. Orchestrators and planners should choose `storySize`, not raw timeout milliseconds; `--timeout` remains only as an explicit compatibility/debug override.
 
-Autonomous jobs can also be scheduled without a Relay database. The job marker
-stores a five-field cron expression, IANA timezone, next run, and missed-run /
-concurrency policy; GitHub issue labels provide the indexed discovery surface.
-A repository heartbeat invokes `tick` at 10-minute resolution. See
+Autonomous jobs can also be scheduled. The Job marker stores a five-field cron expression, IANA timezone, next run, and missed-run/concurrency policy. The daemon evaluates the SQLite-backed managed Job view and validates durable schedule facts before claiming a due slot. A repository heartbeat invokes `tick` at 10-minute resolution. See
 [Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
 operational contract.
 
@@ -152,7 +187,7 @@ This small live suite covers two Temporary Chat submission gates: a normal text
 prompt and a prompt with an attachment. It does not exercise worker lifecycle
 events, durable-thread reuse, resume, or retry behavior.
 
-Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly; the CLI uses GitHubStore with the authenticated gh client in operational mode.
+Open the dashboard on localhost port 8787. The marker format is intentionally public and append-friendly. Daemon/workspace operation uses `ProjectedDurableStore` over SQLite RelayStore plus the authenticated GitHub projection adapter; GitHubStore is not the daemon operational state database.
 
 External product feedback uses the reusable `src/feedback.ts` contract. See [docs/feedback-intake.md](docs/feedback-intake.md) for the schema, attachment limits, privacy rules, materialization path, and provenance envelope for later Jobs/Tasks/PRs.
 
@@ -164,7 +199,7 @@ Router Rules are stored at `~/.agents-relay/execution-router-rules.md` by defaul
 
 For automation, Agents Relay can use GitHub App installation authentication via `AGENTS_RELAY_GITHUB_APP_ID`, `AGENTS_RELAY_GITHUB_APP_INSTALLATION_ID`, and `AGENTS_RELAY_GITHUB_APP_PRIVATE_KEY_FILE` (or matching CLI flags). Webhook mode is local-first: targeted webhook reconciliation is primary, dashboard auto-refresh reads the disposable in-process view restored from SQLite RelayStore state, and the broad watchdog drops to a 30-minute fallback. No separate persisted dashboard Job cache is maintained. See [docs/github-app-rate-limit.md](docs/github-app-rate-limit.md).
 
-V1 assumes one active runner/daemon per job. Use a distributed atomic lease before running multiple reconcilers. Do not put secrets, credentials, private prompts, or large private payloads in the PR-body Job marker or PR-comment Task markers; store only summaries and artifact references.
+Run one logical reconciliation authority per Job. `ReconcileCoordinator` serializes in-process work; use a distributed atomic lease before multiple independent reconcilers own the same Job. Do not put secrets, credentials, private prompts, or large private payloads in the PR-body Job marker or PR-comment Task markers; store only summaries and artifact references.
 
 Model-backed tasks are routed by Relay before launch. Normal task producers omit adapter/provider/model; explicit routing flags remain compatibility/debug constraints. See [docs/architecture.md](docs/architecture.md) and [skills/agents-relay/SKILL.md](skills/agents-relay/SKILL.md).
 
@@ -184,7 +219,7 @@ Managed tasks are descriptive work for agents, not shell commands. Use `codex` o
 
 Every model-backed task declares a durable output with `--output task-pr` or `--output file --output-path PATH`. Agents Relay bootstraps workers with the managed PR URL, durable task-comment URL, job/task identity, project, output contract, and mandatory terminal-event contract; workers retrieve the task intent from GitHub rather than receiving a duplicate copy of the stored task prompt.
 
-For Codex and ChatGPT, **events are authoritative task state**. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay only subscribes and reconciles. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The ChatGPT worker-owned tab follows the configured close policy: `after-start` waits for the correlated start acknowledgement, `never` keeps it open for debug, and `after-terminal` waits for a new exact-task terminal event; start-ack failure closes only the owned tab after 60 seconds. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
+For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The ChatGPT worker-owned tab follows the configured close policy: `after-start` waits for the correlated start acknowledgement, `never` keeps it open for debug, and `after-terminal` waits for a new exact-task terminal event; start-ack failure closes only the owned tab after 60 seconds. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
 The ChatGPT adapter uses the `chatgpt-browser-worker` path selected by the shared execution-context resolver; Relay does not bundle its own copy. The resolver applies project-local > Neo shared > global `~/.agents` precedence at execution time, so durable tasks store names/intent rather than stale absolute skill paths. It opens a fresh Temporary Chat tab, uses the account defaults, submits the prompt, verifies acceptance, and applies `--chatgpt-tab-close-policy` (or `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`): `after-start` by default, `never` for test/debug, or `after-terminal` after a new exact-task terminal event. It never closes a user tab and does not poll for the assistant response, resume/reopen a thread, or use conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
-import { dashboardHtml, dashboardVersion, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
+import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 
 
@@ -82,6 +82,38 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
   assert.match(dashboardHtml, /collapsedTasks\.add\(key\);expandedTasks\.delete\(key\)/);
   assert.match(dashboardHtml, /collapsedTasks\.delete\(key\);expandedTasks\.add\(key\)/);
   assert.match(dashboardHtml, /if\(nested\.length\)\{/);
+});
+
+test('dashboard exposes a top-level Graphs browser backed by the workflow graph API', () => {
+  assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Graphs<\/button>/);
+  assert.match(dashboardHtml, /id="graphs-view"/);
+  assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
+  assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
+  assert.match(dashboardHtml, /window\.mermaid\.render/);
+  assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(rendered\.svg,'image\/svg\+xml'\)/);
+  assert.match(dashboardHtml, /id="graph-source"/);
+});
+
+test('dashboard discovers workflow Mermaid files dynamically', async () => {
+  const graphs = await dashboardWorkflowGraphs();
+  assert.ok(graphs.length >= 10);
+  assert.ok(graphs.some(graph => graph.id === 'job-lifecycle-v2'));
+  assert.ok(graphs.every(graph => graph.path.startsWith('workflow/') && graph.path.endsWith('.mmd')));
+  assert.ok(graphs.every(graph => graph.source.trim().length > 0));
+});
+
+test('dashboard exposes workflow graphs through a no-store API', async () => {
+  const job = { id: 'graphs-job', title: 'Graphs', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/graphs`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const graphs = await response.json();
+  assert.ok(graphs.some(graph => graph.id === 'task-lifecycle-v2'));
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
 test('dashboard exposes a top-level ChatGPT Shortcuts editor beside Router Rules', () => {

@@ -25,6 +25,7 @@ Production orchestration-policy graphs:
 - `workflow/scheduled-run-v2.mmd`
 - `workflow/schedule-cycle-v2.mmd`
 - `workflow/troubleshooter-v2.mmd`
+- `workflow/task-related-action-v2.mmd`
 
 Job/Task graphs own durable lifecycle state transitions. Orchestration graphs
 own durable workflow branching and declared next actions without inventing
@@ -99,7 +100,7 @@ These boundaries keep the executable Mermaid profile small while preventing life
 
 ## Integration verification checklist
 
-- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery branching; the legacy files are compatibility fixtures.
+- `workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery/related-task branching; the legacy files are compatibility fixtures.
 - Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.

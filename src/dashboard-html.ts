@@ -93,7 +93,20 @@ export const dashboardHtml = `<!doctype html>
     .event-meta { display:flex; flex-wrap:wrap; gap:.4rem; color:var(--muted); font-size:.68rem; }
     .event-kind { color:var(--accent); font-weight:800; }
     .event-message { margin:.12rem 0 0; overflow-wrap:anywhere; }
-    #usage-view,#rules-view,#shortcuts-view,#worker-rules-view { grid-column:1 / -1; }
+    #usage-view,#graphs-view,#rules-view,#shortcuts-view,#worker-rules-view { grid-column:1 / -1; }
+    .graphs-browser { display:grid; grid-template-columns:minmax(190px,260px) minmax(0,1fr); gap:.75rem; min-height:60vh; }
+    .graph-list { display:grid; align-content:start; gap:.35rem; }
+    .graph-button { width:100%; display:grid; gap:.08rem; padding:.48rem .55rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--text); text-align:left; font:inherit; cursor:pointer; }
+    .graph-button[aria-current="true"] { border-color:var(--accent); background:var(--accent2); }
+    .graph-button strong { font-size:.78rem; }
+    .graph-button span { color:var(--muted); font:.66rem ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .graph-preview { min-width:0; display:grid; align-content:start; gap:.55rem; }
+    .graph-preview-head { display:flex; justify-content:space-between; gap:.7rem; align-items:baseline; flex-wrap:wrap; }
+    .graph-preview-head h3 { margin:0; font-size:.95rem; }
+    .graph-canvas { min-height:24rem; display:grid; place-items:center; overflow:auto; padding:1rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
+    .graph-canvas svg { max-width:none; height:auto; }
+    .graph-source { margin:0; max-height:22rem; overflow:auto; padding:.7rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--muted); font:.72rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; }
+    .graph-source-details summary { cursor:pointer; color:var(--muted); font-size:.74rem; font-weight:700; }
     .rules-editor { display:grid; gap:.65rem; }
     .rules-help { margin:0; color:var(--muted); font-size:.8rem; }
     .rules-textarea { width:100%; min-height:55vh; resize:vertical; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); color:var(--text); padding:.8rem; font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -137,6 +150,9 @@ export const dashboardHtml = `<!doctype html>
       #jobs-workspace .panel-body { max-height:none; }
       #usage-view .panel-head { padding:.6rem .7rem .35rem; }
       #usage-view .panel-head .subtle { display:none; }
+      .graphs-browser { grid-template-columns:1fr; min-height:0; }
+      .graph-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .graph-canvas { min-height:18rem; }
       #usage-view .panel-body { padding:.45rem .5rem .65rem; max-height:none; }
       #usage-view .usage-providers { gap:.45rem; }
       #usage-view .usage-provider {
@@ -172,6 +188,7 @@ export const dashboardHtml = `<!doctype html>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
+    <button id="graphs-tab" type="button" role="tab" aria-selected="false" aria-controls="graphs-view">Graphs</button>
     <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Router Rules</button>
     <button id="shortcuts-tab" type="button" role="tab" aria-selected="false" aria-controls="shortcuts-view">Shortcuts</button>
   </nav>
@@ -203,6 +220,21 @@ export const dashboardHtml = `<!doctype html>
       <div class="panel-body" id="usage-root" aria-live="polite"><div class="skeleton"></div></div>
     </div>
   </section>
+  <section id="graphs-view" role="tabpanel" aria-labelledby="graphs-tab" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>Workflow Graphs</h2><span id="graphs-meta" class="subtle"></span></div>
+      <div class="panel-body">
+        <div class="graphs-browser">
+          <div id="graph-list" class="graph-list" aria-label="Workflow graphs"></div>
+          <div class="graph-preview">
+            <div class="graph-preview-head"><h3 id="graph-title">Select a graph</h3><span id="graph-path" class="subtle"></span></div>
+            <div id="graph-canvas" class="graph-canvas"><p class="empty">Select a graph to inspect it.</p></div>
+            <details class="graph-source-details"><summary>Mermaid source</summary><pre id="graph-source" class="graph-source"></pre></details>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
   <section id="rules-view" role="tabpanel" aria-labelledby="rules-tab" hidden>
     <div class="panel">
       <div class="panel-head"><h2>Router Rules</h2><span id="rules-meta" class="subtle"></span></div>
@@ -228,6 +260,7 @@ export const dashboardHtml = `<!doctype html>
     </div>
   </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
 'use strict';
 // Compatibility contracts retained for dashboard tests:
@@ -246,10 +279,12 @@ const MAX_EVENTS=60;
 const DASHBOARD_VERSION=${JSON.stringify(dashboardVersion)};
 const jobsTab=document.querySelector('#jobs-tab');
 const usageTab=document.querySelector('#usage-tab');
+const graphsTab=document.querySelector('#graphs-tab');
 const rulesTab=document.querySelector('#rules-tab');
 const shortcutsTab=document.querySelector('#shortcuts-tab');
 const jobsView=document.querySelector('#jobs-view');
 const usageView=document.querySelector('#usage-view');
+const graphsView=document.querySelector('#graphs-view');
 const rulesView=document.querySelector('#rules-view');
 const shortcutsView=document.querySelector('#shortcuts-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
@@ -273,6 +308,12 @@ const connection=document.querySelector('#connection');
 const selectedJobTitle=document.querySelector('#selected-job-title');
 const usageRoot=document.querySelector('#usage-root');
 const usageMeta=document.querySelector('#usage-meta');
+const graphsMeta=document.querySelector('#graphs-meta');
+const graphList=document.querySelector('#graph-list');
+const graphTitle=document.querySelector('#graph-title');
+const graphPath=document.querySelector('#graph-path');
+const graphCanvas=document.querySelector('#graph-canvas');
+const graphSource=document.querySelector('#graph-source');
 const rulesText=document.querySelector('#rules-text');
 const rulesMeta=document.querySelector('#rules-meta');
 const rulesStatus=document.querySelector('#rules-status');
@@ -289,6 +330,8 @@ let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
 let quickMode=sessionStorage.getItem('agents-relay:quick-filter')||'jobs';
 let selectedRuntimeStatus=sessionStorage.getItem('agents-relay:runtime-status-filter')||'';
 let searchQuery=sessionStorage.getItem('agents-relay:job-search')||'';
+let workflowGraphs=[];
+let selectedGraphId=sessionStorage.getItem('agents-relay:selected-graph')||'';
 let eventTaskId=selectedTaskId;
 const collapsedTasks=new Set();
 const expandedTasks=new Set();
@@ -410,11 +453,15 @@ function githubUsageCard(effective,status){
   return card;
 }
 async function drawUsage(){try{const overview=await loadJSON('/api/usage');usageRoot.replaceChildren();usageMeta.textContent='Real account telemetry when available';const providers=Array.isArray(overview.providers)?overview.providers:[];const credits=Array.isArray(overview.credits)?overview.credits:[];const grid=element('div','usage-providers');if(overview.githubEffective||overview.githubStatus)grid.append(githubUsageCard(overview.githubEffective,overview.githubStatus));for(const provider of providers)grid.append(usageProvider(provider));for(const provider of credits)grid.append(creditProvider(provider));if(!grid.children.length){usageRoot.append(element('p','empty',text('Usage telemetry is unavailable.')));return;}usageRoot.append(grid);}catch(error){usageMeta.textContent='Unavailable';usageRoot.replaceChildren(element('p','error-state',text('Usage unavailable: '+error.message)));}}
+function selectedWorkflowGraph(){return workflowGraphs.find(graph=>graph.id===selectedGraphId)||workflowGraphs[0]||null;}
+function renderGraphList(){graphList.replaceChildren();if(!workflowGraphs.length){graphList.append(element('p','empty',text('No workflow graphs found.')));return;}for(const graph of workflowGraphs){const button=document.createElement('button');button.type='button';button.className='graph-button';button.setAttribute('aria-current',String(graph.id===selectedGraphId));button.append(element('strong','',text(graph.name)),element('span','',text(graph.path)));button.addEventListener('click',()=>{selectedGraphId=graph.id;sessionStorage.setItem('agents-relay:selected-graph',selectedGraphId);renderGraphList();void renderSelectedGraph();});graphList.append(button);}}
+async function renderSelectedGraph(){const graph=selectedWorkflowGraph();if(!graph){graphTitle.textContent='Select a graph';graphPath.textContent='';graphSource.textContent='';graphCanvas.replaceChildren(element('p','empty',text('No workflow graphs found.')));return;}selectedGraphId=graph.id;sessionStorage.setItem('agents-relay:selected-graph',selectedGraphId);graphTitle.textContent=graph.name;graphPath.textContent=graph.path;graphSource.textContent=graph.source;graphCanvas.replaceChildren(element('p','subtle',text('Rendering…')));try{if(!window.mermaid)throw new Error('Mermaid renderer unavailable');if(!window.__relayMermaidReady){window.mermaid.initialize({startOnLoad:false,securityLevel:'strict'});window.__relayMermaidReady=true;}const rendered=await window.mermaid.render('relay-graph-'+graph.id.replace(/[^A-Za-z0-9_-]/g,'-'),graph.source);const parsed=new DOMParser().parseFromString(rendered.svg,'image/svg+xml');const svg=parsed.documentElement;if(svg.nodeName.toLowerCase()!=='svg')throw new Error('Mermaid did not return SVG');graphCanvas.replaceChildren(document.importNode(svg,true));}catch(error){graphCanvas.replaceChildren(element('p','error-state',text('Visual preview unavailable: '+error.message)));}}
+async function drawGraphs(){try{const graphs=await loadJSON('/api/graphs');workflowGraphs=Array.isArray(graphs)?graphs:[];if(!workflowGraphs.some(graph=>graph.id===selectedGraphId))selectedGraphId=workflowGraphs[0]?.id||'';graphsMeta.textContent=workflowGraphs.length+' graph'+(workflowGraphs.length===1?'':'s')+' · workflow/*.mmd';renderGraphList();await renderSelectedGraph();}catch(error){graphsMeta.textContent='Unavailable';workflowGraphs=[];renderGraphList();graphCanvas.replaceChildren(element('p','error-state',text('Graphs unavailable: '+error.message)));}}
 async function drawRules(){rulesStatus.textContent='';try{const rules=await loadJSON('/api/execution-router-rules');rulesText.value=typeof rules.text==='string'?rules.text:'';rulesMeta.textContent=rules.hash&&rules.hash!=='none'?'Loaded · '+rules.hash.slice(0,12):'No custom rules saved';}catch(error){rulesMeta.textContent='Unavailable';rulesStatus.textContent='Could not load rules: '+error.message;}}
 async function saveRules(){rulesSave.disabled=true;rulesStatus.textContent='Saving…';try{const response=await fetch('/api/execution-router-rules',{method:'PUT',headers:{'content-type':'text/plain; charset=utf-8'},body:rulesText.value});if(!response.ok)throw new Error(response.status+' '+await response.text());const rules=await response.json();rulesMeta.textContent='Saved · '+rules.hash.slice(0,12);rulesStatus.textContent='Saved. New routing decisions will load these rules.';}catch(error){rulesStatus.textContent='Save failed: '+error.message;}finally{rulesSave.disabled=false;}}
 async function drawShortcuts(){shortcutsStatus.textContent='';shortcutsText.value=chatShortcutText();}
 function saveShortcuts(){const value=shortcutsText.value.trim();if(value)localStorage.setItem(CHAT_SHORTCUTS_KEY,value);else localStorage.removeItem(CHAT_SHORTCUTS_KEY);shortcutsText.value=chatShortcutText();shortcutsStatus.textContent='Saved.';}
-function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isRules=view==='rules';const isShortcuts=view==='shortcuts';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;rulesView.hidden=!isRules;shortcutsView.hidden=!isShortcuts;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));rulesTab.setAttribute('aria-selected',String(isRules));shortcutsTab.setAttribute('aria-selected',String(isShortcuts));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isRules)void drawRules();else void drawShortcuts();}
+function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isGraphs=view==='graphs';const isRules=view==='rules';const isShortcuts=view==='shortcuts';jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;graphsView.hidden=!isGraphs;rulesView.hidden=!isRules;shortcutsView.hidden=!isShortcuts;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));graphsTab.setAttribute('aria-selected',String(isGraphs));rulesTab.setAttribute('aria-selected',String(isRules));shortcutsTab.setAttribute('aria-selected',String(isShortcuts));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isGraphs)void drawGraphs();else if(isRules)void drawRules();else void drawShortcuts();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
@@ -428,19 +475,20 @@ mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJo
 mobileJobs.addEventListener('change',syncMobileJobsView);
 window.addEventListener('hashchange',syncMobileJobsView);
 usageTab.addEventListener('click',()=>{location.hash='#/usage';showView('usage');});
+graphsTab.addEventListener('click',()=>{location.hash='#/graphs';showView('graphs');});
 rulesTab.addEventListener('click',()=>{location.hash='#/execution-router-rules';showView('rules');});
 shortcutsTab.addEventListener('click',()=>{location.hash='#/shortcuts';showView('shortcuts');});
 rulesSave.addEventListener('click',()=>void saveRules());
 shortcutsSave.addEventListener('click',saveShortcuts);
-window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const next=location.hash==='#/usage'?'rules':location.hash==='#/execution-router-rules'?'jobs':'usage';location.hash=next==='usage'?'#/usage':next==='rules'?'#/execution-router-rules':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
+window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const views=['jobs','usage','graphs','rules','shortcuts'];const current=location.hash==='#/usage'?'usage':location.hash==='#/graphs'?'graphs':location.hash==='#/execution-router-rules'?'rules':location.hash==='#/shortcuts'?'shortcuts':'jobs';const next=views[(views.indexOf(current)+1)%views.length];location.hash=next==='usage'?'#/usage':next==='graphs'?'#/graphs':next==='rules'?'#/execution-router-rules':next==='shortcuts'?'#/shortcuts':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
 const stream=new EventSource('/events');
 stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();void drawRuntimeSummary();}};
 stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>job.id===payload.job.id);if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
-if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/shortcuts')showView('shortcuts');else showView('jobs');
-setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/execution-router-rules'&&location.hash!=='#/shortcuts')void refresh();},300000);
+if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/graphs')showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/shortcuts')showView('shortcuts');else showView('jobs');
+setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/graphs'&&location.hash!=='#/execution-router-rules'&&location.hash!=='#/shortcuts')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);
 setInterval(()=>void refreshVersion(),30000);
 async function refreshSelected(){if(!selectedJob){await refresh();return;}selectedJobRefresh.disabled=true;selectedJobRefresh.textContent='Refreshing…';try{const updated=await loadJSON('/api/job?id='+encodeURIComponent(selectedJob));const index=jobs.findIndex(job=>job.id===selectedJob);if(index>=0)jobs[index]=updated;else jobs.push(updated);rememberSelection();renderAll();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';}finally{selectedJobRefresh.disabled=false;selectedJobRefresh.textContent='Refresh';}}
