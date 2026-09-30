@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { ModelCandidate } from './model-routing.js';
+import { ModelCandidate, modelChoiceId } from './model-routing.js';
 import type { WorkerCandidate } from './worker-routing.js';
 import type { ExecutionRouteEvaluation, WorkerGateEvaluation } from './execution-routing.js';
 import type { WorkerRequirements } from './types.js';
@@ -56,8 +56,8 @@ export function taskAuditFacts(task?: Pick<Task, 'jobId' | 'id' | 'attempt' | 'e
 }
 
 export function makeDecisionAudit(input: { task?: Pick<Task, 'jobId' | 'id' | 'attempt' | 'executionId' | 'capabilities' | 'input'>; worker: Record<string, unknown>; contract: Record<string, unknown>; policy: LoadedRoutingPolicy; candidates: readonly ModelCandidate[]; eligibleCandidates: readonly ModelCandidate[]; selected: ModelCandidate; routing: RoutingDecision; priorDecisionId?: string; priorFailure?: AuditFailureEvidence }): DecisionAuditRecord {
-  const candidate = (item: ModelCandidate): Record<string, unknown> => ({ id: item.id, provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null, resourceRemainingPercent: item.resourceRemainingPercent ?? null, resourceResetAt: item.resourceResetAt ?? null, resourceResetInMinutes: item.resourceResetInMinutes ?? null, resourceWindows: item.resourceWindows ?? null });
-  const eligibleIds = new Set(input.eligibleCandidates.map(item => item.id));
+  const candidate = (item: ModelCandidate): Record<string, unknown> => ({ id: modelChoiceId(item), provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null, resourceRemainingPercent: item.resourceRemainingPercent ?? null, resourceResetAt: item.resourceResetAt ?? null, resourceResetInMinutes: item.resourceResetInMinutes ?? null, resourceWindows: item.resourceWindows ?? null });
+  const eligibleIds = new Set(input.eligibleCandidates.map(modelChoiceId));
   const gate_results = input.candidates.map(item => {
     const reasons: string[] = [];
     if (item.resourceHealthy === false) reasons.push('resource_unhealthy');
@@ -69,7 +69,7 @@ export function makeDecisionAudit(input: { task?: Pick<Task, 'jobId' | 'id' | 'a
     if (typeof constraints?.profile === 'string' && constraints.profile !== item.profile) reasons.push('profile_constraint');
     if (input.policy.policy.disabledProviders?.includes(item.provider)) reasons.push('policy_disabled_provider');
     if (item.profile && input.policy.policy.disabledProfiles?.includes(item.profile)) reasons.push('policy_disabled_profile');
-    return { candidate_id: item.id, eligible: eligibleIds.has(item.id), rejection_reasons: reasons };
+    return { candidate_id: modelChoiceId(item), eligible: eligibleIds.has(modelChoiceId(item)), rejection_reasons: reasons };
   });
   return { record_type: 'decision', schema_version: DECISION_AUDIT_SCHEMA_VERSION, decision_id: decisionAuditId(), prior_decision_id: input.priorDecisionId, timestamp: input.routing.decidedAt, correlation: { job_id: input.task?.jobId, task_id: input.task?.id, execution_id: input.task?.executionId, attempt: input.task?.attempt }, task: taskAuditFacts(input.task), worker: input.worker, contract: input.contract, policy: { path: input.policy.path, hash: input.policy.hash, snapshot: input.policy.snapshot as Record<string, unknown>, rules: input.policy.rules }, candidates: input.candidates.map(candidate), gate_results, eligible_candidates: input.eligibleCandidates.map(candidate), selected: candidate(input.selected), engine: input.routing.decidedBy, fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error }, decision_evidence: input.routing.decisionEvidence, prior_failure: input.priorFailure };
 }
