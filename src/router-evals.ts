@@ -38,12 +38,12 @@ export const ROUTER_EVAL_CASES: readonly RouterEvalCase[] = [
   { id: 'large-workspace-available', storySize: 'L', task: 'Implement a large feature even though ChatGPT workspace capacity is healthy.', chatgptAvailable: true, expectedWorker: 'codex' },
 ];
 
-const CODEX_ROUTE = 'codex::default:openai/gpt-5.6-sol@medium';
-const CHATGPT_ROUTE = 'chatgpt/browser-worker::chatgpt/account-defaults';
+const CODEX_ROUTE = 'codex/openai/default';
+const CHATGPT_ROUTE = 'chatgpt/browser-worker/chatgpt/default';
 
 function workerForRoute(route: string): 'chatgpt' | 'codex' | 'unknown' {
   if (route.startsWith('chatgpt/')) return 'chatgpt';
-  if (route.startsWith('codex::')) return 'codex';
+  if (route.startsWith('codex/')) return 'codex';
   return 'unknown';
 }
 
@@ -54,29 +54,31 @@ export async function runRouterEvals(engine: DecisionEngine, rulesPath?: string)
     const taskShape = executionTaskShape({ storySize: testCase.storySize });
     const available = testCase.chatgptAvailable;
     const choices = available ? [CODEX_ROUTE, CHATGPT_ROUTE] : [CODEX_ROUTE];
-    const eligibleRoutes = [
+    const workerCandidates = [
       {
-        id: CODEX_ROUTE,
-        worker: 'codex',
-        provider: 'openai',
-        model: 'gpt-5.6-sol',
-        profile: null,
-        reasoning: 'medium',
-        code_plan: { five_hour: null, weekly: null },
+        id: 'codex',
+        adapter: 'codex',
+        providers: {
+          openai: {
+            default: { model: 'gpt-5.6-sol', reasoning: 'medium' },
+            code_plan: { five_hour: null, weekly: null },
+          },
+        },
       },
       ...(available ? [{
-        id: CHATGPT_ROUTE,
-        worker: 'chatgpt',
-        provider: 'chatgpt',
-        model: 'account-defaults',
-        profile: null,
-        reasoning: null,
-        code_plan: { five_hour: null, weekly: null },
+        id: 'chatgpt/browser-worker',
+        adapter: 'chatgpt',
+        providers: {
+          chatgpt: {
+            default: { model: 'account-defaults', reasoning: null },
+            code_plan: { five_hour: null, weekly: null },
+          },
+        },
       }] : []),
     ];
-    const facts = {
+    const facts = JSON.parse(JSON.stringify({
       context: {
-        job: { id: 'router-eval', title: 'Router eval', objective: 'Evaluate worker and model route selection.' },
+        job: { id: 'router-eval', title: 'Router eval', objective: 'Evaluate worker and provider route selection.' },
         task: { id: testCase.id, kind: 'work', storySize: testCase.storySize, input: testCase.task },
         task_shape: {
           story_size: taskShape.storySize,
@@ -88,16 +90,18 @@ export async function runRouterEvals(engine: DecisionEngine, rulesPath?: string)
       },
       user_input_rules: rules.text,
       runtime: { chatgpt_running: testCase.chatgptRunning ?? 0, preferred_chatgpt_concurrency: 10 },
-      eligible_routes: eligibleRoutes,
-    };
+      worker_candidates: workerCandidates,
+      routing_instruction: 'For each selected provider, use its default model and reasoning unless user_input_rules explicitly provides another model/reasoning option.',
+    }));
     const decision = await engine.decide(
       { facts },
       {
         type: 'choice',
-        question: 'Choose one eligible complete execution route. Treat context.task_shape.preferred_worker as the default worker-fit signal; user_input_rules and concrete runtime or code-plan resource facts may override it. The choice identifies worker, provider, model, profile, and reasoning together.',
+        question: 'Choose one legal route. Each provider default is available. Additional model/reasoning routes exist only when explicitly provided by user_input_rules. Use context, code-plan quota, runtime load, and user_input_rules.',
         choices,
       },
     );
+    if (decision.type !== 'choice') throw new Error('Router eval expected a single-choice decision');
     const selectedWorker = workerForRoute(decision.choice);
     results.push({
       ...testCase,

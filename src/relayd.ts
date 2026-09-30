@@ -377,6 +377,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         reasoning: result.candidate.routing.reasoning,
       },
       probabilities: result.candidate.routing.decisionEvidence?.probabilities ?? {},
+      proposedFields: result.candidate.routing.decisionEvidence?.proposedFields ?? {},
       fallback: result.candidate.routing.decisionEvidence?.fallback ?? false,
       current: {
         chatgptRunning: runtime.workers.chatgpt,
