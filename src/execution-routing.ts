@@ -1,4 +1,4 @@
-import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './decision.js';
+import { DecisionEngine, DecisionMode, JsonValue } from './decision.js';
 import { DecisionAuditRecord, DecisionAuditStore, makeExecutionDecisionAudit } from './decision-audit.js';
 import { discoverModelCandidates, ModelCandidate } from './model-routing.js';
 import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './routing-policy.js';
@@ -108,6 +108,114 @@ function modelGateReasons(
   return reasons;
 }
 
+const REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+
+function setupName(worker: WorkerCandidate, model: ModelCandidate): string {
+  if (worker.adapter === 'chatgpt') return 'account-defaults';
+  if (model.id.startsWith('default:') || model.id.startsWith('catalog:')) return 'default';
+  return model.profile ?? model.provider;
+}
+
+function setupKey(worker: WorkerCandidate, model: ModelCandidate): string {
+  return worker.workerId + '/' + setupName(worker, model);
+}
+
+function configuredDefault(models: readonly ModelCandidate[], setup: string): ModelCandidate | undefined {
+  if (setup === 'account-defaults') return models[0];
+  if (setup === 'default') return models.find(model => model.id.startsWith('default:'));
+  return models.find(model => model.profile === setup && model.id.startsWith(setup + ':'));
+}
+
+function resolveModelAlias(raw: string, models: readonly ModelCandidate[], familyHint?: string): string {
+  const normalized = raw.trim().toLowerCase();
+  const exact = models.find(model => model.model.toLowerCase() === normalized);
+  if (exact) return exact.model;
+  if (familyHint) {
+    const sameFamily = models.find(model => model.model.toLowerCase() === familyHint.toLowerCase() + '-' + normalized);
+    if (sameFamily) return sameFamily.model;
+  }
+  const suffix = [...new Set(models.filter(model => model.model.toLowerCase().endsWith('-' + normalized)).map(model => model.model))];
+  return suffix.length === 1 ? suffix[0] : raw.trim();
+}
+
+function userModelOverrides(rulesText: string, defaults: readonly ModelCandidate[], models: readonly ModelCandidate[]): ModelCandidate[] {
+  const result: ModelCandidate[] = [];
+  for (const line of rulesText.split(/\r?\n/)) {
+    const match = line.match(/^\s*([a-z0-9._-]+)\s*:\s*(.+)$/i);
+    if (!match) continue;
+    const label = match[1].toLowerCase();
+    const base = defaults.find(model => (model.profile ?? (model.provider === 'openai' ? 'default' : model.provider)).toLowerCase() === label || model.provider.toLowerCase() === label);
+    if (!base) continue;
+    const sameSetupModels = models.filter(model => model.provider === base.provider && (model.profile ?? null) === (base.profile ?? null));
+    const familyHint = match[2].match(/\b(gpt-\d+(?:\.\d+)?)-[a-z0-9.-]+/i)?.[1];
+    for (const segment of match[2].split(',')) {
+      const item = segment.trim().match(/^(.+?)\s+(low|medium|high|xhigh|max|ultra)(?:\s|$)/i);
+      if (!item) continue;
+      const model = resolveModelAlias(item[1].trim(), sameSetupModels, familyHint);
+      const reasoning = item[2].toLowerCase();
+      if (result.some(candidate => candidate.provider === base.provider && candidate.model === model && (candidate.profile ?? null) === (base.profile ?? null) && candidate.reasoning === reasoning)) continue;
+      result.push({
+        ...base,
+        id: (base.profile ?? 'default') + ':user/' + model,
+        model,
+        reasoning,
+      });
+    }
+  }
+  return result;
+}
+
+function codePlan(model: ModelCandidate): Record<string, unknown> {
+  return {
+    five_hour: model.resourceWindows?.fiveHour ? {
+      remaining_percent: model.resourceWindows.fiveHour.remainingPercent ?? null,
+      reset_at: model.resourceWindows.fiveHour.resetAt ?? null,
+      reset_in_minutes: model.resourceWindows.fiveHour.resetInMinutes ?? null,
+    } : null,
+    weekly: model.resourceWindows?.weekly ? {
+      remaining_percent: model.resourceWindows.weekly.remainingPercent ?? null,
+      reset_at: model.resourceWindows.weekly.resetAt ?? null,
+      reset_in_minutes: model.resourceWindows.weekly.resetInMinutes ?? null,
+    } : null,
+  };
+}
+
+function workerProviderFacts(routes: readonly ExecutionRouteCandidate[]): Array<Record<string, unknown>> {
+  const workers = new Map<string, ExecutionRouteCandidate[]>();
+  for (const route of routes) {
+    const list = workers.get(route.worker.workerId) ?? [];
+    list.push(route);
+    workers.set(route.worker.workerId, list);
+  }
+  return [...workers.entries()].map(([workerId, workerRoutes]) => {
+    const providers = new Map<string, ExecutionRouteCandidate[]>();
+    for (const route of workerRoutes) {
+      const list = providers.get(route.model.provider) ?? [];
+      list.push(route);
+      providers.set(route.model.provider, list);
+    }
+    return {
+      id: workerId,
+      adapter: workerRoutes[0].worker.adapter,
+      providers: Object.fromEntries([...providers.entries()].map(([provider, providerRoutes]) => {
+        const models = providerRoutes.map(route => route.model);
+        const configured = models.find(model => !model.id.includes(':user/')) ?? models[0];
+        return [provider, {
+          default: { model: configured.model, reasoning: configured.reasoning ?? null },
+          code_plan: codePlan(configured),
+        }];
+      })),
+    };
+  });
+}
+
+
+function decisionRouteLabel(route: ExecutionRouteCandidate): string {
+  const prefix = route.worker.workerId + '/' + route.model.provider + '/';
+  if (!route.model.id.includes(':user/')) return prefix + 'default';
+  return prefix + route.model.model + (route.model.reasoning ? '@' + route.model.reasoning : '');
+}
+
 function routeId(worker: WorkerCandidate, model: ModelCandidate): string {
   return worker.workerId + '::' + model.id + (model.reasoning ? '@' + model.reasoning : '');
 }
@@ -155,7 +263,11 @@ export async function discoverExecutionRoutes(
   const evaluations: ExecutionRouteEvaluation[] = [];
   for (const worker of workers) {
     const workerReasons = workerGateEvaluations.find(item => item.workerId === worker.workerId)?.rejectionReasons ?? [];
-    const models = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
+    const discoveredModels = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
+    const configuredModels = discoveredModels.filter(model => !model.id.startsWith('catalog:'));
+    const defaults = configuredModels.filter(model => model.id.startsWith('default:') || (model.profile && model.id.startsWith(model.profile + ':')) || worker.adapter === 'chatgpt');
+    const advertised = userModelOverrides(policy.rules.text, defaults, discoveredModels);
+    const models = [...configuredModels, ...advertised];
     for (const model of models) {
       const rejectionReasons = [...workerReasons, ...modelGateReasons(model, options.routingConstraints, options.excludedRoutes, policy)];
       const route = { id: routeId(worker, model), worker, model };
@@ -202,44 +314,51 @@ export async function routeExecution(
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
-    eligible_routes: routes.map(route => ({
-      id: route.id,
-      worker: route.worker.adapter,
-      provider: route.model.provider,
-      model: route.model.model,
-      profile: route.model.profile ?? null,
-      reasoning: route.model.reasoning ?? null,
-      code_plan: {
-        five_hour: route.model.resourceWindows?.fiveHour ? {
-          remaining_percent: route.model.resourceWindows.fiveHour.remainingPercent ?? null,
-          reset_at: route.model.resourceWindows.fiveHour.resetAt ?? null,
-          reset_in_minutes: route.model.resourceWindows.fiveHour.resetInMinutes ?? null,
-        } : null,
-        weekly: route.model.resourceWindows?.weekly ? {
-          remaining_percent: route.model.resourceWindows.weekly.remainingPercent ?? null,
-          reset_at: route.model.resourceWindows.weekly.resetAt ?? null,
-          reset_in_minutes: route.model.resourceWindows.weekly.resetInMinutes ?? null,
-        } : null,
-      },
-    })),
+    worker_candidates: workerProviderFacts(routes),
+    routing_instruction: 'For each selected provider, use its default model and reasoning unless user_input_rules explicitly provides another model/reasoning option. Any override must be compatible with the selected worker/provider and pass runtime validation.',
   })) as JsonValue;
 
+  const decisionChoices = routes.map(decisionRouteLabel);
   const decisionRequest = { facts };
   const decisionContract = {
     type: 'choice' as const,
-    question: 'Choose one eligible complete execution route. Treat context.task_shape.preferred_worker as the default worker-fit signal; user_input_rules and concrete runtime or code-plan resource facts may override it. The choice identifies worker, provider, model, profile, and reasoning together.',
-    choices: routes.map(route => route.id),
+    question: 'Choose one legal route. Each provider default is available. Additional model/reasoning routes exist only when explicitly provided by user_input_rules. Use context, code-plan quota, runtime load, and user_input_rules.',
+    choices: decisionChoices,
   };
-  const choice = await chooseWithDecision(
-    options.decisionEngine,
-    options.decisionMode ?? 'off',
-    decisionRequest,
-    decisionContract,
-    () => fallback.id,
-  );
 
-  const selected = routes.find(route => route.id === choice.choice) ?? fallback;
-  const selectedBy = choice.evidence.engine && !choice.evidence.fallback ? 'execution-router:laya' : 'execution-router:fallback';
+  let selected = fallback;
+  let evidence: WorkerSelection['decisionEvidence'] = { mode: options.decisionMode ?? 'off', fallback: true };
+  if ((options.decisionMode ?? 'off') !== 'off' && options.decisionEngine) {
+    try {
+      const decision = await options.decisionEngine.decide(decisionRequest, decisionContract);
+      if (decision.type !== 'choice') throw new Error('Execution router expected a route choice result');
+      const index = decisionChoices.indexOf(decision.choice);
+      if (index < 0) throw new Error('Execution router returned an unknown route');
+      selected = routes[index];
+      evidence = {
+        mode: options.decisionMode ?? 'active',
+        engine: options.decisionEngine.name,
+        proposed: decision.choice,
+        probabilities: decision.probabilities,
+        proposedFields: {
+          worker: selected.worker.workerId,
+          provider: selected.model.provider,
+          model: selected.model.model,
+          reasoning: selected.model.reasoning ?? '',
+        },
+        fallback: false,
+      };
+    } catch (error) {
+      evidence = {
+        mode: options.decisionMode ?? 'active',
+        engine: options.decisionEngine.name,
+        fallback: true,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  const selectedBy = evidence.engine && !evidence.fallback ? 'execution-router:laya' : 'execution-router:fallback';
   const routing: RoutingDecision = {
     provider: selected.model.provider,
     model: selected.model.model,
@@ -247,7 +366,7 @@ export async function routeExecution(
     reasoning: options.routingConstraints?.reasoning ?? selected.model.reasoning,
     decidedBy: selectedBy,
     decidedAt: new Date().toISOString(),
-    decisionEvidence: choice.evidence,
+    decisionEvidence: evidence,
   };
 
   const audit = makeExecutionDecisionAudit({
@@ -275,7 +394,7 @@ export async function routeExecution(
 
   return {
     candidate: { ...selected.worker, routing },
-    selection: workerSelection(selected.worker, selectedBy, choice.evidence),
+    selection: workerSelection(selected.worker, selectedBy, evidence),
     model: selected.model,
     audit,
   };
