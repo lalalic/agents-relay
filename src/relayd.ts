@@ -161,7 +161,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       return cachedOverviews;
     }
   };
-  const overviews = async (forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => forceRefresh ? refreshAll(true) : cachedOverviews;
+  const overviews = async (forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => {
+    if (forceRefresh) return refreshAll(true);
+    cachedOverviews = await overlayOperationalOverviews(cachedOverviews, (repository, prNumber) => runtimeStore(repository, prNumber));
+    return cachedOverviews;
+  };
   const persistCache = async (): Promise<void> => {
     try { await mkdir(cacheDirectory, { recursive: true }); await writeFile(cacheFile, JSON.stringify(cachedOverviews), 'utf8'); } catch { /* cache is best effort */ }
   };

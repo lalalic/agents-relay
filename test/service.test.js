@@ -28,6 +28,11 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
   const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
   assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
 });
+test('workspace dashboard/runtime summary refreshes cached jobs from local operational truth', async () => {
+  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
+});
+
 test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {
   const remoteJob = { id: 'job-1', title: 'remote', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'DRAFT', continuation: null, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
   const localJob = { ...remoteJob, state: 'ACTIVE', updatedAt: '2026-09-29T00:01:00.000Z', tasks: [{ jobId:'job-1', id:'work', kind:'work', parentTaskId:null, dependencies:[], capabilities:[], adapter:'codex', attachments:[], output:{kind:'task_pr'}, continuation:null, continuationDeliveredAt:null, state:'RUNNING', attempt:1, maxAttempts:3, leaseOwner:'relay', leaseExpiresAt:null, executionId:'execution-1', threadId:null, result:null, plannerResult:null, error:null, timeoutMs:1000, createdAt:'2026-09-29T00:00:30.000Z', updatedAt:'2026-09-29T00:01:00.000Z', input:'work' }] };

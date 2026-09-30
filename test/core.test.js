@@ -1023,8 +1023,8 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','success-then-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'success-then-exit')));
   await bus.publish(eventFor('j','success-then-exit',null,'task.completed','succeeded','durable output','user',undefined,await activeEventSource(store,'success-then-exit')));
-  adapter.resolvers[0].resolve({summary:'runtime exited'});
   await new Promise(resolve=>setTimeout(resolve,20));
+  assert.ok(adapter.cancelled > 0, 'accepted Codex terminal fact must stop the still-live worker process');
   assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
   assert.equal(events.filter(event=>event.type==='task.failed').length,0);
   assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
