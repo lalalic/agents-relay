@@ -1,6 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import {
   decideJobLifecycle,
   decideTaskLifecycle,
@@ -163,4 +164,15 @@ test('command and adapter mutation surfaces do not bypass shared Action boundari
   assert.match(dashboard,/dispatchWorkflowTargetOverride\s*\(/,'dashboard state overrides must enter the shared workflow dispatcher');
   assert.doesNotMatch(dashboard,/assertJobLifecycleTransition\s*\(|assertTaskTransition\s*\(/,'dashboard must not perform graph topology decisions outside the dispatcher');
   assert.doesNotMatch(dashboard,/applyTaskCancelAction\s*\(/,'dashboard task cancel must use shared task action dispatcher');
+});
+
+test('task action dispatcher executes workflow-selected related mutations without owning recovery scope policy', async () => {
+  const actions = await readFile(new URL('../src/task-actions.ts', import.meta.url), 'utf8');
+  const policy = await readFile(new URL('../src/workflow/task-action-policy.ts', import.meta.url), 'utf8');
+  assert.match(actions, /selectRelatedTaskMutations\s*\(/);
+  assert.doesNotMatch(actions, /agentName\s*===\s*['"]troubleshooter['"]/);
+  assert.doesNotMatch(actions, /startsWith\(`troubleshoot-/);
+  assert.match(policy, /agentName\s*!==\s*['"]troubleshooter['"]/);
+  assert.match(policy, /parentTaskId\s*===\s*task\.id/);
+  assert.match(policy, /startsWith\(`troubleshoot-\$\{task\.id\}-a`\)/);
 });

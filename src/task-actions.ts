@@ -1,6 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent } from './scheduler.js';
+import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
 export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
@@ -86,6 +87,20 @@ export async function applyOrchestratorCompleteAction(task: Task, summary: strin
   return task;
 }
 
+async function applySelectedRelatedTaskMutations(
+  job: Job,
+  mutations: readonly RelatedTaskMutation[],
+): Promise<Task[]> {
+  const changed: Task[] = [];
+  for (const mutation of mutations) {
+    const related = job.tasks.find(item => item.id === mutation.taskId);
+    if (!related) throw new Error(`Related task ${mutation.taskId} not found`);
+    if (mutation.mutation === 'cancel') await applyTaskCancelAction(related, mutation.reason);
+    changed.push(related);
+  }
+  return changed;
+}
+
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
 export async function dispatchTaskAction(
   store: DurableStore,
@@ -94,19 +109,13 @@ export async function dispatchTaskAction(
   const job = await store.load(request.jobId);
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
-  const supersededRecoveries: Task[] = [];
-  if (request.id === TASK_RETRY_ACTION) {
-    await applyTaskRetryAction(task, { extendBudget: true });
-    for (const recovery of job.tasks) {
-      const targetsTask = recovery.agentName === 'troubleshooter' && (recovery.parentTaskId === task.id || (!recovery.parentTaskId && recovery.id.startsWith(`troubleshoot-${task.id}-a`)));
-      if (!targetsTask || !['DRAFT','QUEUED','RUNNING','BLOCKED','FAILED'].includes(recovery.state)) continue;
-      await applyTaskCancelAction(recovery, `Superseded by manual retry of ${task.id}`);
-      supersededRecoveries.push(recovery);
-    }
-  } else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
+  const relatedMutations = selectRelatedTaskMutations(job, task, request.id);
+  if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
+  else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
   else throw new Error(`Unsupported task action ${request.id}`);
+  const changedRelated = await applySelectedRelatedTaskMutations(job, relatedMutations);
   await store.saveTask(task);
-  for (const recovery of supersededRecoveries) await store.saveTask(recovery);
+  for (const related of changedRelated) await store.saveTask(related);
   return { job, task };
 }
