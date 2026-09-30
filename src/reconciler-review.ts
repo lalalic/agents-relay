@@ -7,6 +7,7 @@ import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult, withExecutionBoundary } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
+import { createTaskEntity } from './workflow/entity-creation.js';
 
 const taskRouteClaims = new Set<string>();
 
@@ -70,16 +71,16 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewerRouting = await this.selectReviewer(reviewGateTasks);
-    const task: Task = {
+    const task = createTaskEntity(job, {
       jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input: 'Review existing PR #' + job.prNumber + ' at exactly head SHA ' + headSha + '. Job objective: ' + (job.objective ?? job.description ?? job.title) + '. Use the selected reviewer agent contract as the authoritative review protocol.',
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
-      reviewHeadSha: headSha, state: 'QUEUED', attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2,
+      reviewHeadSha: headSha, attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2,
       leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
       error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
-    };
+    });
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     return id;
@@ -237,7 +238,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
           const input = 'Address all reviewer findings for PR #' + job.prNumber + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
-          const fixTask: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
+          const fixTask = createTaskEntity(job, { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
           await this.store.appendTask(fixTask);
           await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + id + ' for ' + issues.length + ' reviewer finding(s)', 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
         }

@@ -1691,7 +1691,7 @@ test('review changes-required creates one routable implementation fix task conta
   assert.match(fixes[0].input,/3\. third bug/);
   assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
   assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'WAITING');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');

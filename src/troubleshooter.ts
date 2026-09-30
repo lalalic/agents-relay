@@ -1,5 +1,6 @@
 import { Job, Task, taskOverallTimeoutMs } from './types.js';
 import { dispatchTroubleshooter } from './workflow/troubleshooter-v2.js';
+import { createTaskEntity } from './workflow/entity-creation.js';
 
 function slug(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72) || 'task';
@@ -65,7 +66,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
     }, () => { create = true; });
     if (!decision.accepted || !create) continue;
     const now = new Date().toISOString();
-    recoveries.push({
+    recoveries.push(createTaskEntity(job, {
       jobId: job.id,
       id,
       kind: 'work',
@@ -82,7 +83,6 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       output: { kind: 'task_pr' },
       continuation: null,
       continuationDeliveredAt: null,
-      state: 'QUEUED',
       attempt: 0,
       maxAttempts: 1,
       leaseOwner: null,
@@ -95,7 +95,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       timeoutMs: taskOverallTimeoutMs('M'),
       createdAt: now,
       updatedAt: now,
-    });
+    }));
   }
   return recoveries;
 }

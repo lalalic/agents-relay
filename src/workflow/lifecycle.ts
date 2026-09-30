@@ -91,6 +91,23 @@ export async function dispatchTaskLifecycle(
   return { accepted: true, target: result.target as TaskState, guard: null, actions, ...classifyWorkflowActions(actions), reason: 'accepted' };
 }
 
+export function dispatchJobLifecycleSync(
+  job: { id: string; state: JobLifecycleState; updatedAt: string },
+  event: string,
+  facts: WorkflowContext = {},
+): WorkflowDecision<JobLifecycleState> {
+  const actions: string[] = [];
+  const result = dispatchWorkflowGraphSync(jobLifecycleV2, {
+    initialState: job.state,
+    input: { transport: 'event', id: event, payload: {} },
+    durableFacts: facts,
+    persistTransition: (_source, target) => applyJobGraphTarget(job as never, target as JobLifecycleState),
+    executeAction: actionId => { actions.push(actionId); return {}; },
+  });
+  if (!result.accepted) return emptyWorkflowDecision<JobLifecycleState>(result.reason === 'ambiguous' ? 'ambiguous' : 'no_transition');
+  return { accepted: true, target: result.target as JobLifecycleState, guard: null, actions, ...classifyWorkflowActions(actions), reason: 'accepted' };
+}
+
 export async function dispatchJobLifecycle(
   job: { id: string; state: JobLifecycleState; updatedAt: string },
   event: string,

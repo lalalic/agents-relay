@@ -211,3 +211,21 @@ test('production orchestration entry points use dispatch facades and never direc
   assert.doesNotMatch(reconciler, /task\.attempt\s*=\s*task\.maxAttempts/, 'planner availability must not force attempts procedurally');
   assert.doesNotMatch(reconciler, /reviewEnabled\s*===\s*false[^\n]+implementationComplete/, 'no-review merge policy must stay in the Job graph');
 });
+
+
+test('new entity constructors cannot choose lifecycle state outside workflow creation boundary', async () => {
+  const root = new URL('../src', import.meta.url).pathname;
+  const allowed = new Set(['workflow/entity-creation.ts']);
+  const violations = [];
+  for (const path of await sourceFiles(root)) {
+    const relative = path.slice(root.length + 1);
+    if (allowed.has(relative)) continue;
+    const source = await readFile(path, 'utf8');
+    for (const match of source.matchAll(/state\s*:\s*['"](?:DRAFT|QUEUED|ACTIVE)['"]/g)) {
+      // Explicit historical record/import is allowed to materialize a completed fact only,
+      // never a fresh runnable lifecycle state.
+      violations.push(relative + ':' + match[0]);
+    }
+  }
+  assert.deepEqual(violations, []);
+});

@@ -6,6 +6,7 @@ import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, Tas
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
+import { createTaskEntity } from './workflow/entity-creation.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -105,15 +106,15 @@ export function createPlannerRoundTask(job: Job, options: PlannerRoundOptions = 
     trigger: plannerTrigger(job, options.manual === true),
     guidance: options.guidance,
   };
-  return {
+  return createTaskEntity(job, {
     jobId: job.id, id, kind: 'planner', storySize: 'M', agentName: 'planner',
     parentTaskId: null, dependencies: [], capabilities: ['planner'], adapter: 'orchestrator',
-    input: plannerInput(context), continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0,
+    input: plannerInput(context), continuation: null, continuationDeliveredAt: null, attempt: 0,
     maxAttempts: options.manual ? 1 : 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
     result: null, plannerResult: null, error: null, timeoutMs: options.timeoutMs ?? storySizeTimeoutMs('M'),
     createdAt: now, updatedAt: now, planningDecisionId: id, planningSource: 'model-planner', planningRound: round, previousPlannerTaskId: previousPlanner?.id ?? null,
     plannerGuidance: options.guidance, manualPlanning: options.manual === true, planTrigger: context.trigger,
-  };
+  });
 }
 
 export function pendingPlanForPlannerTask(job: Job, task: Task): Plan {
@@ -138,7 +139,7 @@ export function recoverPendingPlannerTask(job: Job, timeoutMs: number): Task | n
 export function materializePlannerChild(job: Job, planner: Task, spec: PlannerTaskSpec, executionContext: ExecutionContext): Task {
   validateAgentSelection(executionContext, spec.agentName, spec.agentGraph);
   const now = new Date().toISOString();
-  return { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, state: (spec.dependencies?.length ?? 0) > 0 ? 'DRAFT' : 'QUEUED', attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 };
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: planner.id, planningSource: planner.planningSource ?? 'model-planner', planningRound: planner.planningRound ?? 1 });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {

@@ -26,6 +26,7 @@ import { runBlockerCommand } from './cli-blocker.js';
 import { helpText, usage } from './cli-help.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
 export { helpText } from './cli-help.js';
 import {
   SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
@@ -49,7 +50,7 @@ export async function ensureManagedGitHubJob(
     if (!(error instanceof Error) || !error.message.startsWith('JOB_MARKER_MISSING:')) throw error;
   }
   const now = new Date().toISOString();
-  const job: Job = {
+  const job = createJobEntity({
     id: options.id,
     title: options.title || pr.title || 'Agents Relay job',
     objective: options.objective || pr.body || undefined,
@@ -62,13 +63,12 @@ export async function ensureManagedGitHubJob(
     reviewEnabled: options.reviewEnabled ?? true,
     prNumber: pr.number,
     repository: repositoryName,
-    state: options.schedule ? 'ACTIVE' : 'DRAFT',
     continuation: options.continuation ?? null,
     createdAt: now,
     updatedAt: now,
-    tasks: []
-  };
-  if (options.schedule) job.schedule = options.schedule;
+    tasks: [],
+    ...(options.schedule ? { schedule: options.schedule } : {}),
+  }, { activate: Boolean(options.schedule) });
   await store.saveJob(job);
   return { job: await store.load(options.id), pr };
 }
@@ -91,7 +91,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
   const size = storySize(args);
   const dependencies = arg(args, '--deps').split(',').filter(Boolean);
   const timeoutMs = adapter === 'orchestrator' ? 0 : hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
-  return {
+  return createTaskEntity(job, {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
     priority: priority(args, job.priority ?? 'P2'),
@@ -111,7 +111,6 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     routing,
     continuation: continuation(args),
     continuationDeliveredAt: null,
-    state: hasArg(args, '--draft') || dependencies.length > 0 ? 'DRAFT' : 'QUEUED',
     attempt: 0,
     maxAttempts: Number(arg(args, '--max-attempts', '3')),
     leaseOwner: null,
@@ -123,7 +122,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     timeoutMs,
     createdAt: now,
     updatedAt: now
-  };
+  }, { defer: hasArg(args, '--draft') });
 }
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
@@ -442,7 +441,7 @@ async function main(): Promise<void> {
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const job: Job = { id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: scheduleFromArgs(args), autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), state: scheduleFromArgs(args) ? 'ACTIVE' : 'DRAFT', continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }; let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') { const now = new Date().toISOString(); const initialSchedule = scheduleFromArgs(args); const job = createJobEntity({ id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }, { activate: Boolean(initialSchedule) }); let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
   const bus = eventBus(args);
   if (command === 'status') {
     const host = arg(args, '--host', '127.0.0.1');
