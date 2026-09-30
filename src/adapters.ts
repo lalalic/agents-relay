@@ -44,11 +44,20 @@ function parseThreadStarted(line: string): string | undefined {
     return undefined;
   }
 }
+function signalChildTree(child: import('node:child_process').ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid && process.platform !== 'win32') {
+    try { process.kill(-child.pid, signal); return; } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  }
+  child.kill(signal);
+}
+
 function terminateChild(child: import('node:child_process').ChildProcess, graceMs = 750): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill('SIGTERM');
+  signalChildTree(child, 'SIGTERM');
   const force = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    if (child.exitCode === null && child.signalCode === null) signalChildTree(child, 'SIGKILL');
   }, graceMs);
   force.unref();
 }
@@ -72,6 +81,7 @@ export class CodexAdapter implements WorkerAdapter {
       shell: false,
       cwd: task.routing.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
     let stdoutBuffer = '';
     let stderrTail = '';
