@@ -18,7 +18,7 @@ export async function runBlockerCommand(action: string, args: string[]): Promise
   }
   if (action === 'resolve') {
     const summary = await blockerStore.resolveBlockerDependents(id, 'verified');
-    await publishDependentUnblocked(eventBus(args), summary.unblocked, `Blocker Job ${id} resolved (verified)`);
+    await publishDependentUnblocked(await eventBus(args), summary.unblocked, `Blocker Job ${id} resolved (verified)`);
     console.log(JSON.stringify({ blocker: id, resolution: 'verified', ...summary }, null, 2));
     return;
   }
