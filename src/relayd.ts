@@ -289,7 +289,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         await pool.webhookWake(bus, target.job, event);
       }
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
-      await persistCache();
     }
   } : undefined;
   const exactJob = async (jobId: string) => {
