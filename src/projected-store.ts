@@ -38,6 +38,13 @@ export function githubProjectionRetryAt(error: unknown, attempt: number, now = n
   return new Date(now.getTime() + backoffMs);
 }
 
+
+export function isTerminalProjectionFailure(item: Pick<ProjectionOutboxItem, 'operation'>, error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (item.operation === 'append_task' || item.operation === 'append_plan')
+    && /already exists with a different definition$/.test(message);
+}
+
 export class GitHubProjectionWriter {
   constructor(private readonly relay: RelayStore, private readonly github: DurableStore) {}
 
@@ -52,8 +59,11 @@ export class GitHubProjectionWriter {
         projected += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await this.relay.retryProjection(item.id, message, githubProjectionRetryAt(error, item.attempts, now));
-        deferred += 1;
+        if (isTerminalProjectionFailure(item, error)) await this.relay.deadLetterProjection(item.id, message);
+        else {
+          await this.relay.retryProjection(item.id, message, githubProjectionRetryAt(error, item.attempts, now));
+          deferred += 1;
+        }
       }
     }
     return { projected, deferred };

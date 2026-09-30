@@ -60,7 +60,9 @@ export interface RelayStore {
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
   completeProjection(id: number): Promise<void>;
   retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void>;
+  deadLetterProjection(id: number, error: string): Promise<void>;
   pendingProjectionCount(): Promise<number>;
+  terminalProjectionCount(): Promise<number>;
   close(): void;
 }
 
@@ -78,7 +80,7 @@ type OutboxRow = {
   updated_at: string;
 };
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
   if (!local) return structuredClone(remote);
@@ -170,7 +172,7 @@ export class SQLiteRelayStore implements RelayStore {
         operation TEXT NOT NULL,
         payload_json TEXT NOT NULL,
         priority INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','dead')),
         attempts INTEGER NOT NULL DEFAULT 0,
         next_attempt_at TEXT,
         last_error TEXT,
@@ -185,6 +187,37 @@ export class SQLiteRelayStore implements RelayStore {
     const current = this.db.prepare("SELECT value FROM relay_meta WHERE key='schema_version'").get() as { value?: string } | undefined;
     const version = current?.value ? Number(current.value) : 0;
     if (version > SCHEMA_VERSION) throw new Error(`Relay store schema ${version} is newer than supported ${SCHEMA_VERSION}`);
+    if (version < 4) {
+      const schema = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='projection_outbox'").get() as { sql?: string } | undefined;
+      if (schema?.sql && !schema.sql.includes("'dead'")) {
+        this.db.exec(`
+          BEGIN IMMEDIATE;
+          DROP INDEX IF EXISTS projection_due_idx;
+          DROP INDEX IF EXISTS projection_coalesce_idx;
+          ALTER TABLE projection_outbox RENAME TO projection_outbox_v3;
+          CREATE TABLE projection_outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            coalesce_key TEXT,
+            operation TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','dead')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          INSERT INTO projection_outbox(id,idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at)
+          SELECT id,idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at FROM projection_outbox_v3;
+          DROP TABLE projection_outbox_v3;
+          CREATE INDEX projection_due_idx ON projection_outbox(status, next_attempt_at, priority DESC, id);
+          CREATE INDEX projection_coalesce_idx ON projection_outbox(coalesce_key, status);
+          COMMIT;
+        `);
+      }
+    }
     this.db.prepare("INSERT INTO relay_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(String(SCHEMA_VERSION));
   }
@@ -332,7 +365,7 @@ export class SQLiteRelayStore implements RelayStore {
     // A writer may be applying this key outside the transaction. Never rewrite its
     // payload: its completion must only remove its own row, not a newer mutation.
     const nextId = Number((this.db.prepare('SELECT COALESCE(MAX(id),0)+1 AS next_id FROM projection_outbox').get() as { next_id?: number | bigint }).next_id ?? 1);
-    const idempotencyKey = existing?.status === 'processing'
+    const idempotencyKey = existing?.status === 'processing' || existing?.status === 'dead'
       ? `${request.idempotencyKey}:queued:${nextId}`
       : request.idempotencyKey;
     this.db.prepare(`
@@ -398,8 +431,21 @@ export class SQLiteRelayStore implements RelayStore {
     `).run(nextAttemptAt.toISOString(), error, new Date().toISOString(), id);
   }
 
+  async deadLetterProjection(id: number, error: string): Promise<void> {
+    this.db.prepare(`
+      UPDATE projection_outbox
+      SET status='dead', attempts=attempts+1, next_attempt_at=NULL, last_error=?, updated_at=?
+      WHERE id=?
+    `).run(error, new Date().toISOString(), id);
+  }
+
   async pendingProjectionCount(): Promise<number> {
-    const row = this.db.prepare('SELECT COUNT(*) AS count FROM projection_outbox').get() as { count?: number | bigint } | undefined;
+    const row = this.db.prepare("SELECT COUNT(*) AS count FROM projection_outbox WHERE status IN ('pending','processing')").get() as { count?: number | bigint } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  async terminalProjectionCount(): Promise<number> {
+    const row = this.db.prepare("SELECT COUNT(*) AS count FROM projection_outbox WHERE status='dead'").get() as { count?: number | bigint } | undefined;
     return Number(row?.count ?? 0);
   }
 

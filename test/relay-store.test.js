@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from '../dist/relay-store.js';
-import { ProjectedDurableStore, GitHubProjectionWriter, githubProjectionRetryAt } from '../dist/projected-store.js';
+import { ProjectedDurableStore, GitHubProjectionWriter, githubProjectionRetryAt, isTerminalProjectionFailure } from '../dist/projected-store.js';
 import { InMemoryStore } from '../dist/store.js';
 
 const now = () => new Date().toISOString();
@@ -330,6 +330,48 @@ test('ProjectedDurableStore resolves blocker domain mutations locally without di
 
   await rootTmp.close(blockerRelay);
   await dependentTmp.close(dependentRelay);
+});
+
+test('GitHubProjectionWriter dead-letters deterministic append definition conflicts', async () => {
+  const tmp = await tempDb();
+  let relay = new SQLiteRelayStore(tmp.path);
+  const remoteTask = { ...makeTask('SUCCEEDED'), result: { summary: 'remote' }, updatedAt: '2026-09-30T00:02:00.000Z' };
+  const remote = new InMemoryStore({ ...makeJob(), tasks: [remoteTask] });
+  const localTask = { ...makeTask('QUEUED'), input: 'different definition', updatedAt: '2026-09-30T00:03:00.000Z' };
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_task:job-1:task-1',
+    operation: 'append_task',
+    payload: { operation: 'append_task', value: localTask },
+  });
+  const writer = new GitHubProjectionWriter(relay, remote);
+  assert.deepEqual(await writer.flushOnce(), { projected: 0, deferred: 0 });
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.terminalProjectionCount(), 1);
+  assert.deepEqual(await relay.claimDueProjections(), []);
+
+  relay.close();
+  relay = new SQLiteRelayStore(tmp.path);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.terminalProjectionCount(), 1);
+  assert.deepEqual(await relay.claimDueProjections(), []);
+
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_task:job-1:task-1',
+    operation: 'append_task',
+    payload: { operation: 'append_task', value: { ...localTask, input: 'new mutation' } },
+  });
+  assert.equal(await relay.terminalProjectionCount(), 1);
+  assert.equal(await relay.pendingProjectionCount(), 1);
+  const [newer] = await relay.claimDueProjections();
+  assert.match(newer.idempotencyKey, /^append_task:job-1:task-1:queued:\d+$/);
+  await tmp.close(relay);
+});
+
+test('projection terminal classifier is narrow and leaves transient writes retryable', () => {
+  assert.equal(isTerminalProjectionFailure({ operation: 'append_task' }, new Error('Task task-1 already exists with a different definition')), true);
+  assert.equal(isTerminalProjectionFailure({ operation: 'append_plan' }, new Error('Plan plan-1 already exists with a different definition')), true);
+  assert.equal(isTerminalProjectionFailure({ operation: 'save_task' }, new Error('Task task-1 already exists with a different definition')), false);
+  assert.equal(isTerminalProjectionFailure({ operation: 'append_task' }, new Error('secondary rate limit')), false);
 });
 
 test('GitHubProjectionWriter defers rate-limited writes and respects retry-after', async () => {
