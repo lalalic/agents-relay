@@ -1484,6 +1484,26 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('cancelled same-head review creates a versioned review round instead of conflicting', async () => {
+  const work=task('work','SUCCEEDED');
+  const base='final-review-sha-review-r';
+  const old={...task(base,'CANCELLED'),agentName:'reviewer',reviewHeadSha:'sha-review-round',error:'Cancelled by user',dependencies:['work']};
+  const reviewJob={...job([work,old]),headSha:'sha-review-round',review:{outcome:'pending',headSha:'sha-review-round',taskId:old.id,evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(reviewJob);
+  store.pullRequestState=async()=> 'OPEN';
+  store.headSha=async()=> 'sha-review-round';
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  let saved=await store.load('j');
+  let rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  assert.equal(rounds.length,2);
+  assert.equal(rounds[1].id,base+'-r2');
+  assert.equal(saved.review?.taskId,base+'-r2');
+  await reconciler.reconcile('j');
+  saved=await store.load('j');
+  rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
+  assert.equal(rounds.length,2);
+});
 test('reconcile persists a newly observed head before final review approval can auto-merge', async () => {
   const oldHead = 'old-head-before-push';
   const newHead = 'new-head-after-push';

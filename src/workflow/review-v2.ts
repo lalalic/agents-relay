@@ -19,6 +19,7 @@ export const reviewLifecycleV2 = new GraphRuntime(source, {
     headAvailable: boolGuard('headAvailable'),
     completionGateSatisfied: boolGuard('completionGateSatisfied'),
     noActiveReviewTask: boolGuard('noActiveReviewTask'),
+    currentReviewCancelled: boolGuard('currentReviewCancelled'),
     noApprovedCurrentReview: boolGuard('noApprovedCurrentReview'),
     autoMerge: boolGuard('autoMerge'),
   },

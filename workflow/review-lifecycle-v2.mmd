@@ -26,6 +26,10 @@ headAvailableStale["guard: headAvailable"]
 completionGateStale["guard: completionGateSatisfied"]
 noActiveReviewStale["guard: noActiveReviewTask"]
 noApprovedReviewStale["guard: noApprovedCurrentReview"]
+pendingRetry["guard: noActiveReviewTask"]
+pendingCancelled["guard: currentReviewCancelled"]
+pendingUnapproved["guard: noApprovedCurrentReview"]
+createPendingRetry["action: review.create"]
 autoMergePending["guard: autoMerge"]
 autoMergeStarted["guard: autoMerge"]
 createNone["action: review.create"]
@@ -81,6 +85,15 @@ noActiveReviewStale -->|false| stale
 noApprovedReviewStale -->|true| createStale
 noApprovedReviewStale -->|false| stale
 createStale --> pending
+
+pending -->|on: reconcile| pendingRetry
+pendingRetry -->|true| pendingCancelled
+pendingRetry -->|false| pending
+pendingCancelled -->|true| pendingUnapproved
+pendingCancelled -->|false| pending
+pendingUnapproved -->|true| createPendingRetry
+pendingUnapproved -->|false| pending
+createPendingRetry --> pending
 
 pending -->|on: review.started| started
 pending -->|on: review.approved| autoMergePending

@@ -15,6 +15,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected async currentHeadSha(job: Job): Promise<string | null> { return await this.store.headSha?.() ?? job.headSha ?? job.review?.headSha ?? null; }
   private reviewFacts(job: Job, prState: string, headSha: string | null): Readonly<Record<string, unknown>> {
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
+    const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
       unscheduled: !job.schedule,
       reviewEnabled: job.reviewEnabled !== false,
@@ -24,6 +25,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       headAvailable: Boolean(headSha),
       completionGateSatisfied: completionGateSatisfied(job),
       noActiveReviewTask: !reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
+      currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
     };
   }
@@ -52,8 +54,19 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     await this.store.saveJob(job);
   }
 
-  private async createFinalReviewTask(job: Job, headSha: string): Promise<void> {
-    const id = 'final-review-' + headSha.slice(0, 12);
+  private nextFinalReviewTaskId(job: Job, headSha: string): string {
+    const base = 'final-review-' + headSha.slice(0, 12);
+    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && task.agentName === 'reviewer').map(task => task.id));
+    if (!ids.has(base)) return base;
+    for (let round = 2; round < 1000; round += 1) {
+      const candidate = base + '-r' + round;
+      if (!ids.has(candidate)) return candidate;
+    }
+    throw new Error('Too many final review rounds for ' + headSha);
+  }
+
+  private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
+    const id = this.nextFinalReviewTaskId(job, headSha);
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewerRouting = await this.selectReviewer(reviewGateTasks);
@@ -69,17 +82,18 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     };
     await this.store.appendTask(task);
     await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
+    return id;
   }
 
   protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
     const decision = decideReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, prState, headSha));
     if (!decision.accepted || !decision.actions.some(action => action.id === 'review.create')) return;
     if (!headSha) throw new Error('Review graph requested creation without a durable head SHA');
-    await this.createFinalReviewTask(job, headSha);
+    const reviewTaskId = await this.createFinalReviewTask(job, headSha);
     const outcome = reviewOutcome(decision.target);
     if (!outcome) throw new Error('Review graph produced invalid create target ' + decision.target);
     const now = new Date().toISOString();
-    job.review = { outcome, headSha, taskId: 'final-review-' + headSha.slice(0, 12), evidence: null, updatedAt: now };
+    job.review = { outcome, headSha, taskId: reviewTaskId, evidence: null, updatedAt: now };
     job.updatedAt = now;
     await this.store.saveJob(job);
     const ready = schedule(await this.store.load(job.id));
