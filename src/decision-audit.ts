@@ -21,7 +21,7 @@ export type DecisionAuditRecord = {
   decision_evidence?: DecisionEvidence; prior_failure?: AuditFailureEvidence;
   worker_candidates?: Array<Record<string, unknown>>;
   worker_gate_results?: Array<{ worker_id: string; eligible: boolean; rejection_reasons: string[] }>;
-  decision_input?: { facts: Record<string, unknown>; contract: { type: string; question: string; choices: string[] } };
+  decision_input?: Record<string, unknown>;
 };
 export type DecisionOutcomeRecord = {
   record_type: 'outcome'; schema_version: number; outcome_id: string; decision_id: string; timestamp: string;
@@ -129,8 +129,12 @@ export function makeExecutionDecisionAudit(input: {
   contract: Record<string, unknown>;
   policy: LoadedRoutingPolicy;
   routing: RoutingDecision;
-  decisionRequest: { facts: import('./decision.js').JsonValue };
-  decisionContract: { type: 'choice'; question: string; choices: readonly string[] };
+  decisionStages: Array<{
+    name: string;
+    facts: import('./decision.js').JsonValue;
+    contract: { type: 'choice'; question: string; choices: string[] };
+    result: { choice: string; probabilities?: Record<string, number>; bypassed?: boolean };
+  }>;
 }): DecisionAuditRecord {
   const routeRecords = input.evaluations.map(item => executionRouteAuditCandidate(item.route));
   const eligibleRouteRecords = input.evaluations.filter(item => item.eligible).map(item => executionRouteAuditCandidate(item.route));
@@ -167,12 +171,21 @@ export function makeExecutionDecisionAudit(input: {
     fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error },
     decision_evidence: input.routing.decisionEvidence,
     decision_input: {
-      facts: input.decisionRequest.facts as Record<string, unknown>,
-      contract: {
-        type: input.decisionContract.type,
-        question: input.decisionContract.question,
-        choices: [...input.decisionContract.choices],
-      },
+      type: 'staged_route_decision',
+      stages: input.decisionStages.map(stage => ({
+        name: stage.name,
+        facts: stage.facts,
+        contract: {
+          type: stage.contract.type,
+          question: stage.contract.question,
+          choices: [...stage.contract.choices],
+        },
+        result: {
+          choice: stage.result.choice,
+          probabilities: stage.result.probabilities ?? null,
+          bypassed: stage.result.bypassed ?? false,
+        },
+      })),
     },
     worker_candidates: input.workers.map(workerAuditCandidate),
     worker_gate_results: input.workerGateEvaluations.map(item => ({

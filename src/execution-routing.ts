@@ -108,63 +108,6 @@ function modelGateReasons(
   return reasons;
 }
 
-const REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
-
-function setupName(worker: WorkerCandidate, model: ModelCandidate): string {
-  if (worker.adapter === 'chatgpt') return 'account-defaults';
-  if (model.id.startsWith('default:') || model.id.startsWith('catalog:')) return 'default';
-  return model.profile ?? model.provider;
-}
-
-function setupKey(worker: WorkerCandidate, model: ModelCandidate): string {
-  return worker.workerId + '/' + setupName(worker, model);
-}
-
-function configuredDefault(models: readonly ModelCandidate[], setup: string): ModelCandidate | undefined {
-  if (setup === 'account-defaults') return models[0];
-  if (setup === 'default') return models.find(model => model.id.startsWith('default:'));
-  return models.find(model => model.profile === setup && model.id.startsWith(setup + ':'));
-}
-
-function resolveModelAlias(raw: string, models: readonly ModelCandidate[], familyHint?: string): string {
-  const normalized = raw.trim().toLowerCase();
-  const exact = models.find(model => model.model.toLowerCase() === normalized);
-  if (exact) return exact.model;
-  if (familyHint) {
-    const sameFamily = models.find(model => model.model.toLowerCase() === familyHint.toLowerCase() + '-' + normalized);
-    if (sameFamily) return sameFamily.model;
-  }
-  const suffix = [...new Set(models.filter(model => model.model.toLowerCase().endsWith('-' + normalized)).map(model => model.model))];
-  return suffix.length === 1 ? suffix[0] : raw.trim();
-}
-
-function userModelOverrides(rulesText: string, defaults: readonly ModelCandidate[], models: readonly ModelCandidate[]): ModelCandidate[] {
-  const result: ModelCandidate[] = [];
-  for (const line of rulesText.split(/\r?\n/)) {
-    const match = line.match(/^\s*([a-z0-9._-]+)\s*:\s*(.+)$/i);
-    if (!match) continue;
-    const label = match[1].toLowerCase();
-    const base = defaults.find(model => (model.profile ?? (model.provider === 'openai' ? 'default' : model.provider)).toLowerCase() === label || model.provider.toLowerCase() === label);
-    if (!base) continue;
-    const sameSetupModels = models.filter(model => model.provider === base.provider && (model.profile ?? null) === (base.profile ?? null));
-    const familyHint = match[2].match(/\b(gpt-\d+(?:\.\d+)?)-[a-z0-9.-]+/i)?.[1];
-    for (const segment of match[2].split(',')) {
-      const item = segment.trim().match(/^(.+?)\s+(low|medium|high|xhigh|max|ultra)(?:\s|$)/i);
-      if (!item) continue;
-      const model = resolveModelAlias(item[1].trim(), sameSetupModels, familyHint);
-      const reasoning = item[2].toLowerCase();
-      if (result.some(candidate => candidate.provider === base.provider && candidate.model === model && (candidate.profile ?? null) === (base.profile ?? null) && candidate.reasoning === reasoning)) continue;
-      result.push({
-        ...base,
-        id: (base.profile ?? 'default') + ':user/' + model,
-        model,
-        reasoning,
-      });
-    }
-  }
-  return result;
-}
-
 function codePlan(model: ModelCandidate): Record<string, unknown> {
   return {
     five_hour: model.resourceWindows?.fiveHour ? {
@@ -198,22 +141,48 @@ function workerProviderFacts(routes: readonly ExecutionRouteCandidate[]): Array<
       id: workerId,
       adapter: workerRoutes[0].worker.adapter,
       providers: Object.fromEntries([...providers.entries()].map(([provider, providerRoutes]) => {
-        const models = providerRoutes.map(route => route.model);
-        const configured = models.find(model => !model.id.includes(':user/')) ?? models[0];
+        const configured = providerRoutes.find(route => !route.model.id.startsWith('catalog:')) ?? providerRoutes[0];
         return [provider, {
-          default: { model: configured.model, reasoning: configured.reasoning ?? null },
-          code_plan: codePlan(configured),
+          default: { model: configured.model.model, reasoning: configured.model.reasoning ?? null },
+          code_plan: codePlan(configured.model),
         }];
       })),
     };
   });
 }
 
+type LayaDecisionStage = {
+  name: 'provider' | 'model' | 'reasoning';
+  facts: JsonValue;
+  contract: { type: 'choice'; question: string; choices: string[] };
+  result: { choice: string; probabilities?: Record<string, number>; bypassed?: boolean };
+};
 
-function decisionRouteLabel(route: ExecutionRouteCandidate): string {
-  const prefix = route.worker.workerId + '/' + route.model.provider + '/';
-  if (!route.model.id.includes(':user/')) return prefix + 'default';
-  return prefix + route.model.model + (route.model.reasoning ? '@' + route.model.reasoning : '');
+async function decideStage(
+  engine: DecisionEngine,
+  name: LayaDecisionStage['name'],
+  facts: JsonValue,
+  question: string,
+  choices: string[],
+): Promise<LayaDecisionStage> {
+  if (choices.length === 0) throw new Error('No choices available for '+name+' stage');
+  const contract = { type: 'choice' as const, question, choices };
+  if (choices.length === 1) return { name, facts, contract, result: { choice: choices[0], bypassed: true } };
+  const decision = await engine.decide({ facts }, contract);
+  if (decision.type !== 'choice') throw new Error('Execution router expected a choice result for '+name);
+  return { name, facts, contract, result: { choice: decision.choice, probabilities: decision.probabilities } };
+}
+
+function stageFacts(
+  baseFacts: Record<string, unknown>,
+  selected: Partial<{ worker: string; provider: string; model: string }>,
+  candidates: Record<string, unknown>,
+): JsonValue {
+  return JSON.parse(JSON.stringify({
+    ...baseFacts,
+    selected,
+    ...candidates,
+  })) as JsonValue;
 }
 
 function routeId(worker: WorkerCandidate, model: ModelCandidate): string {
@@ -263,11 +232,7 @@ export async function discoverExecutionRoutes(
   const evaluations: ExecutionRouteEvaluation[] = [];
   for (const worker of workers) {
     const workerReasons = workerGateEvaluations.find(item => item.workerId === worker.workerId)?.rejectionReasons ?? [];
-    const discoveredModels = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
-    const configuredModels = discoveredModels.filter(model => !model.id.startsWith('catalog:'));
-    const defaults = configuredModels.filter(model => model.id.startsWith('default:') || (model.profile && model.id.startsWith(model.profile + ':')) || worker.adapter === 'chatgpt');
-    const advertised = userModelOverrides(policy.rules.text, defaults, discoveredModels);
-    const models = [...configuredModels, ...advertised];
+    const models = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
     for (const model of models) {
       const rejectionReasons = [...workerReasons, ...modelGateReasons(model, options.routingConstraints, options.excludedRoutes, policy)];
       const route = { id: routeId(worker, model), worker, model };
@@ -294,7 +259,7 @@ export async function routeExecution(
 
   const taskFacts = options.taskFacts ?? {};
   const taskShape = executionTaskShape(taskFacts);
-  const facts = JSON.parse(JSON.stringify({
+  const baseFacts = JSON.parse(JSON.stringify({
     context: {
       job: taskFacts.job ?? null,
       task: taskFacts.task ?? taskFacts,
@@ -315,31 +280,106 @@ export async function routeExecution(
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
     worker_candidates: workerProviderFacts(routes),
-    routing_instruction: 'For each selected provider, use its default model and reasoning unless user_input_rules explicitly provides another model/reasoning option. Any override must be compatible with the selected worker/provider and pass runtime validation.',
-  })) as JsonValue;
-
-  const decisionChoices = routes.map(decisionRouteLabel);
-  const decisionRequest = { facts };
-  const decisionContract = {
-    type: 'choice' as const,
-    question: 'Choose one legal route. Each provider default is available. Additional model/reasoning routes exist only when explicitly provided by user_input_rules. Use context, code-plan quota, runtime load, and user_input_rules.',
-    choices: decisionChoices,
-  };
+    routing_instruction: 'Interpret user_input_rules directly. Choose among the runtime-provided legal candidates at each stage. Relay does not parse user_input_rules into model or reasoning choices.',
+  })) as Record<string, unknown>;
 
   let selected = fallback;
   let evidence: WorkerSelection['decisionEvidence'] = { mode: options.decisionMode ?? 'off', fallback: true };
+  const decisionStages: LayaDecisionStage[] = [];
   if ((options.decisionMode ?? 'off') !== 'off' && options.decisionEngine) {
     try {
-      const decision = await options.decisionEngine.decide(decisionRequest, decisionContract);
-      if (decision.type !== 'choice') throw new Error('Execution router expected a route choice result');
-      const index = decisionChoices.indexOf(decision.choice);
-      if (index < 0) throw new Error('Execution router returned an unknown route');
-      selected = routes[index];
+      const providerKeys = [...new Set(routes.map(route => route.worker.workerId + '::' + route.model.provider))];
+      const providerOptions = providerKeys.map(key => {
+        const splitAt = key.lastIndexOf('::');
+        const worker = key.slice(0, splitAt);
+        const provider = key.slice(splitAt + 2);
+        const providerRoutes = routes.filter(route => route.worker.workerId === worker && route.model.provider === provider);
+        const configured = providerRoutes.find(route => !route.model.id.startsWith('catalog:')) ?? providerRoutes[0];
+        return {
+          key,
+          worker,
+          provider,
+          default_model: configured.model.model,
+          label: 'worker=' + worker + ' provider=' + provider + ' default_model=' + configured.model.model,
+        };
+      });
+      const providerFacts = stageFacts(baseFacts, {}, {
+        provider_candidates: providerOptions.map(({ label: _label, key: _key, ...option }) => option),
+      });
+      const providerStage = await decideStage(
+        options.decisionEngine,
+        'provider',
+        providerFacts,
+        'Choose the best worker/provider pair. Interpret user_input_rules directly together with task context, runtime load, provider defaults, and code-plan quota. When user_input_rules explicitly names providers as routing options, prefer those named providers when applicable; treat unmentioned providers as fallbacks unless other facts clearly require them.',
+        providerOptions.map(option => option.label),
+      );
+      decisionStages.push(providerStage);
+      const selectedProvider = providerOptions.find(option => option.label === providerStage.result.choice);
+      if (!selectedProvider) throw new Error('Laya selected an unknown worker/provider option');
+      const workerId = selectedProvider.worker;
+      const provider = selectedProvider.provider;
+      const providerRoutes = routes.filter(route => route.worker.workerId === workerId && route.model.provider === provider);
+      if (providerRoutes.length === 0) throw new Error('Laya selected a worker/provider pair with no eligible routes');
+
+      const modelGroups = new Map<string, ExecutionRouteCandidate[]>();
+      for (const route of providerRoutes) {
+        const group = modelGroups.get(route.model.model) ?? [];
+        group.push(route);
+        modelGroups.set(route.model.model, group);
+      }
+      const modelChoices = [...modelGroups.keys()];
+      const modelOptions = modelChoices.map(model => {
+        const group = modelGroups.get(model) ?? [];
+        const configured = group.some(route => !route.model.id.startsWith('catalog:'));
+        return {
+          model,
+          configured_default: configured,
+          supported_reasoning: [...new Set(group.map(route => route.model.reasoning).filter((value): value is string => Boolean(value)))],
+          label: 'model=' + model + ' configured_default=' + String(configured),
+        };
+      });
+      const modelFacts = stageFacts(baseFacts, { worker: workerId, provider }, {
+        model_candidates: modelOptions.map(({ label: _label, ...option }) => option),
+      });
+      const modelStage = await decideStage(
+        options.decisionEngine,
+        'model',
+        modelFacts,
+        'Choose the best model for the selected worker/provider. Interpret user_input_rules directly. Candidate model names come from current runtime/configuration and are not derived from the free-text rules. If user_input_rules explicitly maps a model to the current task type, size, complexity, or other current condition, follow that mapping instead of the provider default.',
+        modelOptions.map(option => option.label),
+      );
+      decisionStages.push(modelStage);
+      const selectedModel = modelOptions.find(option => option.label === modelStage.result.choice);
+      if (!selectedModel) throw new Error('Laya selected an unknown model option');
+
+      const modelRoutes = modelGroups.get(selectedModel.model) ?? [];
+      const reasoningChoices = [...new Set(modelRoutes.map(route => route.model.reasoning ?? 'provider-default'))];
+      const reasoningOptions = reasoningChoices.map(reasoning => ({
+        reasoning,
+        label: 'reasoning=' + reasoning,
+      }));
+      const reasoningFacts = stageFacts(baseFacts, { worker: workerId, provider, model: selectedModel.model }, {
+        reasoning_candidates: reasoningChoices,
+      });
+      const reasoningStage = await decideStage(
+        options.decisionEngine,
+        'reasoning',
+        reasoningFacts,
+        'Choose the reasoning level for the selected model. Interpret user_input_rules directly. If user_input_rules explicitly assigns a reasoning level to the selected model for the current conditions, follow that assignment. Use provider-default only when the model does not expose a specific reasoning level.',
+        reasoningOptions.map(option => option.label),
+      );
+      decisionStages.push(reasoningStage);
+      const selectedReasoning = reasoningOptions.find(option => option.label === reasoningStage.result.choice);
+      if (!selectedReasoning) throw new Error('Laya selected an unknown reasoning option');
+
+      const reasoning = selectedReasoning.reasoning === 'provider-default' ? null : selectedReasoning.reasoning;
+      const proposed = modelRoutes.find(route => (route.model.reasoning ?? null) === reasoning);
+      if (!proposed) throw new Error('Laya selected a model/reasoning combination with no eligible route');
+      selected = proposed;
       evidence = {
         mode: options.decisionMode ?? 'active',
         engine: options.decisionEngine.name,
-        proposed: decision.choice,
-        probabilities: decision.probabilities,
+        proposed: providerStage.result.choice + '/' + selectedModel.model + '@' + selectedReasoning.reasoning,
         proposedFields: {
           worker: selected.worker.workerId,
           provider: selected.model.provider,
@@ -386,8 +426,7 @@ export async function routeExecution(
     },
     policy,
     routing,
-    decisionRequest,
-    decisionContract,
+    decisionStages,
   });
   routing.decisionId = audit.decision_id;
   if (options.auditStore) await options.auditStore.append(audit);
