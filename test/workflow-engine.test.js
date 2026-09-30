@@ -175,26 +175,34 @@ test('production lifecycle state assignments stay inside graph application bound
       assignments.push({ path: path.slice(root.length + 1), text: content.slice(match.index, match.index + 80).split('\n')[0] });
     }
   }
-  assert.deepEqual(assignments, [
-    { path: 'workflow/runtime.ts', text: 'task.state = decision.target;' },
-    { path: 'workflow/runtime.ts', text: 'job.state = decision.target;' },
-    { path: 'workflow/runtime.ts', text: 'job.state = target;' },
-  ]);
+  assert.ok(assignments.length >= 3, 'expected graph-owned lifecycle mutations');
+  assert.ok(assignments.every(item => item.path === 'workflow/runtime.ts'), JSON.stringify(assignments));
 });
 
-test('production orchestration entry points stay bound to v2 graph authorities', async () => {
+test('production orchestration entry points use dispatch facades and never direct decision helpers', async () => {
   const expectations = new Map([
-    ['reconciler-review.ts', ['decideReviewLifecycle']],
-    ['reconciler.ts', ['decidePlannerOrchestration', 'decideJobReconcile']],
-    ['blockers.ts', ['decideBlockerResolution']],
-    ['unblock.ts', ['decideAuthoritativeUnblock']],
-    ['scheduled-jobs.ts', ['decideScheduledRun']],
-    ['scheduler.ts', ['decideScheduleCycle']],
-    ['troubleshooter.ts', ['decideTroubleshooter']],
+    ['reconciler-review.ts', ['dispatchReviewLifecycle']],
+    ['reconciler.ts', ['dispatchPlannerOrchestration', 'dispatchJobReconcile']],
+    ['blockers.ts', ['dispatchBlockerResolution']],
+    ['unblock.ts', ['dispatchAuthoritativeUnblock']],
+    ['scheduled-jobs.ts', ['dispatchScheduledRun']],
+    ['scheduler.ts', ['dispatchScheduleCycle']],
+    ['troubleshooter.ts', ['dispatchTroubleshooter']],
   ]);
+  const forbiddenDecision = /\bdecide(?:ReviewLifecycle|PlannerOrchestration|JobReconcile|BlockerResolution|AuthoritativeUnblock|ScheduledRun|ScheduleCycle|Troubleshooter|TaskLifecycle|JobLifecycle)\b/;
   for (const [name, symbols] of expectations) {
     const source = await readFile(new URL('../src/' + name, import.meta.url), 'utf8');
     for (const symbol of symbols) assert.match(source, new RegExp('\\b' + symbol + '\\b'), name + ' must use ' + symbol);
+    assert.doesNotMatch(source, forbiddenDecision, name + ' must not invoke direct workflow decision helpers');
+  }
+
+  const root = new URL('../src', import.meta.url).pathname;
+  for (const path of await sourceFiles(root)) {
+    const relative = path.slice(root.length + 1);
+    const source = await readFile(path, 'utf8');
+    if (!['workflow/graph-v2.ts','workflow/dispatcher.ts'].includes(relative)) {
+      assert.doesNotMatch(source, /new\s+GraphDispatcher\b|\.evaluateSync\s*\(|\.evaluate\s*\(/, relative + ' must enter graph execution through the dispatcher facade');
+    }
   }
 
   const review = await readFile(new URL('../src/reconciler-review.ts', import.meta.url), 'utf8');

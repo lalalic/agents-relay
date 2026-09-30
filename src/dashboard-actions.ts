@@ -1,7 +1,9 @@
 import type { DurableStore } from './store.js';
-import { assertJobLifecycleTransition, assertTaskTransition, type Job, type JobLifecycleState, type TaskState } from './types.js';
+import { type Job, type JobLifecycleState, type TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
-import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
+import { applyJobGraphTarget, applyTaskGraphTarget } from './workflow/runtime.js';
+import { jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
+import { dispatchWorkflowTargetOverride } from './workflow/dispatcher.js';
 import { dispatchTaskAction } from './task-actions.js';
 
 export function dashboardTaskAction(
@@ -27,17 +29,10 @@ export function dashboardJobSetState(store: DurableStore): (jobId: string, state
   return async (jobId: string, state: JobLifecycleState): Promise<Job> => {
     const job = await store.load(jobId);
     if (job.state === state) return job;
-    assertJobLifecycleTransition(job.state, state);
-    applyJobWorkflowDecision(job, {
-      accepted: true,
-      target: state,
-      guard: null,
-      actions: [],
-      mutations: [],
-      effects: [],
-      reason: 'accepted',
+    await dispatchWorkflowTargetOverride(jobLifecycleV2, {
+      currentState: job.state, targetState: state, kind: 'job',
+      persistTransition: async (_from, target) => { applyJobGraphTarget(job, target as JobLifecycleState); await store.saveJob(job); },
     });
-    await store.saveJob(job);
     return await store.load(job.id);
   };
 }
@@ -54,16 +49,10 @@ export function dashboardTaskSetState(store: DurableStore): (jobId: string, task
 
     const now = new Date().toISOString();
     const from = task.state;
-    assertTaskTransition(from, state);
-    applyTaskWorkflowDecision(task, {
-      accepted: true,
-      target: state,
-      guard: null,
-      actions: [],
-      mutations: [],
-      effects: [],
-      reason: 'accepted',
-    }, now);
+    await dispatchWorkflowTargetOverride(taskLifecycleV2, {
+      currentState: from, targetState: state, kind: 'task',
+      persistTransition: (_source, target) => { applyTaskGraphTarget(task, target as TaskState, now); },
+    });
     task.manualStateOverrides = [
       ...(task.manualStateOverrides ?? []),
       { from, to: state, at: now, actor: 'dashboard-user' as const },

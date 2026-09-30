@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
+import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 import type { Job } from '../types.js';
 import { isEffectivelyBlocked } from '../unblock.js';
 
@@ -34,20 +35,11 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
   events: { 'planner.reconcile': { id: 'planner.reconcile' } },
 });
 
-export function decidePlannerOrchestration(facts: Readonly<Record<string, unknown>>): GraphDecision {
-  let current: PlannerOrchestrationState = 'idle';
-  for (let step = 0; step < 9; step += 1) {
-    const decision = plannerOrchestrationV2.evaluateSync({
-      currentState: current,
-      input: { transport: 'event', id: 'planner.reconcile', payload: {} },
-      durableFacts: facts,
-    });
-    if (!decision.accepted) return decision;
-    const target = decision.target as PlannerOrchestrationState;
-    if (!target.startsWith('check_')) return decision;
-    current = target;
-  }
-  return { accepted: false, source: current, reason: 'no_transition' };
+export async function dispatchPlannerOrchestration(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
+  return dispatchWorkflowGraph(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:9,executeAction});
+}
+export function decidePlannerOrchestration(facts:Readonly<Record<string,unknown>>):GraphDecision{
+  return dispatchWorkflowGraphSync(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:9});
 }
 
 

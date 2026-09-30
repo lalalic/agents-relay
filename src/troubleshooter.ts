@@ -1,5 +1,5 @@
 import { Job, Task, taskOverallTimeoutMs } from './types.js';
-import { decideTroubleshooter } from './workflow/troubleshooter-v2.js';
+import { dispatchTroubleshooter } from './workflow/troubleshooter-v2.js';
 
 function slug(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72) || 'task';
@@ -54,15 +54,16 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
   const recoveries: Task[] = [];
   for (const task of job.tasks) {
     const id = troubleshooterTaskId(task);
-    const decision = decideTroubleshooter({
+    let create = false;
+    const decision = dispatchTroubleshooter({
       failedOrBlocked: ['FAILED','BLOCKED'].includes(task.state),
       ordinaryWork: task.kind !== 'planner' && task.agentName !== 'troubleshooter',
       currentRun: belongsToCurrentRun(job, task),
       needsRecovery: !(task.state === 'BLOCKED' && Boolean(task.unblock)),
       idUnused: !existing.has(id),
       noRecoveryBarrier: !hasRecoveryBarrier(job, task),
-    });
-    if (!decision.accepted || !decision.actions.some(action => action.id === 'troubleshooter.create')) continue;
+    }, () => { create = true; });
+    if (!decision.accepted || !create) continue;
     const now = new Date().toISOString();
     recoveries.push({
       jobId: job.id,

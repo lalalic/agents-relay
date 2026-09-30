@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type ScheduleCycleState = 'idle' | 'check_satisfied' | 'waiting' | 'finished';
 
@@ -16,18 +17,11 @@ export const scheduleCycleV2 = new GraphRuntime(source, {
   events: { 'schedule.reconcile': { id: 'schedule.reconcile' } },
 });
 
-export function decideScheduleCycle(facts: Readonly<Record<string, unknown>>): GraphDecision {
-  let current: ScheduleCycleState = 'idle';
-  for (let step=0; step<2; step+=1) {
-    const decision = scheduleCycleV2.evaluateSync({
-      currentState: current,
-      input: { transport: 'event', id: 'schedule.reconcile', payload: {} },
-      durableFacts: facts,
-    });
-    if (!decision.accepted) return decision;
-    const target = decision.target as ScheduleCycleState;
-    if (!target.startsWith('check_')) return decision;
-    current = target;
-  }
-  return { accepted:false, source:current, reason:'no_transition' };
+export function dispatchScheduleCycle(facts: Readonly<Record<string, unknown>>, onFinish:()=>void): GraphDecision {
+  return dispatchWorkflowGraphSync(scheduleCycleV2, {
+    initialState:'idle', input:{transport:'event',id:'schedule.reconcile',payload:{}}, durableFacts:facts,
+    isTransientState:state=>state.startsWith('check_'), maxSteps:2,
+    executeAction:actionId=>{ if(actionId==='schedule.finishSlot') onFinish(); else throw new Error('Unsupported schedule cycle action '+actionId); return {}; },
+  });
 }
+export function decideScheduleCycle(facts: Readonly<Record<string, unknown>>): GraphDecision { return dispatchScheduleCycle(facts,()=>{}); }

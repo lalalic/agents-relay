@@ -37,6 +37,7 @@ export type GraphTransition = { readonly source: string; readonly target: string
 export type GraphEvent = { readonly id: string; readonly payload: unknown };
 export type GraphDispatcherPorts = {
   readonly persistTransition: (transition: GraphTransition) => void | Promise<void>;
+  readonly executeAction?: (actionId: string, context: ActionContext) => ActionReceipt | Promise<ActionReceipt>;
   readonly publishEvent: (event: GraphEvent) => void | Promise<void>;
 };
 
@@ -268,6 +269,41 @@ export class GraphRuntime {
 export class GraphDispatcher {
   constructor(readonly runtime: GraphRuntime, readonly ports: GraphDispatcherPorts) {}
 
+  dispatchSync<Payload>(facts: GraphFacts<Payload>): GraphDispatchResult {
+    const decision = this.runtime.evaluateSync(facts);
+    if (!decision.accepted) return { decision, receipts: [] };
+    const persisted = this.ports.persistTransition({ source: decision.source, target: decision.target });
+    if (persisted instanceof Promise) throw new Error('GraphDispatcher.dispatchSync requires synchronous persistTransition');
+    const receipts: ActionReceipt[] = [];
+    for (const step of decision.actions) {
+      const action = this.runtime.registry.actions.get(step.id)!;
+      const context = { facts, actionId: step.id, input: step.input };
+      const pending = this.ports.executeAction ? this.ports.executeAction(step.id, context) : action.execute ? action.execute(context) : {};
+      if (pending instanceof Promise) throw new Error('GraphDispatcher.dispatchSync requires synchronous executeAction');
+      const receipt = pending;
+      receipts.push(receipt);
+      if (receipt.ok === false) {
+        const definition = this.runtime.registry.events.get(receipt.failureEvent.id);
+        if (!definition) throw new Error(`unknown failure event '${receipt.failureEvent.id}'`);
+        if (definition.validate && !definition.validate(receipt.failureEvent.payload)) throw new Error(`invalid payload for failure event '${receipt.failureEvent.id}'`);
+        const published = this.ports.publishEvent(receipt.failureEvent);
+        if (published instanceof Promise) throw new Error('GraphDispatcher.dispatchSync requires synchronous publishEvent');
+        return { decision, receipts };
+      }
+      const payloads = receipt.payloads ?? {};
+      for (const eventId of step.emittedEvents) {
+        const definition = this.runtime.registry.events.get(eventId)!;
+        if (!(eventId in payloads)) throw new Error(`action '${step.id}' did not supply payload for emitted event '${eventId}'`);
+        if (definition.validate && !definition.validate(payloads[eventId])) throw new Error(`invalid payload for emitted event '${eventId}'`);
+      }
+      for (const eventId of step.emittedEvents) {
+        const published = this.ports.publishEvent({ id: eventId, payload: payloads[eventId] });
+        if (published instanceof Promise) throw new Error('GraphDispatcher.dispatchSync requires synchronous publishEvent');
+      }
+    }
+    return { decision, receipts };
+  }
+
   async dispatch<Payload>(facts: GraphFacts<Payload>): Promise<GraphDispatchResult> {
     const decision = await this.runtime.evaluate(facts);
     if (!decision.accepted) return { decision, receipts: [] };
@@ -275,7 +311,8 @@ export class GraphDispatcher {
     const receipts: ActionReceipt[] = [];
     for (const step of decision.actions) {
       const action = this.runtime.registry.actions.get(step.id)!;
-      const receipt = action.execute ? await action.execute({ facts, actionId: step.id, input: step.input }) : {};
+      const context = { facts, actionId: step.id, input: step.input };
+      const receipt = this.ports.executeAction ? await this.ports.executeAction(step.id, context) : action.execute ? await action.execute(context) : {};
       receipts.push(receipt);
       if (receipt.ok === false) {
         const definition = this.runtime.registry.events.get(receipt.failureEvent.id);

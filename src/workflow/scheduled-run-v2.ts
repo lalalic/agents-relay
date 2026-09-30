@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
+import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type ScheduledRunGraphState =
   | 'idle' | 'check_unclaimed' | 'check_job' | 'check_active' | 'check_concurrency'
@@ -28,18 +29,9 @@ export const scheduledRunV2=new GraphRuntime(source,{
   events:{'schedule.tick':{id:'schedule.tick'}},
 });
 
+export async function dispatchScheduledRun(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
+  return dispatchWorkflowGraph(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:8,executeAction});
+}
 export function decideScheduledRun(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  let current:ScheduledRunGraphState='idle';
-  for(let step=0;step<8;step+=1){
-    const decision=scheduledRunV2.evaluateSync({
-      currentState:current,
-      input:{transport:'event',id:'schedule.tick',payload:{}},
-      durableFacts:facts,
-    });
-    if(!decision.accepted)return decision;
-    const target=decision.target as ScheduledRunGraphState;
-    if(!target.startsWith('check_'))return decision;
-    current=target;
-  }
-  return {accepted:false,source:current,reason:'no_transition'};
+  return dispatchWorkflowGraphSync(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:8});
 }

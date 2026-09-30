@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
+import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type BlockerResolutionGraphState =
   | 'waiting' | 'check_target' | 'check_autonomous' | 'check_effective' | 'check_already_unblocked'
@@ -31,18 +32,9 @@ export const blockerResolutionV2=new GraphRuntime(source,{
   events:{'blocker.resolved':{id:'blocker.resolved'}},
 });
 
+export async function dispatchBlockerResolution(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
+  return dispatchWorkflowGraph(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:10,executeAction});
+}
 export function decideBlockerResolution(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  let current:BlockerResolutionGraphState='waiting';
-  for(let step=0;step<10;step+=1){
-    const decision=blockerResolutionV2.evaluateSync({
-      currentState:current,
-      input:{transport:'event',id:'blocker.resolved',payload:{}},
-      durableFacts:facts,
-    });
-    if(!decision.accepted)return decision;
-    const target=decision.target as BlockerResolutionGraphState;
-    if(!target.startsWith('check_'))return decision;
-    current=target;
-  }
-  return {accepted:false,source:current,reason:'no_transition'};
+  return dispatchWorkflowGraphSync(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:10});
 }

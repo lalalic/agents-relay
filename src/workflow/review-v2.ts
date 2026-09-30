@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
+import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 import type { ReviewOutcome } from '../types.js';
 
 export type ReviewGraphState = 'NONE' | 'PENDING' | 'STARTED' | 'APPROVED' | 'CHANGES_REQUIRED' | 'BLOCKED' | 'STALE';
@@ -40,14 +41,14 @@ export function reviewOutcome(state: string): ReviewOutcome | undefined {
   return state.toLowerCase() as ReviewOutcome;
 }
 
-export function decideReviewLifecycle(
+export async function dispatchReviewLifecycle(
   outcome: ReviewOutcome | undefined,
   event: string,
   facts: Readonly<Record<string, unknown>> = {},
-): GraphDecision {
-  return reviewLifecycleV2.evaluateSync({
-    currentState: reviewGraphState(outcome),
-    input: { transport: 'event', id: event, payload: {} },
-    durableFacts: facts,
-  });
+  executeAction?: (actionId:string)=>ActionReceipt|Promise<ActionReceipt>,
+): Promise<GraphDecision> {
+  return dispatchWorkflowGraph(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts,executeAction});
+}
+export function decideReviewLifecycle(outcome: ReviewOutcome | undefined,event:string,facts:Readonly<Record<string,unknown>>={}):GraphDecision{
+  return dispatchWorkflowGraphSync(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts});
 }

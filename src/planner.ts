@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
-import { decidePlannerTrigger } from './workflow/planner-trigger-v2.js';
+import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -49,7 +49,7 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
   const consumed = new Set((job.plans ?? []).flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
   const unblocked = job.tasks.filter(task => task.state === 'UNBLOCKED' && task.unblock && !consumed.has(task.id));
   const hasUnblock = unblocked.length > 0 || Boolean(job.changeCycle && !job.changeCycle.consumedByPlannerTaskId);
-  const decision = decidePlannerTrigger({
+  const decision = dispatchPlannerTrigger({
     manualPlan: manual,
     hasUnblock,
     scheduledRun: Boolean(job.schedule?.currentRunSlot),

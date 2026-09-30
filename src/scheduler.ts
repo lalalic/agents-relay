@@ -1,11 +1,10 @@
 import { Job, JobSchedule, MissedRunPolicy, ScheduleConcurrencyPolicy, Task } from './types.js';
 import { implementationTasks } from './runtime-status.js';
 import { WorkflowContext } from './workflow/mermaid.js';
-import { decideJobLifecycle, decideTaskLifecycle, type WorkflowDecision } from './workflow/lifecycle.js';
+import { dispatchJobLifecycle, dispatchTaskLifecycle, dispatchTaskLifecycleSync, type WorkflowDecision } from './workflow/lifecycle.js';
 import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
 export { dependencyReady, detectCycles } from './workflow/task-reconcile.js';
-import { applyJobWorkflowDecision, applyTaskWorkflowDecision } from './workflow/runtime.js';
-import { decideScheduleCycle } from './workflow/schedule-cycle-v2.js';
+import { dispatchScheduleCycle } from './workflow/schedule-cycle-v2.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
@@ -21,17 +20,16 @@ export function schedule(job: Job): Job {
   if (job.schedule) {
     const planners = scopedTasks.filter(task => task.kind === 'planner');
     const latest = planners.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
-    const decision = decideScheduleCycle({
+    dispatchScheduleCycle({
       hasCurrentSlot: Boolean(job.schedule.currentRunSlot),
       plannerSatisfied: latest?.state === 'SUCCEEDED' && latest.plannerResult?.objective_status === 'satisfied',
-    });
-    if (decision.accepted && decision.actions.some(action => action.id === 'schedule.finishSlot')) {
-      const slot = job.schedule.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
-      const lastRun = job.schedule.lastRunAt ? Date.parse(job.schedule.lastRunAt) : Number.NaN;
-      if (Number.isFinite(slot) && (!Number.isFinite(lastRun) || lastRun < slot)) job.schedule.lastRunAt = new Date().toISOString();
-      job.schedule.currentRunSlot = null;
+    }, () => {
+      const slot = job.schedule!.currentRunSlot ? Date.parse(job.schedule!.currentRunSlot) : Number.NaN;
+      const lastRun = job.schedule!.lastRunAt ? Date.parse(job.schedule!.lastRunAt) : Number.NaN;
+      if (Number.isFinite(slot) && (!Number.isFinite(lastRun) || lastRun < slot)) job.schedule!.lastRunAt = new Date().toISOString();
+      job.schedule!.currentRunSlot = null;
       job.updatedAt = new Date().toISOString();
-    }
+    });
   }
   return job;
 }
@@ -41,24 +39,21 @@ export function extendRetryBudget(task: Pick<Task, 'attempt' | 'maxAttempts'>, w
   return Math.max(windowSize, (Math.floor(usedOrBudgeted / windowSize) + 1) * windowSize);
 }
 export function tryTransitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): WorkflowDecision<Task['state']> {
-  const decision = decideTaskLifecycle(task, event, context);
-  if (decision.accepted && decision.target) applyTaskWorkflowDecision(task, decision);
-  return decision;
+  return dispatchTaskLifecycleSync(task as Task & Record<string, unknown>, event, context);
 }
-export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Task['state']>> {
+export async function transitionTaskEvent(task: Task, event: string, context: WorkflowContext = {}, executeEffect?: (actionId:string)=>void|Promise<void>, persist?:()=>void|Promise<void>): Promise<WorkflowDecision<Task['state']>> {
   const from = task.state;
-  const decision = tryTransitionTaskEvent(task, event, context);
+  const decision = await dispatchTaskLifecycle(task as Task & Record<string, unknown>, event, context, executeEffect, persist);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
     ? `Ambiguous workflow transition from ${from} on ${event}`
     : `No enabled workflow transition from ${from} on ${event}`);
   return decision;
 }
-export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}): Promise<WorkflowDecision<Job['state']>> {
-  const decision = decideJobLifecycle(job, event, context);
+export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}, executeEffect?: (actionId:string)=>void|Promise<void>, persist?:()=>void|Promise<void>): Promise<WorkflowDecision<Job['state']>> {
+  const decision = await dispatchJobLifecycle(job, event, context, executeEffect, persist);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
     ? `Ambiguous workflow transition from ${job.state} on ${event}`
     : `No enabled workflow transition from ${job.state} on ${event}`);
-  applyJobWorkflowDecision(job, decision);
   return decision;
 }
 

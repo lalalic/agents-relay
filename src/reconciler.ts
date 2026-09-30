@@ -6,7 +6,7 @@ import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
 import { createPlannerRoundTask, materializePlannerChild, pendingPlanForPlannerTask, recoverPendingPlannerTask, parsePlannerResult, plannerInput, validatePlannerHierarchy } from './planner.js';
-import { decidePlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
+import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
 import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
@@ -22,7 +22,7 @@ import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
-import { decideJobReconcile } from './workflow/job-reconcile-v2.js';
+import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
@@ -136,17 +136,19 @@ export class Reconciler extends ReconcilerReviewBase {
             );
             await this.applyJobEffectOutcomes(job, outcomes);
           } else {
-            const decision = await transitionJobEvent(
+            await transitionJobEvent(
               job,
               prState === 'MERGED' ? 'pr.merged' : 'pr.closed',
               prState === 'CLOSED' ? { notMerged: true } : {},
+              async actionId => {
+                const outcomes = await this.workflowEffects.execute(
+                  [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'],
+                  { jobId: job.id, transitionKey: `terminal:${prState}`, data: { reason } },
+                );
+                await this.applyJobEffectOutcomes(job, outcomes);
+              },
+              async () => { await this.store.saveJob(job); },
             );
-            await this.store.saveJob(job);
-            const outcomes = await this.workflowEffects.execute(
-              decision.effects,
-              { jobId: job.id, transitionKey: `${decision.target}:${prState}`, data: { reason } },
-            );
-            await this.applyJobEffectOutcomes(job, outcomes);
           }
         }
         if (prState === 'MERGED' && this.store.resolveBlockerDependents) { const resolved = await this.store.resolveBlockerDependents(job.id, 'merge'); for (const target of resolved.unblocked) await this.emit(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Blocker Job ${job.id} resolved (merge)`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, blockerJobId: job.id })); }
@@ -192,29 +194,22 @@ export class Reconciler extends ReconcilerReviewBase {
           .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
           .slice(0, capacity);
         for (const task of dispatchable) {
-          const decision = await transitionTaskEvent(task, 'dispatch', { dispatchable: true });
-          await this.store.saveTask(task);
-          const outcomes = await this.workflowEffects.execute(
-            decision.effects,
-            {
-              jobId: scheduled.id,
-              taskId: task.id,
-              transitionKey: `dispatch:${task.attempt}`,
-              data: { attempt: task.attempt },
-            },
-          );
-          await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
+          await transitionTaskEvent(task, 'dispatch', { dispatchable: true }, async actionId => {
+            const outcomes = await this.workflowEffects.execute(
+              [actionId as 'effect.launchTask'],
+              { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: { attempt: task.attempt } },
+            );
+            await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
+          }, async () => { await this.store.saveTask(task); });
         }
       }
       const finalState = schedule(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, prState, headSha);
-      const reconcileDecision = decideJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) });
-      const reconcileOutcomes = await this.workflowEffects.execute(
-        reconcileDecision.effects,
-        { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } },
-      );
-      await this.applyJobEffectOutcomes(finalState, reconcileOutcomes);
+      await dispatchJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
+        const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
+        await this.applyJobEffectOutcomes(finalState, outcomes);
+      }, async () => { await this.store.saveJob(finalState); });
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
@@ -252,25 +247,27 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     const recovered = recoverPendingPlannerTask(job, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'));
-    const decision = decidePlannerOrchestration(plannerOrchestrationFacts(job, Boolean(recovered)));
-    if (!decision.accepted) return job;
-
-    for (const action of decision.actions) {
-      if (action.id === 'planner.recoverPending') {
+    let changed = false;
+    const decision = await dispatchPlannerOrchestration(plannerOrchestrationFacts(job, Boolean(recovered)), async actionId => {
+      if (actionId === 'planner.recoverPending') {
         if (!recovered) throw new Error('Planner graph requested pending recovery without a recoverable Plan');
         await this.store.appendTask(recovered);
         await this.emit(eventFor(job.id, recovered.id, null, 'planner.created', 'queued', 'Recovered pending Plan ' + recovered.id, 'orchestrator'));
-        return this.store.load(job.id);
+        changed = true;
+        return {};
       }
-      if (action.id === 'planner.createRound') {
+      if (actionId === 'planner.createRound') {
         const task = createPlannerRoundTask(job, { timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M') });
         await this.store.appendPlan(pendingPlanForPlannerTask(job, task));
         await this.store.appendTask(task);
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.created', 'queued', 'Planner task ' + task.id + ' created', 'orchestrator'));
-        return this.store.load(job.id);
+        changed = true;
+        return {};
       }
-    }
-    return job;
+      throw new Error('Unsupported planner orchestration action ' + actionId);
+    });
+    if (!decision.accepted || !changed) return job;
+    return this.store.load(job.id);
   }
 
   private async recoverPlannerChildren(job: Job): Promise<void> {

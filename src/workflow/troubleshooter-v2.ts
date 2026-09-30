@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type TroubleshooterGraphState =
   | 'idle' | 'check_ordinary' | 'check_run' | 'check_needs' | 'check_id' | 'check_barrier' | 'skip' | 'create';
@@ -21,18 +22,11 @@ export const troubleshooterV2=new GraphRuntime(source,{
   events:{'troubleshooter.reconcile':{id:'troubleshooter.reconcile'}},
 });
 
-export function decideTroubleshooter(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  let current:TroubleshooterGraphState='idle';
-  for(let step=0;step<6;step+=1){
-    const decision=troubleshooterV2.evaluateSync({
-      currentState:current,
-      input:{transport:'event',id:'troubleshooter.reconcile',payload:{}},
-      durableFacts:facts,
-    });
-    if(!decision.accepted)return decision;
-    const target=decision.target as TroubleshooterGraphState;
-    if(!target.startsWith('check_'))return decision;
-    current=target;
-  }
-  return {accepted:false,source:current,reason:'no_transition'};
+export function dispatchTroubleshooter(facts:Readonly<Record<string,unknown>>, onCreate:()=>void):GraphDecision{
+  return dispatchWorkflowGraphSync(troubleshooterV2,{
+    initialState:'idle', input:{transport:'event',id:'troubleshooter.reconcile',payload:{}}, durableFacts:facts,
+    isTransientState:state=>state.startsWith('check_'), maxSteps:6,
+    executeAction:actionId=>{ if(actionId==='troubleshooter.create') onCreate(); else throw new Error('Unsupported troubleshooter graph action '+actionId); return {}; },
+  });
 }
+export function decideTroubleshooter(facts:Readonly<Record<string,unknown>>):GraphDecision{ return dispatchTroubleshooter(facts,()=>{}); }

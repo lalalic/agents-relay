@@ -6,7 +6,7 @@ import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult, withExecutionBoundary } from './reconciler-runtime.js';
-import { decideReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
+import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 
 const taskRouteClaims = new Set<string>();
 
@@ -43,11 +43,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
   protected async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
     if (!headSha || !job.review || job.review.headSha === headSha) return;
-    const decision = decideReviewLifecycle(job.review.outcome, 'head.changed');
+    const decision = await dispatchReviewLifecycle(job.review.outcome, 'head.changed', {}, async actionId => {
+      if (actionId === 'review.cancelStale') { await this.cancelStaleReviewTask(job); return {}; }
+      throw new Error('Unsupported stale review action ' + actionId);
+    });
     if (!decision.accepted) return;
-    for (const action of decision.actions) {
-      if (action.id === 'review.cancelStale') await this.cancelStaleReviewTask(job);
-    }
     const outcome = reviewOutcome(decision.target);
     if (!outcome) throw new Error('Review graph produced invalid stale target ' + decision.target);
     job.review = { ...job.review, outcome, updatedAt: new Date().toISOString() };
@@ -86,10 +86,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    const decision = decideReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, prState, headSha));
-    if (!decision.accepted || !decision.actions.some(action => action.id === 'review.create')) return;
-    if (!headSha) throw new Error('Review graph requested creation without a durable head SHA');
-    const reviewTaskId = await this.createFinalReviewTask(job, headSha);
+    let reviewTaskId: string | null = null;
+    const decision = await dispatchReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, prState, headSha), async actionId => {
+      if (actionId !== 'review.create') throw new Error('Unsupported review reconcile action ' + actionId);
+      if (!headSha) throw new Error('Review graph requested creation without a durable head SHA');
+      reviewTaskId = await this.createFinalReviewTask(job, headSha); return {};
+    });
+    if (!decision.accepted || !reviewTaskId || !headSha) return;
     const outcome = reviewOutcome(decision.target);
     if (!outcome) throw new Error('Review graph produced invalid create target ' + decision.target);
     const now = new Date().toISOString();
@@ -214,68 +217,50 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
 
-    const reviewDecision = decideReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false });
-    if (!reviewDecision.accepted) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    const outcome = reviewOutcome(reviewDecision.target);
-    if (!outcome) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-
     const taskDecision = tryTransitionTaskEvent(task, event.type);
     if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     task.error = null;
-    if (taskDecision.target !== 'RUNNING') {
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.executionId = null;
-    }
+    if (taskDecision.target !== 'RUNNING') { task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; }
     await this.store.saveTask(task);
 
-    const evidence = { summary: event.message || 'Review ' + outcome, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
-    job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
-
-    for (const action of reviewDecision.actions) {
-      if (action.id === 'review.createFix') {
+    let needsReconcile = false;
+    const reviewDecision = await dispatchReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
+      if (actionId === 'review.createFix') {
+        needsReconcile = true;
         const rawIssues = Array.isArray(reviewData?.issues) ? reviewData.issues : [];
         const issues = rawIssues.map(item => {
           if (typeof item === 'string') return item.trim();
-          if (item && typeof item === 'object') {
-            const value = item as Record<string, unknown>;
-            const summary = typeof value.summary === 'string' ? value.summary : typeof value.message === 'string' ? value.message : typeof value.title === 'string' ? value.title : '';
-            return summary.trim();
-          }
+          if (item && typeof item === 'object') { const value = item as Record<string, unknown>; return (typeof value.summary === 'string' ? value.summary : typeof value.message === 'string' ? value.message : typeof value.title === 'string' ? value.title : '').trim(); }
           return '';
         }).filter(Boolean);
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
-        const now = event.timestamp || new Date().toISOString();
-        const id = 'review-fix-' + headSha.slice(0, 8);
+        const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
           const input = 'Address all reviewer findings for PR #' + job.prNumber + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
-          const fixTask: Task = {
-            jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title,
-            agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'],
-            workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' },
-            continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3,
-            leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
-            error: null, timeoutMs: 0, createdAt: now, updatedAt: now
-          };
+          const fixTask: Task = { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, state: 'DRAFT', attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
           await this.store.appendTask(fixTask);
           await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + id + ' for ' + issues.length + ' reviewer finding(s)', 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
         }
+        return {};
       }
-
-      if (action.id === 'review.requestMerge') {
-        const decision = await transitionJobEvent(job, 'review.approved', { autoMerge: true });
-        await this.store.saveJob(job);
-        const outcomes = await this.workflowEffects.execute(
-          decision.effects,
-          { jobId: job.id, taskId: task.id, transitionKey: 'review.approved:' + headSha, data: { headSha } },
-        );
-        await this.applyJobEffectOutcomes(job, outcomes);
+      if (actionId === 'review.requestMerge') {
+        await transitionJobEvent(job, 'review.approved', { autoMerge: true }, async effectId => {
+          const outcomes = await this.workflowEffects.execute(
+            [effectId as 'effect.mergePullRequest'],
+            { jobId: job.id, taskId: task.id, transitionKey: 'review.approved:' + headSha, data: { headSha } },
+          );
+          await this.applyJobEffectOutcomes(job, outcomes);
+        }, async () => { await this.store.saveJob(job); });
+        return {};
       }
-    }
-
-    job.updatedAt = job.review.updatedAt;
-    await this.store.saveJob(job);
-    const needsReconcile = reviewDecision.actions.some(action => action.id === 'review.createFix');
+      throw new Error('Unsupported review event action ' + actionId);
+    });
+    if (!reviewDecision.accepted) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const outcome = reviewOutcome(reviewDecision.target);
+    if (!outcome) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const evidence = { summary: event.message || 'Review ' + outcome, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
+    job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
+    job.updatedAt = job.review.updatedAt; await this.store.saveJob(job);
     return { applied: true, reconcile: needsReconcile, reason: 'review.' + outcome, reconcileMode: needsReconcile ? 'detached' : undefined };
   }
 

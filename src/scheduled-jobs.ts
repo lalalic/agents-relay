@@ -1,7 +1,7 @@
 import { GitHubClient, GitHubStore, type DurableStore } from './store.js';
 import { Job } from './types.js';
 import { nextScheduleRun, scheduleBucket } from './scheduler.js';
-import { decideScheduledRun } from './workflow/scheduled-run-v2.js';
+import { dispatchScheduledRun } from './workflow/scheduled-run-v2.js';
 
 export type ScheduledJobRef = { prNumber: number; jobId: string; bucket: string };
 export type ScheduledRunStatus = 'completed' | 'skipped-idempotent' | 'skipped-active';
@@ -27,40 +27,28 @@ export async function runScheduledBucket(
   if (!schedule) throw new Error('Scheduled job ' + job.id + ' has no schedule metadata');
   const slot = new Date(schedule.nextRunAt);
   const active = job.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state));
-  const decision = decideScheduledRun({
+  const schedulerStore = storeFactory ? storeFactory() : new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
+  let actionStatus: ScheduledRunStatus | null = null;
+  const decision = await dispatchScheduledRun({
     slotDue: scheduleBucket(slot) === ref.bucket && slot.getTime() <= now.getTime(),
     slotUnclaimed: !schedule.lastScheduledSlot || new Date(schedule.lastScheduledSlot).getTime() < slot.getTime(),
-    jobActive: job.state === 'ACTIVE',
-    hasActiveTasks: active,
-    concurrencySkip: schedule.concurrencyPolicy === 'skip',
-    concurrencyQueue: schedule.concurrencyPolicy === 'queue',
+    jobActive: job.state === 'ACTIVE', hasActiveTasks: active,
+    concurrencySkip: schedule.concurrencyPolicy === 'skip', concurrencyQueue: schedule.concurrencyPolicy === 'queue',
     runMissed: schedule.missedRunPolicy === 'run',
+  }, async actionId => {
+    if (actionId === 'schedule.skipActiveAdvance') {
+      schedule.lastScheduledSlot = slot.toISOString(); schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
+      job.updatedAt = now.toISOString(); await schedulerStore.saveJob(job); actionStatus = 'skipped-active'; return {};
+    }
+    if (actionId === 'schedule.claimFromSlot' || actionId === 'schedule.claimFromNow') {
+      schedule.lastScheduledSlot = slot.toISOString(); schedule.currentRunSlot = slot.toISOString();
+      schedule.nextRunAt = nextScheduleRun(schedule, actionId === 'schedule.claimFromSlot' ? slot : now).toISOString();
+      job.updatedAt = now.toISOString(); await schedulerStore.saveJob(job); job = await schedulerStore.load(job.id); return {};
+    }
+    throw new Error('Unsupported schedule graph action ' + actionId);
   });
-  if (!decision.accepted) return { job, status: 'skipped-idempotent' };
-  if (decision.target === 'skip_idempotent') return { job, status: 'skipped-idempotent' };
-  if (decision.target === 'skip_active' && decision.actions.length === 0) return { job, status: 'skipped-active' };
-
-  const schedulerStore = storeFactory ? storeFactory() : new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
-  for (const action of decision.actions) {
-    if (action.id === 'schedule.skipActiveAdvance') {
-      schedule.lastScheduledSlot = slot.toISOString();
-      schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
-      job.updatedAt = now.toISOString();
-      await schedulerStore.saveJob(job);
-      return { job, status: 'skipped-active' };
-    }
-    if (action.id === 'schedule.claimFromSlot' || action.id === 'schedule.claimFromNow') {
-      schedule.lastScheduledSlot = slot.toISOString();
-      schedule.currentRunSlot = slot.toISOString();
-      schedule.nextRunAt = nextScheduleRun(schedule, action.id === 'schedule.claimFromSlot' ? slot : now).toISOString();
-      job.updatedAt = now.toISOString();
-      await schedulerStore.saveJob(job);
-      job = await schedulerStore.load(job.id);
-    } else {
-      throw new Error('Unsupported schedule graph action ' + action.id);
-    }
-  }
-
+  if (!decision.accepted || decision.target === 'skip_idempotent') return { job, status: 'skipped-idempotent' };
+  if (actionStatus === 'skipped-active' || decision.target === 'skip_active') return { job, status: 'skipped-active' };
   if (decision.target !== 'claimed') return { job, status: 'skipped-idempotent' };
   if (!engine) throw new Error('Scheduled jobs require the local relayd scheduler engine');
   await engine.reconcile(job.id);

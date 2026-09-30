@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { GraphRuntime, type GraphDecision } from './graph-v2.js';
+import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
+import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type AuthoritativeUnblockState = 'blocked' | 'autonomous_replan' | 'fixed_retry';
 
@@ -16,10 +17,9 @@ export const authoritativeUnblockV2=new GraphRuntime(source,{
   events:{'task.authoritative_unblock':{id:'task.authoritative_unblock'}},
 });
 
+export async function dispatchAuthoritativeUnblock(autonomousJob:boolean, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
+  return dispatchWorkflowGraph(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},durableFacts:{autonomousJob},executeAction});
+}
 export function decideAuthoritativeUnblock(autonomousJob:boolean):GraphDecision{
-  return authoritativeUnblockV2.evaluateSync({
-    currentState:'blocked',
-    input:{transport:'event',id:'task.authoritative_unblock',payload:{}},
-    durableFacts:{autonomousJob},
-  });
+  return dispatchWorkflowGraphSync(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},durableFacts:{autonomousJob}});
 }
