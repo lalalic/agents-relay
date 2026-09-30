@@ -11,7 +11,15 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 export const reviewLifecycleV2 = new GraphRuntime(source, {
   states: new Set<ReviewGraphState>(['NONE','PENDING','STARTED','APPROVED','CHANGES_REQUIRED','BLOCKED','STALE']),
   guards: {
-    reviewEligible: boolGuard('reviewEligible'),
+    unscheduled: boolGuard('unscheduled'),
+    reviewEnabled: boolGuard('reviewEnabled'),
+    prOpen: boolGuard('prOpen'),
+    jobActive: boolGuard('jobActive'),
+    implementationComplete: boolGuard('implementationComplete'),
+    headAvailable: boolGuard('headAvailable'),
+    completionGateSatisfied: boolGuard('completionGateSatisfied'),
+    noActiveReviewTask: boolGuard('noActiveReviewTask'),
+    noApprovedCurrentReview: boolGuard('noApprovedCurrentReview'),
     autoMerge: boolGuard('autoMerge'),
   },
   actions: Object.fromEntries((['review.create','review.cancelStale','review.createFix','review.requestMerge'] as ReviewGraphAction[]).map(id => [id,{id}])),

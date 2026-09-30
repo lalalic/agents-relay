@@ -8,8 +8,24 @@ changes["state: CHANGES_REQUIRED"]
 blocked["state: BLOCKED"]
 stale["state: STALE"]
 
-eligibleNone["guard: reviewEligible"]
-eligibleStale["guard: reviewEligible"]
+unscheduledNone["guard: unscheduled"]
+reviewEnabledNone["guard: reviewEnabled"]
+prOpenNone["guard: prOpen"]
+jobActiveNone["guard: jobActive"]
+implementationCompleteNone["guard: implementationComplete"]
+headAvailableNone["guard: headAvailable"]
+completionGateNone["guard: completionGateSatisfied"]
+noActiveReviewNone["guard: noActiveReviewTask"]
+noApprovedReviewNone["guard: noApprovedCurrentReview"]
+unscheduledStale["guard: unscheduled"]
+reviewEnabledStale["guard: reviewEnabled"]
+prOpenStale["guard: prOpen"]
+jobActiveStale["guard: jobActive"]
+implementationCompleteStale["guard: implementationComplete"]
+headAvailableStale["guard: headAvailable"]
+completionGateStale["guard: completionGateSatisfied"]
+noActiveReviewStale["guard: noActiveReviewTask"]
+noApprovedReviewStale["guard: noApprovedCurrentReview"]
 autoMergePending["guard: autoMerge"]
 autoMergeStarted["guard: autoMerge"]
 createNone["action: review.create"]
@@ -24,15 +40,47 @@ fixStarted["action: review.createFix"]
 mergePending["action: review.requestMerge"]
 mergeStarted["action: review.requestMerge"]
 
-none -->|on: reconcile| eligibleNone
-eligibleNone -->|true| createNone
+none -->|on: reconcile| unscheduledNone
+unscheduledNone -->|true| reviewEnabledNone
+unscheduledNone -->|false| none
+reviewEnabledNone -->|true| prOpenNone
+reviewEnabledNone -->|false| none
+prOpenNone -->|true| jobActiveNone
+prOpenNone -->|false| none
+jobActiveNone -->|true| implementationCompleteNone
+jobActiveNone -->|false| none
+implementationCompleteNone -->|true| headAvailableNone
+implementationCompleteNone -->|false| none
+headAvailableNone -->|true| completionGateNone
+headAvailableNone -->|false| none
+completionGateNone -->|true| noActiveReviewNone
+completionGateNone -->|false| none
+noActiveReviewNone -->|true| noApprovedReviewNone
+noActiveReviewNone -->|false| none
+noApprovedReviewNone -->|true| createNone
+noApprovedReviewNone -->|false| none
 createNone --> pending
-eligibleNone -->|false| none
 
-stale -->|on: reconcile| eligibleStale
-eligibleStale -->|true| createStale
+stale -->|on: reconcile| unscheduledStale
+unscheduledStale -->|true| reviewEnabledStale
+unscheduledStale -->|false| stale
+reviewEnabledStale -->|true| prOpenStale
+reviewEnabledStale -->|false| stale
+prOpenStale -->|true| jobActiveStale
+prOpenStale -->|false| stale
+jobActiveStale -->|true| implementationCompleteStale
+jobActiveStale -->|false| stale
+implementationCompleteStale -->|true| headAvailableStale
+implementationCompleteStale -->|false| stale
+headAvailableStale -->|true| completionGateStale
+headAvailableStale -->|false| stale
+completionGateStale -->|true| noActiveReviewStale
+completionGateStale -->|false| stale
+noActiveReviewStale -->|true| noApprovedReviewStale
+noActiveReviewStale -->|false| stale
+noApprovedReviewStale -->|true| createStale
+noApprovedReviewStale -->|false| stale
 createStale --> pending
-eligibleStale -->|false| stale
 
 pending -->|on: review.started| started
 pending -->|on: review.approved| autoMergePending

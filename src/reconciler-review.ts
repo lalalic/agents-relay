@@ -13,13 +13,19 @@ const taskRouteClaims = new Set<string>();
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
   protected async currentHeadSha(job: Job): Promise<string | null> { return await this.store.headSha?.() ?? job.headSha ?? job.review?.headSha ?? null; }
-  private reviewEligible(job: Job, prState: string, headSha: string | null): boolean {
-    if (job.schedule || job.reviewEnabled === false || prState !== 'OPEN' || job.state !== 'ACTIVE' || !implementationComplete(job) || !headSha) return false;
-    if (job.executionMode === 'autonomous' && !completionGateSatisfied(job)) return false;
+  private reviewFacts(job: Job, prState: string, headSha: string | null): Readonly<Record<string, unknown>> {
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
-    if (reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))) return false;
-    if (reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved')) return false;
-    return true;
+    return {
+      unscheduled: !job.schedule,
+      reviewEnabled: job.reviewEnabled !== false,
+      prOpen: prState === 'OPEN',
+      jobActive: job.state === 'ACTIVE',
+      implementationComplete: implementationComplete(job),
+      headAvailable: Boolean(headSha),
+      completionGateSatisfied: completionGateSatisfied(job),
+      noActiveReviewTask: !reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
+      noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
+    };
   }
 
   private async cancelStaleReviewTask(job: Job): Promise<void> {
@@ -66,7 +72,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
-    const decision = decideReviewLifecycle(job.review?.outcome, 'reconcile', { reviewEligible: this.reviewEligible(job, prState, headSha) });
+    const decision = decideReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, prState, headSha));
     if (!decision.accepted || !decision.actions.some(action => action.id === 'review.create')) return;
     if (!headSha) throw new Error('Review graph requested creation without a durable head SHA');
     await this.createFinalReviewTask(job, headSha);
