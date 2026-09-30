@@ -15,6 +15,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'pr.merged',
   'plan.requested',
   'planner.failed',
+  'planner.unavailable',
   'reconcile',
   'release',
   'retry',
@@ -46,6 +47,11 @@ export const WORKFLOW_FACT_NAMES = [
   'scheduledRun',
   'hasUnblock',
   'manualPlan',
+  'prOpen',
+  'reviewDisabled',
+  'implementationComplete',
+  'headAvailable',
+  'mergeCapable',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [
@@ -55,6 +61,7 @@ export const WORKFLOW_MUTATION_NAMES = [
   'mutation.clearExecution',
   'mutation.markLeaseExpired',
   'mutation.markStartupOrphanedExhausted',
+  'mutation.markPlannerUnavailable',
 ] as const;
 
 export const WORKFLOW_EFFECT_NAMES = [

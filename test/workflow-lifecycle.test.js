@@ -112,6 +112,29 @@ test('graph decisions drive durable transition mutations', async () => {
   assert.equal(currentJob.state,'ACTIVE');
 });
 
+test('planner unavailable is a canonical Task graph failure without attempt manipulation', async () => {
+  const current={...task('QUEUED'),attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null};
+  const decision=await transitionTaskEvent(current,'planner.unavailable');
+  assert.equal(decision.target,'FAILED');
+  assert.equal(current.state,'FAILED');
+  assert.equal(current.attempt,0);
+  assert.equal(current.error,'No objective planner configured');
+});
+
+test('Job reconcile graph owns the no-review merge gate', () => {
+  const all={prOpen:true,reviewDisabled:true,implementationComplete:true,autoMerge:true,headAvailable:true,mergeCapable:true};
+  const allowed=decideJobLifecycle(job('ACTIVE'),'reconcile',all);
+  assert.equal(allowed.accepted,true);
+  assert.equal(allowed.target,'ACTIVE');
+  assert.deepEqual(allowed.effects,['effect.mergePullRequest']);
+  for(const key of Object.keys(all)){
+    const facts={...all,[key]:false};
+    const denied=decideJobLifecycle(job('ACTIVE'),'reconcile',facts);
+    assert.equal(denied.accepted,true,key);
+    assert.equal(denied.target,'ACTIVE',key);
+    assert.deepEqual(denied.effects,[],key);
+  }
+});
 test('graph reconcile releases satisfied dependencies', () => {
   const dep={...task('SUCCEEDED'),id:'dep'};
   const child={...task('DRAFT'),id:'child',dependencies:['dep']};

@@ -36,6 +36,7 @@ function applyTaskMutation(task: Task, mutation: WorkflowMutationName): void {
   if (mutation === 'mutation.clearExecution') task.executionId = null;
   if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
   if (mutation === 'mutation.markStartupOrphanedExhausted') task.error = 'Orphaned after relayd restart after maximum attempts';
+  if (mutation === 'mutation.markPlannerUnavailable') task.error = 'No objective planner configured';
 }
 
 export function applyTaskWorkflowDecision(

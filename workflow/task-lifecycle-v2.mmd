@@ -21,6 +21,7 @@ recoverCancelled["guard: recoverableExecution"]
 
 retryAvailableRunning["guard: retryAvailable"]
 plannerRetryAvailable["guard: retryAvailable"]
+plannerUnavailableMark["action: mutation.markPlannerUnavailable"]
 orphanRetryAvailable["guard: retryAvailable"]
 orphanRetryClearError["action: mutation.clearError"]
 orphanRetryClearLease["action: mutation.clearLease"]
@@ -116,6 +117,8 @@ queued -->|on: effect.launchTask.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
+queued -->|on: planner.unavailable| plannerUnavailableMark
+plannerUnavailableMark --> failed
 queued -->|on: lease.expired| retryAvailableQueued
 retryAvailableQueued -->|true| leaseRetryQueuedClearError
 leaseRetryQueuedClearError --> leaseRetryQueuedClearLease

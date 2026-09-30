@@ -78,8 +78,8 @@ const taskRuntime = new GraphRuntime(taskSource, {
     recoverableExecution: boolGuard('recoverableExecution'),
     retryAvailable: boolGuard('retryAvailable'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'execution.orphaned']),
-  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','effect.launchTask']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned']),
+  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','effect.launchTask']),
 });
 
 const jobRuntime = new GraphRuntime(jobSource, {
@@ -87,8 +87,13 @@ const jobRuntime = new GraphRuntime(jobSource, {
   guards: {
     notMerged: boolGuard('notMerged'),
     autoMerge: boolGuard('autoMerge'),
+    prOpen: boolGuard('prOpen'),
+    reviewDisabled: boolGuard('reviewDisabled'),
+    implementationComplete: boolGuard('implementationComplete'),
+    headAvailable: boolGuard('headAvailable'),
+    mergeCapable: boolGuard('mergeCapable'),
   },
-  events: eventRegistry(jobCases.map(([,event]) => event)),
+  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile']),
   actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest']),
 });
 

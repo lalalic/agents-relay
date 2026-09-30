@@ -135,7 +135,7 @@ function validateTopology(nodes: ReadonlyMap<string, GraphNode>, edges: readonly
       }
     } else if (node.kind === 'guard') {
       if (exits.length < 1 || exits.length > 2 || exits.some(edge => edge.kind !== 'true' && edge.kind !== 'false') || new Set(exits.map(edge => edge.kind)).size !== exits.length) fail(node.line, `guard '${node.semanticId}' requires one or two unique true/false exits`);
-      for (const edge of exits) if (nodes.get(edge.to)!.kind !== 'state' && nodes.get(edge.to)!.kind !== 'action') fail(edge.line, `guard edge '${edge.kind}' must lead to an action or state`);
+      for (const edge of exits) if (!['state','guard','action'].includes(nodes.get(edge.to)!.kind)) fail(edge.line, `guard edge '${edge.kind}' must lead to a state, guard, or action`);
     } else if (node.kind === 'action') {
       const continuations = exits.filter(edge => edge.kind === 'to' || edge.kind === 'unlabelled');
       if (continuations.length > 1) fail(node.line, `action '${node.semanticId}' has multiple continuations`);

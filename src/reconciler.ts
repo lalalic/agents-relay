@@ -3,7 +3,6 @@ import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverall
 import { DurableStore } from './store.js';
 import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
-import { implementationComplete } from './runtime-status.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
 import { createPlannerRoundTask, materializePlannerChild, pendingPlanForPlannerTask, recoverPendingPlannerTask, parsePlannerResult, plannerInput, validatePlannerHierarchy } from './planner.js';
@@ -23,6 +22,7 @@ import { createReviewChairExecutionPlan } from './review-chair.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
+import { decideJobReconcile } from './workflow/job-reconcile-v2.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
@@ -78,7 +78,6 @@ The ChatGPT/Codex conversation or process exit is never the task result.
 Before your final return, verify that a terminal event for this exact Job/Task was published.
 If no terminal event has been published, publish task.failed before exiting.`;
 }
-
 export class Reconciler extends ReconcilerReviewBase {
   constructor(store: DurableStore, options: ReconcileOptions) {
     super(store, options);
@@ -210,15 +209,12 @@ export class Reconciler extends ReconcilerReviewBase {
       const finalState = schedule(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, prState, headSha);
-      if (prState === 'OPEN' && finalState.reviewEnabled === false && implementationComplete(finalState) && finalState.autoMerge !== false && this.store.mergePullRequest && headSha) {
-        const decision = await transitionJobEvent(finalState, 'implementation.completed', { autoMerge: true });
-        await this.store.saveJob(finalState);
-        const outcomes = await this.workflowEffects.execute(
-          decision.effects,
-          { jobId: finalState.id, transitionKey: `implementation.completed:${headSha}`, data: { headSha } },
-        );
-        await this.applyJobEffectOutcomes(finalState, outcomes);
-      }
+      const reconcileDecision = decideJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) });
+      const reconcileOutcomes = await this.workflowEffects.execute(
+        reconcileDecision.effects,
+        { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } },
+      );
+      await this.applyJobEffectOutcomes(finalState, reconcileOutcomes);
       return this.store.load(jobId);
     } finally { this.reconciling = false; }
   }
@@ -427,7 +423,12 @@ export class Reconciler extends ReconcilerReviewBase {
 
   private async launchPlanner(job: Job, task: Task): Promise<void> {
     const planner = this.options.planner;
-    if (!planner) { task.attempt = task.maxAttempts; task.error = 'No objective planner configured'; await transitionTaskEvent(task, 'fail'); await this.store.saveTask(task); await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user')); return; }
+    if (!planner) {
+      await transitionTaskEvent(task, 'planner.unavailable');
+      await this.store.saveTask(task);
+      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'planner.failed', 'failed', `Planner ${task.id}: ${task.error}`, 'user'));
+      return;
+    }
     const startedAt = (this.options.now ?? new Date()).getTime();
     await transitionTaskEvent(task, 'task.started'); task.attempt += 1; task.leaseOwner = this.options.owner; task.leaseExpiresAt = new Date(startedAt + Math.max(this.options.leaseMs ?? 300000, task.timeoutMs)).toISOString(); task.executionId = randomUUID();
     task.executionHistory = [...(task.executionHistory ?? []), { id: task.executionId, attempt: task.attempt, startedAt: new Date(startedAt).toISOString() }].slice(-8);

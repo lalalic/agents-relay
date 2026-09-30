@@ -76,6 +76,28 @@ g2 -->|true| active`;
   assert.deepEqual(runtime.evaluateSync({ currentState: 'DONE', input: { transport: 'event', id: 'finish', payload: {} }, durableFacts: {} }), { accepted: false, source: 'DONE', reason: 'no_transition' });
 });
 
+test('v2 guard chains remain deterministic without expanding the DSL', () => {
+  const chained = `flowchart LR
+%% relay: initial active
+active["state: ACTIVE"]
+allowed["guard: allowed"]
+ready["guard: ready"]
+done["state: DONE"]
+active -->|on: finish| allowed
+allowed -->|true| ready
+allowed -->|false| active
+ready -->|true| done
+ready -->|false| active`;
+  const runtime = new GraphRuntime(chained, {
+    states: new Set(['ACTIVE','DONE']),
+    guards: { allowed: facts => facts.durableFacts.allowed === true, ready: facts => facts.durableFacts.ready === true },
+    events: { finish: { id: 'finish' } },
+  });
+  const input = { transport: 'event', id: 'finish', payload: {} };
+  assert.equal(runtime.evaluateSync({ currentState:'ACTIVE', input, durableFacts:{allowed:true,ready:true} }).target,'DONE');
+  assert.equal(runtime.evaluateSync({ currentState:'ACTIVE', input, durableFacts:{allowed:true,ready:false} }).target,'ACTIVE');
+  assert.equal(runtime.evaluateSync({ currentState:'ACTIVE', input, durableFacts:{allowed:false,ready:true} }).target,'ACTIVE');
+});
 test('v2 dispatcher persists the graph transition before action execution and publishes validated emits', async () => {
   const order = [];
   const runtime = new GraphRuntime(source, {

@@ -44,6 +44,11 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
   notMerged: boolGuard('notMerged'),
   autoMerge: boolGuard('autoMerge'),
+  prOpen: boolGuard('prOpen'),
+  reviewDisabled: boolGuard('reviewDisabled'),
+  implementationComplete: boolGuard('implementationComplete'),
+  headAvailable: boolGuard('headAvailable'),
+  mergeCapable: boolGuard('mergeCapable'),
 });
 
 function topologyTargets(graph: Graph, from: string): Set<string> {
