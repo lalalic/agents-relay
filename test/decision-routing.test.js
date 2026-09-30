@@ -127,7 +127,7 @@ test('free-text rules never create an unconfigured non-OpenAI provider or model'
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
-test('Codex runtime catalog informs validation without expanding execution choices', async () => {
+test('Codex runtime catalog supplies model candidates while free-text rules stay opaque', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-codex-catalog-'));
   const priorHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = home;
@@ -158,14 +158,12 @@ test('Codex runtime catalog informs validation without expanding execution choic
     };
     const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
     assert.equal(calls[0].contract.type, 'choice');
-    assert.deepEqual(calls[0].contract.choices, ['codex/openai/default']);
-    const codex = calls[0].request.facts.worker_candidates.find(item => item.id === 'codex');
-    const openai = codex.providers.openai;
-    assert.equal(openai.default.model, 'gpt-5.6-luna');
-    assert.equal(openai.default.reasoning, 'medium');
-    assert.equal(openai.runtime_catalog, undefined);
-    assert.equal(openai.user_advertised, undefined);
-    assert.match(calls[0].request.facts.routing_instruction, /user_input_rules/);
+    assert.deepEqual(calls[0].contract.choices, ['model=gpt-5.6-luna configured_default=true', 'model=gpt-6-astra configured_default=false', 'model=gpt-5.6-sol configured_default=false']);
+    assert.equal(calls[0].request.facts.selected.worker, 'codex');
+    assert.equal(calls[0].request.facts.selected.provider, 'openai');
+    assert.deepEqual(calls[0].request.facts.model_candidates.map(item => item.model), ['gpt-5.6-luna', 'gpt-6-astra', 'gpt-5.6-sol']);
+    assert.equal(calls[0].request.facts.user_input_rules, '');
+    assert.match(calls[0].request.facts.routing_instruction, /does not parse user_input_rules/);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -174,7 +172,7 @@ test('Codex runtime catalog informs validation without expanding execution choic
   }
 });
 
-test('user_input_rules advertise only explicit provider model overrides', async () => {
+test('user_input_rules are interpreted by Laya and never parsed into model choices by Relay', async () => {
   const home = await mkdtemp(join(tmpdir(), 'relay-user-advertised-'));
   const priorHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = home;
@@ -194,22 +192,18 @@ test('user_input_rules advertise only explicit provider model overrides', async 
       name: 'capture',
       async decide(request, contract) {
         calls.push({ request, contract });
-        return { type: 'choice', choice: 'codex/openai/gpt-5.6-sol@medium' };
+        if (contract.choices.some(item => item.startsWith('model=gpt-5.6-sol '))) return { type: 'choice', choice: contract.choices.find(item => item.startsWith('model=gpt-5.6-sol ')) };
+        if (contract.choices.includes('reasoning=medium')) return { type: 'choice', choice: 'reasoning=medium' };
+        return { type: 'choice', choice: contract.choices[0] };
       },
     };
     const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
     const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
-    assert.deepEqual(calls[0].contract.choices, [
-      'codex/openai/default',
-      'codex/openai/gpt-5.6-luna@high',
-      'codex/openai/gpt-5.6-sol@medium',
-      'codex/openai/gpt-6-astra@medium',
-    ]);
-    assert.equal(calls[0].contract.choices.some(item => item.includes('terra')), false);
-    const openai = calls[0].request.facts.worker_candidates.find(item => item.id === 'codex').providers.openai;
-    assert.deepEqual(openai.default, { model: 'gpt-5.6-luna', reasoning: 'medium' });
-    assert.equal(openai.runtime_catalog, undefined);
-    assert.equal(openai.user_advertised, undefined);
+    assert.deepEqual(calls[0].contract.choices, ['model=gpt-5.6-luna configured_default=true', 'model=gpt-6-astra configured_default=false', 'model=gpt-5.6-sol configured_default=false', 'model=gpt-5.6-terra configured_default=false']);
+    assert.ok(calls[0].contract.choices.some(item => item.startsWith('model=gpt-5.6-terra ')));
+    assert.equal(calls[0].request.facts.user_input_rules, 'openai: gpt-5.6-luna high, sol medium, astra medium for complex and big tasks\n');
+    assert.deepEqual(calls[1].contract.choices, ['reasoning=medium', 'reasoning=high']);
+    assert.equal(calls[1].request.facts.user_input_rules, calls[0].request.facts.user_input_rules);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-sol');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -454,7 +448,7 @@ test('execution router makes one decision over complete routes with compact task
       name: 'fake',
       async decide(request, decisionContract) {
         calls.push({ request, contract: decisionContract });
-        return { type: 'choice', choice: decisionContract.choices.find(item => item.startsWith('chatgpt/browser-worker/chatgpt/')) ?? decisionContract.choices[0] };
+        return { type: 'choice', choice: decisionContract.choices.find(item => item === 'worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults') ?? decisionContract.choices[0] };
       },
     };
     const requirements = { capabilities: ['browser-harness', 'review'], taskKind: 'review', trustDomain: 'trusted', region: 'ca', labels: { tier: 'interactive' } };
@@ -464,8 +458,8 @@ test('execution router makes one decision over complete routes with compact task
     ], requirements, { decisionEngine: engine, decisionMode: 'active', taskFacts: { role: 'reviewer' } });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].contract.type, 'choice');
-    assert.ok(calls[0].contract.choices.some(item => item.startsWith('codex/openai/')));
-    assert.ok(calls[0].contract.choices.some(item => item.startsWith('chatgpt/browser-worker/chatgpt/')));
+    assert.ok(calls[0].contract.choices.includes('worker=codex provider=openai default_model=gpt-test'));
+    assert.ok(calls[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults'));
     assert.ok(Array.isArray(calls[0].request.facts.worker_candidates));
     assert.equal(calls[0].request.facts.context.task_shape.story_size, 'M');
     assert.equal(calls[0].request.facts.context.task_shape.preferred_worker, 'chatgpt');
@@ -518,7 +512,7 @@ test('final review uses normal Worker Router decision with current user guidance
       async decide(request, decisionContract) {
         calls.push({ request, contract: decisionContract });
         if (decisionContract.type === 'multi_choice') {
-          return { type: 'choice', choice: contract.choices.find(item => item === 'codex/openai/default') ?? contract.choices[0] };
+          return { type: 'choice', choice: contract.choices.find(item => item === 'codex::openai/default') ?? contract.choices[0] };
         }
         const choice = decisionContract.choices.includes('codex') ? 'codex' : decisionContract.choices[0];
         return { type: 'choice', choice, probabilities: Object.fromEntries(decisionContract.choices.map(item => [item, item === choice ? 0.9 : 0.1])) };
@@ -555,7 +549,7 @@ test('execution router exposes explicit five-hour and weekly code-plan windows t
   const calls = [];
   const engine = { name: 'capture', decide: async (request, contract) => {
     calls.push({ request, contract });
-    return { type: 'choice', choice: contract.choices.find(item => item === 'codex/openai/default') ?? contract.choices[0] };
+    return { type: 'choice', choice: contract.choices.find(item => item === 'codex::openai/default') ?? contract.choices[0] };
   } };
   await routeExecution([
     { workerId: 'codex', adapter: 'codex', capabilities: [], runtime: 'codex' },
