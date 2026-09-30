@@ -5,6 +5,7 @@ import { EventRecord, Job, Task, ExecutionMode, ChatGptTabClosePolicy, StorySize
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
 import { parseJobTagJson } from './task-tag.js';
+import { resolveEventsBusRuntime } from './events-bus-runtime.js';
 
 export const SERVICE_DEFAULTS = { port: 8787, watchdogMs: 300000, webhookWatchdogMs: 300000, dashboardRefreshMs: 300000, projectionFlushMs: 1000 } as const;
 export class ServiceEventBus implements EventBus {
@@ -74,15 +75,17 @@ export type EventBusResolution = { bus: EventBus | undefined; transport: 'nats' 
 export async function resolveEventBus(args: string[], probe?: (bus: NatsEventBus) => Promise<boolean>): Promise<EventBusResolution> {
   const explicit = hasArg(args, '--events');
   const requested = arg(args, '--events');
-  const natsUrl = arg(args, '--nats-url', process.env.NEO_NATS_URL || 'nats://127.0.0.1:4222');
+  const runtime = resolveEventsBusRuntime();
+  const natsUrl = arg(args, '--nats-url', runtime.natsUrl);
   if (!explicit && hasArg(args, '--file')) return { bus: undefined, transport: 'none', source: 'local', natsUrl };
   if (explicit && requested !== 'nats') return { bus: undefined, transport: 'none', source: 'explicit', natsUrl };
-  const bus = new NatsEventBus(natsUrl, arg(args, '--subject-prefix', 'neo.events.job'));
+  const subjectPrefix = arg(args, '--subject-prefix', runtime.subjectPrefix);
+  const bus = new NatsEventBus(natsUrl, subjectPrefix);
   if (explicit) return { bus, transport: 'nats', source: 'explicit', natsUrl };
   const reachable = probe ? await probe(bus) : await bus.ping().then(() => true, () => false);
   await bus.close().catch(() => undefined);
   if (!reachable) return { bus: undefined, transport: 'none', source: 'unavailable', natsUrl };
-  return { bus: new NatsEventBus(natsUrl, arg(args, '--subject-prefix', 'neo.events.job')), transport: 'nats', source: 'auto', natsUrl };
+  return { bus: new NatsEventBus(natsUrl, subjectPrefix), transport: 'nats', source: 'auto', natsUrl };
 }
 export function eventBusResolutionMessage(resolution: EventBusResolution): string {
   if (resolution.transport === 'nats') return `event transport: nats (${resolution.source === 'auto' ? 'auto-detected' : 'explicit'})`;

@@ -1,6 +1,5 @@
 import { createServer, Server } from 'node:http';
 import { readFile, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DurableStore, GitHubRateLimitBucket, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
@@ -12,10 +11,10 @@ import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './gith
 import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-policy.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
+import { eventsBusHistory } from './events-bus-runtime.js';
 
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
-const EVENTS_HISTORY_FILE = process.env.EVENTS_BUS_DATA_DIR ? join(process.env.EVENTS_BUS_DATA_DIR, 'events.jsonl') : join(homedir(), 'Library', 'Application Support', 'EventsBus', 'events.jsonl');
 const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
 
 export type DashboardWorkflowGraph = { id: string; name: string; path: string; source: string };
@@ -64,22 +63,7 @@ export function githubPrUrl(repository: unknown, prNumber: unknown): string | nu
 
 
 async function eventHistory(jobId: string, taskId: string | null, limit: number): Promise<import('./types.js').EventRecord[]> {
-  const boundedLimit = Math.max(1, Math.min(60, limit));
-  let content = '';
-  try { content = await readFile(EVENTS_HISTORY_FILE, 'utf8'); } catch { return []; }
-  const output: import('./types.js').EventRecord[] = [];
-  const lines = content.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0 && output.length < boundedLimit; index -= 1) {
-    const line = lines[index];
-    if (!line) continue;
-    try {
-      const row = JSON.parse(line) as { event?: import('./types.js').EventRecord };
-      const event = row.event;
-      if (!event || event.job_id !== jobId || (taskId && event.task_id !== taskId)) continue;
-      output.push(event);
-    } catch { /* ignore malformed historical rows */ }
-  }
-  return output;
+  try { return await eventsBusHistory(jobId, taskId, limit); } catch { return []; }
 }
 
 export { dashboardHtml, dashboardVersion } from './dashboard-html.js';
