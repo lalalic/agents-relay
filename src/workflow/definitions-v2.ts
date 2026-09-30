@@ -23,7 +23,7 @@ function actionRegistry(): GraphRegistries['actions'] {
 }
 
 function load(name: string, states: readonly string[], guards: GraphRegistries['guards']): GraphRuntime {
-  const url = new URL(`../../workflow/${name}-v2.mmd`, import.meta.url);
+  const url = new URL(`../../workflow/${name}.mmd`, import.meta.url);
   return new GraphRuntime(readFileSync(url, 'utf8'), {
     states: new Set(states),
     guards,

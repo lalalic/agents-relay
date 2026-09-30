@@ -6,7 +6,7 @@ import type { ReviewOutcome } from '../types.js';
 export type ReviewGraphState = 'NONE' | 'PENDING' | 'STARTED' | 'APPROVED' | 'CHANGES_REQUIRED' | 'BLOCKED' | 'STALE';
 export type ReviewGraphAction = 'review.create' | 'review.cancelStale' | 'review.createFix' | 'review.requestMerge';
 
-const source = readFileSync(new URL('../../workflow/review-lifecycle-v2.mmd', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../workflow/review-lifecycle.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => facts.durableFacts[name] === true;
 
 export const reviewLifecycleV2 = new GraphRuntime(source, {

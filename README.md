@@ -28,19 +28,19 @@ RelayStore owns local operational execution facts; GitHub remains the human-read
 
 | Area | Canonical graph |
 | --- | --- |
-| Job lifecycle | [`workflow/job-lifecycle-v2.mmd`](workflow/job-lifecycle-v2.mmd) |
-| Task lifecycle | [`workflow/task-lifecycle-v2.mmd`](workflow/task-lifecycle-v2.mmd) |
-| Review lifecycle | [`workflow/review-lifecycle-v2.mmd`](workflow/review-lifecycle-v2.mmd) |
-| Planner trigger | [`workflow/planner-trigger-v2.mmd`](workflow/planner-trigger-v2.mmd) |
-| Planner orchestration | [`workflow/planner-orchestration-v2.mmd`](workflow/planner-orchestration-v2.mmd) |
-| Blocker resolution | [`workflow/blocker-resolution-v2.mmd`](workflow/blocker-resolution-v2.mmd) |
-| Authoritative unblock | [`workflow/authoritative-unblock-v2.mmd`](workflow/authoritative-unblock-v2.mmd) |
-| Scheduled run | [`workflow/scheduled-run-v2.mmd`](workflow/scheduled-run-v2.mmd) |
-| Schedule cycle | [`workflow/schedule-cycle-v2.mmd`](workflow/schedule-cycle-v2.mmd) |
-| Troubleshooter | [`workflow/troubleshooter-v2.mmd`](workflow/troubleshooter-v2.mmd) |
-| Related-task action policy | [`workflow/task-related-action-v2.mmd`](workflow/task-related-action-v2.mmd) |
+| Job lifecycle | [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) |
+| Task lifecycle | [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd) |
+| Review lifecycle | [`workflow/review-lifecycle.mmd`](workflow/review-lifecycle.mmd) |
+| Planner trigger | [`workflow/planner-trigger.mmd`](workflow/planner-trigger.mmd) |
+| Planner orchestration | [`workflow/planner-orchestration.mmd`](workflow/planner-orchestration.mmd) |
+| Blocker resolution | [`workflow/blocker-resolution.mmd`](workflow/blocker-resolution.mmd) |
+| Authoritative unblock | [`workflow/authoritative-unblock.mmd`](workflow/authoritative-unblock.mmd) |
+| Scheduled run | [`workflow/scheduled-run.mmd`](workflow/scheduled-run.mmd) |
+| Schedule cycle | [`workflow/schedule-cycle.mmd`](workflow/schedule-cycle.mmd) |
+| Troubleshooter | [`workflow/troubleshooter.mmd`](workflow/troubleshooter.mmd) |
+| Related-task action policy | [`workflow/task-related-action.mmd`](workflow/task-related-action.mmd) |
 
-Legacy [`workflow/job-lifecycle.mmd`](workflow/job-lifecycle.mmd) and [`workflow/task-lifecycle.mmd`](workflow/task-lifecycle.mmd) are compatibility/parity fixtures only. See [`docs/workflow-engine.md`](docs/workflow-engine.md) and [`docs/architecture-v2.md`](docs/architecture-v2.md).
+These paths always represent the current canonical graphs. Historical graph definitions are available through Git history, tags, and commits rather than parallel versioned files in `workflow/`. See [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable profile and runtime boundary.
 
 ## Quick start
 
@@ -88,9 +88,9 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 
 Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
 
-Lifecycle transition authority lives in the directly renderable V2 flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). The legacy `stateDiagram-v2` files remain compatibility fixtures only; see [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable Mermaid profile and runtime boundary.
+Lifecycle transition authority lives in the directly renderable canonical flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). Git history owns prior graph versions; the working tree contains only the current graph set.
 
-The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, Schedule, and Troubleshooter orchestration branches are defined by the v2 workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
+The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, Schedule, and Troubleshooter orchestration branches are defined by the canonical workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 

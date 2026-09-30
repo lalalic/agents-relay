@@ -9,7 +9,7 @@ export type PlannerOrchestrationState =
   | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_objective'
   | 'wait' | 'recovered' | 'created';
 
-const source = readFileSync(new URL('../../workflow/planner-orchestration-v2.mmd', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../workflow/planner-orchestration.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => facts.durableFacts[name] === true;
 
 export const plannerOrchestrationV2 = new GraphRuntime(source, {

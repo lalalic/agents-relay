@@ -4,7 +4,7 @@ import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type ScheduleCycleState = 'idle' | 'check_satisfied' | 'waiting' | 'finished';
 
-const source = readFileSync(new URL('../../workflow/schedule-cycle-v2.mmd', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../workflow/schedule-cycle.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => facts.durableFacts[name] === true;
 
 export const scheduleCycleV2 = new GraphRuntime(source, {

@@ -4,7 +4,7 @@ import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.j
 
 export type AuthoritativeUnblockState = 'blocked' | 'autonomous_replan' | 'fixed_retry';
 
-const source=readFileSync(new URL('../../workflow/authoritative-unblock-v2.mmd',import.meta.url),'utf8');
+const source=readFileSync(new URL('../../workflow/authoritative-unblock.mmd',import.meta.url),'utf8');
 const boolGuard=(name:string)=>(facts:{readonly durableFacts:Readonly<Record<string,unknown>>})=>facts.durableFacts[name]===true;
 
 export const authoritativeUnblockV2=new GraphRuntime(source,{

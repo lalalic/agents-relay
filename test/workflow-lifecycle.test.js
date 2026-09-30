@@ -180,7 +180,7 @@ test('related task scope is graph-driven while TypeScript only supplies facts', 
   const actions = await readFile(new URL('../src/task-actions.ts', import.meta.url), 'utf8');
   const policy = await readFile(new URL('../src/workflow/task-action-policy.ts', import.meta.url), 'utf8');
   const facts = await readFile(new URL('../src/workflow/task-related-action-v2.ts', import.meta.url), 'utf8');
-  const graph = await readFile(new URL('../workflow/task-related-action-v2.mmd', import.meta.url), 'utf8');
+  const graph = await readFile(new URL('../workflow/task-related-action.mmd', import.meta.url), 'utf8');
   assert.match(actions, /selectRelatedTaskMutations\s*\(/);
   assert.doesNotMatch(actions, /agentName\s*===\s*['"]troubleshooter['"]/);
   assert.doesNotMatch(actions, /startsWith\(`troubleshoot-/);

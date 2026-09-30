@@ -21,7 +21,7 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 
 Before implementing any feature or bug fix, identify which layer owns the behavior. Do not start with a procedural code change and classify it afterward.
 
-- **Graph** owns workflow policy: legal transitions, branching, eligibility, ordering, and decisions about **when**, **whether**, or **what happens next**. If existing workflow behavior changes, inspect the canonical `workflow/*-v2.mmd` graphs first and change the owning graph when that policy belongs there.
+- **Graph** owns workflow policy: legal transitions, branching, eligibility, ordering, and decisions about **when**, **whether**, or **what happens next**. If existing workflow behavior changes, inspect the canonical `workflow/*.mmd` graphs first and change the owning graph when that policy belongs there.
 - **Action / effect** performs a concrete mutation or external side effect already selected by a graph. It may validate inputs and report success/failure, but it must not make a second workflow decision.
 - **TypeScript code** owns non-policy mechanics: facts, pure calculations, parsing/serialization, persistence primitives, leases/claims, I/O adapters, runtime projections, and concrete guard/action implementations.
 - Do not duplicate graph-owned policy in CLI, reconciler, scheduler, helper, or runtime `if`/`else` branches. Do not hide the same policy inside a composite boolean helper.

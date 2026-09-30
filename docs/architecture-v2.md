@@ -401,71 +401,44 @@ The storage boundary is intentionally adapter-shaped. SQLite is a permanent supp
 
 ## 4. Compatibility and migration
 
-Production lifecycle authority now uses
-`workflow/job-lifecycle-v2.mmd` and `workflow/task-lifecycle-v2.mmd` through
-the strict v2 `flowchart` runtime. The older
-`workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd`
-`stateDiagram-v2` files remain compatibility fixtures and parity oracles only.
+Production lifecycle authority uses the current canonical files
+`workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` through the
+strict executable `flowchart` runtime. The working tree does not retain older
+graph copies or version-suffixed graph filenames. Prior graph definitions and
+formats are retrieved from Git history, tags, or commits when regression or
+migration evidence is needed.
 
 The migration preserves existing Job/Task markers, lifecycle values, task
-attempts, leases, execution IDs, review facts, and derived runtime status. The
-v1/v2 parity suite compares canonical transition targets, ordered
-mutation/effect actions, guarded rejection, and ambiguity before the old files
-can be retired.
+attempts, leases, execution IDs, review facts, and derived runtime status.
+Regression tests compare the canonical graph decisions with the public lifecycle
+API for transition targets, ordered mutation/effect actions, guarded rejection,
+and ambiguity.
 
-The implementation handoff has a mechanically testable version boundary:
+The executable graph boundary remains mechanically testable:
 
-1. The public parser surface is versioned. `stateDiagram-v2` remains the only
-   profile accepted by the v1 parser; `flowchart` is accepted only by the new
-   v2 parser. A parser must reject the other header rather than infer a
-   compatible mode.
-2. The v1 compatibility suite must load both existing canonical `.mmd` files,
-   exercise representative transitions for every state/input family they
-   declare, and preserve current durable marker serialization and lifecycle
-   behavior.
-3. The v2 suite must include parser and validator fixtures for every accepted
-   node/edge form, each required rejection class, stable one-based diagnostics,
-   unknown state/guard/action/input-event/emit-event identifiers, duplicate and
-   ambiguous input paths, guard determinism, transition-result ordering, and
-   action/emit execution.
-4. Typed registry fixtures must cover successful binding and one negative test
-   per registry kind. The canonical workflow fixtures and their expected
-   decisions belong in the repository; ad-hoc local graphs are not sufficient
-   acceptance evidence.
-5. Relay may not claim v2 executable-graph support until the v2 parser,
-   validator, typed registries, deterministic transition engine, canonical v2
-   fixtures, and v1 compatibility tests all pass together.
+1. The current `flowchart` parser validates every canonical graph and fails
+   closed on unsupported syntax or unknown registry identifiers.
+2. Regression coverage preserves durable marker serialization and lifecycle
+   behavior without shipping historical graph files beside current ones.
+3. Parser and validator fixtures cover accepted node/edge forms, required
+   rejection classes, stable diagnostics, unknown state/guard/action/input-event/
+   emit-event identifiers, duplicate and ambiguous input paths, guard
+   determinism, transition-result ordering, and action/emit execution.
+4. Typed registry fixtures cover successful binding and negative cases for each
+   registry kind. Canonical workflow fixtures and expected decisions remain in
+   the repository; historical graph sources remain in Git history.
 
-The migration is staged:
+The migration path that produced the current architecture was incremental: the
+strict flowchart parser and Graph Engine landed first, lifecycle/reconcile
+decisions moved behind graph authority, shared Actions replaced duplicated
+mutation entry points, and procedural workflow authority was removed after
+restart/reconciliation and durable-record compatibility checks passed.
 
-1. land and review this specification and its examples;
-2. implement the strict flowchart parser, typed registries, deterministic
-   validator, and Graph Engine with focused tests;
-3. add an adapter that can represent the existing canonical Job/Task lifecycle
-   decisions without changing durable marker serialization;
-4. route one representative mutation through the common Action Dispatcher from
-   both CLI and relayd/API and prove semantic parity;
-5. migrate lifecycle/reconcile decisions incrementally, preserving behavior and
-   treating the v1 graphs as compatibility fixtures until each graph is proven
-   equivalent;
-6. add composition only when a real workflow requires it, with a separately
-   reviewed profile extension; and
-7. remove duplicated procedural authority only after graph decisions, restart,
-   reconciliation, and durable-record compatibility tests pass.
-
-Checkpoint: `task.retry` was the first shared Action vertical slice. CLI and
-relayd/dashboard dispatch the same domain action mutation, and the production
-v2 lifecycle flowchart now authoritatively accepts or rejects the retry
-transition. Adapter-specific wake, reconciliation, and output behavior remain
-outside the Action boundary.
-
-The migration now routes manual CLI/dashboard retry, lease-expiry retry,
-Planner retry, blocker-resolution retry, and fixed-job authoritative unblock
-through controlled Action semantics. Retry policy remains explicit: user-driven
-retry may extend the durable retry budget, while automatic retries preserve the
-existing finite budget. Fixed authoritative unblock uses the distinct
-`task.unblock.retry` Action so ordinary `task.retry` still rejects historical
-`UNBLOCKED` work.
+`task.retry` was the first shared Action vertical slice. CLI and
+relayd/dashboard dispatch the same domain action mutation, while the production
+lifecycle graph authoritatively accepts or rejects the retry transition. Manual
+CLI/dashboard retry, lease-expiry retry, Planner retry, blocker-resolution
+retry, and fixed-job authoritative unblock now use controlled Action semantics.
 
 `task.cancel`, task release/hold, orchestrator self-task completion, and
 `job.activate` / `job.cancel` likewise use shared Action helpers across their
@@ -474,11 +447,10 @@ such as closing or merging a pull request remain adapter concerns. Worker,
 review, planner, webhook, and reconcile lifecycle facts remain direct Graph
 Event ingestion and are not wrapped as Actions merely to hide the distinction.
 
-Production code no longer translates v1 graph decisions into v2 decisions.
-The legacy parser/runtime is retained only by compatibility and parity tests.
-Any future behavior change must begin in the canonical v2 graph and include a
-migration note plus compatibility/regression evidence when durable behavior is
-affected.
+Any future behavior change must begin in the canonical graph when it changes
+workflow policy and include migration/regression evidence when durable behavior
+is affected. Historical graph content is inspected from Git rather than copied
+back into the current workflow directory.
 
 ## 5. Review checkpoints and acceptance criteria
 
@@ -506,22 +478,22 @@ The later implementation is accepted only when it demonstrates:
 
 ## 6. Current implementation evidence
 
-The v2 lifecycle migration is implemented locally with these mechanically
+The current lifecycle architecture is implemented with these mechanically
 checked boundaries:
 
-- `src/workflow/definitions-v2.ts` loads the canonical v2 Job/Task flowcharts
+- `src/workflow/definitions-v2.ts` loads the canonical Job/Task flowcharts
   with typed state, guard, action, and event registries;
-- `src/workflow/lifecycle.ts` uses those v2 runtimes for production lifecycle
+- `src/workflow/lifecycle.ts` uses those graph runtimes for production lifecycle
   decisions, and `src/types.ts` uses the same topology for transition
   assertions;
-- `test/workflow-v2-lifecycle-parity.test.js` compares v2 against the legacy
-  compatibility fixtures for target states, ordered actions, guarded rejection,
+- `test/workflow-v2-lifecycle-parity.test.js` compares canonical graph decisions
+  against the lifecycle API for target states, ordered actions, guarded rejection,
   and ambiguity;
 - command/adapter mutation tests reject new bypasses around the shared Action
   boundaries, while production-source tests reject reintroduction of the legacy
   lifecycle definitions;
-- npm packaging tests require both production v2 graphs and legacy compatibility
-  fixtures to ship; and
+- npm packaging tests require the complete current canonical graph set to ship,
+  with no version-suffixed or historical graph copies; and
 - the full repository test suite is the final local regression gate before each
   reviewable migration checkpoint.
 

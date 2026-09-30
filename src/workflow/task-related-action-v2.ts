@@ -6,7 +6,7 @@ import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type RelatedTaskActionState = 'evaluate' | 'check_other' | 'check_recovery' | 'skip' | 'selected';
 
-const source = readFileSync(new URL('../../workflow/task-related-action-v2.mmd', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../workflow/task-related-action.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) =>
   (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean =>
     facts.durableFacts[name] === true;

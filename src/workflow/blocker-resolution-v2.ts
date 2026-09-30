@@ -6,7 +6,7 @@ export type BlockerResolutionGraphState =
   | 'waiting' | 'check_target' | 'check_autonomous' | 'check_effective' | 'check_already_unblocked'
   | 'check_draft' | 'check_blocked' | 'check_failed' | 'check_unblocked' | 'wait' | 'obsolete' | 'resumed';
 
-const source=readFileSync(new URL('../../workflow/blocker-resolution-v2.mmd',import.meta.url),'utf8');
+const source=readFileSync(new URL('../../workflow/blocker-resolution.mmd',import.meta.url),'utf8');
 const boolGuard=(name:string)=>(facts:{readonly durableFacts:Readonly<Record<string,unknown>>})=>facts.durableFacts[name]===true;
 
 export const blockerResolutionV2=new GraphRuntime(source,{

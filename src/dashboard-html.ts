@@ -188,9 +188,9 @@ export const dashboardHtml = `<!doctype html>
   <nav role="tablist" aria-label="Console views">
     <button id="jobs-tab" type="button" role="tab" aria-selected="true" aria-controls="jobs-view">Jobs</button>
     <button id="usage-tab" type="button" role="tab" aria-selected="false" aria-controls="usage-view">Usage</button>
-    <button id="graphs-tab" type="button" role="tab" aria-selected="false" aria-controls="graphs-view">Graphs</button>
     <button id="rules-tab" type="button" role="tab" aria-selected="false" aria-controls="rules-view">Router Rules</button>
     <button id="shortcuts-tab" type="button" role="tab" aria-selected="false" aria-controls="shortcuts-view">Shortcuts</button>
+    <button id="graphs-tab" type="button" role="tab" aria-selected="false" aria-controls="graphs-view">Graphs</button>
   </nav>
 </header>
 <main>

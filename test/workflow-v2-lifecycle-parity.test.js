@@ -65,8 +65,8 @@ const jobCases = [
   ['COMPLETED','effect.cancelActiveTasks.failed',{},'COMPLETED'],
 ];
 
-const taskSource = readFileSync(new URL('../workflow/task-lifecycle-v2.mmd', import.meta.url), 'utf8');
-const jobSource = readFileSync(new URL('../workflow/job-lifecycle-v2.mmd', import.meta.url), 'utf8');
+const taskSource = readFileSync(new URL('../workflow/task-lifecycle.mmd', import.meta.url), 'utf8');
+const jobSource = readFileSync(new URL('../workflow/job-lifecycle.mmd', import.meta.url), 'utf8');
 
 const taskRuntime = new GraphRuntime(taskSource, {
   states: new Set(['DRAFT','QUEUED','RUNNING','BLOCKED','UNBLOCKED','SUCCEEDED','FAILED','CANCELLED']),
@@ -97,7 +97,7 @@ const jobRuntime = new GraphRuntime(jobSource, {
   actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest']),
 });
 
-test('v2 Task lifecycle flowchart matches v1 transition targets across the canonical corpus', () => {
+test('canonical Task lifecycle flowchart matches lifecycle API targets across the canonical corpus', () => {
   for (const [from,event,facts,target] of taskCases) {
     const v1 = decideTaskLifecycle({ id: 't', state: from }, event, facts);
     const v2 = taskRuntime.evaluateSync({ currentState: from, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts });
@@ -109,7 +109,7 @@ test('v2 Task lifecycle flowchart matches v1 transition targets across the canon
   }
 });
 
-test('v2 Job lifecycle flowchart matches v1 transition targets across the canonical corpus', () => {
+test('canonical Job lifecycle flowchart matches lifecycle API targets across the canonical corpus', () => {
   for (const [from,event,facts,target] of jobCases) {
     const v1 = decideJobLifecycle({ id: 'j', state: from }, event, facts);
     const v2 = jobRuntime.evaluateSync({ currentState: from, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts });
@@ -121,7 +121,7 @@ test('v2 Job lifecycle flowchart matches v1 transition targets across the canoni
   }
 });
 
-test('v2 guarded rejection and ambiguity match v1 lifecycle semantics', () => {
+test('canonical guarded rejection and ambiguity match lifecycle API semantics', () => {
   for (const [from,event,facts] of [
     ['DRAFT','reconcile',{dependenciesSatisfied:false}],
     ['FAILED','task.completed',{recoverableExecution:false}],
