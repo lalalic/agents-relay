@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from './test-runtime.js';
 import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
-import { requestManagedReconciliation } from '../dist/cli-support.js';
+import { requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
 
 
@@ -74,10 +74,55 @@ test('repository daemon wires account usage telemetry and the default planner in
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
 });
 
+
+
+test('event transport resolution preserves explicit choice and auto-detects reachable NATS', async () => {
+  let probes = 0;
+  const explicitNats = await resolveEventBus(['--events','nats','--nats-url','nats://example:4222'], async () => { probes += 1; return false; });
+  assert.equal(explicitNats.transport, 'nats');
+  assert.equal(explicitNats.source, 'explicit');
+  assert.equal(explicitNats.natsUrl, 'nats://example:4222');
+  assert.equal(probes, 0);
+  assert.equal(eventBusResolutionMessage(explicitNats), 'event transport: nats (explicit)');
+
+  const explicitNone = await resolveEventBus(['--events','none'], async () => { probes += 1; return true; });
+  assert.equal(explicitNone.transport, 'none');
+  assert.equal(explicitNone.source, 'explicit');
+  assert.equal(probes, 0);
+  assert.equal(eventBusResolutionMessage(explicitNone), 'event transport: none (explicit)');
+
+  const autoNats = await resolveEventBus(['--nats-url','nats://custom:4333'], async () => { probes += 1; return true; });
+  assert.equal(autoNats.transport, 'nats');
+  assert.equal(autoNats.source, 'auto');
+  assert.equal(autoNats.natsUrl, 'nats://custom:4333');
+  assert.equal(probes, 1);
+  assert.equal(eventBusResolutionMessage(autoNats), 'event transport: nats (auto-detected)');
+
+  const unavailable = await resolveEventBus([], async () => { probes += 1; return false; });
+  assert.equal(unavailable.transport, 'none');
+  assert.equal(unavailable.source, 'unavailable');
+  assert.equal(probes, 2);
+  assert.equal(eventBusResolutionMessage(unavailable), 'event transport: none (NATS unavailable)');
+});
+
+test('event transport resolution honors NEO_NATS_URL when no CLI URL is supplied', async () => {
+  const previous = process.env.NEO_NATS_URL;
+  process.env.NEO_NATS_URL = 'nats://env-host:4555';
+  try {
+    const resolved = await resolveEventBus([], async () => true);
+    assert.equal(resolved.natsUrl, 'nats://env-host:4555');
+    assert.equal(resolved.source, 'auto');
+  } finally {
+    if (previous === undefined) delete process.env.NEO_NATS_URL; else process.env.NEO_NATS_URL = previous;
+  }
+});
+
+
+
 test('managed CLI reconciliation delegates through relayd and rejects a missing event bus', async () => {
   const now = new Date().toISOString();
   const job = { id: 'managed-cli', repository: 'owner/repo', prNumber: 106, state: 'ACTIVE', tasks: [], createdAt: now, updatedAt: now };
-  await assert.rejects(() => requestManagedReconciliation(undefined, job), /requires --events nats/);
+  await assert.rejects(() => requestManagedReconciliation(undefined, job), /requires a reachable NATS event bus/);
   const events = [];
   const bus = { publish: async event => { events.push(event); }, subscribe: async () => async () => {}, subscribeAll: async () => async () => {} };
   await requestManagedReconciliation(bus, job);

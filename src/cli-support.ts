@@ -70,12 +70,32 @@ export async function relayTaskCommand(args: string[], body: { jobId: string; ta
   if (!response.ok) throw new Error(`Agents Relay task command failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
-export function eventBus(args: string[]): EventBus | undefined { if (arg(args, '--events') !== 'nats') return undefined; return new NatsEventBus(arg(args, '--nats-url', 'nats://127.0.0.1:4222'), arg(args, '--subject-prefix', 'neo.events.job')); }
+export type EventBusResolution = { bus: EventBus | undefined; transport: 'nats' | 'none'; source: 'explicit' | 'auto' | 'unavailable'; natsUrl: string };
+export async function resolveEventBus(args: string[], probe?: (bus: NatsEventBus) => Promise<boolean>): Promise<EventBusResolution> {
+  const explicit = hasArg(args, '--events');
+  const requested = arg(args, '--events');
+  const natsUrl = arg(args, '--nats-url', process.env.NEO_NATS_URL || 'nats://127.0.0.1:4222');
+  if (explicit && requested !== 'nats') return { bus: undefined, transport: 'none', source: 'explicit', natsUrl };
+  const bus = new NatsEventBus(natsUrl, arg(args, '--subject-prefix', 'neo.events.job'));
+  if (explicit) return { bus, transport: 'nats', source: 'explicit', natsUrl };
+  const reachable = probe ? await probe(bus) : await bus.ping().then(() => true, () => false);
+  if (!reachable) { await bus.close().catch(() => undefined); return { bus: undefined, transport: 'none', source: 'unavailable', natsUrl }; }
+  return { bus, transport: 'nats', source: 'auto', natsUrl };
+}
+export function eventBusResolutionMessage(resolution: EventBusResolution): string {
+  if (resolution.transport === 'nats') return `event transport: nats (${resolution.source === 'auto' ? 'auto-detected' : 'explicit'})`;
+  return resolution.source === 'explicit' ? 'event transport: none (explicit)' : 'event transport: none (NATS unavailable)';
+}
+export async function eventBus(args: string[]): Promise<EventBus | undefined> {
+  const resolution = await resolveEventBus(args);
+  process.stderr.write(`${eventBusResolutionMessage(resolution)}\n`);
+  return resolution.bus;
+}
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.unblocked', 'unblocked', `Task ${taskId} unblocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason })); } catch (error) { process.stderr.write(`warning: unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishDependentUnblocked(bus: EventBus | undefined, targets: readonly { repository: string; prNumber: number; jobId: string; taskId: string }[], reason: string): Promise<void> { if (!bus) return; for (const target of targets) { try { await bus.publish(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Task ${target.taskId} unblocked: ${reason}`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, reason })); } catch (error) { process.stderr.write(`warning: dependent unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } } }
 export async function requestManagedReconciliation(bus: EventBus | undefined, job: Job): Promise<void> {
-  if (!bus) throw new Error('Managed GitHub reconciliation requires --events nats so agents-relayd can execute the job');
+  if (!bus) throw new Error('Managed GitHub reconciliation requires a reachable NATS event bus (auto-detected when available, or explicit with --events nats)');
   try {
     await bus.publish(eventFor(job.id, 'reconcile', null, 'job.wake', 'queued', `Reconcile requested for ${job.id}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber }));
   } catch (error) {

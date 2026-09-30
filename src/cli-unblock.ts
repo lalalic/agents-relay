@@ -9,7 +9,7 @@ export async function runTaskUnblockCommand(args: string[], store: DurableStore,
   const result = await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
   const refreshed = await store.load(job.id);
   await saveLocal(localFile, refreshed);
-  const bus = eventBus(args);
+  const bus = await eventBus(args);
   await publishTaskUnblocked(bus, refreshed, task.id, reason);
   await publishWake(bus, refreshed, task.id, `Task ${task.id} unblocked${result.replanning ? ' for replanning' : ''}`);
   console.log(JSON.stringify({ taskId: task.id, ...result, task: refreshed.tasks.find(item => item.id === task.id) }, null, 2));
@@ -23,7 +23,7 @@ export async function runJobUnblockCommand(args: string[], store: DurableStore, 
   if (job.executionMode === 'autonomous') {
     const planTrigger = await unblockAutonomousTasks({ store, job, tasks: blocked, trigger: { source: 'cli', reason } });
     const refreshed = await store.load(job.id);
-    const bus = eventBus(args);
+    const bus = await eventBus(args);
     for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
     await publishWake(bus, refreshed, 'job', `Job ${job.id} unblocked for replanning`);
     console.log(JSON.stringify({ jobId: job.id, replanning: true, planTrigger }, null, 2));
@@ -31,7 +31,7 @@ export async function runJobUnblockCommand(args: string[], store: DurableStore, 
   }
   for (const task of blocked) await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
   const refreshed = await store.load(job.id);
-  const bus = eventBus(args);
+  const bus = await eventBus(args);
   for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
   await publishWake(bus, refreshed, 'job', `Job ${job.id} unblocked`);
   console.log(JSON.stringify({ jobId: job.id, replanning: false, resumedTasks: blocked.map(task => task.id) }, null, 2));

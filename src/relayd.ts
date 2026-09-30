@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { ChatGptAdapter, CodexAdapter } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
-import { NatsEventBus } from './events.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type DurableStore, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
@@ -14,6 +13,7 @@ import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
+import { eventBusResolutionMessage, resolveEventBus } from './cli-support.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -69,7 +69,7 @@ Options:
   --projection-ms MS      GitHub projection flush interval (default: 1000)
   --execution-router-rules PATH
                          Router Rules file (default: ~/.agents-relay/execution-router-rules.md)
-  --events nats            Enable event wakeups
+  --events nats            Require NATS event wakeups (otherwise auto-detect reachable NATS)
 
 Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 
@@ -117,7 +117,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const auth = await githubAuthContext(argv); const client = auth.client;
   const trusted = auth.trustedAuthors;
   const concurrency = Number(value(argv,'--concurrency','4'));
-  const bus = value(argv,'--events') === 'nats' ? new NatsEventBus(value(argv,'--nats-url','nats://127.0.0.1:4222'), value(argv,'--subject-prefix','neo.events.job')) : undefined;
+  const eventResolution = await resolveEventBus([...argv]);
+  const bus = eventResolution.bus;
+  process.stderr.write(`${eventBusResolutionMessage(eventResolution)}\n`);
   const workspaceRoot = normalized.workspaceRoot ?? defaultWorkspaceRoot();
   const discoveredRepositories = normalized.repository ? [] : await discoverWorkspaceRepositories(workspaceRoot);
   const repositories = normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);

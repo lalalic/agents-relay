@@ -19,6 +19,8 @@ npx agents-relayd --workspace ~/Workspace
 
 Use `--repo OWNER/REPO` to retain the single-repository worker pool. Legacy single-job daemon mode remains available with `--repo OWNER/REPO --pr NUMBER --id JOB_ID`.
 
+By default, Relay probes the configured NATS endpoint (`--nats-url`, then `NEO_NATS_URL`, then `nats://127.0.0.1:4222`). When the broker is reachable, the CLI and daemon automatically use NATS even when `--events` is omitted. Pass `--events nats` to require NATS explicitly; pass an explicit non-NATS value such as `--events none` to disable auto-detection. If NATS is unavailable, commands that require authoritative model-task lifecycle events fail clearly instead of pretending the transport exists.
+
 Use service overrides as needed:
 
 ```sh

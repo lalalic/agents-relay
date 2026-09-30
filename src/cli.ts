@@ -164,7 +164,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
     const durableTask = (await store.load(job.id)).tasks.find(item => item.id === task.id) ?? task;
     await saveLocal(localFile, await store.load(job.id));
-    await publishWake(eventBus(args), refreshed, task.id, `Task ${task.id} created`);
+    await publishWake(await eventBus(args), refreshed, task.id, `Task ${task.id} created`);
     console.log(JSON.stringify(durableTask, null, 2));
     return;
   }
@@ -195,7 +195,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
       outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
     }
     await saveLocal(localFile, outputJob);
-    await publishWake(eventBus(args), outputJob, outputTask.id, `${outputTask.id} ${action} requested`);
+    await publishWake(await eventBus(args), outputJob, outputTask.id, `${outputTask.id} ${action} requested`);
     console.log(JSON.stringify(outputTask, null, 2));
     return;
   }
@@ -324,7 +324,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     await store.mergePullRequest(headSha ?? undefined);
     await transitionJobEvent(job, 'pr.merged'); await store.saveJob(job);
     const resolved = await store.resolveBlockerDependents(id, 'merge');
-    await publishDependentUnblocked(eventBus(args), resolved.unblocked, `Blocker Job ${id} resolved (merge)`);
+    await publishDependentUnblocked(await eventBus(args), resolved.unblocked, `Blocker Job ${id} resolved (merge)`);
     console.log(JSON.stringify(await store.load(id), null, 2)); return;
   }
   if (action === 'cancel') {
@@ -372,7 +372,7 @@ export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, 
 }
 export interface Service { store: DurableStore; job: Job; reconciler: Reconciler; dashboardServer: Server; watchdogCleared: boolean; stop(): Promise<void>; }
 export async function createService(args: string[]): Promise<Service> {
-  const loaded = await storeFor(args); const upstream = eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined;
+  const loaded = await storeFor(args); const upstream = await eventBus(args); const bus = upstream ? new ServiceEventBus(upstream) : undefined;
   const requestedUsageDays = Number(arg(args, '--usage-window-days', '1')); const usageWindowDays = Number.isInteger(requestedUsageDays) && requestedUsageDays > 0 ? requestedUsageDays : 1;
   const usageRegistry = codexAndZaiUsageRegistry(undefined, usageWindowDays);
   const reconciler = runtime(loaded.store, args, bus, usageRegistry);
@@ -440,7 +440,7 @@ async function main(): Promise<void> {
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
   if (command === 'init') { const now = new Date().toISOString(); const initialSchedule = scheduleFromArgs(args); const job = createJobEntity({ id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }, { activate: Boolean(initialSchedule) }); let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = await githubStore(args); else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
-  const bus = eventBus(args);
+  const bus = await eventBus(args);
   if (command === 'status') {
     const host = arg(args, '--host', '127.0.0.1');
     const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));

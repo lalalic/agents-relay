@@ -179,7 +179,7 @@ Example:
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 
-Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; use --events nats.
+Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly.
 
 Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
@@ -192,7 +192,7 @@ Example:
   serve: `Run the dashboard and reconciliation service for a managed job.
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
-Common: --port PORT, --interval MS, --events nats.
+Common: --port PORT, --interval MS, --events nats (optional; reachable NATS is auto-detected).
 
 Example:
   npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,
