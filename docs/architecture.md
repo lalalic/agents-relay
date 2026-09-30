@@ -13,7 +13,7 @@ Provide a generic, shareable async agent job system where agents can create dura
 - **Agent adapters** — agent execution backends such as Codex and ChatGPT browser workers.
 - **Event adapter** — required lifecycle channel for model-backed workers. Correlated terminal events drive task-state transitions, while GitHub PR/task markers persist the resulting durable state.
 - **Periodic watchdog** — low-frequency recovery sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state (30 minutes with webhook mode by default; 5 minutes without webhooks for compatibility).
-- **Autonomous scheduler** — the always-on `agents-relayd` process is the sole scheduler heartbeat. It evaluates cached managed Jobs every ten minutes, validates durable `nextRunAt`, claims due slots, and reconciles them locally; see [scheduled autonomous jobs](scheduled-autonomous-jobs.md).
+- **Autonomous scheduler** — the always-on `agents-relayd` process is the sole scheduler heartbeat. It evaluates the disposable in-process Job view restored from SQLite every ten minutes, validates durable `nextRunAt`, claims due slots, and reconciles them locally; see [scheduled autonomous jobs](scheduled-autonomous-jobs.md).
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice
@@ -39,7 +39,7 @@ reconciler; planner output never directly marks a job complete.
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL owns operational execution state and the projection outbox. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
+Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL is the single local source of truth for operational execution state and the projection outbox. Any daemon in-memory Job overview is disposable and reconstructed from SQLite; there is no separate persisted JSON Job cache. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
 
 ## State
 

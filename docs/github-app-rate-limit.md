@@ -80,7 +80,7 @@ flowchart LR
     W[GitHub webhook] --> T[Target exact repository + PR]
     T --> R[Targeted reconciliation]
     R --> C[Update durable state]
-    D[Dashboard auto refresh] --> K[Read local cache]
+    D[Dashboard auto refresh] --> K[Read SQLite-backed local view]
     M[Manual Jobs refresh] --> A
     F[30-minute webhook watchdog] --> A
 ```
@@ -88,7 +88,7 @@ flowchart LR
 Key changes:
 
 - Startup discovery is reused directly for startup reconciliation, avoiding a second immediate workspace scan.
-- Dashboard automatic refresh reads the in-process/disk cache. Only an explicit Jobs refresh asks for a broad refresh.
+- Dashboard automatic refresh reads the disposable in-process view restored from SQLite RelayStore state. Only an explicit Jobs refresh asks for a broad GitHub refresh; there is no separate persisted dashboard Job cache.
 - Selected-job refresh remains targeted to that job's pull request.
 - Webhook mode uses a 30-minute watchdog by default instead of five minutes; `--interval` still overrides it.
 - Without webhook configuration, the existing five-minute watchdog remains for compatibility.
@@ -112,12 +112,12 @@ This keeps all active managed jobs discoverable while bounding historical reads 
 
 - Partial App configuration fails fast; Agents Relay will not silently mix identities.
 - If App authentication is not configured, existing local `gh` authentication is unchanged.
-- If GitHub becomes rate limited, dashboard data remains available from cache and the daemon stops broad retries until cooldown expires.
+- If GitHub becomes rate limited, dashboard data remains available from SQLite-backed local state and the daemon stops broad retries until cooldown expires.
 - The private key is read locally and used only to sign App JWTs. Durable GitHub comments never contain the key, JWT, or installation token.
 
 ## Validation
 
-Coverage includes App-config validation, RS256 JWT signature/claims, existing fixed/auth fallback behavior, dashboard manual-vs-cached refresh wiring, startup reconciliation reuse without a second workspace scan, targeted webhook reconciliation, and open-PR pagination with bounded closed history. Run the full suite with:
+Coverage includes App-config validation, RS256 JWT signature/claims, existing fixed/auth fallback behavior, dashboard manual-vs-local-state refresh wiring, startup reconciliation reuse without a second workspace scan, targeted webhook reconciliation, and open-PR pagination with bounded closed history. Run the full suite with:
 
 ```bash
 npm test
