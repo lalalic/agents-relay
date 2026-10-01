@@ -37,3 +37,11 @@ A **P0 job** (alias: **self job**) is executed directly by the current active or
 6. After implementation and local verification, the orchestrator merges the job itself and completes normal post-merge reconciliation.
 
 `job create` still only creates durable job state; the P0 workflow requires the orchestrator to follow it immediately with task creation and execution.
+
+## Merge completion vs deployment evidence
+
+For a normal one-shot managed Job, the canonical Job lifecycle graph owns completion: a durable `pr.merged` fact transitions the Job to `COMPLETED`. Reconciler and deployment code must not invent a second completion gate after merge.
+
+Post-merge publication and deployment activity is separate from Job lifecycle. Events or evidence such as `package.published`, published version metadata, service restart, and deployment verification may be attached after the Job is already `COMPLETED`; they must not hold the Job open, reopen it, or redefine completion. If post-merge deployment needs remediation, record that as separate deployment/recovery work rather than mutating the completed implementation Job lifecycle.
+
+A PR closed without merge follows the same graph-owned rule through `pr.closed -> CANCELLED`.

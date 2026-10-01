@@ -153,6 +153,8 @@ test('production orchestration entry points use dispatch facades and never direc
   const reconciler = await readFile(new URL('../src/reconciler.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(reconciler, /task\.attempt\s*=\s*task\.maxAttempts/, 'planner availability must not force attempts procedurally');
   assert.doesNotMatch(reconciler, /reviewEnabled\s*===\s*false[^\n]+implementationComplete/, 'no-review merge policy must stay in the Job graph');
+  assert.doesNotMatch(reconciler, /prState\s*===\s*['"]MERGED['"]\s*\?\s*['"]COMPLETED['"]/, 'merge completion policy must stay in the Job graph');
+  assert.doesNotMatch(reconciler, /prState\s*===\s*['"]CLOSED['"]\s*\?\s*['"]CANCELLED['"]/, 'close cancellation policy must stay in the Job graph');
 });
 
 
