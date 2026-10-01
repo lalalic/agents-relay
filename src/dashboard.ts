@@ -81,13 +81,13 @@ export function serveDashboard(
   webhook?: { secret: string; repositories: ReadonlySet<string>; pullRequest?: number; wake: (event: import('./github-webhook.js').GitHubWebhookWake) => void | Promise<void> },
   statusProvider?: () => { limited: boolean; cooldownUntil: string | null; [key: string]: unknown },
   githubUsageProvider?: () => Promise<unknown>,
-  exactJobProvider?: (jobId: string) => Promise<Job | null>,
+  exactJobProvider?: (jobId: string, target?: { repository?: string; prNumber?: number }) => Promise<Job | null>,
   actions?: DashboardActions,
   routerTestProvider?: (selection: { jobId: string; taskId: string }) => Promise<Record<string, unknown>>,
   decisionAuditProvider?: () => Promise<DecisionAuditRecord[]>,
 ): Server {
   const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
-  const legacyExactJobProvider = !exactJobProvider && githubUsageProvider ? githubUsageProvider as unknown as ((jobId: string) => Promise<Job | null>) : undefined;
+  const legacyExactJobProvider = !exactJobProvider && githubUsageProvider ? githubUsageProvider as unknown as ((jobId: string, target?: { repository?: string; prNumber?: number }) => Promise<Job | null>) : undefined;
   const resolvedExactJobProvider = typeof exactJobProvider === 'function' ? exactJobProvider : legacyExactJobProvider;
   const resolvedGithubUsageProvider = legacyExactJobProvider ? undefined : githubUsageProvider;
   const resolvedActions = actions ?? legacyActions;
@@ -134,11 +134,11 @@ export function serveDashboard(
     }
   };
 
-  const snapshot = async (requestedJobId = jobId, forceRefresh = false): Promise<{ id: string; json: string }> => {
+  const snapshot = async (requestedJobId = jobId, forceRefresh = false, target?: { repository?: string; prNumber?: number }): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
     if (overviewProvider) {
       if (forceRefresh && requestedJobId && resolvedExactJobProvider) {
-        const exact = await resolvedExactJobProvider(requestedJobId);
+        const exact = await resolvedExactJobProvider(requestedJobId, target);
         if (exact) return { id: exact.id, json: JSON.stringify(exact) };
       }
       const candidates = await discoveredJobs();
@@ -310,8 +310,12 @@ export function serveDashboard(
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/job') {
       try {
-        const requestedJobId = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? undefined;
-        const body = (await snapshot(requestedJobId, true)).json;
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        const requestedJobId = url.searchParams.get('id') ?? undefined;
+        const repository = url.searchParams.get('repo') ?? undefined;
+        const parsedPr = Number(url.searchParams.get('pr'));
+        const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
+        const body = (await snapshot(requestedJobId, true, { repository, prNumber })).json;
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(body);
       } catch (error) {

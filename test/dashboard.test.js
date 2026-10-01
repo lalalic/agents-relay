@@ -505,7 +505,7 @@ test('job list supports title and PR-number wildcard search', () => {
 test('dashboard periodic snapshots stay cache-only until an explicit refresh', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/dashboard.ts', import.meta.url), 'utf8'));
   assert.match(source, /forceRefresh && requestedJobId && resolvedExactJobProvider/);
-  assert.match(source, /snapshot\(requestedJobId, true\)/);
+  assert.match(source, /snapshot\(requestedJobId, true, \{ repository, prNumber \}\)/);
   assert.match(source, /if \(clients\.size === 0\) return;/);
 });
 
