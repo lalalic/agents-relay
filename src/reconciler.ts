@@ -15,7 +15,6 @@ import { executionEventSource, type ReconcileOptions, withExecutionBoundary } fr
 export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
-import { applyHistoricalJobCompatibilityRepair } from './workflow/runtime.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
@@ -125,34 +124,13 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (prState !== 'OPEN') {
-        const reason = prState === 'MERGED' ? 'Pull request merged' : 'Pull request closed';
-        const terminalState = prState === 'MERGED' ? 'COMPLETED' : 'CANCELLED';
-        if (job.state !== terminalState) {
-          if (!['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED'].includes(job.state)) {
-            // Compatibility repair boundary for historical records that persisted runtime status as lifecycle.
-            applyHistoricalJobCompatibilityRepair(job, terminalState);
-            await this.store.saveJob(job);
-            const outcomes = await this.workflowEffects.execute(
-              ['effect.cancelActiveTasks'],
-              { jobId: job.id, transitionKey: `compatibility:${prState}`, data: { reason } },
-            );
-            await this.applyJobEffectOutcomes(job, outcomes);
-          } else {
-            await transitionJobEvent(
-              job,
-              prState === 'MERGED' ? 'pr.merged' : 'pr.closed',
-              prState === 'CLOSED' ? { notMerged: true } : {},
-              async actionId => {
-                const outcomes = await this.workflowEffects.execute(
-                  [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'],
-                  { jobId: job.id, transitionKey: `terminal:${prState}`, data: { reason } },
-                );
-                await this.applyJobEffectOutcomes(job, outcomes);
-              },
-              async () => { await this.store.saveJob(job); },
-            );
-          }
-        }
+        await dispatchJobReconcile(job, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
+          const outcomes = await this.workflowEffects.execute(
+            [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'],
+            { jobId: job.id, transitionKey: `terminal:${prState}`, data: { reason: `Pull request ${prState.toLowerCase()}` } },
+          );
+          await this.applyJobEffectOutcomes(job, outcomes);
+        }, async () => { await this.store.saveJob(job); });
         if (prState === 'MERGED' && this.store.resolveBlockerDependents) { const resolved = await this.store.resolveBlockerDependents(job.id, 'merge'); for (const target of resolved.unblocked) await this.emit(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Blocker Job ${job.id} resolved (merge)`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, blockerJobId: job.id })); }
         return this.store.load(jobId);
       }

@@ -7,6 +7,7 @@ import {
   decideTaskLifecycle,
 } from '../dist/workflow/lifecycle.js';
 import { schedule, transitionJobEvent, transitionTaskEvent } from '../dist/scheduler.js';
+import { decideJobReconcile } from '../dist/workflow/job-reconcile-v2.js';
 
 const task = state => ({
   jobId: 'job-graph',
@@ -137,6 +138,19 @@ test('Job reconcile graph owns the no-review merge gate', () => {
     assert.deepEqual(denied.effects,[],key);
   }
 });
+
+test('Job reconcile adapter maps terminal PR facts into canonical Job graph events', () => {
+  const merged=decideJobReconcile(job('ACTIVE'),{prState:'MERGED',headSha:null,mergeCapable:false});
+  assert.equal(merged.accepted,true);
+  assert.equal(merged.target,'COMPLETED');
+  assert.deepEqual(merged.effects,['effect.cancelActiveTasks']);
+
+  const closed=decideJobReconcile(job('ACTIVE'),{prState:'CLOSED',headSha:null,mergeCapable:false});
+  assert.equal(closed.accepted,true);
+  assert.equal(closed.target,'CANCELLED');
+  assert.deepEqual(closed.effects,['effect.cancelActiveTasks']);
+});
+
 test('job cancel graph owns active-work cancellation effect', () => {
   for (const state of ['DRAFT','ACTIVE']) {
     const decision=decideJobLifecycle(job(state),'cancel');
