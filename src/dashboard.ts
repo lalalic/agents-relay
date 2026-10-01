@@ -29,7 +29,8 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
     source: await readFile(join(WORKFLOW_DIR, name), 'utf8'),
   })));
 }
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState) => Promise<Job> };
+type DashboardTarget = { repository?: string; prNumber?: number };
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -279,10 +280,13 @@ export function serveDashboard(
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       const requestedJobId = url.searchParams.get('id') ?? '';
       const requestedState = url.searchParams.get('state') ?? '';
+      const repository = url.searchParams.get('repo') ?? undefined;
+      const parsedPr = Number(url.searchParams.get('pr'));
+      const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
       const validState = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'].includes(requestedState);
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !validState || !resolvedActions?.jobSetState) { res.writeHead(404); res.end('Job state override unavailable'); return; }
       try {
-        const result = await resolvedActions.jobSetState(requestedJobId, requestedState as JobLifecycleState);
+        const result = await resolvedActions.jobSetState(requestedJobId, requestedState as JobLifecycleState, { repository, prNumber });
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));
       } catch (error) {
@@ -296,10 +300,13 @@ export function serveDashboard(
       const requestedJobId = url.searchParams.get('id') ?? '';
       const requestedTaskId = url.searchParams.get('task') ?? '';
       const requestedState = url.searchParams.get('state') ?? '';
+      const repository = url.searchParams.get('repo') ?? undefined;
+      const parsedPr = Number(url.searchParams.get('pr'));
+      const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
       const validState = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'].includes(requestedState);
       if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
       try {
-        const result = await resolvedActions.taskSetState(requestedJobId, requestedTaskId, requestedState as TaskState);
+        const result = await resolvedActions.taskSetState(requestedJobId, requestedTaskId, requestedState as TaskState, { repository, prNumber });
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));
       } catch (error) {

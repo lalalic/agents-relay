@@ -161,7 +161,8 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /id="jobs-refresh"/);
   assert.match(dashboardHtml, /id="selected-job-refresh"/);
   assert.match(dashboardHtml, /selectedJobRefresh\.addEventListener\('click'/);
-  assert.match(dashboardHtml, /loadJSON\('\/api\/job\?id='/);
+  assert.match(dashboardHtml, /new URLSearchParams\(\{id:job\.id,repo:job\.repository,pr:String\(job\.prNumber\)\}\)/);
+  assert.match(dashboardHtml, /loadJSON\('\/api\/job\?'\+params\.toString\(\)\)/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
   assert.match(dashboardHtml, /\/api\/jobs'\+\(force\?'\?refresh=1'/);
   assert.match(dashboardHtml, /function isTerminalJob\(job\)/);
@@ -283,9 +284,15 @@ test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
   assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
 });
 
-test('job row selection covers the row', () => {
-  assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\.id\)\)/);
-  assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\.id\);\}\)/);
+test('job row selection uses repository, PR, and durable id as one UI identity', () => {
+  assert.match(dashboardHtml, /function jobSelectionKey\(job\)/);
+  assert.match(dashboardHtml, /String\(job\.repository\|\|''\).*String\(job\.prNumber\|\|''\).*String\(job\.id\|\|''\)/);
+  assert.match(dashboardHtml, /function jobForSelection\(selection\).*jobSelectionKey\(job\)===selection.*job\.id===selection/);
+  assert.match(dashboardHtml, /row\.setAttribute\('aria-current',String\(jobSelectionKey\(job\)===selectedJob\)\)/);
+  assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\)\)/);
+  assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\);\}\)/);
+  assert.match(dashboardHtml, /new URLSearchParams\(\{job:job\.id,limit:String\(MAX_EVENTS\)\}\)/);
+  assert.match(dashboardHtml, /jobSelectionKey\(job\)===jobSelectionKey\(payload\.job\)/);
 });
 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
@@ -307,14 +314,14 @@ test('dashboard job actions invoke the supplied runtime handler', async () => {
 test('selected job exposes one direct durable lifecycle selector while runtime status stays derived', () => {
   assert.match(dashboardHtml, /const JOB_STATES=\['DRAFT','ACTIVE','COMPLETED','CANCELLED'\]/);
   assert.match(dashboardHtml, /job-state-select/);
-  assert.match(dashboardHtml, /\/api\/job-state\?id=/);
+  assert.match(dashboardHtml, /new URLSearchParams\(\{id:job\.id,state,repo:job\.repository,pr:String\(job\.prNumber\)\}\)/);
   assert.match(dashboardHtml, /field\('Runtime status',job\.runtimeStatus\|\|'IDLE'\)/);
 });
 
 test('selected task exposes one direct durable state selector instead of retry and cancel buttons', () => {
   assert.match(dashboardHtml, /const TASK_STATES=\['DRAFT','QUEUED','RUNNING','BLOCKED','UNBLOCKED','SUCCEEDED','FAILED','CANCELLED'\]/);
   assert.match(dashboardHtml, /task-state-select/);
-  assert.match(dashboardHtml, /\/api\/task-state\?id=/);
+  assert.match(dashboardHtml, /new URLSearchParams\(\{id:job\.id,task:task\.id,state,repo:job\.repository,pr:String\(job\.prNumber\)\}\)/);
   assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'retry'/);
   assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'cancel'/);
 });
@@ -322,15 +329,17 @@ test('selected task exposes one direct durable state selector instead of retry a
 test('dashboard job state override invokes the supplied runtime handler', async () => {
   const job = { id: 'job-state-job', title: 'Job state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let invoked = '';
+  let target;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
-    jobSetState: async (jobId, state) => { invoked = jobId + '/' + state; return { ...job, state }; }
+    jobSetState: async (jobId, state, receivedTarget) => { invoked = jobId + '/' + state; target = receivedTarget; return { ...job, state }; }
   });
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
-  const response = await fetch(`http://127.0.0.1:${address.port}/api/job-state?id=${job.id}&state=COMPLETED`, { method: 'POST' });
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/job-state?id=${job.id}&state=COMPLETED&repo=${encodeURIComponent(job.repository)}&pr=${job.prNumber}`, { method: 'POST' });
   assert.equal(response.status, 200);
   assert.equal(invoked, `${job.id}/COMPLETED`);
+  assert.deepEqual(target, { repository: job.repository, prNumber: job.prNumber });
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
@@ -338,15 +347,17 @@ test('dashboard task state override invokes the supplied runtime handler', async
   const task = { id: 'manual-task', jobId: 'task-state-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
   const job = { id: 'task-state-job', title: 'Task state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
   let invoked = '';
+  let target;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
-    taskSetState: async (jobId, taskId, state) => { invoked = jobId + '/' + taskId + '/' + state; return job; }
+    taskSetState: async (jobId, taskId, state, receivedTarget) => { invoked = jobId + '/' + taskId + '/' + state; target = receivedTarget; return job; }
   });
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
-  const response = await fetch(`http://127.0.0.1:${address.port}/api/task-state?id=${job.id}&task=${task.id}&state=SUCCEEDED`, { method: 'POST' });
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/task-state?id=${job.id}&task=${task.id}&state=SUCCEEDED&repo=${encodeURIComponent(job.repository)}&pr=${job.prNumber}`, { method: 'POST' });
   assert.equal(response.status, 200);
   assert.equal(invoked, `${job.id}/${task.id}/SUCCEEDED`);
+  assert.deepEqual(target, { repository: job.repository, prNumber: job.prNumber });
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 

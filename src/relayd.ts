@@ -265,6 +265,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   );
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? runtimeStore(fallback.repository, fallback.prNumber) : new InMemoryStore();
+  const dashboardOverview = (jobId: string, target?: { repository?: string; prNumber?: number }) =>
+    cachedOverviews.find(item => item.job.id === jobId
+      && (!target?.repository || item.job.repository === target.repository)
+      && (!target?.prNumber || item.job.prNumber === target.prNumber));
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -275,8 +279,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
     return await dashboardJobAction(store, makeReconciler(store, concurrency), action)(jobId);
   };
-  const workspaceJobSetState = async (jobId: string, state: import('./types.js').JobLifecycleState) => {
-    const overview = cachedOverviews.find(item => item.job.id === jobId);
+  const workspaceJobSetState = async (jobId: string, state: import('./types.js').JobLifecycleState, target?: { repository?: string; prNumber?: number }) => {
+    const overview = dashboardOverview(jobId, target);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     const result = await dashboardJobSetState(store)(jobId, state);
@@ -315,8 +319,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     return await dashboardTaskAction(store, makeReconciler(store, concurrency), action)(jobId, taskId);
   };
-  const workspaceTaskSetState = async (jobId: string, taskId: string, state: import('./types.js').TaskState) => {
-    const overview = cachedOverviews.find(item => item.job.id === jobId);
+  const workspaceTaskSetState = async (jobId: string, taskId: string, state: import('./types.js').TaskState, target?: { repository?: string; prNumber?: number }) => {
+    const overview = dashboardOverview(jobId, target);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = runtimeStore(overview.job.repository, overview.job.prNumber);
     const result = await dashboardTaskSetState(store)(jobId, taskId, state);
@@ -343,13 +347,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   } : undefined;
   const exactJob = async (jobId: string, target?: { repository?: string; prNumber?: number }) => {
-    let cached = cachedOverviews.find(item => item.job.id === jobId);
+    let cached = dashboardOverview(jobId, target);
     if (!cached && target?.repository && target.prNumber && repositories.includes(target.repository)) {
-      cached = (await refreshPullRequest(target.repository, target.prNumber, 'control.job-lookup', { force: true })).find(item => item.job.id === jobId);
+      cached = (await refreshPullRequest(target.repository, target.prNumber, 'control.job-lookup', { force: true }))
+        .find(item => item.job.id === jobId && item.job.repository === target.repository && item.job.prNumber === target.prNumber);
     }
     if (!cached) return null;
-    if (target?.repository && cached.job.repository !== target.repository) return null;
-    if (target?.prNumber && cached.job.prNumber !== target.prNumber) return null;
     const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft, publication: cached.publication });
     if (client.rateLimitStatus().limited) return cachedJob();
     try {
