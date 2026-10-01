@@ -91,13 +91,13 @@ export async function runRouterEvals(engine: DecisionEngine, rulesPath?: string)
       user_input_rules: rules.text,
       runtime: { chatgpt_running: testCase.chatgptRunning ?? 0, preferred_chatgpt_concurrency: 10 },
       worker_candidates: workerCandidates,
-      routing_instruction: 'For each selected provider, use its default model and reasoning unless user_input_rules explicitly provides another model/reasoning option.',
+      routing_instruction: 'Choose one route from the merged choice list. Profile defaults and explicit [choices] have already been merged and hard-gated; do not invent additional routes.',
     }));
     const decision = await engine.decide(
       { facts },
       {
         type: 'choice',
-        question: 'Choose one legal route. Each provider default is available. Additional model/reasoning routes exist only when explicitly provided by user_input_rules. Use context, code-plan quota, runtime load, and user_input_rules.',
+        question: 'Choose one legal route from the merged choice list. Each provider default is available; extra model/reasoning routes appear only when explicitly listed in [choices]. Use context, code-plan quota, runtime load, and routing_instruction.',
         choices,
       },
     );

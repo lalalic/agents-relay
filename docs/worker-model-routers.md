@@ -3,11 +3,11 @@
 Agents Relay routes model-backed executable work with one **Execution Router** decision. The router chooses a complete executable route: worker + provider/model/profile/reasoning.
 
 ```text
-Task + workerRequirements + resource/runtime facts + free-text rules
+Task + workerRequirements + resource/runtime facts + Router Rules
   -> discover workers and configured/authorized models
-  -> build complete worker+model routes
-  -> remove only impossible routes
-  -> decide(one route)
+  -> profile defaults + explicit [choices] (deduplicated, merged)
+  -> remove only impossible routes (hard gates)
+  -> decide(one merged choice list)   [routing-instruction passed verbatim]
   -> persist workerSelection + routing
   -> worker.selected
   -> model.selected
@@ -23,7 +23,20 @@ The router keeps hard gates intentionally narrow. Explicit runtime/provider/mode
 
 Everything else is normally soft decision context: task capabilities, task kind, trust/region/labels, quota pressure and reset horizon, cost, latency, quality, runtime load, reviewer diversity, and human-maintained free-text guidance. The complete `workerRequirements` object is passed into the decision facts even when its fields are soft.
 
-Free-text guidance is the primary policy surface. The Execution Router rules file is the single free-text policy surface; it cannot invent routes because route discovery happens before the decision call. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is explicitly authorized by the model rules.
+The Execution Router rules file is the single policy surface and uses two explicit sections:
+
+```text
+[choices]
+openai: sol medium, luna high
+zai: glm-5.3-flash high
+
+[routing-instruction]
+Prefer zai until its quota resets; otherwise use the openai default.
+```
+
+`[choices]` is an additive list of `provider: model [reasoning]` routes. Relay merges it with the discovered profile defaults, deduplicates the result, and applies the authoritative hard gates; the surviving set becomes exactly one merged choice list that Laya chooses from. Runtime catalog models are **not** auto-added: a catalog model becomes a choice only when an explicit `[choices]` entry names it. Relay does not parse or repair user intent beyond reading these explicit entries.
+
+`[routing-instruction]` is opaque guidance forwarded to Laya verbatim; the active one-stage decision reads it as `facts.routing_instruction`. The section body is preserved byte-for-byte: leading/trailing whitespace, blank lines, and line endings are not trimmed or normalized, and the header line's own terminator is not attached to the instruction. Text outside both sections is ignored, so legacy free-text files remain valid but no longer influence routing. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is present in the discovered profile defaults or an explicit `[choices]` entry.
 
 ## Codex fallback
 
@@ -33,9 +46,9 @@ The fallback deliberately does not reproduce the intelligent policy layer. Its j
 
 ## Typed Laya decision
 
-`LayaCliDecisionEngine` remains stateless. Each routing decision invokes one transient `uvx laya-mlx predict` subprocess with a JSON state file and a bounded choice contract. Laya sees only route IDs supplied by Relay and therefore cannot select an unconfigured worker, provider, model, or profile.
+`LayaCliDecisionEngine` remains stateless. Each routing decision invokes one transient `uvx laya-mlx predict` subprocess with a JSON state file and one bounded choice contract. Relay sends exactly one merged choice list per decision, so Laya cannot select an unconfigured worker, provider, model, or profile, and a single decision covers worker and model together.
 
-There is no production resident Laya service and no second model-selection decision after worker selection.
+There is no production resident Laya service and no separate worker/provider/model/reasoning decision chain for the normal pipeline.
 
 ## Durable compatibility and observability
 

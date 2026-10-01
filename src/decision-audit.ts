@@ -171,7 +171,7 @@ export function makeExecutionDecisionAudit(input: {
     fallback: { used: input.routing.decisionEvidence?.fallback ?? false, reason: input.routing.decisionEvidence?.error },
     decision_evidence: input.routing.decisionEvidence,
     decision_input: {
-      type: 'staged_route_decision',
+      type: 'merged_choice_decision',
       stages: input.decisionStages.map(stage => ({
         name: stage.name,
         facts: stage.facts,
