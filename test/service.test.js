@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
+import { normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { publishOrchestratorTaskCompletion, requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
@@ -31,6 +31,18 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
 test('workspace dashboard/runtime summary refreshes the disposable local view from SQLite operational truth', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
+});
+
+test('broad GitHub discovery cannot evict RelayStore-known jobs from operational inventory', () => {
+  const overview = (id, prNumber, state = 'ACTIVE', githubState = 'OPEN') => ({
+    githubState, mergedAt: githubState === 'MERGED' ? '2026-10-01T00:00:00.000Z' : null, closedAt: null, draft: false, publication: null,
+    job: { id, title: id, executionMode: 'fixed', prNumber, repository: 'owner/repo', state, continuation: null, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', tasks: [] },
+  });
+  const durable = overview('old-known-job', 1, 'ACTIVE', 'MERGED');
+  const discovered = Array.from({ length: 25 }, (_, index) => overview('new-' + (index + 1), index + 2, 'COMPLETED', 'MERGED'));
+  const merged = mergeOperationalInventory([durable], discovered);
+  assert.equal(merged.some(item => item.job.id === 'old-known-job'), true);
+  assert.equal(merged.length, 26);
 });
 
 test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {

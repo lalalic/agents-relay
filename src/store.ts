@@ -72,7 +72,7 @@ export async function loadManagedGitHubJobGraphql(client: GitHubClient, reposito
   return (await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors)).find(item => item.job.id === jobId) ?? null;
 }
 const COMPLETED_JOB_HISTORY_LIMIT = 10;
-function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
+function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state); }
 function completedAt(item: ManagedJobOverview): string {
   return [item.job.updatedAt, item.mergedAt, item.closedAt].filter((value): value is string => typeof value === 'string' && value.length > 0).sort().at(-1) ?? '';
 }

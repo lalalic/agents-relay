@@ -43,6 +43,19 @@ export async function overlayOperationalOverviews(
   }));
 }
 
+function managedOverviewKey(item: ManagedJobOverview): string {
+  return item.job.repository + '#' + item.job.prNumber + ':' + item.job.id;
+}
+
+export function mergeOperationalInventory(
+  current: readonly ManagedJobOverview[],
+  discovered: readonly ManagedJobOverview[],
+): ManagedJobOverview[] {
+  const merged = new Map(current.map(item => [managedOverviewKey(item), item]));
+  for (const item of discovered) merged.set(managedOverviewKey(item), item);
+  return [...merged.values()];
+}
+
 export type GitHubReadPathDiagnostics = {
   workspaceScans: number;
   prRefreshes: number;
@@ -184,9 +197,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     try {
       githubReadPaths.workspaceScans += 1;
       const refreshed = await withGitHubRequestContext(client, 'relayd.workspace-refresh', () => aggregateManagedGitHubJobs(client, scanRepositories, trusted));
-      const scanned = new Set(scanRepositories);
-      const merged = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
-      cachedOverviews = await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber));
+      const merged = mergeOperationalInventory(cachedOverviews, refreshed);
+      cachedOverviews = dashboardManagedJobs(await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber)));
       return cachedOverviews;
     } catch (error) {
       process.stderr.write(`warning: workspace job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
