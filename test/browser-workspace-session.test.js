@@ -10,7 +10,7 @@ import {
   ensureChatGptBrowserWorkspace,
 } from '../dist/adapters.js';
 
-test('ChatGPT Browser Workspace bootstrap creates agents-replay with pool size 6', async () => {
+test('ChatGPT Browser Workspace bootstrap uses npx browser-workspace with pool size 6', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-workspace-'));
   try {
     const log = join(root, 'args.log');
@@ -34,6 +34,14 @@ test('ChatGPT Browser Workspace bootstrap creates agents-replay with pool size 6
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+
+test('default Browser Workspace CLI is npx browser-workspace', async () => {
+  const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
+  assert.match(source, /\{ command: 'npx', prefix: \['browser-workspace'\] \}/);
+  assert.match(source, /browserWorkspaceCommand\(browserWorkspaceCli\(command\), \['create', CHATGPT_BROWSER_WORKSPACE, String\(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE\)\]\)/);
 });
 
 test('ChatGPT adapter uses Browser Workspace session lifecycle', async () => {

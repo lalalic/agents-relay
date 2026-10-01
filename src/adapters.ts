@@ -189,9 +189,13 @@ function parseDriverJson(output: string): BrowserWorkerResponse {
   }
   throw new Error('browser-worker driver returned no submitted receipt');
 }
-function browserWorkspaceCommand(command: string, args: readonly string[], stdin?: string): Promise<string> {
+type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
+function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
+  return override ? { command: override, prefix: [] } : { command: 'npx', prefix: ['browser-workspace'] };
+}
+function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const child = spawn(cli.command, [...cli.prefix, ...args], { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -215,12 +219,12 @@ function parseWorkspaceJson(output: string): Record<string, unknown> {
   throw new Error('browser-workspace returned no JSON result');
 }
 
-export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND ?? 'browser-workspace'): Promise<void> {
-  await browserWorkspaceCommand(command, ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
+export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
+  await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
 }
 
 function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
-  const command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND ?? 'browser-workspace';
+  const cli = browserWorkspaceCli();
   return (_definition, request, _route, signal): AgentRun => {
     const policy = request.tabClosePolicy ?? 'after-start';
     let activeSessionId: string | undefined;
@@ -255,7 +259,7 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
         }));
 
         const startOutput = await browserWorkspaceCommand(
-          command,
+          cli,
           ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE],
         );
         const started = parseWorkspaceJson(startOutput);
@@ -273,7 +277,7 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
         ].join('\n\n').replaceAll('__CFG_PATH__', escapedConfig);
 
         const execOutput = await browserWorkspaceCommand(
-          command,
+          cli,
           ['session', 'exec', activeSessionId],
           source,
         );
@@ -292,14 +296,14 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
         }
         await releaseBarrier;
         if (activeSessionId) {
-          await browserWorkspaceCommand(command, ['session', 'stop', activeSessionId]);
+          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
           activeSessionId = undefined;
         }
         return result;
 
       } catch (failure) {
         if (activeSessionId) {
-          await browserWorkspaceCommand(command, ['session', 'stop', activeSessionId]).catch(() => {});
+          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]).catch(() => {});
           activeSessionId = undefined;
         }
         await unlink(configFile).catch(() => {});
@@ -312,7 +316,7 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
     const cancel = (): void => {
       release();
       if (activeSessionId) {
-        void browserWorkspaceCommand(command, ['session', 'stop', activeSessionId]);
+        void browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
         activeSessionId = undefined;
       }
     };
