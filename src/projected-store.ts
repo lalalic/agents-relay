@@ -1,8 +1,9 @@
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget, type BlockerResolutionSummary } from './blockers.js';
 import type { Comment, DurableStore, PullRequestState } from './store.js';
-import { sameTaskDefinition } from './store-task-definition.js';
-import type { ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
+import { DurableDefinitionConflictError, isDurableDefinitionConflict, sameTaskDefinition } from './store-task-definition.js';
+import type { ProjectionConflictDiagnostic, ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
+import { decideProjectionFailure } from './workflow/projection-conflict-v2.js';
 import type { GitHubPullRequestSeed } from './store.js';
 
 type ProjectedPayload =
@@ -39,14 +40,70 @@ export function githubProjectionRetryAt(error: unknown, attempt: number, now = n
 }
 
 
+const DEFINITION_CONFLICT_MESSAGE = /already exists with a different definition$/;
+
+/**
+ * Core deterministic-conflict classifier.
+ *
+ * A structured {@link DurableDefinitionConflictError} is authoritative; a plain error
+ * whose message matches the canonical GitHub marker conflict text is classified the
+ * same way so remote stores and legacy callers converge on one behavior.
+ */
 export function isTerminalProjectionFailure(item: Pick<ProjectionOutboxItem, 'operation'>, error: unknown): boolean {
+  if (item.operation !== 'append_task' && item.operation !== 'append_plan') return false;
   const message = error instanceof Error ? error.message : String(error);
-  return (item.operation === 'append_task' || item.operation === 'append_plan')
-    && /already exists with a different definition$/.test(message);
+  return isDurableDefinitionConflict(error) || DEFINITION_CONFLICT_MESSAGE.test(message);
 }
 
+/** Builds durable diagnostic evidence even when a plain error carries no structured fields. */
+function conflictDiagnostic(item: ProjectionOutboxItem, error: unknown, detectedAt: string): ProjectionConflictDiagnostic {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof DurableDefinitionConflictError) {
+    return {
+      kind: error.kind,
+      jobId: error.jobId,
+      subjectId: error.subjectId,
+      operation: item.operation,
+      operationKey: item.operationKey,
+      localDefinition: error.local,
+      remoteDefinition: error.remote,
+      divergingFields: [...error.divergingFields],
+      detectedAt,
+      message,
+    };
+  }
+  const payload = item.payload as { value?: { jobId?: string; id?: string } } | undefined;
+  const kind = item.operation === 'append_plan' ? 'plan' : 'task';
+  return {
+    kind,
+    jobId: typeof payload?.value?.jobId === 'string' ? payload.value.jobId : '',
+    subjectId: typeof payload?.value?.id === 'string' ? payload.value.id : '',
+    operation: item.operation,
+    operationKey: item.operationKey,
+    localDefinition: payload?.value ?? item.payload ?? null,
+    remoteDefinition: null,
+    divergingFields: [],
+    detectedAt,
+    message,
+  };
+}
+
+export type ProjectionConflictEvent = {
+  type: 'projection.conflict';
+  status: 'conflict';
+  visibility: 'orchestrator';
+  message: string;
+  data: ProjectionConflictDiagnostic;
+};
+
+export type ProjectionConflictObserver = (event: ProjectionConflictEvent) => void | Promise<void>;
+
 export class GitHubProjectionWriter {
-  constructor(private readonly relay: RelayStore, private readonly github: DurableStore) {}
+  constructor(
+    private readonly relay: RelayStore,
+    private readonly github: DurableStore,
+    private readonly onConflict?: ProjectionConflictObserver,
+  ) {}
 
   async flushOnce(limit = 50, now = new Date()): Promise<{ projected: number; deferred: number }> {
     const items = await this.relay.claimDueProjections(limit, now);
@@ -59,14 +116,28 @@ export class GitHubProjectionWriter {
         projected += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (isTerminalProjectionFailure(item, error)) await this.relay.deadLetterProjection(item.id, message);
-        else {
+        const deterministic = isTerminalProjectionFailure(item, error);
+        const decision = decideProjectionFailure({ deterministicDefinitionConflict: deterministic });
+        if (decision.accepted && decision.target === 'conflict') {
+          const diagnostic = conflictDiagnostic(item, error, now.toISOString());
+          await this.relay.recordProjectionConflict(item.id, diagnostic);
+          await this.notifyConflict(diagnostic, message);
+        } else {
           await this.relay.retryProjection(item.id, message, githubProjectionRetryAt(error, item.attempts, now));
           deferred += 1;
         }
       }
     }
     return { projected, deferred };
+  }
+
+  private async notifyConflict(diagnostic: ProjectionConflictDiagnostic, message: string): Promise<void> {
+    if (!this.onConflict) return;
+    try {
+      await this.onConflict({ type: 'projection.conflict', status: 'conflict', visibility: 'orchestrator', message, data: diagnostic });
+    } catch (error) {
+      process.stderr.write(`warning: projection conflict event unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   private async apply(item: ProjectionOutboxItem): Promise<void> {
@@ -103,8 +174,9 @@ export class ProjectedDurableStore implements DurableStore {
     private readonly github: DurableStore,
     seed: GitHubPullRequestSeed | null = null,
     private readonly relatedStore?: (repository: string, prNumber: number) => DurableStore,
+    onConflict?: ProjectionConflictObserver,
   ) {
-    this.projection = new GitHubProjectionWriter(relay, github);
+    this.projection = new GitHubProjectionWriter(relay, github, onConflict);
     this.seededFacts = pullRequestFactsFromSeed(seed);
     if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
   }

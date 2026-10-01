@@ -274,6 +274,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|list|retry|unblock|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
+    ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --pr NUMBER'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
     ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
@@ -337,6 +338,7 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('workflow/schedule-cycle.mmd'), true);
   assert.equal(files.has('workflow/troubleshooter.mmd'), true);
   assert.equal(files.has('workflow/task-related-action.mmd'), true);
+  assert.equal(files.has('workflow/projection-conflict.mmd'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);
