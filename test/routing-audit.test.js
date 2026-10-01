@@ -60,16 +60,18 @@ test('model re-decision refreshes usage, updates routing, and does not retry the
 });
 
 
-test('free-text execution router rules are passed verbatim to the decision engine', async () => {
+test('routing instruction is appended to the decision contract instead of facts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'relay-rules-'));
   const rulesPath = join(root, 'rules.md');
-  const rules = 'Prefer ZAI when paid quota is abundant.\nRe-decide with fresh usage after provider/runtime failure.';
-  await writeFile(rulesPath, rules);
+  const instruction = 'Prefer ZAI when paid quota is abundant.\nRe-decide with fresh usage after provider/runtime failure.';
+  await writeFile(rulesPath, '[routing-instruction]\n' + instruction);
   let seen;
+  let seenContract;
   const decisionEngine = {
     name: 'capture',
     decide: async (request, contract) => {
       seen = request.facts;
+      seenContract = contract;
       return { type: 'choice', choice: contract.choices[0] };
     },
   };
@@ -79,7 +81,9 @@ test('free-text execution router rules are passed verbatim to the decision engin
     decisionMode: 'active',
     taskFacts: { kind: 'implementation' },
   });
-  assert.equal(seen.user_input_rules, rules);
+  assert.equal(seen.user_input_rules, undefined);
+  assert.equal(seen.routing_instruction, undefined);
+  assert.ok(seenContract.question.endsWith(instruction));
 });
 
 
@@ -136,7 +140,9 @@ test('unified execution audit records full worker+model routes and selected rout
       { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model', 'codex'] },
       { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-harness'], browserWorkspaceCapacity: { name: 'Harness', poolSize: 5, idle: 3, leased: 2, available: 3, observedAt: new Date().toISOString(), reason: null } },
     ];
-    const result = await routeExecution(workers, { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', auditStore: store, taskFacts: { kind: 'review' } });
+    const rulesPath = join(root, 'rules.md');
+    await writeFile(rulesPath, '');
+    const result = await routeExecution(workers, { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', auditStore: store, taskFacts: { kind: 'review' }, rulesPath });
     assert.equal(result.selection.workerId, 'chatgpt/browser-worker');
 
     const [audit] = await store.read();

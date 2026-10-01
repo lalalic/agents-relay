@@ -21,6 +21,7 @@
  */
 
 export type RouterRuleChoice = {
+  worker?: string;
   provider: string;
   model: string;
   reasoning?: string;
@@ -42,7 +43,7 @@ function sectionOf(line: string): string | null {
 }
 
 function choiceKey(choice: RouterRuleChoice): string {
-  return [choice.provider, choice.model, choice.reasoning ?? ''].join('\u0000');
+  return [choice.worker ?? '', choice.provider, choice.model, choice.reasoning ?? ''].join('\u0000');
 }
 
 /**
@@ -75,6 +76,11 @@ function rawSectionBody(text: string, name: string): string | null {
  * `[choices]` entries are deduplicated deterministically (first occurrence
  * wins). The `[routing-instruction]` body is captured verbatim.
  */
+export function appendRoutingInstruction(question: string, instruction: string): string {
+  if (!instruction) return question;
+  return question + '\n\n' + instruction;
+}
+
 export function parseRouterRules(text: string): ParsedRouterRules {
   const choices: RouterRuleChoice[] = [];
   const seen = new Set<string>();
@@ -89,6 +95,22 @@ export function parseRouterRules(text: string): ParsedRouterRules {
     if (section === SECTION_INSTRUCTION) continue;
     if (section !== SECTION_CHOICES) continue;
     if (!rawLine.trim() || rawLine.trim().startsWith('#')) continue;
+    const route = rawLine.trim().match(/^([A-Za-z0-9._/-]+)::([A-Za-z0-9._-]+):([A-Za-z0-9._/-]+)(?:@([A-Za-z0-9._-]+))?$/);
+    if (route) {
+      const choice: RouterRuleChoice = {
+        worker: route[1],
+        provider: route[2],
+        model: route[3],
+        ...(route[4] ? { reasoning: route[4].toLowerCase() } : {}),
+      };
+      const key = choiceKey(choice);
+      if (!seen.has(key)) {
+        seen.add(key);
+        choices.push(choice);
+      }
+      continue;
+    }
+
     const match = rawLine.match(/^\s*([A-Za-z0-9._-]+)\s*:\s*(.+)$/);
     if (!match) continue;
     const provider = match[1].trim();

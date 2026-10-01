@@ -1,6 +1,7 @@
 import { DecisionEngine } from './decision.js';
 import { executionTaskShape } from './execution-routing.js';
 import { loadExecutionRouterRules } from './routing-policy.js';
+import { appendRoutingInstruction } from './router-rules.js';
 
 export type RouterEvalCase = {
   id: string;
@@ -88,16 +89,14 @@ export async function runRouterEvals(engine: DecisionEngine, rulesPath?: string)
         },
         reviewer: null,
       },
-      user_input_rules: rules.text,
       runtime: { chatgpt_running: testCase.chatgptRunning ?? 0, preferred_chatgpt_concurrency: 10 },
       worker_candidates: workerCandidates,
-      routing_instruction: 'Choose one route from the merged choice list. Profile defaults and explicit [choices] have already been merged and hard-gated; do not invent additional routes.',
     }));
     const decision = await engine.decide(
       { facts },
       {
         type: 'choice',
-        question: 'Choose one legal route from the merged choice list. Each provider default is available; extra model/reasoning routes appear only when explicitly listed in [choices]. Use context, code-plan quota, runtime load, and routing_instruction.',
+        question: appendRoutingInstruction('Choose one legal route from the merged choice list. Each provider default is available; extra model/reasoning routes appear only when explicitly listed in [choices]. Use context, code-plan quota, and runtime load.', rules.parsed.routingInstruction),
         choices,
       },
     );

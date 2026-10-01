@@ -213,7 +213,9 @@ test('user_input_rules are interpreted by Laya and never parsed into model choic
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-6-astra')));
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-5.6-terra')));
     assert.equal(calls[0].contract.question.includes('merged choice list'), true);
-    assert.equal(calls[0].request.facts.routing_instruction, `${instruction}\n`);
+    assert.equal(calls[0].request.facts.user_input_rules, undefined);
+    assert.equal(calls[0].request.facts.routing_instruction, undefined);
+    assert.match(calls[0].contract.question, /Use sol for complex work; otherwise prefer the configured default\./);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-sol');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -374,7 +376,7 @@ test('worker decide receives task, usage, principles, and local rules without qu
   const dir = await mkdtemp(join(tmpdir(), 'relay-worker-rules-'));
   try {
     const rulesPath = join(dir, 'rules.md');
-    await writeFile(rulesPath, 'Prefer Codex for native app work when ChatGPT cannot operate the local UI.\n');
+    await writeFile(rulesPath, '[routing-instruction]\nPrefer Codex for native app work when ChatGPT cannot operate the local UI.\n');
     const engine = new FakeDecisionEngine('codex');
     const usage = {
       generatedAt: '2026-09-26T01:00:00.000Z',
@@ -400,10 +402,10 @@ test('worker decide receives task, usage, principles, and local rules without qu
     assert.equal(engine.calls[0].request.facts.usage_snapshot.generatedAt, usage.generatedAt);
     assert.match(engine.calls[0].request.facts.routing_principles, /Prefer ChatGPT/);
     assert.match(engine.calls[0].request.facts.routing_principles, /native\/local execution/);
-    assert.match(engine.calls[0].request.facts.user_input_rules, /Prefer Codex for native app work/);
-    assert.deepEqual(engine.calls[0].request.facts.decision_precedence, ['authoritative_hard_constraints', 'user_input_rules', 'routing_principles', 'resource_and_runtime_preferences']);
-    assert.match(engine.calls[0].contract.question, /user_input_rules ahead of built-in routing principles/);
-    assert.match(engine.calls[0].request.facts.routing_principles, /higher-priority routing guidance/);
+    assert.equal(engine.calls[0].request.facts.user_input_rules, undefined);
+    assert.deepEqual(engine.calls[0].request.facts.decision_precedence, ['authoritative_hard_constraints', 'routing_instruction', 'routing_principles', 'resource_and_runtime_preferences']);
+    assert.match(engine.calls[0].contract.question, /Prefer Codex for native app work/);
+    assert.match(engine.calls[0].request.facts.routing_principles, /higher-priority guidance/);
     assert.equal(engine.calls[0].request.facts.candidates[0].resourceHealthy, false);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -513,7 +515,7 @@ test('final review uses normal Worker Router decision with current user guidance
   process.env.AGENTS_RELAY_EXECUTION_ROUTER_RULES = rulesPath;
   try {
     await writeFile(join(dir, 'config.toml'), 'model = "gpt-test"\nmodel_provider = "openai"\n');
-    await writeFile(rulesPath, "don't use chatgpt worker\n");
+    await writeFile(rulesPath, "[routing-instruction]\ndon't use chatgpt worker\n");
     const { InMemoryStore } = await import('../dist/store.js');
     const now = new Date().toISOString();
     const store = new InMemoryStore({ id: 'review-route', title: 'review route', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] });
@@ -544,7 +546,8 @@ test('final review uses normal Worker Router decision with current user guidance
     assert.equal(result.selection.workerId, 'codex');
     assert.equal(result.selection.selectedBy, 'execution-router:laya');
     assert.equal(calls.length, 1);
-    assert.match(calls[0].request.facts.user_input_rules, /don't use chatgpt worker/);
+    assert.equal(calls[0].request.facts.user_input_rules, undefined);
+    assert.match(calls[0].contract.question, /don't use chatgpt worker/);
     assert.equal(calls[0].request.facts.context.reviewer.role, 'reviewer');
     assert.deepEqual(calls[0].request.facts.context.reviewer.reviewer_diversity.implementation_workers, ['codex']);
     assert.match(calls[0].request.facts.context.reviewer.reviewer_diversity.preference, /soft preference below user environment rules/);
@@ -627,6 +630,12 @@ test('Router Rules parse explicit [choices] and [routing-instruction] and ignore
     { provider: 'openai', model: 'luna', reasoning: 'high' },
     { provider: 'zai', model: 'glm-5.3-flash', reasoning: 'high' },
   ]);
+  const canonical = parseRouterRules('[choices]\ncodex::openai:gpt-5.6-sol@medium\nchatgpt/browser-worker::chatgpt:account-defaults\n[routing-instruction]\nUse zai first.\n');
+  assert.deepEqual(canonical.choices, [
+    { worker: 'codex', provider: 'openai', model: 'gpt-5.6-sol', reasoning: 'medium' },
+    { worker: 'chatgpt/browser-worker', provider: 'chatgpt', model: 'account-defaults' },
+  ]);
+  assert.equal(canonical.routingInstruction, 'Use zai first.\n');
   assert.equal(parsed.routingInstruction, 'Prefer zai until quota resets.\nOtherwise use the openai default.');
   assert.deepEqual(parseRouterRules('no sections here'), { choices: [], routingInstruction: '' });
   assert.equal(parseRouterRules('[routing-instruction]\nonly guidance\n').routingInstruction, 'only guidance\n');
@@ -681,9 +690,46 @@ test('profile defaults merge with explicit [choices], deduplicate, and exclude u
     ]);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].contract.question.includes('merged choice list'), true);
-    assert.equal(calls[0].request.facts.routing_instruction, 'Stay on openai.\n');
+    assert.equal(calls[0].request.facts.routing_instruction, undefined);
+    assert.match(calls[0].contract.question, /Stay on openai\./);
     assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.source), ['profile-default', 'explicit-choice']);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('canonical worker::provider:model@reasoning rules become legal contract choices and instruction text stays only in contract.question', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-canonical-rules-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'models_cache.json'), JSON.stringify({
+      models: [{ slug: 'gpt-5.6-sol', visibility: 'list', supported_in_api: true, supported_reasoning_levels: [{ effort: 'medium' }] }],
+    }));
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(rulesPath, [
+      '[choices]',
+      'codex::openai:gpt-5.6-sol@medium',
+      '',
+      '',
+      '[routing-instruction]',
+      '- Use zai first.',
+      "- don't use openrouter provider",
+      '',
+    ].join('\n'));
+    const calls = [];
+    const engine = { name: 'capture', async decide(request, contract) { calls.push({ request, contract }); return { type: 'choice', choice: contract.choices.find(item => item.includes('gpt-5.6-sol')) ?? contract.choices[0] }; } };
+    const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
+    assert.ok(calls[0].contract.choices.includes('worker=codex provider=openai model=gpt-5.6-sol reasoning=medium default=false'));
+    assert.equal(calls[0].request.facts.user_input_rules, undefined);
+    assert.equal(calls[0].request.facts.routing_instruction, undefined);
+    assert.match(calls[0].contract.question, /- Use zai first\./);
+    assert.match(calls[0].contract.question, /- don't use openrouter provider/);
+    assert.equal(result.candidate.routing.model, 'gpt-5.6-sol');
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
     await rm(home, { recursive: true, force: true });
