@@ -44,15 +44,18 @@ Task input should include, as applicable:
 
 Do not require a producer to invent a root cause or solution that is not known yet.
 
-Task results should include, as applicable:
+Every executing Task worker must make both of these explicit in its durable Task result:
 
-- **root cause** for bug, incident, failure, diagnostic, or recovery work; if an investigation cannot determine it, state that explicitly with the remaining uncertainty;
-- **implemented solution**, describing what was actually changed or done;
+- **root cause** — for bug, incident, failure, diagnostic, or recovery work, state the confirmed cause; if it cannot be determined, say so and preserve the remaining uncertainty. For feature, refactor, research, review, or other work with no failure cause to diagnose, explicitly state that root cause is not applicable and why rather than omitting it.
+- **implemented solution** — describe what was actually changed or done. For read-only research or review work, state the concrete findings, recommendation, or resolution produced by the Task rather than omitting the solution.
+
+Task results should also include, as applicable:
+
 - **deviations** from any proposed or required solution, with the reason;
 - **validation** showing how the result was verified;
 - relevant changed files, commits, PR comments, artifacts, or remaining issues.
 
-For feature/refactor work with no failure to diagnose, root cause is not required. For research tasks, use findings/evidence instead of forcing root-cause language.
+This is a worker result-content contract, not a requirement for dedicated `rootCause` / `solution` schema fields. Workers may satisfy it in normal durable result prose unless a Job defines a stricter structured output contract.
 
 Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
 
