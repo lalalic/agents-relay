@@ -56,7 +56,12 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
   let response: Response;
-  try { response = await fetch(`http://${host}:${port}/api/job?id=${encodeURIComponent(jobId)}`); }
+  const params = new URLSearchParams({ id: jobId });
+  const repo = arg(args, '--repo');
+  const pr = Number(arg(args, '--pr'));
+  if (repo) params.set('repo', repo);
+  if (Number.isInteger(pr) && pr > 0) params.set('pr', String(pr));
+  try { response = await fetch(`http://${host}:${port}/api/job?${params.toString()}`); }
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;

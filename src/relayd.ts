@@ -306,9 +306,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       cachedOverviews = dashboardManagedJobs(cachedOverviews);
     }
   } : undefined;
-  const exactJob = async (jobId: string) => {
-    const cached = cachedOverviews.find(item => item.job.id === jobId);
+  const exactJob = async (jobId: string, target?: { repository?: string; prNumber?: number }) => {
+    let cached = cachedOverviews.find(item => item.job.id === jobId);
+    if (!cached && target?.repository && target.prNumber && repositories.includes(target.repository)) {
+      cached = (await refreshPullRequest(target.repository, target.prNumber, 'control.job-lookup', { force: true })).find(item => item.job.id === jobId);
+    }
     if (!cached) return null;
+    if (target?.repository && cached.job.repository !== target.repository) return null;
+    if (target?.prNumber && cached.job.prNumber !== target.prNumber) return null;
     const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft, publication: cached.publication });
     if (client.rateLimitStatus().limited) return cachedJob();
     try {
