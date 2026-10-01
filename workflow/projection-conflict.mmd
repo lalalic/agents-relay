@@ -1,0 +1,11 @@
+flowchart LR
+%% relay: initial classify
+classify["state: classify"]
+retry["state: retry"]
+conflict["state: conflict"]
+
+deterministic["guard: deterministicDefinitionConflict"]
+
+classify -->|on: projection.failed| deterministic
+deterministic -->|true| conflict
+deterministic -->|false| retry

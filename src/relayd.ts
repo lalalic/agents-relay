@@ -10,10 +10,11 @@ import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type DurableStore, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
 import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store.js';
-import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
+import { eventFor } from './events.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -145,7 +146,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const key = `${repository}#${prNumber}`;
     let relay = relayStores.get(key);
     if (!relay) {
-      relay = new SQLiteRelayStore(join(homedir(), '.agents-relay', 'stores', `${repository.replace('/', '_')}-${prNumber}.db`));
+      relay = new SQLiteRelayStore(relayStorePath(join(homedir(), '.agents-relay', 'stores'), repository, prNumber));
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
@@ -154,6 +155,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       github,
       seed ?? null,
       (relatedRepository, relatedPrNumber) => runtimeStore(relatedRepository, relatedPrNumber),
+      conflict => {
+        process.stderr.write(`projection conflict for ${repository}#${prNumber}: ${conflict.message} (fields: ${conflict.data.divergingFields.join(', ') || 'unknown'}; repair with agents-relay projection resolve)\n`);
+        if (bus) {
+          const jobId = conflict.data.jobId || conflictJobId(repository, prNumber);
+          void Promise.resolve().then(() => bus.publish(eventFor(jobId, 'projection', null, 'projection.conflict', 'blocked', conflict.message, 'orchestrator', { ...conflict.data, repository, prNumber }))).catch(() => undefined);
+        }
+      },
     );
     projectionWriters.set(key, projected.projection);
     return projected;
@@ -444,3 +452,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     .catch(error => process.stderr.write('warning: startup remote refresh unavailable: ' + (error instanceof Error ? error.message : String(error)) + '\n'));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
+
+function conflictJobId(repository: string, prNumber: number): string {
+  return `${repository}#${prNumber}`;
+}
