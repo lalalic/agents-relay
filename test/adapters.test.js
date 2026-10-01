@@ -102,26 +102,12 @@ test('ChatGptAdapter loads chatgpt-browser-worker only from the resolved executi
   } finally { await rm(root, { recursive:true, force:true }); }
 });
 
-test('ChatGptAdapter default runner invokes temporary one-shot driver', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-direct-browser-worker-'));
-  try {
-    const agents = join(root, 'agents');
-    const scripts = join(root, 'scripts');
-    await mkdir(agents, { recursive: true });
-    await mkdir(scripts, { recursive: true });
-    const agentPath = join(agents, 'browser-worker.agent.md');
-    await writeFile(agentPath, '# direct browser worker');
-    await writeFile(join(scripts, 'temporary_bh.py'), [
-      '#!/usr/bin/env python3',
-      'import json',
-      'print(json.dumps({"operation":"submit","status":"submitted","verified":True,"diagnostic_thread_id":"d-1","user_message_id":"u-1","verified_by":"user-turn"}))',
-    ].join('\n'), { mode: 0o700 });
-    const result = await new ChatGptAdapter({ agentPath }).launch(task(), new AbortController().signal).promise;
-    assert.equal(result.data.submitted, true);
-    assert.equal(result.data.diagnosticThreadId, 'd-1');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test('ChatGptAdapter default runner uses Browser Workspace sessions', async () => {
+  const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
+  assert.match(source, /this\.runner \?\? sessionBrowserWorkerRunner\(runtime\.root\)/);
+  assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
+  assert.match(source, /\['session', 'exec', activeSessionId\]/);
+  assert.match(source, /\['session', 'stop', activeSessionId\]/);
 });
 
 test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {

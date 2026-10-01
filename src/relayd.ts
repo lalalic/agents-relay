@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ChatGptAdapter, CodexAdapter } from './adapters.js';
+import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
@@ -121,6 +121,7 @@ export function configureExecutionRouterRulesPath(argv: readonly string[]): stri
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureExecutionRouterRulesPath(argv);
+  await ensureChatGptBrowserWorkspace();
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
   const auth = await githubAuthContext(argv); const client = auth.client;
@@ -353,7 +354,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const runtime = summarizeRuntime(cachedOverviews.map(item => item.job));
     const workers = workerCandidates([
       { name: 'codex', id: 'codex', capabilities: ['model', 'codex'] },
-      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-harness'] },
+      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
     ], [], usage);
     const result = await routeExecution(workers, task.workerRequirements ?? { capabilities: task.capabilities ?? [] }, {
       decisionEngine: new LayaCliDecisionEngine(),
