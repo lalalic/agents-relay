@@ -18,7 +18,7 @@ export type LoadedRoutingPolicy = {
   hash: string;
   policy: RoutingPolicy;
   snapshot: RoutingPolicy;
-  rules: { path: string; hash: string; text: string };
+  rules: RouterRules;
 };
 
 const EMPTY_POLICY: RoutingPolicy = {};

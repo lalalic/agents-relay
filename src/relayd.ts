@@ -3,17 +3,18 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ChatGptAdapter, CodexAdapter } from './adapters.js';
+import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool, aggregateManagedGitHubJobs } from './pool.js';
 import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, loadManagedGitHubPullRequestSnapshotGraphql, type DurableStore, type ManagedGitHubPullRequestSnapshot, withGitHubRequestContext } from './store.js';
 import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store.js';
-import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
+import { eventFor } from './events.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -47,6 +48,19 @@ export async function overlayOperationalOverviews(
     const job = await store.load(item.job.id);
     return { ...item, job };
   }));
+}
+
+function managedOverviewKey(item: ManagedJobOverview): string {
+  return item.job.repository + '#' + item.job.prNumber + ':' + item.job.id;
+}
+
+export function mergeOperationalInventory(
+  current: readonly ManagedJobOverview[],
+  discovered: readonly ManagedJobOverview[],
+): ManagedJobOverview[] {
+  const merged = new Map(current.map(item => [managedOverviewKey(item), item]));
+  for (const item of discovered) merged.set(managedOverviewKey(item), item);
+  return [...merged.values()];
 }
 
 export type GitHubReadPathDiagnostics = {
@@ -129,6 +143,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureDaemonObservability();
   configureExecutionRouterRulesPath(argv);
+  await ensureChatGptBrowserWorkspace();
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
   const auth = await githubAuthContext(argv); const client = auth.client;
@@ -153,7 +168,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const key = `${repository}#${prNumber}`;
     let relay = relayStores.get(key);
     if (!relay) {
-      relay = new SQLiteRelayStore(join(homedir(), '.agents-relay', 'stores', `${repository.replace('/', '_')}-${prNumber}.db`));
+      relay = new SQLiteRelayStore(relayStorePath(join(homedir(), '.agents-relay', 'stores'), repository, prNumber));
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
@@ -162,6 +177,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       github,
       seed ?? null,
       (relatedRepository, relatedPrNumber) => runtimeStore(relatedRepository, relatedPrNumber),
+      conflict => {
+        process.stderr.write(`projection conflict for ${repository}#${prNumber}: ${conflict.message} (fields: ${conflict.data.divergingFields.join(', ') || 'unknown'}; repair with agents-relay projection resolve)\n`);
+        if (bus) {
+          const jobId = conflict.data.jobId || conflictJobId(repository, prNumber);
+          void Promise.resolve().then(() => bus.publish(eventFor(jobId, 'projection', null, 'projection.conflict', 'blocked', conflict.message, 'orchestrator', { ...conflict.data, repository, prNumber }))).catch(() => undefined);
+        }
+      },
     );
     projectionWriters.set(key, projected.projection);
     return projected;
@@ -183,9 +205,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     try {
       githubReadPaths.workspaceScans += 1;
       const refreshed = await withGitHubRequestContext(client, 'relayd.workspace-refresh', () => aggregateManagedGitHubJobs(client, scanRepositories, trusted));
-      const scanned = new Set(scanRepositories);
-      const merged = dashboardManagedJobs([...cachedOverviews.filter(item => !scanned.has(item.job.repository)), ...refreshed]);
-      cachedOverviews = await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber));
+      const merged = mergeOperationalInventory(cachedOverviews, refreshed);
+      cachedOverviews = dashboardManagedJobs(await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber)));
       return cachedOverviews;
     } catch (error) {
       observability().record({ stage: 'daemon', event: 'daemon.refresh_failed', level: 'warn', outcome: 'failed', message: `Workspace job refresh unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
@@ -361,7 +382,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const runtime = summarizeRuntime(cachedOverviews.map(item => item.job));
     const workers = workerCandidates([
       { name: 'codex', id: 'codex', capabilities: ['model', 'codex'] },
-      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-harness'] },
+      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
     ], [], usage);
     const result = await routeExecution(workers, task.workerRequirements ?? { capabilities: task.capabilities ?? [] }, {
       decisionEngine: new LayaCliDecisionEngine(),
@@ -452,3 +473,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     .catch(error => observability().record({ stage: 'daemon', event: 'daemon.startup_refresh_failed', level: 'warn', outcome: 'failed', message: 'Startup remote refresh unavailable: ' + errorMessage(error), data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
+
+function conflictJobId(repository: string, prNumber: number): string {
+  return `${repository}#${prNumber}`;
+}

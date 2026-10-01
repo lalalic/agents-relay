@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|plan|blocker|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|plan|blocker|projection|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -10,6 +10,7 @@ Commands:
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
+  projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   record                   Backfill a completed task into durable history
@@ -46,8 +47,8 @@ Example:
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
 With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
-Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-auto-merge, --no-review, --tag JSON. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
-Job creation never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
+Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-review, --tag JSON. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
+Job creation always enables auto-merge and never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective" --objective-file job.md`,
@@ -203,6 +204,17 @@ Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --mo
 
 Example:
   npx agents-relay agent-register --file .agents-relay.json --name builder --responsibility "Build code" --role engineer --endpoint shell`,
+  projection: `Inspect and explicitly repair deterministic V2 GitHub projection conflicts.
+
+Usage:
+  npx agents-relay projection conflicts --repo OWNER/REPO --pr NUMBER [--store PATH]
+  npx agents-relay projection resolve --repo OWNER/REPO --pr NUMBER --projection-id ID --action requeue|discard-local
+
+A deterministic same-id/different-definition append conflict is classified once, stops
+consuming retry budget, and retains structured diagnostic evidence. It is never
+auto-overwritten: an operator resolves it after reconciling the divergent definition.
+  requeue        Re-arm the recorded projection after the divergent side is reconciled
+  discard-local  Drop the blocked local mutation so a fresh one can be enqueued`,
   'agent-discover': `Find registered agents using hard filters.
 
 Required: --file PATH or managed GitHub options.
@@ -218,5 +230,6 @@ export function helpText(command?: string, action?: string): string {
   if (command === 'task') return action ? help[`task ${action}` as keyof typeof help] ?? help.task : help.task;
   if (command === 'context') return action ? help[`context ${action}` as keyof typeof help] ?? help.context : help.context;
   if (command === 'blocker') return action ? help[`blocker ${action}` as keyof typeof help] ?? help.blocker : help.blocker;
+  if (command === 'projection') return help.projection;
   return command ? help[command as keyof typeof help] ?? help.root : help.root;
 }

@@ -147,6 +147,8 @@ export type ChatGptAgentRunner = (
   signal: AbortSignal,
 ) => AgentRun;
 export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner; tabClosePolicy?: ChatGptTabClosePolicy };
+export const CHATGPT_BROWSER_WORKSPACE = 'agents-replay';
+export const CHATGPT_BROWSER_WORKSPACE_POOL_SIZE = 6;
 
 export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatGptTabClosePolicy = 'after-start'): ChatGptTabClosePolicy {
   const policy = value || fallback;
@@ -187,51 +189,143 @@ function parseDriverJson(output: string): BrowserWorkerResponse {
   }
   throw new Error('browser-worker driver returned no submitted receipt');
 }
-function directBrowserWorkerRunner(root: string): ChatGptAgentRunner {
-  return (_definition, request, _route, signal): AgentRun => {
-    const releaseFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-release-${randomUUID()}`);
-    const args = [join(root, 'scripts', 'temporary_bh.py'), '--prompt', request.prompt, '--release-file', releaseFile, '--close-policy', request.tabClosePolicy ?? 'after-start'];
-    for (const file of request.files ?? []) args.push('--file', file);
-    const child = spawn('python3', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
+function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
+  return override ? { command: override, prefix: [] } : { command: 'npx', prefix: ['browser-workspace'] };
+}
+function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cli.command, [...cli.prefix, ...args], { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    let submitted = false;
-    let submittedResolve: ((value: string) => void) | undefined;
-    let submittedReject: ((error: Error) => void) | undefined;
-    const submittedPromise = new Promise<string>((resolve, reject) => { submittedResolve = resolve; submittedReject = reject; });
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-      if (!submitted) {
-        try { const response = parseDriverJson(stdout); submitted = true; submittedResolve?.(JSON.stringify(response)); } catch { /* receipt may be split across chunks */ }
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = appendTail(stderr, chunk.toString()); });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(stderr.trim() || stdout.trim() || `browser-workspace exited ${code}`));
+    });
+    if (stdin !== undefined) {
+      child.stdin?.end(stdin);
+    }
+  });
+}
+
+function parseWorkspaceJson(output: string): Record<string, unknown> {
+  const lines = output.trim().split(/\r?\n/).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try { return JSON.parse(lines[index]) as Record<string, unknown>; } catch { /* diagnostics may precede JSON */ }
+  }
+  throw new Error('browser-workspace returned no JSON result');
+}
+
+export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
+  await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
+}
+
+function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
+  const cli = browserWorkspaceCli();
+  return (_definition, request, _route, signal): AgentRun => {
+    const policy = request.tabClosePolicy ?? 'after-start';
+    let activeSessionId: string | undefined;
+    let released = false;
+    let releaseResolve!: () => void;
+    const releaseBarrier = new Promise<void>(resolve => { releaseResolve = resolve; });
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      releaseResolve();
+    };
+
+    let submittedResolve!: (value: string) => void;
+    let submittedReject!: (error: Error) => void;
+    const submitted = new Promise<string>((resolve, reject) => {
+      submittedResolve = resolve;
+      submittedReject = reject;
+    });
+    const promise = (async (): Promise<string> => {
+      const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
+      try {
+        const [readiness, submitSource, temporarySource] = await Promise.all([
+          readFile(join(root, 'scripts', '_submit_readiness.py'), 'utf8'),
+          readFile(join(root, 'scripts', '_submit_bh.py'), 'utf8'),
+          readFile(join(root, 'scripts', '_temporary_bh.py'), 'utf8'),
+        ]);
+        await writeFile(configFile, JSON.stringify({
+          prompt: request.prompt,
+          file: request.files ?? [],
+          close_policy: policy,
+          release_file: '',
+        }));
+
+        const startOutput = await browserWorkspaceCommand(
+          cli,
+          ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE],
+        );
+        const started = parseWorkspaceJson(startOutput);
+        if (typeof started.session_id !== 'string') {
+          throw new Error('browser-workspace session start returned no session_id');
+        }
+        activeSessionId = started.session_id;
+        if (signal.aborted) throw new Error('browser-worker execution aborted');
+
+        const escapedConfig = configFile.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+        const source = [
+          readiness,
+          submitSource.replace(/^from browser_harness import \*\s*$/m, ''),
+          temporarySource.replace(/^_wait_for_release\(\)\s*$/m, ''),
+        ].join('\n\n').replaceAll('__CFG_PATH__', escapedConfig);
+
+        const execOutput = await browserWorkspaceCommand(
+          cli,
+          ['session', 'exec', activeSessionId],
+          source,
+        );
+        const wrapper = parseWorkspaceJson(execOutput);
+        if (wrapper.ok !== true) {
+          throw new Error(typeof wrapper.error === 'string' ? wrapper.error : 'browser-workspace session exec failed');
+        }
+        const receipt = parseDriverJson(typeof wrapper.stdout === 'string' ? wrapper.stdout : '');
+        const result = JSON.stringify(receipt);
+        submittedResolve(result);
+
+        if (policy === 'never') {
+          await unlink(configFile).catch(() => {});
+          activeSessionId = undefined;
+          return result;
+        }
+        await releaseBarrier;
+        if (activeSessionId) {
+          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
+          activeSessionId = undefined;
+        }
+        return result;
+
+      } catch (failure) {
+        if (activeSessionId) {
+          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]).catch(() => {});
+          activeSessionId = undefined;
+        }
+        await unlink(configFile).catch(() => {});
+        const error = failure instanceof Error ? failure : new Error(String(failure));
+        submittedReject(error);
+        throw error;
       }
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = appendTail(stderr, chunk.toString());
-    });
-    const promise = new Promise<string>((resolve, reject) => {
-      child.on('error', reject);
-      child.on('close', code => {
-        if (code !== 0) {
-          const error = new Error(stderr.trim() || stdout.trim() || `browser-worker driver exited ${code}`);
-          submittedReject?.(error); reject(error);
-          return;
-        }
-        try {
-          const result = JSON.stringify(parseDriverJson(stdout));
-          if (!submitted) { submitted = true; submittedResolve?.(result); }
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      if (signal.aborted) child.kill('SIGTERM');
-      else signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
-    });
-    const release = (): void => { void writeFile(releaseFile, 'release').catch(() => {}); };
-    promise.finally(() => { void unlink(releaseFile).catch(() => {}); }).catch(() => {});
-    return { promise, submitted: submittedPromise, release, cancel: () => { release(); child.kill('SIGTERM'); } };
+    })();
+
+    const cancel = (): void => {
+      release();
+      if (activeSessionId) {
+        void browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
+        activeSessionId = undefined;
+      }
+    };
+    if (signal.aborted) cancel();
+    else signal.addEventListener('abort', cancel, { once: true });
+    return { promise, submitted, release, cancel };
   };
 }
+
 function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
   const text = output.trim().replace(/^\`\`\`(?:json)?\s*|\s*\`\`\`$/g, '').trim();
   let value: unknown;
@@ -252,7 +346,7 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
 export class ChatGptAdapter implements WorkerAdapter {
   readonly name = 'chatgpt' as const;
   readonly id = 'chatgpt/browser-worker';
-  readonly capabilities = ['model', 'chatgpt', 'browser-harness'] as const;
+  readonly capabilities = ['model', 'chatgpt', 'browser-workspace'] as const;
   private readonly agentPath?: string;
   private readonly runner?: ChatGptAgentRunner;
   readonly tabClosePolicy: ChatGptTabClosePolicy;
@@ -283,7 +377,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const runtime = await loadBrowserWorkerRuntime(context.executionContext, this.agentPath);
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? directBrowserWorkerRunner(runtime.root))(
+      const run = (this.runner ?? sessionBrowserWorkerRunner(runtime.root))(
         runtime.definition,
         { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
         route,

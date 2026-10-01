@@ -23,6 +23,7 @@ Production orchestration-policy graphs:
 - `workflow/schedule-cycle.mmd`
 - `workflow/troubleshooter.mmd`
 - `workflow/task-related-action.mmd`
+- `workflow/projection-conflict.mmd`
 
 Job/Task graphs own durable lifecycle state transitions. Orchestration graphs
 own durable workflow branching and declared next actions without inventing

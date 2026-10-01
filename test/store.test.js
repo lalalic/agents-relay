@@ -259,7 +259,7 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient();
   const trusted = new Set(['bot']);
-  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body' };
+  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body', autoMerge: false };
 
   const first = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
   const second = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
@@ -267,6 +267,8 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   assert.equal(first.pr.number, second.pr.number);
   assert.equal(first.job.objective, 'body');
   assert.equal(second.job.objective, 'body');
+  assert.equal(first.job.autoMerge, true);
+  assert.equal(second.job.autoMerge, true);
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 0);
@@ -283,6 +285,18 @@ test('dashboard keeps every unfinished job and only the latest ten completed job
   assert.equal(result.length, 12);
   assert.deepEqual(result.slice(2).map(item => item.job.id), ['job-21', 'job-20', 'job-19', 'job-18', 'job-17', 'job-16', 'job-15', 'job-14', 'job-13', 'job-12']);
   assert.equal(result.some(item => item.job.id === 'job-10'), false);
+});
+
+test('dashboard completion filtering follows durable Job lifecycle, not GitHub PR state', () => {
+  const activeMerged = { job: { ...job('job-1'), state: 'ACTIVE', prNumber: 1 }, githubState: 'MERGED', draft: false, mergedAt: '2026-01-01T00:00:00.000Z', closedAt: null };
+  const completed = Array.from({ length: 12 }, (_, index) => ({
+    job: { ...job('job-' + (index + 10)), state: 'COMPLETED', prNumber: index + 10 },
+    githubState: 'MERGED', draft: false, mergedAt: '2026-02-' + String(index + 1).padStart(2, '0') + 'T00:00:00.000Z', closedAt: null,
+  }));
+  const result = dashboardManagedJobs([...completed, activeMerged]);
+  assert.equal(result[0].job.id, 'job-1');
+  assert.equal(result[0].job.state, 'ACTIVE');
+  assert.equal(result.length, 11);
 });
 
 test('dashboard terminal history uses latest durable activity for discovery ordering', () => {

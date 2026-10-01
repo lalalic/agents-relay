@@ -5,7 +5,7 @@ import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './rou
 import { AccountUsageOverview } from './usage.js';
 import { AgentRegistration, RoutingDecision, Task, WorkerRequirements, WorkerSelection } from './types.js';
 import { DEFAULT_CHATGPT_PREFERRED_CONCURRENCY, WorkerCandidate } from './worker-routing.js';
-import { RouterRuleChoice } from './router-rules.js';
+import { appendRoutingInstruction, RouterRuleChoice } from './router-rules.js';
 
 export type ExecutionRouteCandidate = {
   id: string;
@@ -307,7 +307,8 @@ export async function discoverExecutionRoutes(
     const workerReasons = workerGateEvaluations.find(item => item.workerId === worker.workerId)?.rejectionReasons ?? [];
     const discovered = await discoverModelCandidates(worker, registered, options.usage, undefined, options.rulesPath);
     const defaults = profileDefaults(discovered);
-    const explicit = resolveExplicitChoices(rules.parsed.choices, discovered);
+    const workerChoices = rules.parsed.choices.filter(choice => !choice.worker || choice.worker === worker.workerId || choice.worker === worker.adapter);
+    const explicit = resolveExplicitChoices(workerChoices, discovered);
     const merged = mergeCandidates(defaults, explicit);
     for (const model of merged) {
       const rejectionReasons = [...workerReasons, ...modelGateReasons(model, options.routingConstraints, options.excludedRoutes, policy)];
@@ -328,7 +329,6 @@ export async function routeExecution(
   if (routes.length === 0) throw new Error('No executable worker+model route satisfies authoritative constraints');
 
   const fallback = fallbackRoute(routes);
-  const rules = await loadExecutionRouterRules(options.rulesPath);
   const preferredChatgptConcurrency = options.preferredChatgptConcurrency ?? DEFAULT_CHATGPT_PREFERRED_CONCURRENCY;
   const chatgptRunning = options.chatgptRunning ?? 0;
 
@@ -367,8 +367,6 @@ export async function routeExecution(
         reviewer_diversity: taskFacts.reviewer_diversity,
       } : null,
     },
-    user_input_rules: rules.text,
-    routing_instruction: routingInstruction,
     runtime: {
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
@@ -377,7 +375,10 @@ export async function routeExecution(
     effective_choices: effectiveChoices,
   })) as Record<string, unknown>;
 
-  const question = 'Choose one complete route from the merged choice list. Relay has already merged profile defaults with the user\'s explicit [choices] and applied every authoritative hard gate, so only these routes are legal. Follow [routing_instruction] verbatim; do not invent, add, or substitute routes that are not listed.';
+  const question = appendRoutingInstruction(
+    'Choose one complete route from the merged choice list. Relay has already merged profile defaults with the user\'s explicit [choices] and applied every authoritative hard gate, so only these routes are legal. Do not invent, add, or substitute routes that are not listed.',
+    routingInstruction,
+  );
 
   let selected = fallback;
   let evidence: WorkerSelection['decisionEvidence'] = { mode: options.decisionMode ?? 'off', fallback: true };

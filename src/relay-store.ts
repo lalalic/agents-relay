@@ -5,44 +5,32 @@ import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
 import { observability } from './observability.js';
+import {
+  ProjectionOutbox,
+  SCHEMA_VERSION,
+  logicalOperationKey,
+  type ProjectionConflictDiagnostic,
+  type ProjectionConflictRecord,
+  type ProjectionConflictResolutionRequest,
+  type ProjectionOperation,
+  type ProjectionOutboxItem,
+  type ProjectionRequest,
+} from './projection-outbox.js';
+export type {
+  ProjectionConflictDiagnostic,
+  ProjectionConflictRecord,
+  ProjectionConflictResolution,
+  ProjectionConflictResolutionRequest,
+  ProjectionOperation,
+  ProjectionOutboxItem,
+  ProjectionRequest,
+  ProjectionStatus,
+} from './projection-outbox.js';
 
 export type PullRequestFacts = {
   state: PullRequestState;
   head: { ref: string; sha: string } | null;
   observedAt: string;
-};
-
-export type ProjectionOperation =
-  | 'save_job'
-  | 'append_plan'
-  | 'save_plan'
-  | 'append_task'
-  | 'save_task'
-  | 'save_agent'
-  | 'update_pr_body'
-  | 'merge_pull_request'
-  | 'close_pull_request';
-
-export type ProjectionRequest = {
-  idempotencyKey: string;
-  coalesceKey?: string;
-  operation: ProjectionOperation;
-  payload: unknown;
-  priority?: number;
-};
-
-export type ProjectionOutboxItem = {
-  id: number;
-  idempotencyKey: string;
-  coalesceKey: string | null;
-  operation: ProjectionOperation;
-  payload: unknown;
-  priority: number;
-  attempts: number;
-  nextAttemptAt: string | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export interface RelayStore {
@@ -62,26 +50,14 @@ export interface RelayStore {
   completeProjection(id: number): Promise<void>;
   retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void>;
   deadLetterProjection(id: number, error: string): Promise<void>;
+  recordProjectionConflict(id: number, diagnostic: ProjectionConflictDiagnostic): Promise<void>;
+  listProjectionConflicts(): Promise<ProjectionConflictRecord[]>;
+  resolveProjectionConflict(id: number, resolution: ProjectionConflictResolutionRequest): Promise<boolean>;
+  conflictProjectionCount(): Promise<number>;
   pendingProjectionCount(): Promise<number>;
   terminalProjectionCount(): Promise<number>;
   close(): void;
 }
-
-type OutboxRow = {
-  id: number;
-  idempotency_key: string;
-  coalesce_key: string | null;
-  operation: string;
-  payload_json: string;
-  priority: number;
-  attempts: number;
-  next_attempt_at: string | null;
-  last_error: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-const SCHEMA_VERSION = 4;
 
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
   if (!local) return structuredClone(remote);
@@ -109,32 +85,17 @@ export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   return base;
 }
 
-function rowToProjection(row: OutboxRow): ProjectionOutboxItem {
-  return {
-    id: Number(row.id),
-    idempotencyKey: row.idempotency_key,
-    coalesceKey: row.coalesce_key,
-    operation: row.operation as ProjectionOperation,
-    payload: JSON.parse(row.payload_json) as unknown,
-    priority: Number(row.priority),
-    attempts: Number(row.attempts),
-    nextAttemptAt: row.next_attempt_at,
-    lastError: row.last_error,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 export class SQLiteRelayStore implements RelayStore {
   private readonly db: DatabaseSync;
+  private readonly outbox: ProjectionOutbox;
 
   constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     this.migrate();
-    this.db.prepare("UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing'")
-      .run(new Date().toISOString());
+    this.outbox = new ProjectionOutbox(this.db);
+    this.outbox.resetProcessing(new Date().toISOString());
   }
 
   private migrate(): void {
@@ -166,59 +127,13 @@ export class SQLiteRelayStore implements RelayStore {
         sequence INTEGER,
         received_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS projection_outbox (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempotency_key TEXT NOT NULL UNIQUE,
-        coalesce_key TEXT,
-        operation TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        priority INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','dead')),
-        attempts INTEGER NOT NULL DEFAULT 0,
-        next_attempt_at TEXT,
-        last_error TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS projection_due_idx
-        ON projection_outbox(status, next_attempt_at, priority DESC, id);
-      CREATE INDEX IF NOT EXISTS projection_coalesce_idx
-        ON projection_outbox(coalesce_key, status);
+      ${ProjectionOutbox.createTableSql()}
+      ${ProjectionOutbox.createIndexSql()}
     `);
     const current = this.db.prepare("SELECT value FROM relay_meta WHERE key='schema_version'").get() as { value?: string } | undefined;
     const version = current?.value ? Number(current.value) : 0;
     if (version > SCHEMA_VERSION) throw new Error(`Relay store schema ${version} is newer than supported ${SCHEMA_VERSION}`);
-    if (version < 4) {
-      const schema = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='projection_outbox'").get() as { sql?: string } | undefined;
-      if (schema?.sql && !schema.sql.includes("'dead'")) {
-        this.db.exec(`
-          BEGIN IMMEDIATE;
-          DROP INDEX IF EXISTS projection_due_idx;
-          DROP INDEX IF EXISTS projection_coalesce_idx;
-          ALTER TABLE projection_outbox RENAME TO projection_outbox_v3;
-          CREATE TABLE projection_outbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            idempotency_key TEXT NOT NULL UNIQUE,
-            coalesce_key TEXT,
-            operation TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            priority INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','dead')),
-            attempts INTEGER NOT NULL DEFAULT 0,
-            next_attempt_at TEXT,
-            last_error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-          );
-          INSERT INTO projection_outbox(id,idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at)
-          SELECT id,idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at FROM projection_outbox_v3;
-          DROP TABLE projection_outbox_v3;
-          CREATE INDEX projection_due_idx ON projection_outbox(status, next_attempt_at, priority DESC, id);
-          CREATE INDEX projection_coalesce_idx ON projection_outbox(coalesce_key, status);
-          COMMIT;
-        `);
-      }
-    }
+    if (version < SCHEMA_VERSION) ProjectionOutbox.upgrade(this.db, version);
     this.db.prepare("INSERT INTO relay_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(String(SCHEMA_VERSION));
   }
@@ -351,6 +266,10 @@ export class SQLiteRelayStore implements RelayStore {
     return Number(result.changes) === 1;
   }
 
+  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): boolean {
+    return this.outbox.enqueue(request, now);
+  }
+
   async enqueueProjection(request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -370,105 +289,35 @@ export class SQLiteRelayStore implements RelayStore {
     }
   }
 
-  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): boolean {
-    let coalesced = false;
-    if (request.coalesceKey) {
-      const removed = this.db.prepare(`
-        DELETE FROM projection_outbox
-        WHERE coalesce_key=? AND status='pending' AND idempotency_key<>?
-      `).run(request.coalesceKey, request.idempotencyKey);
-      coalesced = Number(removed.changes) > 0;
-    }
-    const existing = this.db.prepare('SELECT status FROM projection_outbox WHERE idempotency_key=?').get(request.idempotencyKey) as { status?: string } | undefined;
-    // A writer may be applying this key outside the transaction. Never rewrite its
-    // payload: its completion must only remove its own row, not a newer mutation.
-    const nextId = Number((this.db.prepare('SELECT COALESCE(MAX(id),0)+1 AS next_id FROM projection_outbox').get() as { next_id?: number | bigint }).next_id ?? 1);
-    const idempotencyKey = existing?.status === 'processing' || existing?.status === 'dead'
-      ? `${request.idempotencyKey}:queued:${nextId}`
-      : request.idempotencyKey;
-    this.db.prepare(`
-      INSERT INTO projection_outbox(
-        idempotency_key,coalesce_key,operation,payload_json,priority,status,
-        attempts,next_attempt_at,last_error,created_at,updated_at
-      ) VALUES(?,?,?,?,?,'pending',0,NULL,NULL,?,?)
-      ON CONFLICT(idempotency_key) DO UPDATE SET
-        coalesce_key=excluded.coalesce_key,
-        operation=excluded.operation,
-        payload_json=excluded.payload_json,
-        priority=MAX(projection_outbox.priority,excluded.priority),
-        status='pending',
-        next_attempt_at=NULL,
-        last_error=NULL,
-        updated_at=excluded.updated_at
-    `).run(
-      idempotencyKey,
-      request.coalesceKey ?? null,
-      request.operation,
-      JSON.stringify(request.payload),
-      request.priority ?? 0,
-      now,
-      now,
-    );
-    return coalesced;
-  }
 
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {
-    const observedAt = now.toISOString();
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const rows = this.db.prepare(`
-        SELECT id,idempotency_key,coalesce_key,operation,payload_json,priority,
-               attempts,next_attempt_at,last_error,created_at,updated_at
-        FROM projection_outbox
-        WHERE status='pending' AND (next_attempt_at IS NULL OR next_attempt_at<=?)
-        ORDER BY priority DESC, id ASC
-        LIMIT ?
-      `).all(observedAt, Math.max(1, Math.floor(limit))) as unknown as OutboxRow[];
-      const mark = this.db.prepare("UPDATE projection_outbox SET status='processing', updated_at=? WHERE id=? AND status='pending'");
-      const claimed: OutboxRow[] = [];
-      for (const row of rows) {
-        const result = mark.run(observedAt, row.id);
-        if (Number(result.changes) === 1) claimed.push({ ...row, updated_at: observedAt });
-      }
-      this.db.exec('COMMIT');
-      return claimed.map(rowToProjection);
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    return this.outbox.claimDue(limit, now);
   }
 
-  async completeProjection(id: number): Promise<void> {
-    this.db.prepare('DELETE FROM projection_outbox WHERE id=?').run(id);
-  }
+  async completeProjection(id: number): Promise<void> { this.outbox.complete(id); }
 
-  async retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void> {
-    this.db.prepare(`
-      UPDATE projection_outbox
-      SET status='pending', attempts=attempts+1, next_attempt_at=?, last_error=?, updated_at=?
-      WHERE id=?
-    `).run(nextAttemptAt.toISOString(), error, new Date().toISOString(), id);
-  }
+  async retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void> { this.outbox.retry(id, error, nextAttemptAt); }
 
-  async deadLetterProjection(id: number, error: string): Promise<void> {
-    this.db.prepare(`
-      UPDATE projection_outbox
-      SET status='dead', attempts=attempts+1, next_attempt_at=NULL, last_error=?, updated_at=?
-      WHERE id=?
-    `).run(error, new Date().toISOString(), id);
-  }
+  async deadLetterProjection(id: number, error: string): Promise<void> { this.outbox.deadLetter(id, error); }
 
-  async pendingProjectionCount(): Promise<number> {
-    const row = this.db.prepare("SELECT COUNT(*) AS count FROM projection_outbox WHERE status IN ('pending','processing')").get() as { count?: number | bigint } | undefined;
-    return Number(row?.count ?? 0);
-  }
+  async recordProjectionConflict(id: number, diagnostic: ProjectionConflictDiagnostic): Promise<void> { this.outbox.recordConflict(id, diagnostic); }
 
-  async terminalProjectionCount(): Promise<number> {
-    const row = this.db.prepare("SELECT COUNT(*) AS count FROM projection_outbox WHERE status='dead'").get() as { count?: number | bigint } | undefined;
-    return Number(row?.count ?? 0);
-  }
+  async listProjectionConflicts(): Promise<ProjectionConflictRecord[]> { return this.outbox.listConflicts(); }
+
+  async resolveProjectionConflict(id: number, resolution: ProjectionConflictResolutionRequest): Promise<boolean> { return this.outbox.resolveConflict(id, resolution); }
+
+  async conflictProjectionCount(): Promise<number> { return this.outbox.conflictCount(); }
+
+  async pendingProjectionCount(): Promise<number> { return this.outbox.pendingCount(); }
+
+  async terminalProjectionCount(): Promise<number> { return this.outbox.terminalCount(); }
 
   close(): void { this.db.close(); }
+}
+
+/** Canonical on-disk Relay Store location for one managed GitHub pull request. */
+export function relayStorePath(directory: string, repository: string, prNumber: number): string {
+  return directory + '/' + `${repository.replace('/', '_')}-${prNumber}.db`;
 }
 
 export type LocalRelayStoreSnapshot = { path: string; jobs: Job[]; facts: PullRequestFacts | null };

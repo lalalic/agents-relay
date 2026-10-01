@@ -221,7 +221,7 @@ test('projection writer records terminal outcome and deterministic conflict clas
       claimed: null,
       async claimDueProjections() { return this.claimed ? [this.claimed] : []; },
       async completeProjection() { throw new Error('should not complete'); },
-      async deadLetterProjection() { this.deadLettered = true; },
+      async recordProjectionConflict(_id, diagnostic) { this.conflict = diagnostic; },
       async retryProjection() { throw new Error('conflict must not be retried'); },
     };
     const github = { async saveJob() {}, async appendTask() { throw new Error('Task t1 already exists with a different definition'); } };
@@ -229,11 +229,11 @@ test('projection writer records terminal outcome and deterministic conflict clas
     relay.claimed = { id: 7, idempotencyKey: 'append_task:j:t1', coalesceKey: null, operation: 'append_task', payload: { operation: 'append_task', value: {} }, priority: 40, attempts: 0, nextAttemptAt: null, lastError: null, createdAt: now(), updatedAt: now() };
     const result = await writer.flushOnce();
     assert.equal(result.deferred, 0);
-    assert.equal(relay.deadLettered, true);
-    const deadLetter = capture.records.find(record => record.event === 'projection.dead_lettered');
-    assert.ok(deadLetter, 'conflict is dead-lettered with a structured record');
-    assert.equal(deadLetter.data.classification, 'conflict');
-    assert.match(deadLetter.message, /already exists with a different definition/);
+    assert.equal(relay.conflict?.kind, 'task');
+    const conflict = capture.records.find(record => record.event === 'projection.conflict');
+    assert.ok(conflict, 'conflict is classified with a structured record');
+    assert.equal(conflict.data.classification, 'conflict');
+    assert.match(conflict.message, /already exists with a different definition/);
   } finally { capture.restore(); }
 });
 

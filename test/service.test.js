@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, overlayOperationalOverviews, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
+import { normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { publishOrchestratorTaskCompletion, requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
@@ -31,6 +31,18 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
 test('workspace dashboard/runtime summary refreshes the disposable local view from SQLite operational truth', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
+});
+
+test('broad GitHub discovery cannot evict RelayStore-known jobs from operational inventory', () => {
+  const overview = (id, prNumber, state = 'ACTIVE', githubState = 'OPEN') => ({
+    githubState, mergedAt: githubState === 'MERGED' ? '2026-10-01T00:00:00.000Z' : null, closedAt: null, draft: false, publication: null,
+    job: { id, title: id, executionMode: 'fixed', prNumber, repository: 'owner/repo', state, continuation: null, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', tasks: [] },
+  });
+  const durable = overview('old-known-job', 1, 'ACTIVE', 'MERGED');
+  const discovered = Array.from({ length: 25 }, (_, index) => overview('new-' + (index + 1), index + 2, 'COMPLETED', 'MERGED'));
+  const merged = mergeOperationalInventory([durable], discovered);
+  assert.equal(merged.some(item => item.job.id === 'old-known-job'), true);
+  assert.equal(merged.length, 26);
 });
 
 test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {
@@ -274,6 +286,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|list|retry|unblock|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
+    ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --pr NUMBER'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
     ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
@@ -300,8 +313,14 @@ test('job create help is create-only and rejects task execution flags', () => {
   const help = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.doesNotMatch(help.stdout, /--start/);
+  assert.doesNotMatch(help.stdout, /--no-auto-merge/);
+  assert.match(help.stdout, /always enables auto-merge/);
   assert.match(help.stdout, /never creates executable tasks/);
   assert.match(help.stdout, /orchestrator decides the initial task batch/);
+
+  const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
+  assert.notEqual(noAutoMerge.status, 0);
+  assert.match(noAutoMerge.stderr, /does not accept --no-auto-merge; new Jobs always enable auto-merge/);
 
   const invalid = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--start'], { encoding: 'utf8' });
   assert.notEqual(invalid.status, 0);
@@ -337,6 +356,7 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('workflow/schedule-cycle.mmd'), true);
   assert.equal(files.has('workflow/troubleshooter.mmd'), true);
   assert.equal(files.has('workflow/task-related-action.mmd'), true);
+  assert.equal(files.has('workflow/projection-conflict.mmd'), true);
   assert.equal(files.has('src/cli.ts'), false);
   assert.equal(files.has('test/service.test.js'), false);
   assert.equal(files.has('.github/workflows/publish.yml'), false);

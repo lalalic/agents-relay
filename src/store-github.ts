@@ -1,7 +1,7 @@
 import type { DurableStore, GitHubClient, Comment, PullRequestState, GitHubPullRequestSeed } from './store.js';
 import { Job, Plan, Task, AgentRegistration } from './types.js';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderPlanComment, renderTaskComment, JOB_MARKER } from './markers.js';
-import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
+import { DurableDefinitionConflictError, isTaskForJob, planDefinitionDivergence, samePlanDefinition, sameTaskDefinition, taskDefinitionDivergence } from './store-task-definition.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget } from './blockers.js';
 
 const TASK_WRITE_OVERLAY = new Map<string, Comment>();
@@ -269,7 +269,7 @@ export class GitHubStore implements DurableStore {
     const matches = comments.filter(comment => { const existing = parsePlan(comment.body); return existing !== null && existing.jobId === plan.jobId && existing.id === plan.id; });
     if (matches.length === 0) { const body = renderPlanComment(plan); const persisted = await this.comment(body); this.rememberPlanWrite(plan, persisted, body); return; }
     const existing = parsePlan(matches[0].body);
-    if (!existing || JSON.stringify({ ...existing, planUrl: undefined }) !== JSON.stringify({ ...plan, planUrl: undefined })) throw new Error(`Plan ${plan.id} already exists with a different definition`);
+    if (!existing || !samePlanDefinition(existing, plan)) throw new DurableDefinitionConflictError('plan', 'append_plan', plan.jobId, plan.id, plan, existing ?? null, existing ? planDefinitionDivergence(existing, plan) : []);
     for (const duplicate of matches.slice(1)) await this.deleteComment(duplicate);
   }
   async savePlan(plan: Plan): Promise<void> {
@@ -289,7 +289,8 @@ export class GitHubStore implements DurableStore {
     });
     if (matches.length === 0) { const body = renderTaskComment(task); const persisted = await this.comment(body); this.rememberTaskWrite(task, persisted, body); return; }
     const parsed = matches.map(comment => ({ comment, task: parseTask(comment.body) as Task }));
-    if (parsed.some(item => !sameTaskDefinition(item.task, task))) throw new Error(`Task ${task.id} already exists with a different definition`);
+    const divergent = parsed.find(item => !sameTaskDefinition(item.task, task));
+    if (divergent) throw new DurableDefinitionConflictError('task', 'append_task', task.jobId ?? '', task.id, task, divergent.task, taskDefinitionDivergence(divergent.task, task));
     for (const duplicate of parsed.slice(1)) await this.deleteComment(duplicate.comment);
   }
   async saveTask(task: Task): Promise<void> {

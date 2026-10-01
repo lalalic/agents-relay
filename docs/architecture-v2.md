@@ -393,6 +393,45 @@ The ownership rule is deliberately asymmetric:
 
 Relay-originated GitHub mutations are committed to a durable outbox before they are projected. One logical projection writer claims due work, coalesces compatible pending updates, applies idempotent GitHub mutations and persists retry/backoff state. retry-after and x-ratelimit-reset take precedence over bounded exponential fallback.
 
+### Projection conflict semantics
+
+`append_task` and `append_plan` are append-only: the durable id must not already be
+occupied by a *different* immutable definition. When GitHub already holds the same id
+with a different definition, replaying the append can never succeed, so it is a
+deterministic conflict rather than a transient projection failure.
+
+```mermaid
+flowchart LR
+  A[Projection due] --> B{Existing durable object?}
+  B -->|none| C[Append projection]
+  B -->|same ID + identical definition| D[Mark projection complete idempotent]
+  B -->|same ID + different definition| E[Classify deterministic conflict]
+  E --> F[Stop retrying immediately]
+  F --> G[Persist diagnostic + observable event]
+  G --> H[Explicit repair/reconciliation policy]
+```
+
+The conflict-vs-retry decision is owned by the canonical graph
+`workflow/projection-conflict.mmd` (runtime `src/workflow/projection-conflict-v2.ts`),
+not by a procedural branch in the projection writer. `append_task`/`append_plan`
+conflicts are detected via the typed `DurableDefinitionConflictError`, and legacy
+plain errors are normalized by the canonical marker-conflict message.
+
+- **Deterministic conflict**: on the first confirmed occurrence the outbox row moves to
+  the durable `conflict` status. It stops consuming retry budget and is never retried or
+  auto-overwritten. The row retains structured evidence: subject kind, job id, subject id,
+  logical operation key, both divergent definitions, and the diverging top-level field names.
+- **Identical duplicate**: a same-id/same-definition append completes idempotently.
+- **Transient failure**: GitHub/network/rate-limit failures remain `pending` and retry with
+  bounded backoff, `retry-after`, and `x-ratelimit-reset`.
+- **Observable**: the daemon emits a `projection.conflict` event and a stderr diagnostic when
+  a conflict is first recorded.
+- **Repair**: conflict state is durable across daemon restart. It is repaired explicitly, never
+  implicitly. `agents-relay projection conflicts` lists classified conflicts and
+  `agents-relay projection resolve --projection-id ID --action requeue|discard-local` either
+  re-arms the projection after the divergent side is reconciled, or drops the blocked local
+  mutation so a fresh one can be enqueued. RelayStore and GitHub are never silently overwritten.
+
 This is not symmetric database synchronization. Human GitHub changes enter through typed inbound facts/events/actions; runtime components do not race GitHub and SQLite as equal writers of the same field.
 
 SQLiteRelayStore and ProjectedDurableStore establish the first executable vertical slice. A managed Job bootstraps from GitHub once, then Job/Plan/Task runtime mutations can commit locally while GitHub is unavailable. Pending projection survives daemon restart and converges after GitHub recovers without changing the existing marker/comment representation.

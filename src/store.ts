@@ -2,7 +2,7 @@ import { Job, Plan, Task } from './types.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
-import { isTaskForJob, sameTaskDefinition } from './store-task-definition.js';
+import { DurableDefinitionConflictError, isTaskForJob, planDefinitionDivergence, samePlanDefinition, sameTaskDefinition, taskDefinitionDivergence } from './store-task-definition.js';
 import { PackagePublication, parsePackagePublicationMarker } from './github-webhook.js';
 export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
 export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
@@ -72,7 +72,7 @@ export async function loadManagedGitHubJobGraphql(client: GitHubClient, reposito
   return (await loadManagedGitHubPullRequestGraphql(client, repository, prNumber, trustedAuthors)).find(item => item.job.id === jobId) ?? null;
 }
 const COMPLETED_JOB_HISTORY_LIMIT = 10;
-function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state) || item.githubState !== 'OPEN'; }
+function isCompletedManagedJob(item: ManagedJobOverview): boolean { return ['COMPLETED', 'CANCELLED'].includes(item.job.state); }
 function completedAt(item: ManagedJobOverview): string {
   return [item.job.updatedAt, item.mergedAt, item.closedAt].filter((value): value is string => typeof value === 'string' && value.length > 0).sort().at(-1) ?? '';
 }
@@ -93,7 +93,7 @@ export class InMemoryStore implements DurableStore {
   }
   async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId); return job; }
   async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
-  async appendPlan(plan: Plan): Promise<void> { const key = `${PLAN_MARKER}:${plan.jobId}:${plan.id}`; const existing = this.values.get(key); if (existing) { const current = parsePlan(existing); if (current && JSON.stringify(current) === JSON.stringify(plan)) return; throw new Error(`Plan ${plan.id} already exists with a different definition`); } this.values.set(key, renderPlanComment(plan)); }
+  async appendPlan(plan: Plan): Promise<void> { const key = `${PLAN_MARKER}:${plan.jobId}:${plan.id}`; const existing = this.values.get(key); if (existing) { const current = parsePlan(existing); if (current && samePlanDefinition(current, plan)) return; throw new DurableDefinitionConflictError('plan', 'append_plan', plan.jobId, plan.id, plan, current ?? null, current ? planDefinitionDivergence(current, plan) : []); } this.values.set(key, renderPlanComment(plan)); }
   async savePlan(plan: Plan): Promise<void> { this.values.set(`${PLAN_MARKER}:${plan.jobId}:${plan.id}`, renderPlanComment(plan)); }
   async appendTask(task: Task): Promise<void> {
     const key = `${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`;
@@ -101,7 +101,7 @@ export class InMemoryStore implements DurableStore {
     if (existing) {
       const current = parseTask(existing);
       if (current && sameTaskDefinition(current, task)) return;
-      throw new Error(`Task ${task.id} already exists with a different definition`);
+      throw new DurableDefinitionConflictError('task', 'append_task', task.jobId ?? '', task.id, task, current ?? null, current ? taskDefinitionDivergence(current, task) : []);
     }
     this.values.set(key, renderTaskComment(task));
   }

@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from '../dist/relay-store.js';
 import { ProjectedDurableStore, GitHubProjectionWriter, githubProjectionRetryAt, isTerminalProjectionFailure } from '../dist/projected-store.js';
+import { DurableDefinitionConflictError } from '../dist/store-task-definition.js';
+import { decideProjectionFailure } from '../dist/workflow/projection-conflict-v2.js';
 import { InMemoryStore } from '../dist/store.js';
 
 const now = () => new Date().toISOString();
@@ -332,12 +335,123 @@ test('ProjectedDurableStore resolves blocker domain mutations locally without di
   await dependentTmp.close(dependentRelay);
 });
 
-test('GitHubProjectionWriter dead-letters deterministic append definition conflicts', async () => {
+test('GitHubProjectionWriter classifies a deterministic append_task conflict once with diagnostic evidence', async () => {
   const tmp = await tempDb();
   let relay = new SQLiteRelayStore(tmp.path);
   const remoteTask = { ...makeTask('SUCCEEDED'), result: { summary: 'remote' }, updatedAt: '2026-09-30T00:02:00.000Z' };
   const remote = new InMemoryStore({ ...makeJob(), tasks: [remoteTask] });
   const localTask = { ...makeTask('QUEUED'), input: 'different definition', updatedAt: '2026-09-30T00:03:00.000Z' };
+  const observations = [];
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_task:job-1:task-1',
+    operation: 'append_task',
+    payload: { operation: 'append_task', value: localTask },
+  });
+  const writer = new GitHubProjectionWriter(relay, remote, event => observations.push(event));
+  assert.deepEqual(await writer.flushOnce(), { projected: 0, deferred: 0 });
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.terminalProjectionCount(), 0);
+  assert.equal(await relay.conflictProjectionCount(), 1);
+  assert.deepEqual(await relay.claimDueProjections(), []);
+
+  const [conflict] = await relay.listProjectionConflicts();
+  assert.equal(conflict.status, 'conflict');
+  assert.equal(conflict.operation, 'append_task');
+  assert.equal(conflict.operationKey, 'append_task:job-1:task-1');
+  assert.equal(conflict.diagnostic.kind, 'task');
+  assert.equal(conflict.diagnostic.jobId, 'job-1');
+  assert.equal(conflict.diagnostic.subjectId, 'task-1');
+  assert.ok(conflict.diagnostic.divergingFields.includes('input'));
+  assert.equal(conflict.diagnostic.localDefinition.input, 'different definition');
+  assert.equal(conflict.diagnostic.remoteDefinition.id, 'task-1');
+  assert.equal(conflict.resolution, null);
+
+  assert.equal(observations.length, 1);
+  assert.equal(observations[0].type, 'projection.conflict');
+  assert.equal(observations[0].data.subjectId, 'task-1');
+
+  // Restart/recovery: the classified conflict and its diagnostic survive daemon death.
+  relay.close();
+  relay = new SQLiteRelayStore(tmp.path);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.conflictProjectionCount(), 1);
+  assert.deepEqual(await relay.claimDueProjections(), []);
+  const [restarted] = await relay.listProjectionConflicts();
+  assert.equal(restarted.diagnostic.divergingFields.includes('input'), true);
+  assert.equal(restarted.attempts, 1);
+
+  await tmp.close(relay);
+});
+
+test('a classified conflict does not consume retry budget for the blocked definition', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remoteTask = { ...makeTask('SUCCEEDED'), result: { summary: 'remote' } };
+  const remote = new InMemoryStore({ ...makeJob(), tasks: [remoteTask] });
+  const localTask = { ...makeTask('QUEUED'), input: 'different definition' };
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_task:job-1:task-1',
+    operation: 'append_task',
+    payload: { operation: 'append_task', value: localTask },
+  });
+  const writer = new GitHubProjectionWriter(relay, remote);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.deepEqual(await writer.flushOnce(), { projected: 0, deferred: 0 });
+  }
+  const [conflict] = await relay.listProjectionConflicts();
+  assert.equal(conflict.attempts, 1);
+  assert.equal(await relay.conflictProjectionCount(), 1);
+  await tmp.close(relay);
+});
+
+test('append_plan definition conflicts are classified with plan identity, not silently overwritten', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remotePlan = { jobId: 'job-1', id: 'plan-1', round: 1, source: 'manual', previousPlanId: null, trigger: { source: 'manual' }, status: 'SUCCEEDED', assessment: 'remote', generatedTaskIds: [], createdAt: '2026-09-30T00:00:00.000Z', updatedAt: '2026-09-30T00:00:00.000Z' };
+  const job = { ...makeJob(), plans: [remotePlan] };
+  const remote = new InMemoryStore(job);
+  const localPlan = { ...remotePlan, assessment: 'local divergence', updatedAt: '2026-09-30T00:01:00.000Z' };
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_plan:job-1:plan-1',
+    operation: 'append_plan',
+    payload: { operation: 'append_plan', value: localPlan },
+  });
+  const writer = new GitHubProjectionWriter(relay, remote);
+  assert.deepEqual(await writer.flushOnce(), { projected: 0, deferred: 0 });
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.conflictProjectionCount(), 1);
+  const [conflict] = await relay.listProjectionConflicts();
+  assert.equal(conflict.diagnostic.kind, 'plan');
+  assert.equal(conflict.diagnostic.subjectId, 'plan-1');
+  assert.ok(conflict.diagnostic.divergingFields.includes('assessment'));
+  // GitHub still owns the original definition: nothing was overwritten.
+  assert.equal((await remote.load('job-1')).plans[0].assessment, 'remote');
+  await tmp.close(relay);
+});
+
+test('identical duplicate append remains idempotent and never conflicts', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const task = makeTask('SUCCEEDED');
+  const remote = new InMemoryStore({ ...makeJob(), tasks: [task] });
+  await relay.enqueueProjection({
+    idempotencyKey: 'append_task:job-1:task-1',
+    operation: 'append_task',
+    payload: { operation: 'append_task', value: task },
+  });
+  const writer = new GitHubProjectionWriter(relay, remote);
+  assert.deepEqual(await writer.flushOnce(), { projected: 1, deferred: 0 });
+  assert.equal(await relay.conflictProjectionCount(), 0);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  await tmp.close(relay);
+});
+
+test('explicit repair requeues or discards a classified conflict without overwriting either side', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const remoteTask = { ...makeTask('SUCCEEDED'), result: { summary: 'remote' } };
+  const remote = new InMemoryStore({ ...makeJob(), tasks: [remoteTask] });
+  const localTask = { ...makeTask('QUEUED'), input: 'different definition' };
   await relay.enqueueProjection({
     idempotencyKey: 'append_task:job-1:task-1',
     operation: 'append_task',
@@ -345,25 +459,97 @@ test('GitHubProjectionWriter dead-letters deterministic append definition confli
   });
   const writer = new GitHubProjectionWriter(relay, remote);
   assert.deepEqual(await writer.flushOnce(), { projected: 0, deferred: 0 });
-  assert.equal(await relay.pendingProjectionCount(), 0);
-  assert.equal(await relay.terminalProjectionCount(), 1);
-  assert.deepEqual(await relay.claimDueProjections(), []);
+  const [conflict] = await relay.listProjectionConflicts();
 
-  relay.close();
-  relay = new SQLiteRelayStore(tmp.path);
-  assert.equal(await relay.pendingProjectionCount(), 0);
-  assert.equal(await relay.terminalProjectionCount(), 1);
-  assert.deepEqual(await relay.claimDueProjections(), []);
+  // requeue re-arms the original projection for an explicit retry after reconciliation.
+  assert.equal(await relay.resolveProjectionConflict(conflict.id, { action: 'requeue', note: 'github reconciled' }), true);
+  assert.equal(await relay.conflictProjectionCount(), 0);
+  assert.equal(await relay.pendingProjectionCount(), 1);
+  assert.deepEqual((await relay.listProjectionConflicts()), []);
 
+  const [requeued] = await relay.claimDueProjections();
+  await relay.recordProjectionConflict(requeued.id, { ...conflict.diagnostic, detectedAt: new Date().toISOString() });
+  assert.equal(await relay.conflictProjectionCount(), 1);
+
+  // discard_local removes the blocked local mutation so a fresh one can be enqueued.
+  const [again] = await relay.listProjectionConflicts();
+  assert.equal(await relay.resolveProjectionConflict(again.id, { action: 'discard_local' }), true);
+  assert.equal(await relay.conflictProjectionCount(), 0);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.resolveProjectionConflict(9999, { action: 'requeue' }), false);
+  await tmp.close(relay);
+});
+
+test('classified conflict and diagnostic remain durable across restart', async () => {
+  const tmp = await tempDb();
+  let relay = new SQLiteRelayStore(tmp.path);
+  const remoteTask = { ...makeTask('SUCCEEDED') };
+  const remote = new InMemoryStore({ ...makeJob(), tasks: [remoteTask] });
+  const localTask = { ...makeTask('QUEUED'), input: 'different definition' };
   await relay.enqueueProjection({
     idempotencyKey: 'append_task:job-1:task-1',
     operation: 'append_task',
-    payload: { operation: 'append_task', value: { ...localTask, input: 'new mutation' } },
+    payload: { operation: 'append_task', value: localTask },
   });
-  assert.equal(await relay.terminalProjectionCount(), 1);
+  assert.deepEqual(await new GitHubProjectionWriter(relay, remote).flushOnce(), { projected: 0, deferred: 0 });
+  const [classified] = await relay.listProjectionConflicts();
+  assert.equal(classified.status, 'conflict');
+  relay.close();
+
+  // Re-open: the classification and diagnostic remain durable across restart.
+  relay = new SQLiteRelayStore(tmp.path);
+  const [reopened] = await relay.listProjectionConflicts();
+  assert.equal(reopened.diagnostic.subjectId, 'task-1');
+  assert.equal(reopened.attempts, 1);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.deepEqual(await relay.claimDueProjections(), []);
+  await tmp.close(relay);
+});
+
+test('v4 schema with dead deterministic conflicts migrates to classified conflict state', async () => {
+  const tmp = await tempDb();
+  // Build a genuine pre-v5 outbox: old status CHECK, no operation_key, one dead conflict row.
+  const legacy = new DatabaseSync(tmp.path);
+  try {
+    legacy.exec(`
+      CREATE TABLE relay_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE projection_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        coalesce_key TEXT,
+        operation TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','dead')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO relay_meta(key,value) VALUES('schema_version','4');
+      INSERT INTO projection_outbox(idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at)
+      VALUES('append_task:job-1:task-1',NULL,'append_task','{"operation":"append_task","value":{"id":"task-1"}}',40,'dead',31,NULL,'Task task-1 already exists with a different definition','2026-09-29T00:00:00.000Z','2026-09-29T00:00:00.000Z');
+      INSERT INTO projection_outbox(idempotency_key,coalesce_key,operation,payload_json,priority,status,attempts,next_attempt_at,last_error,created_at,updated_at)
+      VALUES('save_job:job-1','job:job-1','save_job','{"operation":"save_job","value":{"id":"job-1"}}',20,'pending',0,NULL,NULL,'2026-09-29T00:00:00.000Z','2026-09-29T00:00:00.000Z');
+    `);
+  } finally {
+    legacy.close();
+  }
+
+  const relay = new SQLiteRelayStore(tmp.path);
+  const conflicts = await relay.listProjectionConflicts();
+  assert.equal(conflicts.length, 1);
+  const [migrated] = conflicts;
+  assert.equal(migrated.status, 'conflict');
+  assert.equal(migrated.operationKey, 'append_task:job-1:task-1');
+  assert.match(migrated.diagnostic.message, /different definition/);
+  assert.equal(migrated.diagnostic.kind, 'task');
+  // The unrelated pending projection is preserved, not misclassified.
   assert.equal(await relay.pendingProjectionCount(), 1);
-  const [newer] = await relay.claimDueProjections();
-  assert.match(newer.idempotencyKey, /^append_task:job-1:task-1:queued:\d+$/);
+  const [due] = await relay.claimDueProjections();
+  assert.equal(due.operation, 'save_job');
+  assert.equal(due.operationKey, 'save_job:job-1');
   await tmp.close(relay);
 });
 
@@ -372,6 +558,7 @@ test('projection terminal classifier is narrow and leaves transient writes retry
   assert.equal(isTerminalProjectionFailure({ operation: 'append_plan' }, new Error('Plan plan-1 already exists with a different definition')), true);
   assert.equal(isTerminalProjectionFailure({ operation: 'save_task' }, new Error('Task task-1 already exists with a different definition')), false);
   assert.equal(isTerminalProjectionFailure({ operation: 'append_task' }, new Error('secondary rate limit')), false);
+  assert.equal(isTerminalProjectionFailure({ operation: 'append_task' }, new DurableDefinitionConflictError('task', 'append_task', 'job-1', 'task-1', { input: 'a' }, { input: 'b' }, ['input'])), true);
 });
 
 test('GitHubProjectionWriter defers rate-limited writes and respects retry-after', async () => {
