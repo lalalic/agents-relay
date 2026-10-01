@@ -21,7 +21,7 @@ export const plannerTriggerV2 = new GraphRuntime(source, {
 
 export function dispatchPlannerTrigger(facts: Readonly<Record<string, unknown>>): GraphDecision {
   return dispatchWorkflowGraphSync(plannerTriggerV2, {
-    initialState: 'idle', input: { transport: 'event', id: 'plan.requested', payload: {} }, durableFacts: facts,
+    initialState: 'idle', input: { transport: 'event', id: 'plan.requested', payload: {} }, durableFacts: facts, graphName: 'planner-trigger',
     isTransientState: state => state.startsWith('check_'), maxSteps: 4,
   });
 }

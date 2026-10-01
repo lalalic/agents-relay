@@ -1,4 +1,5 @@
 import type { WorkflowEffectName } from './contracts.js';
+import { classifyFailure, observability } from '../observability.js';
 
 export type WorkflowEffectContext = {
   jobId: string;
@@ -75,6 +76,7 @@ export class WorkflowEffectExecutor {
       if (await this.receipts.has(key)) {
         const outcome: WorkflowEffectOutcome = { effect, key, status: 'deduplicated' };
         outcomes.push(outcome);
+        this.recordEffect(context, outcome);
         await onOutcome?.(outcome);
         continue;
       }
@@ -83,6 +85,7 @@ export class WorkflowEffectExecutor {
         await this.receipts.markCompleted(key);
         const outcome: WorkflowEffectOutcome = { effect, key, status: 'completed' };
         outcomes.push(outcome);
+        this.recordEffect(context, outcome);
         await onOutcome?.(outcome);
       } catch (error) {
         const outcome: WorkflowEffectOutcome = {
@@ -92,9 +95,34 @@ export class WorkflowEffectExecutor {
           error: error instanceof Error ? error.message : String(error),
         };
         outcomes.push(outcome);
+        this.recordEffect(context, outcome, error);
         await onOutcome?.(outcome);
       }
     }
     return outcomes;
+  }
+
+  private recordEffect(
+    context: WorkflowEffectContext,
+    outcome: WorkflowEffectOutcome,
+    error?: unknown,
+  ): void {
+    observability().record({
+      stage: 'transition',
+      event: outcome.status === 'failed' ? 'workflow.effect.failed' : 'workflow.effect',
+      level: outcome.status === 'failed' ? 'error' : 'info',
+      outcome: outcome.status === 'deduplicated' ? 'deduplicated' : outcome.status === 'failed' ? 'failed' : 'succeeded',
+      message: outcome.status === 'failed'
+        ? `Effect ${outcome.effect} failed: ${outcome.error ?? 'unknown error'}`
+        : `Effect ${outcome.effect} ${outcome.status}`,
+      correlation: { jobId: context.jobId, taskId: context.taskId },
+      transition: { graph: 'workflow.effect', from: null, to: null, actions: [outcome.effect] },
+      data: {
+        effect: outcome.effect,
+        idempotencyKey: outcome.key,
+        transitionKey: context.transitionKey,
+        ...(error ? { classification: classifyFailure(error).classification } : {}),
+      },
+    });
   }
 }

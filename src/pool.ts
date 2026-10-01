@@ -7,6 +7,7 @@ import { runScheduledBucket } from './scheduled-jobs.js';
 import { scheduleBucket } from './scheduler.js';
 import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordinator.js';
 import type { EventRecord } from './types.js';
+import { errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -47,7 +48,12 @@ export class RepositoryWorkerPool {
   ) {
     this.repositories = [...new Set(typeof repository === 'string' ? [repository] : repository)];
     const reportCoordinatorError = (error: unknown, signal: ReconcileSignal): void => {
-      process.stderr.write(`warning: reconcile coordinator failed for ${signal.jobId} (${signal.reason}): ${error instanceof Error ? error.message : String(error)}\n`);
+      observability().record({
+        stage: 'reconcile', event: 'reconcile.coordinator_failed', level: 'error', outcome: 'failed',
+        message: `Reconcile coordinator failed for ${signal.jobId} (${signal.reason}): ${errorMessage(error)}`,
+        correlation: { repository: signal.repository, prNumber: signal.prNumber, jobId: signal.jobId },
+        data: { reason: signal.reason },
+      });
     };
     this.coordinator = new ReconcileCoordinator((jobId, signals) => this.consumeSignals(jobId, signals), reportCoordinatorError);
     this.githubSignalCoordinator = new ReconcileCoordinator((_key, signals) => this.consumeGitHubSignals(signals), reportCoordinatorError);
@@ -108,7 +114,12 @@ export class RepositoryWorkerPool {
     }
     const target = this.jobTargets.get(jobId);
     if (!target || !this.repositories.includes(target.repository)) {
-      process.stderr.write(`warning: reconcile signal target unknown for job ${jobId}\n`);
+      observability().record({
+        stage: 'reconcile', event: 'reconcile.signal_unrouted', level: 'warn', outcome: 'skipped',
+        message: `Reconcile signal target unknown for job ${jobId}`,
+        correlation: { jobId },
+        data: { reasons: signals.map(signal => signal.reason) },
+      });
       return;
     }
     const seedKey = `${target.repository}#${target.prNumber}:${jobId}`;
@@ -133,10 +144,25 @@ export class RepositoryWorkerPool {
       const result = await withGitHubRequestContext(this.client, `pool.coordinator-apply:${signal.reason}`, () => reconciler.applyEvent(signal.event!));
       shouldReconcile ||= result.reconcile;
     }
-    if (!shouldReconcile) return;
+    if (!shouldReconcile) {
+      observability().record({
+        stage: 'wake', event: 'wake.signal', level: 'debug', outcome: 'noop',
+        message: `Wake for ${target.repository}#${target.prNumber} produced no reconcile work`,
+        correlation: { repository: target.repository, prNumber: target.prNumber, jobId },
+        data: { reasons: [...new Set(reasons)] },
+      });
+      return;
+    }
     const reason = [...new Set(reasons)].join('+') || 'unknown';
+    observability().record({
+      stage: 'wake', event: 'wake.signal', outcome: 'started',
+      message: `Wake for ${target.repository}#${target.prNumber}: ${reason}`,
+      correlation: { repository: target.repository, prNumber: target.prNumber, jobId },
+      data: { reasons: [...new Set(reasons)] },
+    });
     await this.reconcileExclusive(jobId, async () => {
-      await withGitHubRequestContext(this.client, `pool.coordinator-reconcile:${reason}`, () => reconciler.reconcile(jobId));
+      await withObservabilityCorrelation({ repository: target.repository, prNumber: target.prNumber, jobId }, () =>
+        withGitHubRequestContext(this.client, `pool.coordinator-reconcile:${reason}`, () => reconciler.reconcile(jobId)));
     });
   }
 

@@ -93,7 +93,7 @@ export type OutboxRow = {
 };
 
 export type ProjectionOutboxPort = {
-  enqueue(request: ProjectionRequest, now: string): void;
+  enqueue(request: ProjectionRequest, now: string): boolean;
   claimDue(limit: number, now: Date): ProjectionOutboxItem[];
   complete(id: number): void;
   retry(id: number, error: string, nextAttemptAt: Date): void;
@@ -252,13 +252,15 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
     this.db.prepare("UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing'").run(now);
   }
 
-  enqueue(request: ProjectionRequest, now: string): void {
+  enqueue(request: ProjectionRequest, now: string): boolean {
     const operationKey = logicalOperationKey(request.idempotencyKey);
+    let coalesced = false;
     if (request.coalesceKey) {
-      this.db.prepare(`
+      const removed = this.db.prepare(`
         DELETE FROM projection_outbox
         WHERE coalesce_key=? AND status='pending' AND operation_key<>?
       `).run(request.coalesceKey, operationKey);
+      coalesced = Number(removed.changes) > 0;
     }
     const existing = this.db.prepare('SELECT status FROM projection_outbox WHERE operation_key=? ORDER BY id DESC LIMIT 1')
       .get(operationKey) as { status?: string } | undefined;
@@ -294,6 +296,7 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
       now,
       now,
     );
+    return coalesced;
   }
 
   claimDue(limit: number, now: Date): ProjectionOutboxItem[] {

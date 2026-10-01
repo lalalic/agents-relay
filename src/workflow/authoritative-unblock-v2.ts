@@ -18,8 +18,8 @@ export const authoritativeUnblockV2=new GraphRuntime(source,{
 });
 
 export async function dispatchAuthoritativeUnblock(autonomousJob:boolean, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
-  return dispatchWorkflowGraph(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},durableFacts:{autonomousJob},executeAction});
+  return dispatchWorkflowGraph(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},graphName:'authoritative-unblock',durableFacts:{autonomousJob},executeAction});
 }
 export function decideAuthoritativeUnblock(autonomousJob:boolean):GraphDecision{
-  return dispatchWorkflowGraphSync(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},durableFacts:{autonomousJob}});
+  return dispatchWorkflowGraphSync(authoritativeUnblockV2,{initialState:'blocked',input:{transport:'event',id:'task.authoritative_unblock',payload:{}},graphName:'authoritative-unblock',durableFacts:{autonomousJob}});
 }

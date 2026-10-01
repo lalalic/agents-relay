@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
+import { observability } from './observability.js';
 import {
   ProjectionOutbox,
   SCHEMA_VERSION,
@@ -172,8 +173,16 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.writeJobSnapshot(job, now);
-      this.enqueueProjectionInTransaction(request, now);
+      const coalesced = this.enqueueProjectionInTransaction(request, now);
       this.db.exec('COMMIT');
+      observability().record({
+        stage: 'projection', event: 'projection.enqueued', outcome: coalesced ? 'deduplicated' : 'succeeded',
+        message: coalesced
+          ? `Projection ${request.operation} coalesced`
+          : `Projection ${request.operation} enqueued`,
+        correlation: { repository: job.repository, prNumber: job.prNumber, jobId: job.id },
+        data: { operation: request.operation, idempotencyKey: request.idempotencyKey, coalesceKey: request.coalesceKey, priority: request.priority ?? 0, coalesced },
+      });
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
@@ -257,21 +266,29 @@ export class SQLiteRelayStore implements RelayStore {
     return Number(result.changes) === 1;
   }
 
-  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): void {
-    this.outbox.enqueue(request, now);
+  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): boolean {
+    return this.outbox.enqueue(request, now);
   }
 
   async enqueueProjection(request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.outbox.enqueue(request, now);
+      const coalesced = this.enqueueProjectionInTransaction(request, now);
       this.db.exec('COMMIT');
+      observability().record({
+        stage: 'projection', event: 'projection.enqueued', outcome: coalesced ? 'deduplicated' : 'succeeded',
+        message: coalesced
+          ? `Projection ${request.operation} coalesced`
+          : `Projection ${request.operation} enqueued`,
+        data: { operation: request.operation, idempotencyKey: request.idempotencyKey, coalesceKey: request.coalesceKey, priority: request.priority ?? 0, coalesced },
+      });
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
   }
+
 
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {
     return this.outbox.claimDue(limit, now);

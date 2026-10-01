@@ -28,8 +28,15 @@ import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
 import { workerCandidates } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
+import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
+/** Initialize the process-wide structured observability sink once, from environment. */
+export function configureDaemonObservability(env: NodeJS.ProcessEnv = process.env): RelayObservability {
+  const configured = RelayObservability.fromEnvironment(env);
+  setObservability(configured);
+  return configured;
+}
 export type PullRequestRefreshTrigger = string;
 export async function overlayOperationalOverviews(
   overviews: readonly ManagedJobOverview[],
@@ -134,6 +141,7 @@ export function configureExecutionRouterRulesPath(argv: readonly string[]): stri
 
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
+  configureDaemonObservability();
   configureExecutionRouterRulesPath(argv);
   await ensureChatGptBrowserWorkspace();
   const normalized = normalizeDaemonArguments(argv);
@@ -201,7 +209,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       cachedOverviews = dashboardManagedJobs(await overlayOperationalOverviews(merged, (repository, prNumber) => runtimeStore(repository, prNumber)));
       return cachedOverviews;
     } catch (error) {
-      process.stderr.write(`warning: workspace job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      observability().record({ stage: 'daemon', event: 'daemon.refresh_failed', level: 'warn', outcome: 'failed', message: `Workspace job refresh unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
       return cachedOverviews;
     }
   };
@@ -349,7 +357,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (!refreshed) return null;
       return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft, publication: refreshed.publication };
     } catch (error) {
-      process.stderr.write(`warning: selected job refresh unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+      observability().record({ stage: 'daemon', event: 'daemon.refresh_failed', level: 'warn', outcome: 'failed', message: `Selected job refresh unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
       return cachedJob();
     }
   };
@@ -430,7 +438,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }
-    catch (error) { process.stderr.write(`warning: workspace reconcile unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
+    catch (error) { observability().record({ stage: 'daemon', event: 'daemon.reconcile_failed', level: 'warn', outcome: 'failed', message: `Workspace reconcile unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
   };
   const scheduleHeartbeatSafely = async (): Promise<void> => {
     const now = new Date();
@@ -438,14 +446,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       try {
         await pool.scheduleTickSignal(bus, item.job, now);
       } catch (error) {
-        process.stderr.write(`warning: scheduled heartbeat unavailable for ${item.job.repository}#${item.job.prNumber}: ${error instanceof Error ? error.message : String(error)}\n`);
+        observability().record({ stage: 'daemon', event: 'daemon.schedule_heartbeat_failed', level: 'warn', outcome: 'failed', message: `Scheduled heartbeat unavailable: ${errorMessage(error)}`, correlation: { repository: item.job.repository, prNumber: item.job.prNumber, jobId: item.job.id }, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
       }
     }
   };
   const flushProjectionsSafely = async (): Promise<void> => {
     for (const writer of projectionWriters.values()) {
       try { await writer.flushOnce(); }
-      catch (error) { process.stderr.write(`warning: GitHub projection flush unavailable: ${error instanceof Error ? error.message : String(error)}\n`); }
+      catch (error) { observability().record({ stage: 'daemon', event: 'daemon.projection_flush_failed', level: 'warn', outcome: 'failed', message: `GitHub projection flush unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
     }
   };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
@@ -462,7 +470,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)
     .then(items => pool.reconcileKnown(items))
-    .catch(error => process.stderr.write('warning: startup remote refresh unavailable: ' + (error instanceof Error ? error.message : String(error)) + '\n'));
+    .catch(error => observability().record({ stage: 'daemon', event: 'daemon.startup_refresh_failed', level: 'warn', outcome: 'failed', message: 'Startup remote refresh unavailable: ' + errorMessage(error), data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
 

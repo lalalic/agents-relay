@@ -47,8 +47,8 @@ export async function dispatchReviewLifecycle(
   facts: Readonly<Record<string, unknown>> = {},
   executeAction?: (actionId:string)=>ActionReceipt|Promise<ActionReceipt>,
 ): Promise<GraphDecision> {
-  return dispatchWorkflowGraph(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts,executeAction});
+  return dispatchWorkflowGraph(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts,graphName:'review-lifecycle',executeAction});
 }
 export function decideReviewLifecycle(outcome: ReviewOutcome | undefined,event:string,facts:Readonly<Record<string,unknown>>={}):GraphDecision{
-  return dispatchWorkflowGraphSync(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts});
+  return dispatchWorkflowGraphSync(reviewLifecycleV2,{initialState:reviewGraphState(outcome),input:{transport:'event',id:event,payload:{}},durableFacts:facts,graphName:'review-lifecycle'});
 }

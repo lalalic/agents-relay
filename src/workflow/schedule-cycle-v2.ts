@@ -19,7 +19,7 @@ export const scheduleCycleV2 = new GraphRuntime(source, {
 
 export function dispatchScheduleCycle(facts: Readonly<Record<string, unknown>>, onFinish:()=>void): GraphDecision {
   return dispatchWorkflowGraphSync(scheduleCycleV2, {
-    initialState:'idle', input:{transport:'event',id:'schedule.reconcile',payload:{}}, durableFacts:facts,
+    initialState:'idle', input:{transport:'event',id:'schedule.reconcile',payload:{}}, durableFacts:facts,graphName:'schedule-cycle',
     isTransientState:state=>state.startsWith('check_'), maxSteps:2,
     executeAction:actionId=>{ if(actionId==='schedule.finishSlot') onFinish(); else throw new Error('Unsupported schedule cycle action '+actionId); return {}; },
   });

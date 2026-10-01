@@ -36,10 +36,10 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
 });
 
 export async function dispatchPlannerOrchestration(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
-  return dispatchWorkflowGraph(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:9,executeAction});
+  return dispatchWorkflowGraph(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:9,executeAction});
 }
 export function decidePlannerOrchestration(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  return dispatchWorkflowGraphSync(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:9});
+  return dispatchWorkflowGraphSync(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:9});
 }
 
 

@@ -3,6 +3,7 @@ import type { Job, Task } from '../types.js';
 import { tryTransitionTaskEvent } from '../scheduler.js';
 import type { WorkflowContext } from './mermaid.js';
 import type { WorkflowDecision } from './contracts.js';
+import { observability } from '../observability.js';
 
 export type DurableTaskTransitionResult = {
   job: Job;
@@ -37,12 +38,30 @@ export class DurableTaskTransitionRuntime {
     return this.withLock(`${jobId}/${taskId}`, async () => {
       const job = await this.store.load(jobId);
       const task = job.tasks.find(item => item.id === taskId);
-      if (!task || (options.eligible && !options.eligible(job, task))) return null;
+      if (!task || (options.eligible && !options.eligible(job, task))) {
+        observability().record({
+          stage: 'transition', event, level: 'debug', outcome: 'skipped',
+          message: `Task ${taskId} transition ${event} not eligible`,
+          correlation: { repository: job.repository, prNumber: job.prNumber, jobId, taskId },
+          transition: { graph: 'task-lifecycle', from: task?.state ?? null, to: null },
+        });
+        return null;
+      }
       const from = task.state;
       const decision = tryTransitionTaskEvent(task, event, options.facts?.(job, task) ?? {});
-      if (!decision.accepted || !decision.target) return { job, task, from, decision };
+      if (!decision.accepted || !decision.target) {
+        return { job, task, from, decision };
+      }
       await options.mutate?.(job, task, decision);
       await this.store.saveTask(task);
+      observability().record({
+        stage: 'transition',
+        event,
+        outcome: 'succeeded',
+        message: `Task ${taskId} ${from} -> ${decision.target}`,
+        correlation: { repository: job.repository, prNumber: job.prNumber, jobId, taskId, executionId: task.executionId ?? undefined },
+        transition: { graph: 'task-lifecycle', from, to: decision.target, actions: decision.actions },
+      });
       return { job, task, from, decision };
     });
   }
