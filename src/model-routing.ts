@@ -7,6 +7,7 @@ import { AgentRegistration, ResourceUsageWindow, RoutingDecision } from './types
 import { usageForProvider, WorkerCandidate } from './worker-routing.js';
 import { DecisionAuditStore, DecisionAuditRecord, makeDecisionAudit } from './decision-audit.js';
 import { loadRoutingPolicy, LoadedRoutingPolicy, policyAllows, policyRank } from './routing-policy.js';
+import { appendRoutingInstruction } from './router-rules.js';
 
 export type ModelCandidate = {
   id: string;
@@ -212,7 +213,6 @@ export async function routeModel(
       {
         facts: JSON.parse(JSON.stringify({
           task: options.taskFacts ?? {},
-          user_input_rules: policy.rules.text,
           structured_policy: policy.snapshot,
           prior_decision_id: options.priorDecisionId ?? null,
           prior_failure: options.priorFailure ?? null,
@@ -220,7 +220,7 @@ export async function routeModel(
           candidates: eligible.map(item => ({ id: item.id, provider: item.provider, model: item.model, profile: item.profile ?? null, reasoning: item.reasoning ?? null, resourceHealthy: item.resourceHealthy ?? null, resourceUsedPercent: item.resourceUsedPercent ?? null, resourceRemainingPercent: item.resourceRemainingPercent ?? null, resourceResetAt: item.resourceResetAt ?? null, resourceResetInMinutes: item.resourceResetInMinutes ?? null, resourceWindows: item.resourceWindows ?? null })),
         })) as import('./decision.js').JsonValue,
       },
-      { type: 'choice', question: 'Which eligible model profile is best suited to execute this task? Apply hard gates first, then explicit task constraints, then current user input rules and structured policy; consider every quota window and never violate task fit or continuity.', choices: eligible.map(modelChoiceId) },
+      { type: 'choice', question: appendRoutingInstruction('Which eligible model profile is best suited to execute this task? Apply hard gates first, then explicit task constraints, then structured policy; consider every quota window and never violate task fit or continuity.', policy.rules.parsed.routingInstruction), choices: eligible.map(modelChoiceId) },
       () => modelChoiceId(deterministic),
     );
   const selected = eligible.find(item => modelChoiceId(item) === choice.choice) ?? deterministic;
