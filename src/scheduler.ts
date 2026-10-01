@@ -5,6 +5,7 @@ import { dispatchJobLifecycle, dispatchTaskLifecycle, dispatchTaskLifecycleSync,
 import { dependencyReady, detectCycles, reconcileTaskDependencies } from './workflow/task-reconcile.js';
 export { dependencyReady, detectCycles } from './workflow/task-reconcile.js';
 import { dispatchScheduleCycle } from './workflow/schedule-cycle-v2.js';
+import { observability } from './observability.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
@@ -49,13 +50,30 @@ export async function transitionTaskEvent(task: Task, event: string, context: Wo
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
     ? `Ambiguous workflow transition from ${from} on ${event}`
     : `No enabled workflow transition from ${from} on ${event}`);
+  observability().record({
+    stage: 'transition',
+    event,
+    outcome: 'succeeded',
+    message: `Task ${task.id} ${from} -> ${decision.target}`,
+    correlation: { jobId: task.jobId, taskId: task.id, executionId: task.executionId ?? undefined },
+    transition: { graph: 'task-lifecycle', from, to: decision.target, actions: decision.actions },
+  });
   return decision;
 }
 export async function transitionJobEvent(job: Job, event: string, context: WorkflowContext = {}, executeEffect?: (actionId:string)=>void|Promise<void>, persist?:()=>void|Promise<void>): Promise<WorkflowDecision<Job['state']>> {
+  const from = job.state;
   const decision = await dispatchJobLifecycle(job, event, context, executeEffect, persist);
   if (!decision.accepted || !decision.target) throw new Error(decision.reason === 'ambiguous'
-    ? `Ambiguous workflow transition from ${job.state} on ${event}`
-    : `No enabled workflow transition from ${job.state} on ${event}`);
+    ? `Ambiguous workflow transition from ${from} on ${event}`
+    : `No enabled workflow transition from ${from} on ${event}`);
+  observability().record({
+    stage: 'transition',
+    event,
+    outcome: 'succeeded',
+    message: `Job ${job.id} ${from} -> ${decision.target}`,
+    correlation: { repository: job.repository, prNumber: job.prNumber, jobId: job.id },
+    transition: { graph: 'job-lifecycle', from, to: decision.target, actions: decision.actions },
+  });
   return decision;
 }
 

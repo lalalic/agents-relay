@@ -4,6 +4,7 @@ import type { Comment, DurableStore, PullRequestState } from './store.js';
 import { sameTaskDefinition } from './store-task-definition.js';
 import type { ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
 import type { GitHubPullRequestSeed } from './store.js';
+import { classifyFailure, errorMessage, observability } from './observability.js';
 
 type ProjectedPayload =
   | { operation: 'save_job'; value: Job }
@@ -57,12 +58,31 @@ export class GitHubProjectionWriter {
         await this.apply(item);
         await this.relay.completeProjection(item.id);
         projected += 1;
+        observability().record({
+          stage: 'projection', event: 'projection.completed', outcome: 'succeeded',
+          message: `Projection ${item.operation} applied`,
+          data: { operation: item.operation, idempotencyKey: item.idempotencyKey, coalesceKey: item.coalesceKey, attempts: item.attempts },
+        });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (isTerminalProjectionFailure(item, error)) await this.relay.deadLetterProjection(item.id, message);
-        else {
-          await this.relay.retryProjection(item.id, message, githubProjectionRetryAt(error, item.attempts, now));
+        const message = errorMessage(error);
+        const terminal = isTerminalProjectionFailure(item, error);
+        const classified = classifyFailure(error);
+        if (terminal) {
+          await this.relay.deadLetterProjection(item.id, message);
+          observability().record({
+            stage: 'projection', event: 'projection.dead_lettered', level: 'error', outcome: 'failed',
+            message: `Projection ${item.operation} dead-lettered: ${message}`,
+            data: { operation: item.operation, idempotencyKey: item.idempotencyKey, coalesceKey: item.coalesceKey, attempts: item.attempts, classification: 'conflict', reason: classified.reason },
+          });
+        } else {
+          const retryAt = githubProjectionRetryAt(error, item.attempts, now);
+          await this.relay.retryProjection(item.id, message, retryAt);
           deferred += 1;
+          observability().record({
+            stage: 'projection', event: 'projection.retry_scheduled', level: 'warn', outcome: 'failed',
+            message: `Projection ${item.operation} deferred for retry: ${message}`,
+            data: { operation: item.operation, idempotencyKey: item.idempotencyKey, attempts: item.attempts, classification: classified.classification, retryAt: retryAt.toISOString(), status: classified.status, reason: classified.reason },
+          });
         }
       }
     }
@@ -131,6 +151,12 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'save_job', value } satisfies ProjectedPayload,
       priority: ['COMPLETED', 'CANCELLED'].includes(job.state) ? 100 : 20,
     });
+    observability().record({
+      stage: 'store', event: 'store.commit', outcome: 'succeeded',
+      message: `Job ${job.id} committed`,
+      correlation: { repository: job.repository, prNumber: job.prNumber, jobId: job.id },
+      data: { operation: 'save_job', state: job.state, tasks: job.tasks.length },
+    });
   }
 
   async appendPlan(plan: Plan): Promise<void> {
@@ -179,6 +205,12 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'append_task', value: task } satisfies ProjectedPayload,
       priority: 40,
     });
+    observability().record({
+      stage: 'store', event: 'store.commit', outcome: 'succeeded',
+      message: `Task ${task.id} appended`,
+      correlation: { repository: job.repository, prNumber: job.prNumber, jobId: task.jobId, taskId: task.id },
+      data: { operation: 'append_task', agentName: task.agentName, storySize: task.storySize },
+    });
   }
 
   async saveTask(task: Task): Promise<void> {
@@ -196,6 +228,12 @@ export class ProjectedDurableStore implements DurableStore {
       operation: 'save_task',
       payload: { operation: 'save_task', value } satisfies ProjectedPayload,
       priority: terminal ? 100 : 50,
+    });
+    observability().record({
+      stage: 'store', event: 'store.commit', outcome: 'succeeded',
+      message: `Task ${task.id} committed (${task.state})`,
+      correlation: { repository: job.repository, prNumber: job.prNumber, jobId: task.jobId, taskId: task.id, executionId: task.executionId ?? undefined },
+      data: { operation: 'save_task', state: task.state, attempt: task.attempt },
     });
   }
 

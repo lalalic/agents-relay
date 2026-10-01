@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
+import { observability } from './observability.js';
 
 export type PullRequestFacts = {
   state: PullRequestState;
@@ -257,8 +258,16 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.writeJobSnapshot(job, now);
-      this.enqueueProjectionInTransaction(request, now);
+      const coalesced = this.enqueueProjectionInTransaction(request, now);
       this.db.exec('COMMIT');
+      observability().record({
+        stage: 'projection', event: 'projection.enqueued', outcome: coalesced ? 'deduplicated' : 'succeeded',
+        message: coalesced
+          ? `Projection ${request.operation} coalesced`
+          : `Projection ${request.operation} enqueued`,
+        correlation: { repository: job.repository, prNumber: job.prNumber, jobId: job.id },
+        data: { operation: request.operation, idempotencyKey: request.idempotencyKey, coalesceKey: request.coalesceKey, priority: request.priority ?? 0, coalesced },
+      });
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
@@ -346,20 +355,29 @@ export class SQLiteRelayStore implements RelayStore {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.enqueueProjectionInTransaction(request, now);
+      const coalesced = this.enqueueProjectionInTransaction(request, now);
       this.db.exec('COMMIT');
+      observability().record({
+        stage: 'projection', event: 'projection.enqueued', outcome: coalesced ? 'deduplicated' : 'succeeded',
+        message: coalesced
+          ? `Projection ${request.operation} coalesced`
+          : `Projection ${request.operation} enqueued`,
+        data: { operation: request.operation, idempotencyKey: request.idempotencyKey, coalesceKey: request.coalesceKey, priority: request.priority ?? 0, coalesced },
+      });
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
   }
 
-  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): void {
+  private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): boolean {
+    let coalesced = false;
     if (request.coalesceKey) {
-      this.db.prepare(`
+      const removed = this.db.prepare(`
         DELETE FROM projection_outbox
         WHERE coalesce_key=? AND status='pending' AND idempotency_key<>?
       `).run(request.coalesceKey, request.idempotencyKey);
+      coalesced = Number(removed.changes) > 0;
     }
     const existing = this.db.prepare('SELECT status FROM projection_outbox WHERE idempotency_key=?').get(request.idempotencyKey) as { status?: string } | undefined;
     // A writer may be applying this key outside the transaction. Never rewrite its
@@ -391,6 +409,7 @@ export class SQLiteRelayStore implements RelayStore {
       now,
       now,
     );
+    return coalesced;
   }
 
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {

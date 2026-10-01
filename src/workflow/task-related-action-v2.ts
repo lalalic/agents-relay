@@ -47,6 +47,7 @@ export function decideRelatedTaskAction(task: Task, candidate: Task, actionId: s
     initialState: 'evaluate',
     input: { transport: 'action', id: actionId, payload: {} },
     durableFacts: relatedTaskActionFacts(task, candidate),
+    graphName: 'task-related-action',
     isTransientState: state => state === 'check_other' || state === 'check_recovery',
     maxSteps: 3,
   });

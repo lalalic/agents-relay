@@ -33,8 +33,8 @@ export const blockerResolutionV2=new GraphRuntime(source,{
 });
 
 export async function dispatchBlockerResolution(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
-  return dispatchWorkflowGraph(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:10,executeAction});
+  return dispatchWorkflowGraph(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,graphName:'blocker-resolution',isTransientState:state=>state.startsWith('check_'),maxSteps:10,executeAction});
 }
 export function decideBlockerResolution(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  return dispatchWorkflowGraphSync(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:10});
+  return dispatchWorkflowGraphSync(blockerResolutionV2,{initialState:'waiting',input:{transport:'event',id:'blocker.resolved',payload:{}},durableFacts:facts,graphName:'blocker-resolution',isTransientState:state=>state.startsWith('check_'),maxSteps:10});
 }

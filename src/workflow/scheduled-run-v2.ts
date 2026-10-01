@@ -30,8 +30,8 @@ export const scheduledRunV2=new GraphRuntime(source,{
 });
 
 export async function dispatchScheduledRun(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
-  return dispatchWorkflowGraph(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:8,executeAction});
+  return dispatchWorkflowGraph(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,graphName:'scheduled-run',isTransientState:state=>state.startsWith('check_'),maxSteps:8,executeAction});
 }
 export function decideScheduledRun(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  return dispatchWorkflowGraphSync(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,isTransientState:state=>state.startsWith('check_'),maxSteps:8});
+  return dispatchWorkflowGraphSync(scheduledRunV2,{initialState:'idle',input:{transport:'event',id:'schedule.tick',payload:{}},durableFacts:facts,graphName:'scheduled-run',isTransientState:state=>state.startsWith('check_'),maxSteps:8});
 }

@@ -20,6 +20,7 @@ function v2WorkflowDecision<State extends string>(
     initialState: from,
     input: { transport: 'event', id: event, payload: {} },
     durableFacts: facts,
+    graphName: runtime === jobLifecycleV2 ? 'job-lifecycle' : 'task-lifecycle',
     executeAction: actionId => { actions.push(actionId); return {}; },
   });
   if (!decision.accepted) return emptyWorkflowDecision<State>(decision.reason === 'ambiguous' ? 'ambiguous' : 'no_transition');
@@ -62,6 +63,7 @@ export function dispatchTaskLifecycleSync(
     initialState: task.state,
     input: { transport: 'event', id: event, payload: {} },
     durableFacts: facts,
+    graphName: 'task-lifecycle',
     persistTransition: (_source, target) => applyTaskGraphTarget(task as never, target as TaskState),
     executeAction: actionId => { actions.push(actionId); if (actionId.startsWith('mutation.')) applyTaskMutation(task as never, actionId as WorkflowMutationName); return {}; },
   });
@@ -79,6 +81,7 @@ export async function dispatchTaskLifecycle(
   const actions: string[] = [];
   const result = await dispatchWorkflowGraph(taskLifecycleV2, {
     initialState: task.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts,
+    graphName: 'task-lifecycle',
     persistTransition: async (_source, target) => { applyTaskGraphTarget(task as never, target as TaskState); await persist?.(); },
     executeAction: async actionId => {
       actions.push(actionId);
@@ -101,6 +104,7 @@ export function dispatchJobLifecycleSync(
     initialState: job.state,
     input: { transport: 'event', id: event, payload: {} },
     durableFacts: facts,
+    graphName: 'job-lifecycle',
     persistTransition: (_source, target) => applyJobGraphTarget(job as never, target as JobLifecycleState),
     executeAction: actionId => { actions.push(actionId); return {}; },
   });
@@ -118,6 +122,7 @@ export async function dispatchJobLifecycle(
   const actions: string[] = [];
   const result = await dispatchWorkflowGraph(jobLifecycleV2, {
     initialState: job.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts,
+    graphName: 'job-lifecycle',
     persistTransition: async (_source, target) => { applyJobGraphTarget(job as never, target as JobLifecycleState); await persist?.(); },
     executeAction: async actionId => { actions.push(actionId); await executeEffect?.(actionId); return {}; },
   });

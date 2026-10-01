@@ -24,7 +24,7 @@ export const troubleshooterV2=new GraphRuntime(source,{
 
 export function dispatchTroubleshooter(facts:Readonly<Record<string,unknown>>, onCreate:()=>void):GraphDecision{
   return dispatchWorkflowGraphSync(troubleshooterV2,{
-    initialState:'idle', input:{transport:'event',id:'troubleshooter.reconcile',payload:{}}, durableFacts:facts,
+    initialState:'idle', input:{transport:'event',id:'troubleshooter.reconcile',payload:{}}, durableFacts:facts,graphName:'troubleshooter',
     isTransientState:state=>state.startsWith('check_'), maxSteps:6,
     executeAction:actionId=>{ if(actionId==='troubleshooter.create') onCreate(); else throw new Error('Unsupported troubleshooter graph action '+actionId); return {}; },
   });

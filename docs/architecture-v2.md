@@ -481,6 +481,10 @@ The later implementation is accepted only when it demonstrates:
 The current lifecycle architecture is implemented with these mechanically
 checked boundaries:
 
+- `src/observability.ts` is the single structured runtime observability boundary;
+  records are observational only (correlation, graph decision identity,
+  before/after transitions, store commits, projection outcomes) and are never a
+  second durable store. See `docs/structured-observability.md`;
 - `src/workflow/definitions-v2.ts` loads the canonical Job/Task flowcharts
   with typed state, guard, action, and event registries;
 - `src/workflow/lifecycle.ts` uses those graph runtimes for production lifecycle

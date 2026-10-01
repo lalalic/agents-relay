@@ -23,6 +23,7 @@ import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
 import { launchPlanExecution } from './planner-runtime.js';
+import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
@@ -112,6 +113,8 @@ export class Reconciler extends ReconcilerReviewBase {
     try {
       const job = await this.store.load(jobId);
       const previousState = job.state;
+      const lifecycleFingerprint = (value: Job): string => `${value.state}|${value.tasks.map(task => `${task.id}:${task.state}`).join(',')}`;
+      const beforeFingerprint = lifecycleFingerprint(job);
       const prState = await this.store.pullRequestState?.() ?? 'OPEN';
       const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
       if (headSha && job.headSha !== headSha) {
@@ -210,7 +213,32 @@ export class Reconciler extends ReconcilerReviewBase {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
       }, async () => { await this.store.saveJob(finalState); });
-      return this.store.load(jobId);
+      const settled = await this.store.load(jobId);
+      const changed = lifecycleFingerprint(settled) !== beforeFingerprint;
+      observability().record({
+        stage: 'reconcile',
+        event: 'reconcile',
+        level: changed ? 'info' : 'debug',
+        outcome: changed ? 'succeeded' : 'noop',
+        message: changed
+          ? `Reconcile updated ${settled.repository}#${settled.prNumber} lifecycle`
+          : `Reconcile ${settled.repository}#${settled.prNumber} made no lifecycle change`,
+        correlation: { repository: settled.repository, prNumber: settled.prNumber, jobId: settled.id },
+        transition: { graph: 'job-lifecycle', from: previousState, to: settled.state },
+        data: { prState, tasks: settled.tasks.length },
+      });
+      return settled;
+    } catch (error) {
+      observability().record({
+        stage: 'reconcile',
+        event: 'reconcile.failed',
+        level: 'error',
+        outcome: 'failed',
+        message: `Reconcile failed for ${jobId}: ${errorMessage(error)}`,
+        correlation: { jobId },
+        data: { classification: classifyFailure(error).classification, reason: errorMessage(error) },
+      });
+      throw error;
     } finally { this.reconciling = false; }
   }
   private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
@@ -334,6 +362,13 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   protected async launch(job: Job, task: Task): Promise<void> {
+    return withObservabilityCorrelation(
+      { repository: job.repository, prNumber: job.prNumber, jobId: job.id, taskId: task.id },
+      () => this.launchCorrelated(job, task),
+    );
+  }
+
+  private async launchCorrelated(job: Job, task: Task): Promise<void> {
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
       await transitionTaskEvent(task, 'fail');
@@ -422,6 +457,13 @@ export class Reconciler extends ReconcilerReviewBase {
 
     this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: Date.now(), workerStarted: false, processSettled: false });
     this.registerExecutionOwner(job.id, task.id, durableExecutionId);
+    observability().record({
+      stage: 'transition', event: 'task.dispatch', outcome: 'succeeded',
+      message: `Task ${task.id} dispatched to ${task.adapter}`,
+      correlation: { repository: job.repository, prNumber: job.prNumber, jobId: job.id, taskId: task.id, executionId: durableExecutionId },
+      transition: { graph: 'task-lifecycle', from: 'QUEUED', to: 'QUEUED', actions: ['effect.launchTask'] },
+      data: { adapter: adapter.id, attempt: task.attempt, model: task.routing?.model ?? null },
+    });
     const terminalTimer = setTimeout(() => {
       this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
     }, Math.max(1, task.timeoutMs));

@@ -42,6 +42,10 @@ RelayStore owns local operational execution facts; GitHub remains the human-read
 
 These paths always represent the current canonical graphs. Historical graph definitions are available through Git history, tags, and commits rather than parallel versioned files in `workflow/`. See [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable profile and runtime boundary.
 
+### Structured runtime observability
+
+`src/observability.ts` is the single structured logging/event boundary that records why a lifecycle or projection decision happened. One correlated record chain (`wake -> graph -> transition -> store commit -> projection outcome`) lets an operator reconstruct a representative task lifecycle without ad-hoc stderr parsing. Records are observational only, never a second durable store; they correlate by repository/PR/job/task/execution, classify failures as deterministic `conflict` vs `transient` retry vs `terminal`, redact secrets/prompts, bound large payloads, and keep routine idle/no-op cycles quiet at the default level. See [`docs/structured-observability.md`](docs/structured-observability.md) for the record contract, fields, noise policy, and redaction rules.
+
 ## Quick start
 
 For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
