@@ -13,9 +13,11 @@
  * ```
  *
  * `[choices]` is an explicit, additive list of provider/model/reasoning routes.
- * `[routing-instruction]` is opaque guidance forwarded to Laya verbatim.
- * Everything outside these sections is ignored so legacy free-text files remain
- * valid and Relay never has to guess at intent.
+ * `[routing-instruction]` is opaque guidance forwarded to Laya verbatim: the
+ * exact section body is preserved byte-for-byte (leading and trailing
+ * whitespace, blank lines, and line endings included) so Relay never rewrites or
+ * normalizes user intent. Everything outside these sections is ignored so legacy
+ * free-text files remain valid and Relay never has to guess at intent.
  */
 
 export type RouterRuleChoice = {
@@ -32,6 +34,8 @@ export type ParsedRouterRules = {
 const SECTION_CHOICES = 'choices';
 const SECTION_INSTRUCTION = 'routing-instruction';
 
+const SECTION_HEADER = /^[ \t]*\[([a-z][a-z0-9-]*)\][ \t]*\r?$/gim;
+
 function sectionOf(line: string): string | null {
   const match = line.match(/^\s*\[([a-z][a-z0-9-]*)\]\s*$/i);
   return match ? match[1].toLowerCase() : null;
@@ -42,13 +46,38 @@ function choiceKey(choice: RouterRuleChoice): string {
 }
 
 /**
+ * Return the raw body of the first section named `name`, exactly as authored.
+ *
+ * The body begins after the line terminator that ends the section header line
+ * (the terminator belongs to the header) and ends at the start of the next
+ * section header line, or at end of input. Nothing inside the body is trimmed or
+ * normalized: whitespace, blank lines, and line endings are part of the
+ * forwarded instruction.
+ */
+function rawSectionBody(text: string, name: string): string | null {
+  const headers: Array<{ name: string; lineStart: number; lineEnd: number }> = [];
+  for (const match of text.matchAll(SECTION_HEADER)) {
+    const lineStart = match.index ?? 0;
+    headers.push({ name: match[1].toLowerCase(), lineStart, lineEnd: lineStart + match[0].length });
+  }
+  const index = headers.findIndex(header => header.name === name);
+  if (index < 0) return null;
+  let bodyStart = headers[index].lineEnd;
+  if (text[bodyStart] === '\r') bodyStart += 1;
+  if (text[bodyStart] === '\n') bodyStart += 1;
+  const bodyEnd = index + 1 < headers.length ? headers[index + 1].lineStart : text.length;
+  return text.slice(bodyStart, bodyEnd);
+}
+
+/**
  * Parse explicit router choices and the routing instruction from Router Rules.
- * Duplicate choices are collapsed deterministically (first occurrence wins).
+ *
+ * `[choices]` entries are deduplicated deterministically (first occurrence
+ * wins). The `[routing-instruction]` body is captured verbatim.
  */
 export function parseRouterRules(text: string): ParsedRouterRules {
   const choices: RouterRuleChoice[] = [];
   const seen = new Set<string>();
-  const instructionLines: string[] = [];
   let section: string | null = null;
 
   for (const rawLine of text.split(/\r?\n/)) {
@@ -57,10 +86,7 @@ export function parseRouterRules(text: string): ParsedRouterRules {
       section = header;
       continue;
     }
-    if (section === SECTION_INSTRUCTION) {
-      instructionLines.push(rawLine);
-      continue;
-    }
+    if (section === SECTION_INSTRUCTION) continue;
     if (section !== SECTION_CHOICES) continue;
     if (!rawLine.trim() || rawLine.trim().startsWith('#')) continue;
     const match = rawLine.match(/^\s*([A-Za-z0-9._-]+)\s*:\s*(.+)$/);
@@ -81,5 +107,5 @@ export function parseRouterRules(text: string): ParsedRouterRules {
     }
   }
 
-  return { choices, routingInstruction: instructionLines.join('\n').trim() };
+  return { choices, routingInstruction: rawSectionBody(text, SECTION_INSTRUCTION) ?? '' };
 }

@@ -36,7 +36,7 @@ Prefer zai until its quota resets; otherwise use the openai default.
 
 `[choices]` is an additive list of `provider: model [reasoning]` routes. Relay merges it with the discovered profile defaults, deduplicates the result, and applies the authoritative hard gates; the surviving set becomes exactly one merged choice list that Laya chooses from. Runtime catalog models are **not** auto-added: a catalog model becomes a choice only when an explicit `[choices]` entry names it. Relay does not parse or repair user intent beyond reading these explicit entries.
 
-`[routing-instruction]` is opaque guidance forwarded to Laya verbatim; the active one-stage decision reads it as `facts.routing_instruction`. Text outside both sections is ignored, so legacy free-text files remain valid but no longer influence routing. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is present in the discovered profile defaults or an explicit `[choices]` entry.
+`[routing-instruction]` is opaque guidance forwarded to Laya verbatim; the active one-stage decision reads it as `facts.routing_instruction`. The section body is preserved byte-for-byte: leading/trailing whitespace, blank lines, and line endings are not trimmed or normalized, and the header line's own terminator is not attached to the instruction. Text outside both sections is ignored, so legacy free-text files remain valid but no longer influence routing. Non-OpenAI Codex profiles remain eligible only when their configured provider/model is present in the discovered profile defaults or an explicit `[choices]` entry.
 
 ## Codex fallback
 

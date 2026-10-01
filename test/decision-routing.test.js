@@ -213,7 +213,7 @@ test('user_input_rules are interpreted by Laya and never parsed into model choic
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-6-astra')));
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-5.6-terra')));
     assert.equal(calls[0].contract.question.includes('merged choice list'), true);
-    assert.equal(calls[0].request.facts.routing_instruction, instruction);
+    assert.equal(calls[0].request.facts.routing_instruction, `${instruction}\n`);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-sol');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -629,7 +629,32 @@ test('Router Rules parse explicit [choices] and [routing-instruction] and ignore
   ]);
   assert.equal(parsed.routingInstruction, 'Prefer zai until quota resets.\nOtherwise use the openai default.');
   assert.deepEqual(parseRouterRules('no sections here'), { choices: [], routingInstruction: '' });
-  assert.equal(parseRouterRules('[routing-instruction]\nonly guidance\n').routingInstruction, 'only guidance');
+  assert.equal(parseRouterRules('[routing-instruction]\nonly guidance\n').routingInstruction, 'only guidance\n');
+});
+
+test('[routing-instruction] is forwarded verbatim without trimming or normalization', async () => {
+  const { parseRouterRules } = await import('../dist/router-rules.js');
+
+  // Leading/trailing blank lines, indentation, and interior blank lines survive.
+  const padded = '[choices]\nopenai: sol medium\n\n[routing-instruction]\n\n  Keep tabs\tand  spacing  \n\nPrefer zai until quota resets.\n\n';
+  assert.equal(
+    parseRouterRules(padded).routingInstruction,
+    '\n  Keep tabs\tand  spacing  \n\nPrefer zai until quota resets.\n\n',
+  );
+
+  // A CRLF file preserves CRLF inside the instruction body.
+  assert.equal(
+    parseRouterRules('[routing-instruction]\r\nLine one\r\nLine two\r\n').routingInstruction,
+    'Line one\r\nLine two\r\n',
+  );
+
+  // No trailing newline when the user did not author one.
+  assert.equal(parseRouterRules('[routing-instruction]\nno trailing newline').routingInstruction, 'no trailing newline');
+
+  // An empty instruction section yields an empty string, not whitespace.
+  assert.equal(parseRouterRules('[routing-instruction]\n').routingInstruction, '');
+  assert.equal(parseRouterRules('[routing-instruction]').routingInstruction, '');
+  assert.equal(parseRouterRules('[choices]\nopenai: sol medium\n').routingInstruction, '');
 });
 
 test('profile defaults merge with explicit [choices], deduplicate, and exclude unreferenced catalog models', async () => {
@@ -656,7 +681,7 @@ test('profile defaults merge with explicit [choices], deduplicate, and exclude u
     ]);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].contract.question.includes('merged choice list'), true);
-    assert.equal(calls[0].request.facts.routing_instruction, 'Stay on openai.');
+    assert.equal(calls[0].request.facts.routing_instruction, 'Stay on openai.\n');
     assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.source), ['profile-default', 'explicit-choice']);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');
   } finally {
