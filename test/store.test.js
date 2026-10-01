@@ -259,7 +259,7 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient();
   const trusted = new Set(['bot']);
-  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body' };
+  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body', autoMerge: false };
 
   const first = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
   const second = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
@@ -267,6 +267,8 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   assert.equal(first.pr.number, second.pr.number);
   assert.equal(first.job.objective, 'body');
   assert.equal(second.job.objective, 'body');
+  assert.equal(first.job.autoMerge, true);
+  assert.equal(second.job.autoMerge, true);
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 0);

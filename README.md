@@ -128,7 +128,7 @@ Autonomous jobs can also be scheduled. The Job marker stores a five-field cron e
 [Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
 operational contract.
 
-job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
+job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only and always enables auto-merge; `--no-auto-merge` is not a `job create` option. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
 To create a Job on an existing unmanaged PR, use the same `job create` action with `--pr` instead of `--head`:
 

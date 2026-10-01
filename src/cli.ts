@@ -39,7 +39,7 @@ export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; tag?: Job['tag']; autoMerge?: boolean; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -60,7 +60,7 @@ export async function ensureManagedGitHubJob(
     priority: options.priority ?? 'P2',
     executionMode: options.executionMode ?? 'fixed',
     tag: options.tag,
-    autoMerge: options.autoMerge ?? true,
+    autoMerge: true,
     reviewEnabled: options.reviewEnabled ?? true,
     prNumber: pr.number,
     repository: repositoryName,
@@ -274,6 +274,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
+    if (hasArg(args, '--no-auto-merge')) throw new Error('job create does not accept --no-auto-merge; new Jobs always enable auto-merge');
     const taskOnlyFlags = ['--start','--task-id','--input','--input-file','--adapter','--provider','--model','--profile','--reasoning','--story-size','--project','--agent','--parent','--deps','--capabilities','--attachments','--max-attempts','--timeout','--cwd','--chatgpt-project','--chatgpt-tab-close-policy','--output','--output-path','--draft','--queue'];
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
@@ -302,7 +303,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       executionMode: requestedExecutionMode(args),
       schedule: scheduleFromArgs(args),
       tag: jobTagFromArgs(args),
-      autoMerge: !hasArg(args, '--no-auto-merge'),
       reviewEnabled: !hasArg(args, '--no-review'),
       continuation: continuation(args),
       prNumber,
