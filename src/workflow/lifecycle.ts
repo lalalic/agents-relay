@@ -15,12 +15,14 @@ function v2WorkflowDecision<State extends string>(
   event: string,
   facts: WorkflowContext = {},
 ): WorkflowDecision<State> {
+  // Pure lifecycle predicates still enter through the dispatcher facade, but
+  // suppress observability because no durable transition is being applied.
   const actions: string[] = [];
   const decision = dispatchWorkflowGraphSync(runtime, {
     initialState: from,
     input: { transport: 'event', id: event, payload: {} },
     durableFacts: facts,
-    graphName: runtime === jobLifecycleV2 ? 'job-lifecycle' : 'task-lifecycle',
+    observe: false,
     executeAction: actionId => { actions.push(actionId); return {}; },
   });
   if (!decision.accepted) return emptyWorkflowDecision<State>(decision.reason === 'ambiguous' ? 'ambiguous' : 'no_transition');

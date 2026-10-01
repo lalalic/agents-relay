@@ -11,6 +11,7 @@ export type WorkflowDispatchOptions = {
   persistTransition?: (source: string, target: string) => void | Promise<void>;
   publishEvent?: (id: string, payload: unknown) => void | Promise<void>;
   maxSteps?: number;
+  observe?: boolean;
 };
 
 /**
@@ -21,11 +22,15 @@ export type WorkflowDispatchOptions = {
  */
 function observeDecision(graphName: string | undefined, input: GraphInput, decision: GraphDecision): void {
   if (decision.accepted) {
+    const noOp = decision.source === decision.target && decision.actions.length === 0;
     observability().record({
       stage: 'graph',
       event: input.id,
-      outcome: 'succeeded',
-      message: `Graph ${graphName ?? 'workflow'} accepted ${decision.source} -> ${decision.target}`,
+      level: noOp ? 'debug' : undefined,
+      outcome: noOp ? 'noop' : 'succeeded',
+      message: noOp
+        ? `Graph ${graphName ?? 'workflow'} accepted no-op ${decision.source} -> ${decision.target}`
+        : `Graph ${graphName ?? 'workflow'} accepted ${decision.source} -> ${decision.target}`,
       transition: {
         graph: graphName ?? null,
         from: decision.source,
@@ -78,7 +83,7 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
       input: options.input,
       durableFacts: options.durableFacts ?? {},
     });
-    observeDecision(options.graphName, options.input, result.decision);
+    if (options.observe !== false) observeDecision(options.graphName, options.input, result.decision);
     if (!result.decision.accepted) return result.decision;
     current = result.decision.target;
     if (!options.isTransientState?.(current)) return result.decision;
@@ -97,7 +102,7 @@ export function dispatchWorkflowGraphSync(runtime: GraphRuntime, options: Workfl
       publishEvent: event => { const result = options.publishEvent?.(event.id, event.payload); if (result instanceof Promise) throw new Error('sync workflow publishEvent returned Promise'); },
     });
     const result = dispatcher.dispatchSync({ currentState: current, input: options.input, durableFacts: options.durableFacts ?? {} });
-    observeDecision(options.graphName, options.input, result.decision);
+    if (options.observe !== false) observeDecision(options.graphName, options.input, result.decision);
     if (!result.decision.accepted) return result.decision;
     current = result.decision.target;
     if (!options.isTransientState?.(current)) return result.decision;

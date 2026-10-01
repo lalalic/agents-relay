@@ -14,7 +14,7 @@ import {
 } from '../dist/observability.js';
 import { decideTaskLifecycle } from '../dist/workflow/lifecycle.js';
 import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from '../dist/workflow/dispatcher.js';
-import { taskLifecycleV2 } from '../dist/workflow/definitions-v2.js';
+import { jobLifecycleV2, taskLifecycleV2 } from '../dist/workflow/definitions-v2.js';
 import { SQLiteRelayStore } from '../dist/relay-store.js';
 import { GitHubProjectionWriter, ProjectedDurableStore, isTerminalProjectionFailure } from '../dist/projected-store.js';
 import { InMemoryStore } from '../dist/store.js';
@@ -86,12 +86,45 @@ test('graph dispatcher records decision identity and stays quiet on no_transitio
   } finally { verbose.restore(); }
 });
 
+test('same-state actionless graph decisions are debug no-ops, not info transitions', () => {
+  const capture = collecting('info');
+  try {
+    const decision = dispatchWorkflowGraphSync(jobLifecycleV2, {
+      initialState: 'ACTIVE',
+      input: { transport: 'event', id: 'reconcile', payload: {} },
+      durableFacts: { prOpen: false },
+      graphName: 'job-lifecycle',
+    });
+    assert.equal(decision.accepted, true);
+    assert.equal(decision.source, 'ACTIVE');
+    assert.equal(decision.target, 'ACTIVE');
+    assert.deepEqual(decision.actions, []);
+    assert.deepEqual(capture.records, []);
+  } finally { capture.restore(); }
+});
+
+test('pure lifecycle decisions do not emit phantom transition observations', () => {
+  const capture = collecting('debug');
+  try {
+    const decision = decideTaskLifecycle({ id: 'task-predicate', state: 'RUNNING' }, 'cancel', {});
+    assert.equal(decision.accepted, true);
+    assert.equal(decision.target, 'CANCELLED');
+    assert.deepEqual(capture.records, []);
+  } finally { capture.restore(); }
+});
+
 test('representative wake -> graph -> store -> projection lifecycle is reconstructible', async () => {
   const capture = collecting('debug');
   const dir = await mkdtemp(join(tmpdir(), 'agents-relay-obs-'));
   const store = new SQLiteRelayStore(join(dir, 'relay.db'));
   try {
-    const turn = decideTaskLifecycle({ jobId: 'job-1', id: 'task-1', state: 'QUEUED' }, 'task.started', {});
+    const turn = dispatchWorkflowGraphSync(taskLifecycleV2, {
+      initialState: 'QUEUED',
+      input: { transport: 'event', id: 'task.started', payload: {} },
+      durableFacts: {},
+      graphName: 'task-lifecycle',
+    });
+    assert.equal(turn.accepted, true);
     assert.equal(turn.target, 'RUNNING');
 
     await withObservabilityCorrelation(
