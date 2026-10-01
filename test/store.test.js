@@ -285,6 +285,18 @@ test('dashboard keeps every unfinished job and only the latest ten completed job
   assert.equal(result.some(item => item.job.id === 'job-10'), false);
 });
 
+test('dashboard completion filtering follows durable Job lifecycle, not GitHub PR state', () => {
+  const activeMerged = { job: { ...job('job-1'), state: 'ACTIVE', prNumber: 1 }, githubState: 'MERGED', draft: false, mergedAt: '2026-01-01T00:00:00.000Z', closedAt: null };
+  const completed = Array.from({ length: 12 }, (_, index) => ({
+    job: { ...job('job-' + (index + 10)), state: 'COMPLETED', prNumber: index + 10 },
+    githubState: 'MERGED', draft: false, mergedAt: '2026-02-' + String(index + 1).padStart(2, '0') + 'T00:00:00.000Z', closedAt: null,
+  }));
+  const result = dashboardManagedJobs([...completed, activeMerged]);
+  assert.equal(result[0].job.id, 'job-1');
+  assert.equal(result[0].job.state, 'ACTIVE');
+  assert.equal(result.length, 11);
+});
+
 test('dashboard terminal history uses latest durable activity for discovery ordering', () => {
   const overview = (id, updatedAt, mergedAt) => ({ job: { ...job(id), state: 'COMPLETED', updatedAt, prNumber: Number(id.replace('job-', '')) }, githubState: 'MERGED', draft: false, mergedAt, closedAt: null });
   const items = Array.from({ length: 10 }, (_, index) => overview(`job-${index + 1}`, `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`, `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`));
