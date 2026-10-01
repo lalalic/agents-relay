@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { parseRouterRules, ParsedRouterRules } from './router-rules.js';
 
 export type RoutingPolicy = {
   disabledProfiles?: string[];
@@ -49,21 +50,21 @@ export function policyPath(explicit?: string): string {
   return explicit ?? process.env.AGENTS_RELAY_ROUTING_POLICY ?? join(process.cwd(), '.agents-relay-routing-policy.json');
 }
 
-type RouterRules = { path: string; hash: string; text: string };
+export type RouterRules = { path: string; hash: string; text: string; parsed: ParsedRouterRules };
 
 async function loadRouterRules(path: string): Promise<RouterRules> {
   try {
     const text = await readFile(path, 'utf8');
-    return { path, hash: createHash('sha256').update(text).digest('hex'), text };
+    return { path, hash: createHash('sha256').update(text).digest('hex'), text, parsed: parseRouterRules(text) };
   } catch {
-    return { path, hash: 'none', text: '' };
+    return { path, hash: 'none', text: '', parsed: parseRouterRules('') };
   }
 }
 
 async function saveRouterRules(path: string, text: string): Promise<RouterRules> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, text, 'utf8');
-  return { path, hash: createHash('sha256').update(text).digest('hex'), text };
+  return { path, hash: createHash('sha256').update(text).digest('hex'), text, parsed: parseRouterRules(text) };
 }
 
 export function executionRouterRulesPath(explicit?: string): string {

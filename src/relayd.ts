@@ -78,6 +78,13 @@ Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Examples:
   npx agents-relayd --repo OWNER/REPO
   npx agents-relayd --workspace ~/Workspace`;
+function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
+  const stages = decisionInput?.stages;
+  if (!Array.isArray(stages) || stages.length === 0) return [];
+  const contract = (stages[0] as { contract?: { choices?: unknown } }).contract;
+  return Array.isArray(contract?.choices) ? contract.choices.filter((item): item is string => typeof item === 'string') : [];
+}
+
 function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 export function normalizeDaemonArguments(argv: readonly string[]): DaemonArguments {
   const repository = value(argv, '--repo') || null;
@@ -385,6 +392,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         providers: usage.providers,
         credits: usage.credits,
       },
+      effectiveChoices: result.audit?.contract?.effectiveChoices ?? [],
+      routingInstruction: result.audit?.contract?.routingInstruction ?? '',
+      mergedChoices: firstStageChoices(result.audit?.decision_input),
       decisionInput: result.audit?.decision_input ?? null,
       gates: result.audit?.gate_results ?? [],
     };

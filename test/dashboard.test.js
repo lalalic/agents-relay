@@ -575,7 +575,7 @@ test('dashboard exposes reviewer approval, changes-required, stale, and merge-re
 test('dashboard exposes one free-text Execution Router rules editor', () => {
   assert.match(dashboardHtml, /id="rules-tab"[^>]*>Router Rules</);
   assert.match(dashboardHtml, /id="rules-text"[^>]*class="rules-textarea"/);
-  assert.match(dashboardHtml, /Free-text soft policy loaded by the Execution Router/);
+  assert.match(dashboardHtml, /Execution Router rules with an explicit <code>\[choices\]<\/code> section/);
   assert.match(dashboardHtml, /fetch\('\/api\/execution-router-rules'/);
   assert.match(dashboardHtml, /method:'PUT'/);
   assert.match(dashboardHtml, /New routing decisions will load these rules/);
@@ -683,5 +683,9 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.match(dashboardHtml, /loadJSON\('\/api\/decision-audit'/);
   assert.match(dashboardHtml, /laya_input/);
   assert.match(dashboardHtml, /hard_gates/);
+  assert.match(dashboardHtml, /effective_choices/);
+  assert.match(dashboardHtml, /routing_instruction/);
+  assert.match(dashboardHtml, /\[choices\]/);
+  assert.match(dashboardHtml, /\[routing-instruction\]/);
   assert.match(dashboardHtml, /Select a Job and Task first/);
 });

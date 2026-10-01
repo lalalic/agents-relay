@@ -129,7 +129,7 @@ test('unified execution audit records full worker+model routes and selected rout
       name: 'capture',
       decide: async (_request, contract) => ({
         type: 'choice',
-        choice: contract.choices.find(item => item === 'worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults') ?? contract.choices[0],
+        choice: contract.choices.find(item => item.includes('provider=chatgpt')) ?? contract.choices[0],
       }),
     };
     const workers = [
@@ -147,13 +147,15 @@ test('unified execution audit records full worker+model routes and selected rout
     assert.ok(audit.candidates.some(item => item.worker.adapter === 'codex' && item.model.provider === 'openai'));
     assert.ok(audit.candidates.some(item => item.worker.adapter === 'chatgpt' && item.model.provider === 'chatgpt'));
     assert.equal(audit.worker_gate_results.find(item => item.worker_id === 'chatgpt/browser-worker').eligible, true);
-    assert.equal(audit.decision_input.type, 'staged_route_decision');
-    assert.equal(audit.decision_input.stages.length, 3);
-    assert.equal(audit.decision_input.stages[0].name, 'provider');
-    assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=codex provider=openai default_model=gpt-test'));
-    assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults'));
+    assert.equal(audit.decision_input.type, 'merged_choice_decision');
+    assert.equal(audit.decision_input.stages.length, 1);
+    assert.equal(audit.decision_input.stages[0].name, 'route');
+    assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=codex provider=openai model=gpt-test reasoning=medium default=true'));
+    assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt model=account-defaults reasoning=provider-default default=true'));
     assert.equal(audit.decision_input.stages[0].facts.runtime.chatgpt_running, 0);
     assert.ok(Array.isArray(audit.decision_input.stages[0].facts.worker_candidates));
+    assert.ok(Array.isArray(audit.contract.effectiveChoices));
+    assert.equal(audit.contract.routingInstruction, '');
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }

@@ -157,13 +157,11 @@ test('Codex runtime catalog supplies model candidates while free-text rules stay
       },
     };
     const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
-    assert.equal(calls[0].contract.type, 'choice');
-    assert.deepEqual(calls[0].contract.choices, ['model=gpt-5.6-luna configured_default=true', 'model=gpt-6-astra configured_default=false', 'model=gpt-5.6-sol configured_default=false']);
-    assert.equal(calls[0].request.facts.selected.worker, 'codex');
-    assert.equal(calls[0].request.facts.selected.provider, 'openai');
-    assert.deepEqual(calls[0].request.facts.model_candidates.map(item => item.model), ['gpt-5.6-luna', 'gpt-6-astra', 'gpt-5.6-sol']);
-    assert.equal(calls[0].request.facts.user_input_rules, '');
-    assert.match(calls[0].request.facts.routing_instruction, /does not parse user_input_rules/);
+    // Only the configured profile default is legal; runtime catalog models are not auto-added choices.
+    assert.equal(calls.length, 0);
+    assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.model), ['gpt-5.6-luna']);
+    assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.source), ['profile-default']);
+    assert.equal(result.audit.contract.routingInstruction, '');
     assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -186,24 +184,36 @@ test('user_input_rules are interpreted by Laya and never parsed into model choic
       ],
     }));
     const rulesPath = join(home, 'rules.md');
-    await writeFile(rulesPath, 'openai: gpt-5.6-luna high, sol medium, astra medium for complex and big tasks\n');
+    const instruction = 'Use sol for complex work; otherwise prefer the configured default.';
+    await writeFile(rulesPath, [
+      '[choices]',
+      'openai: sol medium',
+      'openai: sol high',
+      '',
+      '[routing-instruction]',
+      instruction,
+      '',
+    ].join('\n'));
     const calls = [];
     const engine = {
       name: 'capture',
       async decide(request, contract) {
         calls.push({ request, contract });
-        if (contract.choices.some(item => item.startsWith('model=gpt-5.6-sol '))) return { type: 'choice', choice: contract.choices.find(item => item.startsWith('model=gpt-5.6-sol ')) };
-        if (contract.choices.includes('reasoning=medium')) return { type: 'choice', choice: 'reasoning=medium' };
-        return { type: 'choice', choice: contract.choices[0] };
+        return { type: 'choice', choice: contract.choices.find(item => item.includes('model=gpt-5.6-sol reasoning=medium')) ?? contract.choices[0] };
       },
     };
     const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
     const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
-    assert.deepEqual(calls[0].contract.choices, ['model=gpt-5.6-luna configured_default=true', 'model=gpt-6-astra configured_default=false', 'model=gpt-5.6-sol configured_default=false', 'model=gpt-5.6-terra configured_default=false']);
-    assert.ok(calls[0].contract.choices.some(item => item.startsWith('model=gpt-5.6-terra ')));
-    assert.equal(calls[0].request.facts.user_input_rules, 'openai: gpt-5.6-luna high, sol medium, astra medium for complex and big tasks\n');
-    assert.deepEqual(calls[1].contract.choices, ['reasoning=medium', 'reasoning=high']);
-    assert.equal(calls[1].request.facts.user_input_rules, calls[0].request.facts.user_input_rules);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].contract.choices, [
+      'worker=codex provider=openai model=gpt-5.6-luna reasoning=medium default=true',
+      'worker=codex provider=openai model=gpt-5.6-sol reasoning=medium default=false',
+      'worker=codex provider=openai model=gpt-5.6-sol reasoning=high default=false',
+    ]);
+    assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-6-astra')));
+    assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-5.6-terra')));
+    assert.equal(calls[0].contract.question.includes('merged choice list'), true);
+    assert.equal(calls[0].request.facts.routing_instruction, instruction);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-sol');
     assert.equal(result.candidate.routing.reasoning, 'medium');
   } finally {
@@ -448,7 +458,7 @@ test('execution router makes one decision over complete routes with compact task
       name: 'fake',
       async decide(request, decisionContract) {
         calls.push({ request, contract: decisionContract });
-        return { type: 'choice', choice: decisionContract.choices.find(item => item === 'worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults') ?? decisionContract.choices[0] };
+        return { type: 'choice', choice: decisionContract.choices.find(item => item.includes('provider=chatgpt')) ?? decisionContract.choices[0] };
       },
     };
     const requirements = { capabilities: ['browser-harness', 'review'], taskKind: 'review', trustDomain: 'trusted', region: 'ca', labels: { tier: 'interactive' } };
@@ -458,9 +468,10 @@ test('execution router makes one decision over complete routes with compact task
     ], requirements, { decisionEngine: engine, decisionMode: 'active', taskFacts: { role: 'reviewer' } });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].contract.type, 'choice');
-    assert.ok(calls[0].contract.choices.includes('worker=codex provider=openai default_model=gpt-test'));
-    assert.ok(calls[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt default_model=account-defaults'));
+    assert.ok(calls[0].contract.choices.includes('worker=codex provider=openai model=gpt-test reasoning=medium default=true'));
+    assert.ok(calls[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt model=account-defaults reasoning=provider-default default=true'));
     assert.ok(Array.isArray(calls[0].request.facts.worker_candidates));
+    assert.ok(Array.isArray(calls[0].request.facts.effective_choices));
     assert.equal(calls[0].request.facts.context.task_shape.story_size, 'M');
     assert.equal(calls[0].request.facts.context.task_shape.preferred_worker, 'chatgpt');
     assert.equal(calls[0].request.facts.preferred_routes, undefined);
@@ -594,4 +605,110 @@ test('execution task shape keeps router policy simple', () => {
   });
   assert.equal(executionTaskShape({ storySize: 'M' }).preferredWorker, 'chatgpt');
   assert.equal(executionTaskShape({ storySize: 'L' }).preferredWorker, 'codex');
+});
+
+test('Router Rules parse explicit [choices] and [routing-instruction] and ignore other text', async () => {
+  const { parseRouterRules } = await import('../dist/router-rules.js');
+  const text = [
+    'legacy prose that must be ignored',
+    '[choices]',
+    'openai: sol medium, luna high',
+    'openai: sol medium',
+    'zai: glm-5.3-flash high',
+    'unparseable line without colon',
+    '',
+    '[routing-instruction]',
+    'Prefer zai until quota resets.',
+    'Otherwise use the openai default.',
+  ].join('\n');
+  const parsed = parseRouterRules(text);
+  assert.deepEqual(parsed.choices, [
+    { provider: 'openai', model: 'sol', reasoning: 'medium' },
+    { provider: 'openai', model: 'luna', reasoning: 'high' },
+    { provider: 'zai', model: 'glm-5.3-flash', reasoning: 'high' },
+  ]);
+  assert.equal(parsed.routingInstruction, 'Prefer zai until quota resets.\nOtherwise use the openai default.');
+  assert.deepEqual(parseRouterRules('no sections here'), { choices: [], routingInstruction: '' });
+  assert.equal(parseRouterRules('[routing-instruction]\nonly guidance\n').routingInstruction, 'only guidance');
+});
+
+test('profile defaults merge with explicit [choices], deduplicate, and exclude unreferenced catalog models', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-merged-choices-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'models_cache.json'), JSON.stringify({
+      models: [
+        { slug: 'gpt-6-astra', visibility: 'list', supported_in_api: true, supported_reasoning_levels: [{ effort: 'medium' }] },
+        { slug: 'gpt-5.6-sol', visibility: 'list', supported_in_api: true, supported_reasoning_levels: [{ effort: 'medium' }, { effort: 'high' }] },
+      ],
+    }));
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(rulesPath, '[choices]\nopenai: luna medium\nopenai: sol high\nopenai: sol high\n[routing-instruction]\nStay on openai.\n');
+    const calls = [];
+    const engine = { name: 'capture', async decide(request, contract) { calls.push({ request, contract }); return { type: 'choice', choice: contract.choices[0] }; } };
+    const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
+    assert.deepEqual(calls[0].contract.choices, [
+      'worker=codex provider=openai model=gpt-5.6-luna reasoning=medium default=true',
+      'worker=codex provider=openai model=gpt-5.6-sol reasoning=high default=false',
+    ]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].contract.question.includes('merged choice list'), true);
+    assert.equal(calls[0].request.facts.routing_instruction, 'Stay on openai.');
+    assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.source), ['profile-default', 'explicit-choice']);
+    assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('hard gates remove explicit [choices] before the merged list reaches Laya', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-gated-choices-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-5.6-luna"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    await writeFile(join(home, 'zai.config.toml'), 'model_provider = "zai"\nmodel = "glm-test"\nmodel_reasoning_effort = "high"\n');
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(join(home, 'models_cache.json'), JSON.stringify({
+      models: [{ slug: 'gpt-5.6-sol', visibility: 'list', supported_in_api: true, supported_reasoning_levels: [{ effort: 'high' }] }],
+    }));
+    await writeFile(rulesPath, '[choices]\nopenai: sol high\nzai: glm-test high\n');
+    const usage = { generatedAt: 'x', providers: [], credits: [{ id: 'zai', label: 'ZAI', credits: { available: false, generatedAt: 'x', balances: [{ currency: 'USD', total: 0, used: null, remaining: 0 }], reason: null } }] };
+    const calls = [];
+    const engine = { name: 'capture', async decide(request, contract) { calls.push({ request, contract }); return { type: 'choice', choice: contract.choices[0] }; } };
+    const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath, usage });
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].contract.choices.some(item => item === 'worker=codex provider=openai model=gpt-5.6-luna reasoning=medium default=true'));
+    assert.ok(calls[0].contract.choices.some(item => item === 'worker=codex provider=openai model=gpt-5.6-sol reasoning=high default=false'));
+    assert.ok(!calls[0].contract.choices.some(item => item.includes('provider=zai')));
+    assert.ok(!result.audit.contract.effectiveChoices.some(item => item.provider === 'zai'));
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('explicit [choices] referencing an unconfigured provider are not fabricated', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'relay-unknown-choice-'));
+  const priorHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await writeFile(join(home, 'config.toml'), 'model = "gpt-main"\nmodel_provider = "openai"\nmodel_reasoning_effort = "medium"\n');
+    const rulesPath = join(home, 'rules.md');
+    await writeFile(rulesPath, '[choices]\nopenai: gpt-main medium\ndeepseek: deepseek-flash high\n');
+    const calls = [];
+    const engine = { name: 'capture', async decide(request, contract) { calls.push(contract); return { type: 'choice', choice: contract.choices[0] }; } };
+    const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
+    assert.deepEqual(result.audit.contract.effectiveChoices.map(item => [item.provider, item.model]), [['openai', 'gpt-main']]);
+    assert.equal(result.candidate.routing.provider, 'openai');
+  } finally {
+    if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
+    await rm(home, { recursive: true, force: true });
+  }
 });
