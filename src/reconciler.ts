@@ -106,6 +106,33 @@ export class Reconciler extends ReconcilerReviewBase {
     ));
   }
 
+  private async dispatchExecutableTasks(jobId: string): Promise<Job> {
+    await this.routeExecutableTasks(await this.store.load(jobId));
+    const scheduled = schedule(await this.store.load(jobId));
+    for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
+      this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
+    }
+    const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
+    const dispatchable = scheduled.tasks
+      .filter(task => task.state === 'QUEUED'
+        && task.executionId === null
+        && task.kind !== 'planner'
+        && task.adapter !== 'orchestrator'
+        && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
+      .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
+      .slice(0, capacity);
+    for (const task of dispatchable) {
+      await transitionTaskEvent(task, 'dispatch', { dispatchable: true }, async actionId => {
+        const outcomes = await this.workflowEffects.execute(
+          [actionId as 'effect.launchTask'],
+          { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: { attempt: task.attempt } },
+        );
+        await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
+      }, async () => { await this.store.saveTask(task); });
+    }
+    return schedule(await this.store.load(jobId));
+  }
+
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
     this.reconciling = true;
@@ -161,32 +188,11 @@ export class Reconciler extends ReconcilerReviewBase {
         scheduled = schedule(await this.maybeCreatePlanner(scheduled));
       }
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
-      if (prState === 'OPEN') {
-        await this.routeExecutableTasks(await this.store.load(jobId));
-        scheduled = schedule(await this.store.load(jobId));
-        for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
-        const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-        const dispatchable = scheduled.tasks
-          .filter(task => task.state === 'QUEUED'
-            && task.executionId === null
-            && task.kind !== 'planner'
-            && task.adapter !== 'orchestrator'
-            && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
-          .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
-          .slice(0, capacity);
-        for (const task of dispatchable) {
-          await transitionTaskEvent(task, 'dispatch', { dispatchable: true }, async actionId => {
-            const outcomes = await this.workflowEffects.execute(
-              [actionId as 'effect.launchTask'],
-              { jobId: scheduled.id, taskId: task.id, transitionKey: `dispatch:${task.attempt}`, data: { attempt: task.attempt } },
-            );
-            await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
-          }, async () => { await this.store.saveTask(task); });
-        }
-      }
+      if (prState === 'OPEN') scheduled = await this.dispatchExecutableTasks(jobId);
       const finalState = schedule(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, prState, headSha);
+      if (prState === 'OPEN') await this.dispatchExecutableTasks(jobId);
       await dispatchJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
