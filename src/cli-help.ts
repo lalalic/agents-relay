@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|plan|blocker|projection|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -11,6 +11,7 @@ Commands:
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
+  escalation               Run the canonical escalation graph and Neo escalation executor
   context resolve          Resolve shared project instructions, skills, agents, and runtimes
   init                     Create a local demo job or initialize a GitHub job
   record                   Backfill a completed task into durable history
@@ -79,6 +80,7 @@ Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head S
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
+  escalation: `Run the canonical escalation workflow for a suspected human/external blocker.\n\nRequired: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-file PATH. Optional: --context/--context-file, --on-needs-user/--on-needs-user-file, --cwd. The executable workflow/escalation.mmd graph invokes Neo escalation, then owns the resolved / failed / needs_user branch. Only needs_user selects the block-for-user path.`,
   status: `Show live aggregate runtime status from the running Agents Relay service.
 
 Usage:

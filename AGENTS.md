@@ -27,6 +27,7 @@ Before implementing any feature or bug fix, identify which layer owns the behavi
 - Do not duplicate graph-owned policy in CLI, reconciler, scheduler, helper, or runtime `if`/`else` branches. Do not hide the same policy inside a composite boolean helper.
 - When ownership is ambiguous, resolve the classification explicitly before implementation. Prefer extending an existing graph/action boundary over inventing a parallel authority path.
 - Tests must exercise the chosen authority layer and, for workflow changes, protect against a second procedural path that can make the same decision.
+- Canonical workflow graph filenames and identities do not use `v1`/`v2`/etc suffixes. Git history is the version history; keep one stable current graph name.
 
 ## Execution context ownership
 

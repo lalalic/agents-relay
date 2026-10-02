@@ -1,0 +1,28 @@
+flowchart LR
+%% relay: initial suspected
+suspected["state: suspected_human_blocker"]
+invoking["state: invoking"]
+resolved["state: resolved"]
+technical["state: technical_failure"]
+user["state: needs_user"]
+
+invoke["action: escalation.invoke"]
+isResolved["guard: escalationResolved"]
+isFailed["guard: escalationFailed"]
+isNeedsUser["guard: escalationNeedsUser"]
+resume["action: escalation.resume_recovery"]
+technicalAction["action: escalation.technical_failure"]
+block["action: escalation.block_for_user"]
+
+suspected -->|on: escalation.requested| invoke
+invoke --> invoking
+
+invoking -->|on: escalation.result| isResolved
+isResolved -->|true| resume
+resume --> resolved
+isResolved -->|false| isFailed
+isFailed -->|true| technicalAction
+technicalAction --> technical
+isFailed -->|false| isNeedsUser
+isNeedsUser -->|true| block
+block --> user
