@@ -84,8 +84,8 @@ test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempoten
   assert.match(recovery.input, /api\/events\?job=neo-pr40&task=final-review-3a941f98a1ad&limit=200/);
   assert.match(recovery.input, /duplicate events/);
   assert.match(recovery.input, /Do not treat the final task\.error string as the complete root cause/);
-  assert.match(recovery.input, /neo escalation/);
-  assert.match(recovery.input, /only needs_user justifies publishing task\.blocked/);
+  assert.match(recovery.input, /agents-relay escalation/);
+  assert.match(recovery.input, /canonical escalation graph invokes Neo escalation and owns the resolved\/failed\/needs_user branch/);
   assert.deepEqual(pendingTroubleshooterTasks(job([failed, recovery])), []);
 });
 
@@ -180,7 +180,7 @@ test('troubleshooter is a discoverable orchestrator-side execution role', async 
   assert.match(agentContract, /Mandatory before diagnosis/);
   assert.match(agentContract, /api\/events\?job=<job_id>&task=<task_id>&limit=200/);
   assert.match(agentContract, /event history cannot be retrieved/);
-  assert.match(agentContract, /neo escalation/);
+  assert.match(agentContract, /agents-relay escalation/);
   assert.match(agentContract, /`resolved`/);
   assert.match(agentContract, /`failed`/);
   assert.match(agentContract, /`needs_user`/);

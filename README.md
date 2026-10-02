@@ -38,6 +38,7 @@ RelayStore owns local operational execution facts; GitHub remains the human-read
 | Scheduled run | [`workflow/scheduled-run.mmd`](workflow/scheduled-run.mmd) |
 | Schedule cycle | [`workflow/schedule-cycle.mmd`](workflow/schedule-cycle.mmd) |
 | Troubleshooter | [`workflow/troubleshooter.mmd`](workflow/troubleshooter.mmd) |
+| Escalation | [`workflow/escalation.mmd`](workflow/escalation.mmd) |
 | Related-task action policy | [`workflow/task-related-action.mmd`](workflow/task-related-action.mmd) |
 
 These paths always represent the current canonical graphs. Historical graph definitions are available through Git history, tags, and commits rather than parallel versioned files in `workflow/`. See [`docs/workflow-engine.md`](docs/workflow-engine.md) for the executable profile and runtime boundary.
@@ -248,7 +249,23 @@ For work that was completed outside the relay but must be represented truthfully
 
 When an ACTIVE Job contains a current-run `FAILED` task, reconciliation may create one P0-priority `troubleshooter` recovery task for that exact failed attempt. `BLOCKED` work is not troubleshooter-owned: it remains blocked until authoritative unblock transitions it to `UNBLOCKED`. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
 
-The Troubleshooter diagnoses before retrying. A task-local or transient execution cause is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the failure cause is repaired does it retry the original FAILED task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
+The Troubleshooter diagnoses before retrying. A task-local or transient execution cause is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. A suspected human/external blocker enters the canonical [`workflow/escalation.mmd`](workflow/escalation.mmd) graph through `agents-relay escalation`; Troubleshooter does not decide the escalation result branch itself.
+
+```mermaid
+flowchart LR
+    Failed[Failed task] --> Troubleshooter
+    Troubleshooter -->|technical| Repair[Repair / retry]
+    Troubleshooter -->|suspected human blocker| Escalation[Escalation graph]
+    Escalation --> Invoke[neo escalation]
+    Invoke --> Codex[Escalation Agent + elevated Local Codex]
+    Codex -->|resolved| Resume[Resume recovery]
+    Codex -->|failed| Technical[Technical recovery evidence]
+    Codex -->|needs_user| User[Notify user + task.blocked]
+    User --> Unblock[Authoritative unblock]
+    Unblock --> Repair
+```
+
+The escalation graph is the authority for what happens after Neo returns: `resolved` selects resume recovery, `failed` selects technical-failure handling, and only `needs_user` selects the block-for-user action. Notification mechanics stay caller-described through `--on-needs-user`; Relay does not bind WeChat, Discord, iMessage, or another channel. Only after the failure cause is repaired does Troubleshooter retry the original FAILED task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
 
 
 ### Authoritative unblock and Planner history

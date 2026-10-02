@@ -12,6 +12,7 @@ import { authoritativeUnblockV2 } from '../dist/workflow/authoritative-unblock-v
 import { scheduledRunV2 } from '../dist/workflow/scheduled-run-v2.js';
 import { scheduleCycleV2 } from '../dist/workflow/schedule-cycle-v2.js';
 import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
+import { escalationGraph } from '../dist/workflow/escalation.js';
 import { reviewLifecycleV2 } from '../dist/workflow/review-v2.js';
 import { taskRelatedActionV2 } from '../dist/workflow/task-related-action-v2.js';
 import { projectionConflictV2 } from '../dist/workflow/projection-conflict-v2.js';
@@ -87,6 +88,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['scheduled-run.mmd', scheduledRunV2],
         ['schedule-cycle.mmd', scheduleCycleV2],
         ['troubleshooter.mmd', troubleshooterV2],
+        ['escalation.mmd', escalationGraph],
         ['task-related-action.mmd', taskRelatedActionV2],
         ['projection-conflict.mmd', projectionConflictV2],
       ]);
