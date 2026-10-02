@@ -378,7 +378,6 @@ function syncFilters(){
   jobSearch.value=searchQuery;
 }
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
-
 const CHAT_SHORTCUTS_KEY='agents-relay:chatgpt-shortcuts';
 const DEFAULT_CHAT_SHORTCUTS=[
   'Why blocked?: %1: why is it blocked? Find the root cause and move it forward.',
@@ -484,11 +483,12 @@ auditRefresh.addEventListener('click',()=>void drawAudit());
 shortcutsSave.addEventListener('click',saveShortcuts);
 window.addEventListener('keydown',event=>{if(event.key==='Tab'&&event.altKey){event.preventDefault();const views=['jobs','usage','graphs','rules','shortcuts'];const current=location.hash==='#/usage'?'usage':location.hash==='#/graphs'?'graphs':location.hash==='#/execution-router-rules'?'rules':location.hash==='#/shortcuts'?'shortcuts':'jobs';const next=views[(views.indexOf(current)+1)%views.length];location.hash=next==='usage'?'#/usage':next==='graphs'?'#/graphs':next==='rules'?'#/execution-router-rules':next==='shortcuts'?'#/shortcuts':(selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs');showView(next);}});
 function parseMessage(message){try{return JSON.parse(message.data);}catch{return null;}}
+function applyStatePatch(patch){if(!patch?.jobId)return false;const job=jobs.find(candidate=>candidate.id===patch.jobId);if(!job)return false;if(patch.jobState)job['state']=patch.jobState;if(patch.jobUpdatedAt)job.updatedAt=patch.jobUpdatedAt;if(patch.taskId&&patch.taskState){const task=(job.tasks||[]).find(candidate=>candidate.id===patch.taskId);if(task){task['state']=patch.taskState;if(patch.taskUpdatedAt)task.updatedAt=patch.taskUpdatedAt;}}return true;}
 const stream=new EventSource('/events');
 stream.onopen=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream connected');connection.className='status-pill ok';};
 stream.onerror=()=>{connection.textContent='';connection.setAttribute('aria-label','Event stream reconnecting');connection.className='status-pill warn';};
 stream.onmessage=message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>jobSelectionKey(job)===jobSelectionKey(payload.job));if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);renderAll();void drawRuntimeSummary();}};
-stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.job){const index=jobs.findIndex(job=>jobSelectionKey(job)===jobSelectionKey(payload.job));if(index>=0)jobs[index]=payload.job;else jobs.push(payload.job);}if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
+stream.addEventListener('relay',message=>{const payload=parseMessage(message);if(payload?.statePatch)applyStatePatch(payload.statePatch);if(payload?.event)addEvent(payload.event);renderAll();void drawRuntimeSummary();});
 if(location.hash==='#/usage')showView('usage');else if(location.hash==='#/graphs')showView('graphs');else if(location.hash==='#/execution-router-rules')showView('rules');else if(location.hash==='#/shortcuts')showView('shortcuts');else showView('jobs');
 setInterval(()=>{if(location.hash!=='#/usage'&&location.hash!=='#/graphs'&&location.hash!=='#/execution-router-rules'&&location.hash!=='#/shortcuts')void refresh();},300000);
 setInterval(()=>{if(location.hash==='#/usage')void drawUsage();},30000);

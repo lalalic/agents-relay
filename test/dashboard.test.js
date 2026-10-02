@@ -136,6 +136,14 @@ test('job detail exposes ChatGPT shortcuts as an empty-first select that resets 
   assert.match(dashboardHtml, /chatShortcutField\(job\)/);
 });
 
+test('dashboard applies lifecycle state patches from relay SSE without refetching jobs', () => {
+  assert.match(dashboardHtml, /function applyStatePatch\(patch\)/);
+  assert.match(dashboardHtml, /if\(patch\.jobState\)job\['state'\]=patch\.jobState/);
+  assert.match(dashboardHtml, /task\['state'\]=patch\.taskState/);
+  assert.match(dashboardHtml, /payload\?\.statePatch\)applyStatePatch\(payload\.statePatch\)/);
+  assert.doesNotMatch(dashboardHtml, /payload\?\.statePatch[\s\S]{0,120}refresh\(/);
+});
+
 test('dashboard exposes the operations-console structure safely', () => {
   assert.match(dashboardHtml, /data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history"/);
   assert.match(dashboardHtml, />Usage<\/button>/);
