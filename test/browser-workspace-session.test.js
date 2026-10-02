@@ -65,8 +65,9 @@ test('ChatGPT adapter uses Browser Workspace session lifecycle', async () => {
 });
 
 
-test('relayd bootstraps ChatGPT Browser Workspace before runtime startup', async () => {
+test('relayd best-effort bootstraps ChatGPT Browser Workspace before runtime startup', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /import \{ ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace \} from '\.\/adapters\.js'/);
-  assert.match(source, /configureExecutionRouterRulesPath\(argv\);\s+await ensureChatGptBrowserWorkspace\(\);\s+const normalized = normalizeDaemonArguments\(argv\);/);
+  assert.match(source, /configureExecutionRouterRulesPath\(argv\);\s+try \{\s+await ensureChatGptBrowserWorkspace\(\);\s+\} catch \(error\) \{\s+process\.stderr\.write\(`Browser Workspace bootstrap skipped:/);
+  assert.match(source, /const normalized = normalizeDaemonArguments\(argv\);/);
 });
