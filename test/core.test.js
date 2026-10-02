@@ -1538,6 +1538,42 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
 });
 
+test('final review created after the first dispatch pass is dispatched in the same reconcile', async () => {
+  const work = task('work', 'RUNNING');
+  const store = new InMemoryStore({ ...job([work]), headSha: 'sha-late-review' });
+  const bus = new MemoryEventBus();
+  const adapter = new FakeAdapter();
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1 });
+  const originalEnsureFinalReview = reconciler.ensureFinalReview.bind(reconciler);
+  let reviewChecks = 0;
+  reconciler.ensureFinalReview = async (...args) => {
+    reviewChecks += 1;
+    if (reviewChecks === 2) {
+      const current = await store.load('j');
+      const currentWork = current.tasks.find(item => item.id === 'work');
+      currentWork.state = 'SUCCEEDED';
+      currentWork.executionId = null;
+      currentWork.leaseOwner = null;
+      currentWork.leaseExpiresAt = null;
+      await store.saveTask(currentWork);
+      args[0] = await store.load('j');
+    }
+    return originalEnsureFinalReview(...args);
+  };
+
+  await reconciler.reconcile('j');
+  const saved = await store.load('j');
+  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(reviewer);
+  assert.equal(adapter.launches, 1);
+  assert.equal(reviewer.attempt, 1);
+  assert.ok(reviewer.executionId);
+
+  await reconciler.reconcile('j');
+  assert.equal((await store.load('j')).tasks.filter(item => item.agentName === 'reviewer').length, 1);
+  assert.equal(adapter.launches, 1);
+});
+
 test('cancelled same-head review creates a versioned review round instead of conflicting', async () => {
   const work=task('work','SUCCEEDED');
   const base='final-review-sha-review-r';
