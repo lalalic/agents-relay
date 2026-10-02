@@ -1539,11 +1539,17 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
 });
 
 test('final review created after the first dispatch pass is dispatched in the same reconcile', async () => {
+  const contextRoot = await mkdtemp(join(tmpdir(), 'agents-relay-review-dispatch-context-'));
+  await mkdir(join(contextRoot, 'agents'));
+  await writeFile(join(contextRoot, 'agents', 'reviewer.agent.md'), '---\nname: reviewer\n---\nReview the managed task.\n');
   const work = task('work', 'RUNNING');
   const store = new InMemoryStore({ ...job([work]), headSha: 'sha-late-review' });
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1 });
+  const reconciler = managedReconciler(store, {
+    owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 1,
+    executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
+  });
   const originalEnsureFinalReview = reconciler.ensureFinalReview.bind(reconciler);
   let reviewChecks = 0;
   reconciler.ensureFinalReview = async (...args) => {
@@ -1572,6 +1578,7 @@ test('final review created after the first dispatch pass is dispatched in the sa
   await reconciler.reconcile('j');
   assert.equal((await store.load('j')).tasks.filter(item => item.agentName === 'reviewer').length, 1);
   assert.equal(adapter.launches, 1);
+  await rm(contextRoot, { recursive: true, force: true });
 });
 
 test('cancelled same-head review creates a versioned review round instead of conflicting', async () => {
