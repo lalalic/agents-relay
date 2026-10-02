@@ -91,7 +91,7 @@ Leaf workers consume the resolved instruction/skill/agent paths, not the full to
 
 ## ChatGPT worker
 
-The ChatGPT adapter uses the `chatgpt-browser-worker` path from the shared execution context; Relay does not bundle or independently rediscover that skill. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
+The ChatGPT adapter uses Relay's `chatgpt-worker` agent contract and Browser Workspace ChatGPT platform; it does not depend on a Neo worker skill. It opens a fresh Temporary Chat tab, submits the complete task with the account defaults, verifies acceptance, applies the configured `after-start` (default), `never`, or `after-terminal` owned-tab close policy, and returns a submission receipt.
 
 ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 

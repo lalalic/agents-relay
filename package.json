@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js dist/relayd.js dist/relayd-main.js",
     "test": "npm run build && node --test test/*.test.js",
-    "test:chatgpt-temp-quality": "AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY=1 AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT=/Users/chengli/Workspace/neo/skills/chatgpt-browser-worker/agents/browser-worker.agent.md sh -c \"npm run build && node test/quality/run-temporary-chat.mjs\"",
+    "test:chatgpt-temp-quality": "AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY=1 sh -c \"npm run build && node test/quality/run-temporary-chat.mjs\"",
     "dev": "tsx src/cli.ts",
     "test:publish": "npm run build && node --test --test-force-exit test/*.test.js"
   },

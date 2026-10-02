@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { access, readFile, writeFile, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
 import { ExecutionContext } from './execution-context.js';
@@ -159,23 +159,6 @@ export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatG
 export class LaunchFailure extends Error {}
 export class StartAckTimeout extends LaunchFailure {}
 
-type BrowserWorkerRuntime = { definition: string; root: string };
-async function loadBrowserWorkerRuntime(context: ExecutionContext | undefined, explicit?: string): Promise<BrowserWorkerRuntime> {
-  const resolvedSkill = context?.skills.find(skill => skill.name === 'chatgpt-browser-worker');
-  // Once a worker receives a resolved execution context, that context owns
-  // skill discovery. The explicit path remains the fallback for direct
-  // adapter use, where no shared context has been resolved yet.
-  const candidate = resolvedSkill
-    ? join(dirname(resolvedSkill.path), 'agents', 'browser-worker.agent.md')
-    : explicit;
-  if (!candidate) throw new Error('chatgpt-browser-worker is not visible in the resolved execution context');
-  try {
-    await access(candidate);
-    return { definition: await readFile(candidate, 'utf8'), root: dirname(dirname(candidate)) };
-  } catch {
-    throw new Error(`chatgpt-browser-worker agent definition not found at resolved path: ${candidate}`);
-  }
-}
 function parseDriverJson(output: string): BrowserWorkerResponse {
   const lines = output.trim().split(/\r?\n/).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -223,7 +206,7 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
   await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
 }
 
-function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
+function sessionBrowserWorkerRunner(): ChatGptAgentRunner {
   const cli = browserWorkspaceCli();
   return (_definition, request, _route, signal): AgentRun => {
     const policy = request.tabClosePolicy ?? 'after-start';
@@ -246,16 +229,10 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
     const promise = (async (): Promise<string> => {
       const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
       try {
-        const [readiness, submitSource, temporarySource] = await Promise.all([
-          readFile(join(root, 'scripts', '_submit_readiness.py'), 'utf8'),
-          readFile(join(root, 'scripts', '_submit_bh.py'), 'utf8'),
-          readFile(join(root, 'scripts', '_temporary_bh.py'), 'utf8'),
-        ]);
         await writeFile(configFile, JSON.stringify({
           prompt: request.prompt,
           file: request.files ?? [],
-          close_policy: policy,
-          release_file: '',
+          close_policy: 'never',
         }));
 
         const startOutput = await browserWorkspaceCommand(
@@ -269,12 +246,10 @@ function sessionBrowserWorkerRunner(root: string): ChatGptAgentRunner {
         activeSessionId = started.session_id;
         if (signal.aborted) throw new Error('browser-worker execution aborted');
 
-        const escapedConfig = configFile.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-        const source = [
-          readiness,
-          submitSource.replace(/^from browser_harness import \*\s*$/m, ''),
-          temporarySource.replace(/^_wait_for_release\(\)\s*$/m, ''),
-        ].join('\n\n').replaceAll('__CFG_PATH__', escapedConfig);
+        const source = await browserWorkspaceCommand(
+          cli,
+          ['platform', 'source', 'chatgpt', 'temporary-submit', '--config', configFile],
+        );
 
         const execOutput = await browserWorkspaceCommand(
           cli,
@@ -347,12 +322,10 @@ export class ChatGptAdapter implements WorkerAdapter {
   readonly name = 'chatgpt' as const;
   readonly id = 'chatgpt/browser-worker';
   readonly capabilities = ['model', 'chatgpt', 'browser-workspace'] as const;
-  private readonly agentPath?: string;
   private readonly runner?: ChatGptAgentRunner;
   readonly tabClosePolicy: ChatGptTabClosePolicy;
 
   constructor(options: ChatGptAdapterOptions = {}) {
-    this.agentPath = options.agentPath ?? process.env.AGENTS_RELAY_CHATGPT_BROWSER_WORKER_AGENT;
     this.runner = options.agentRunner;
     this.tabClosePolicy = chatGptTabClosePolicy(options.tabClosePolicy ?? process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY);
   }
@@ -374,11 +347,11 @@ export class ChatGptAdapter implements WorkerAdapter {
     execution.launched = new Promise<void>((resolve, reject) => { launchResolve = resolve; launchReject = reject; });
     execution.launched.catch(() => {});
     execution.promise = (async (): Promise<Result> => {
-      const runtime = await loadBrowserWorkerRuntime(context.executionContext, this.agentPath);
+      const definition = await readFile(new URL('../agents/chatgpt-worker.agent.md', import.meta.url), 'utf8');
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? sessionBrowserWorkerRunner(runtime.root))(
-        runtime.definition,
+      const run = (this.runner ?? sessionBrowserWorkerRunner())(
+        definition,
         { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
         route,
         controller.signal,

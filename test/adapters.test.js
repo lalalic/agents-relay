@@ -75,36 +75,26 @@ test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', as
     await rm(root, { recursive: true, force: true });
   }
 });
-test('ChatGptAdapter loads chatgpt-browser-worker only from the resolved execution context', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-resolved-browser-worker-'));
-  try {
-    const skillRoot = join(root, 'chatgpt-browser-worker');
-    const agents = join(skillRoot, 'agents');
-    await mkdir(agents, { recursive: true });
-    const skillPath = join(skillRoot, 'SKILL.md');
-    const agentPath = join(agents, 'browser-worker.agent.md');
-    await writeFile(skillPath, '---\nname: chatgpt-browser-worker\n---\n');
-    await writeFile(agentPath, '# resolved browser worker');
-    let definition = '';
-    const adapter = new ChatGptAdapter({
-      agentRunner: (value) => {
-        definition = value;
-        return { promise: Promise.resolve(JSON.stringify({ operation:'submit', status:'submitted', verified:true })), cancel() {} };
-      },
-    });
-    const executionContext = {
-      project:{name:'project',path:root,workspaceRoot:root,neoRoot:null,globalRoot:root}, role:'worker', instructions:[],
-      skills:[{name:'chatgpt-browser-worker',path:skillPath,source:'neo'}], agents:[], runtimes:[],
-      delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
-    };
-    await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;
-    assert.equal(definition, '# resolved browser worker');
-  } finally { await rm(root, { recursive:true, force:true }); }
+test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a resolved Neo skill', async () => {
+  let definition = '';
+  const adapter = new ChatGptAdapter({
+    agentRunner: (value) => {
+      definition = value;
+      return { promise: Promise.resolve(JSON.stringify({ operation:'submit', status:'submitted', verified:true })), cancel() {} };
+    },
+  });
+  const executionContext = {
+    project:{name:'project',path:'.',workspaceRoot:'.',neoRoot:null,globalRoot:'.'}, role:'worker', instructions:[],
+    skills:[], agents:[], runtimes:[], delegation:{mode:'relay-child-task',parentTaskIdRequired:false}
+  };
+  await adapter.launch(task(), new AbortController().signal, { executionContext }).promise;
+  assert.match(definition, /name: chatgpt-worker/);
+  assert.match(definition, /Browser Workspace/);
 });
 
 test('ChatGptAdapter default runner uses Browser Workspace sessions', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /this\.runner \?\? sessionBrowserWorkerRunner\(runtime\.root\)/);
+  assert.match(source, /this\.runner \?\? sessionBrowserWorkerRunner\(\)/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /\['session', 'exec', activeSessionId\]/);
   assert.match(source, /\['session', 'stop', activeSessionId\]/);

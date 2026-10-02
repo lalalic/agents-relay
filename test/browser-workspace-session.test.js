@@ -51,8 +51,9 @@ test('ChatGPT adapter uses Browser Workspace session lifecycle', async () => {
   assert.match(source, /sessionBrowserWorkerRunner/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /\['session', 'exec', activeSessionId\]/);
+  assert.match(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
   assert.match(source, /\['session', 'stop', activeSessionId\]/);
-  assert.match(source, /this\.runner \?\? sessionBrowserWorkerRunner\(runtime\.root\)/);
+  assert.match(source, /this\.runner \?\? sessionBrowserWorkerRunner\(\)/);
   assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'browser-workspace']);
 });
 
