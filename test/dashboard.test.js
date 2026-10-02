@@ -707,4 +707,8 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.match(dashboardHtml, /\[choices\]/);
   assert.match(dashboardHtml, /\[routing-instruction\]/);
   assert.match(dashboardHtml, /Select a Job and Task first/);
+  assert.match(dashboardHtml, /const routeSelection=result\.selected\|\|\{\}/);
+  assert.doesNotMatch(dashboardHtml, /const selected=result\.selected/);
+  assert.match(dashboardHtml, /\.router-rules-pane\{min-width:0;max-width:100%;overflow:hidden\}/);
+  assert.match(dashboardHtml, /\.audit-log\{[^}]*overflow:auto;min-width:0\}/);
 });
