@@ -125,8 +125,17 @@ export function serveDashboard(
       subscribedJobs.add(job.id);
       try {
         await bus.subscribe(job.id, async event => {
-          const current = (await discoveredJobs()).find(candidate => candidate.id === job.id) ?? job;
-          const payload = JSON.stringify({ event, job: current });
+          const durable = await store.load(job.id).catch(() => null);
+          const task = durable?.tasks.find(candidate => candidate.id === event.task_id) ?? null;
+          const statePatch = durable ? {
+            jobId: durable.id,
+            jobState: durable.state,
+            jobUpdatedAt: durable.updatedAt,
+            taskId: task?.id ?? null,
+            taskState: task?.state ?? null,
+            taskUpdatedAt: task?.updatedAt ?? null,
+          } : null;
+          const payload = JSON.stringify({ event, statePatch });
           for (const client of clients) client.write(`event: relay\ndata: ${payload}\n\n`);
         });
       } catch {
