@@ -203,7 +203,11 @@ function parseWorkspaceJson(output: string): Record<string, unknown> {
 }
 
 export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
-  await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
+  try {
+    await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
+  } catch (error) {
+    console.warn(`[agents-relay] browser workspace ensure skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function sessionBrowserWorkerRunner(): ChatGptAgentRunner {

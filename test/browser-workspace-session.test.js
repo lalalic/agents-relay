@@ -40,6 +40,28 @@ test('ChatGPT Browser Workspace bootstrap uses npx browser-workspace with pool s
 
 
 
+test('ChatGPT Browser Workspace bootstrap fails open when provisioning command fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-workspace-fail-open-'));
+  const command = join(root, 'fake-browser-workspace-fail');
+  const warnings = [];
+  const originalWarn = console.warn;
+  try {
+    await writeFile(command, [
+      '#!/bin/sh',
+      'echo "workspace API unavailable" >&2',
+      'exit 7',
+    ].join('\n'), { mode: 0o700 });
+    console.warn = (...args) => warnings.push(args.join(' '));
+    await ensureChatGptBrowserWorkspace(command);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /browser workspace ensure skipped/);
+    assert.match(warnings[0], /workspace API unavailable/);
+  } finally {
+    console.warn = originalWarn;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('default Browser Workspace CLI is npx browser-workspace', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /\{ command: 'npx', prefix: \['browser-workspace'\] \}/);
