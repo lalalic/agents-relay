@@ -57,7 +57,9 @@ test('mobile Router Rules removes the nested scroll trap and exposes touch-sized
   assert.match(dashboardHtml, /#rules-view \.rules-footer>div\{width:100%;display:grid;grid-template-columns:1fr 1fr;/);
   assert.match(dashboardHtml, /#rules-view \.rules-save\{min-height:44px;width:100%;/);
   assert.match(dashboardHtml, /#rules-view \.audit-log\{max-height:none\}/);
-  assert.match(dashboardHtml, /#rules-view \.router-test-results\{max-height:none\}/);
+  assert.match(dashboardHtml, /#rules-view \.router-test-results\{max-height:none;width:100%;max-width:100%;overflow-x:hidden\}/);
+  assert.match(dashboardHtml, /#rules-view \.router-test-panel\{min-width:0;max-width:100%;overflow:hidden\}/);
+  assert.match(dashboardHtml, /#rules-view \.router-test-results pre\{width:100%;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-size:11px;/);
 });
 
 test('task tree rows stay within the mobile viewport and ellipsize long ids', () => {
