@@ -103,6 +103,18 @@ export async function eventBus(args: string[]): Promise<EventBus | undefined> {
   process.stderr.write(`${eventBusResolutionMessage(resolution)}\n`);
   return resolution.bus;
 }
+export async function withEventBus<T>(
+  args: string[],
+  work: (bus: EventBus | undefined) => Promise<T>,
+  resolve: (args: string[]) => Promise<EventBus | undefined> = eventBus,
+): Promise<T> {
+  const bus = await resolve(args);
+  try {
+    return await work(bus);
+  } finally {
+    await bus?.close?.();
+  }
+}
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.unblocked', 'unblocked', `Task ${taskId} unblocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason })); } catch (error) { process.stderr.write(`warning: unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishOrchestratorTaskCompletion(bus: EventBus | undefined, job: Job, task: Task, summary: string): Promise<void> {

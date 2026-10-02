@@ -135,6 +135,30 @@ test('event transport resolution honors NEO_NATS_URL when no CLI URL is supplied
   }
 });
 
+test('one-shot event bus scope always closes its resolved bus', async () => {
+  const { withEventBus } = await import('../dist/cli-support.js');
+  let closed = 0;
+  const fake = {
+    async publish() {},
+    async subscribe() { return async () => {}; },
+    async subscribeAll() { return async () => {}; },
+    async close() { closed += 1; },
+  };
+  const value = await withEventBus([], async bus => {
+    assert.equal(bus, fake);
+    return 42;
+  }, async () => fake);
+  assert.equal(value, 42);
+  assert.equal(closed, 1);
+
+  await assert.rejects(
+    () => withEventBus([], async () => { throw new Error('boom'); }, async () => fake),
+    /boom/,
+  );
+  assert.equal(closed, 2);
+});
+
+
 
 
 test('managed CLI reconciliation delegates through relayd and rejects a missing event bus', async () => {
