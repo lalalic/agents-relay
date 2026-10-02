@@ -18,7 +18,7 @@ test('ChatGPT Browser Workspace bootstrap uses npx browser-workspace with pool s
     await writeFile(command, [
       '#!/bin/sh',
       'printf "%s\\n" "$*" > "$FAKE_BW_LOG"',
-      'printf "{\\\"name\\\":\\\"agents-replay\\\",\\\"poolSize\\\":6}\\n"',
+      'printf "{\\\"name\\\":\\\"Relay\\\",\\\"poolSize\\\":6}\\n"',
     ].join('\n'), { mode: 0o700 });
     const previous = process.env.FAKE_BW_LOG;
     process.env.FAKE_BW_LOG = log;
@@ -28,9 +28,11 @@ test('ChatGPT Browser Workspace bootstrap uses npx browser-workspace with pool s
       if (previous === undefined) delete process.env.FAKE_BW_LOG;
       else process.env.FAKE_BW_LOG = previous;
     }
-    assert.equal((await readFile(log, 'utf8')).trim(), 'create agents-replay 6');
-    assert.equal(CHATGPT_BROWSER_WORKSPACE, 'agents-replay');
+    assert.equal((await readFile(log, 'utf8')).trim(), 'create Relay 6');
+    assert.equal(CHATGPT_BROWSER_WORKSPACE, 'Relay');
     assert.equal(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE, 6);
+    const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /CHATGPT_BROWSER_WORKSPACE\s*=\s*['\"](?:agents-replay|Agents Relay)['\"]/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

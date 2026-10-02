@@ -147,7 +147,7 @@ export type ChatGptAgentRunner = (
   signal: AbortSignal,
 ) => AgentRun;
 export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner; tabClosePolicy?: ChatGptTabClosePolicy };
-export const CHATGPT_BROWSER_WORKSPACE = 'agents-replay';
+export const CHATGPT_BROWSER_WORKSPACE = 'Relay';
 export const CHATGPT_BROWSER_WORKSPACE_POOL_SIZE = 6;
 
 export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatGptTabClosePolicy = 'after-start'): ChatGptTabClosePolicy {
