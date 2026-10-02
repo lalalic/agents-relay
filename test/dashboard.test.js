@@ -52,6 +52,14 @@ test('mobile usage view uses compact single-column cards', () => {
   assert.match(dashboardHtml, /#usage-view \.usage-details \{ padding-top:\.35rem; \}/);
 });
 
+test('mobile Router Rules removes the nested scroll trap and exposes touch-sized actions', () => {
+  assert.match(dashboardHtml, /#rules-view \.panel-body\{max-height:none;overflow:visible;/);
+  assert.match(dashboardHtml, /#rules-view \.rules-footer>div\{width:100%;display:grid;grid-template-columns:1fr 1fr;/);
+  assert.match(dashboardHtml, /#rules-view \.rules-save\{min-height:44px;width:100%;/);
+  assert.match(dashboardHtml, /#rules-view \.audit-log\{max-height:none\}/);
+  assert.match(dashboardHtml, /#rules-view \.router-test-results\{max-height:none\}/);
+});
+
 test('task tree rows stay within the mobile viewport and ellipsize long ids', () => {
   assert.match(dashboardHtml, /ul\.tree li \{ min-width:0; max-width:100%; \}/);
   assert.match(dashboardHtml, /\.task-row \{ width:100%; max-width:100%; overflow:hidden;/);
