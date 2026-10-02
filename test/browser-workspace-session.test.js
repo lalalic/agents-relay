@@ -10,40 +10,47 @@ import {
   ensureChatGptBrowserWorkspace,
 } from '../dist/adapters.js';
 
-test('ChatGPT Browser Workspace bootstrap uses npx browser-workspace with pool size 6', async () => {
+test('ChatGPT Browser Workspace bootstrap discovers product admin helper through status', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-workspace-'));
   try {
     const log = join(root, 'args.log');
+    const adminLog = join(root, 'admin.log');
+    const admin = join(root, 'admin.mjs');
     const command = join(root, 'fake-browser-workspace');
+    await writeFile(admin, [
+      "import { appendFile } from 'node:fs/promises';",
+      "export async function ensureWorkspace(name, size) { await appendFile(process.env.FAKE_BW_ADMIN_LOG, JSON.stringify({name,size})+'\\n'); }",
+    ].join('\n'));
     await writeFile(command, [
       '#!/bin/sh',
-      'printf "%s\\n" "$*" > "$FAKE_BW_LOG"',
-      'printf "{\\\"name\\\":\\\"Relay\\\",\\\"poolSize\\\":6}\\n"',
+      'printf "%s\\n" "$*" >> "$FAKE_BW_LOG"',
+      `printf '%s\\n' '${JSON.stringify({ admin_helper: admin })}'`,
     ].join('\n'), { mode: 0o700 });
-    const previous = process.env.FAKE_BW_LOG;
+    const previousLog = process.env.FAKE_BW_LOG;
+    const previousAdminLog = process.env.FAKE_BW_ADMIN_LOG;
     process.env.FAKE_BW_LOG = log;
+    process.env.FAKE_BW_ADMIN_LOG = adminLog;
     try {
       await ensureChatGptBrowserWorkspace(command);
     } finally {
-      if (previous === undefined) delete process.env.FAKE_BW_LOG;
-      else process.env.FAKE_BW_LOG = previous;
+      if (previousLog === undefined) delete process.env.FAKE_BW_LOG; else process.env.FAKE_BW_LOG = previousLog;
+      if (previousAdminLog === undefined) delete process.env.FAKE_BW_ADMIN_LOG; else process.env.FAKE_BW_ADMIN_LOG = previousAdminLog;
     }
-    assert.equal((await readFile(log, 'utf8')).trim(), 'create Relay 6');
+    assert.equal((await readFile(log, 'utf8')).trim(), 'status');
+    assert.deepEqual(JSON.parse((await readFile(adminLog, 'utf8')).trim()), { name: 'Relay', size: 6 });
     assert.equal(CHATGPT_BROWSER_WORKSPACE, 'Relay');
     assert.equal(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE, 6);
-    const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /CHATGPT_BROWSER_WORKSPACE\s*=\s*['\"](?:agents-replay|Agents Relay)['\"]/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-
-
-test('default Browser Workspace CLI is npx browser-workspace', async () => {
+test('default Browser Workspace CLI uses status discovery and no lifecycle CLI command', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /\{ command: 'npx', prefix: \['browser-workspace'\] \}/);
-  assert.match(source, /browserWorkspaceCommand\(browserWorkspaceCli\(command\), \['create', CHATGPT_BROWSER_WORKSPACE, String\(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE\)\]\)/);
+  assert.match(source, /browserWorkspaceCommand\(browserWorkspaceCli\(command\), \['status'\]\)/);
+  assert.match(source, /admin\.ensureWorkspace\(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE\)/);
+  assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);
 });
 
 test('ChatGPT adapter uses Browser Workspace session lifecycle', async () => {

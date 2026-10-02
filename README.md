@@ -273,3 +273,8 @@ The escalation graph is the authority for what happens after Neo returns: `resol
 Dependency release and runtime unblock are separate concepts. Dependency completion simply releases DAG work. A runtime/external blocker remains `BLOCKED` until `task unblock`, `job unblock`, or blocker-Job resolution records the blocked baseline/current evidence and emits `task.unblocked`, transitioning the Task to `UNBLOCKED`.
 
 For autonomous Jobs, `UNBLOCKED` is historical: Relay does not retry that old Task. The unblock evidence becomes the trigger/context of the next Planner round. Every Planner round is a first-class `agents-relay:plan:v1` PR comment. Relay creates that Plan comment before generated Task comments, then updates the same comment with the Planner assessment and generated Task IDs, preserving causal order in the PR timeline. Fixed Jobs may transition `UNBLOCKED -> QUEUED` through retry after the authoritative unblock record exists. Legacy Job `changeCycle` data is accepted only as compatibility input and is not written by the current model.
+
+
+### Browser Workspace product boundary
+
+Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `browser-workspace status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. Ordinary worker/session activity remains on the public Browser Workspace CLI (`session start/exec/stop` and platform commands). Relay does not create or delete workspaces through CLI lifecycle commands.

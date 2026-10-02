@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
 import { ExecutionContext } from './execution-context.js';
@@ -202,8 +203,19 @@ function parseWorkspaceJson(output: string): Record<string, unknown> {
   throw new Error('browser-workspace returned no JSON result');
 }
 
+type BrowserWorkspaceStatus = { admin_helper?: unknown };
+type BrowserWorkspaceAdminModule = { ensureWorkspace?: (name: string, size?: number) => Promise<unknown> | unknown };
+
 export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
-  await browserWorkspaceCommand(browserWorkspaceCli(command), ['create', CHATGPT_BROWSER_WORKSPACE, String(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE)]);
+  const status = parseWorkspaceJson(await browserWorkspaceCommand(browserWorkspaceCli(command), ['status'])) as BrowserWorkspaceStatus;
+  if (typeof status.admin_helper !== 'string' || !status.admin_helper.startsWith('/')) {
+    throw new Error('browser-workspace status returned no absolute admin_helper path');
+  }
+  const admin = await import(pathToFileURL(status.admin_helper).href) as BrowserWorkspaceAdminModule;
+  if (typeof admin.ensureWorkspace !== 'function') {
+    throw new Error('browser-workspace admin helper does not export ensureWorkspace');
+  }
+  await admin.ensureWorkspace(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE);
 }
 
 function sessionBrowserWorkerRunner(): ChatGptAgentRunner {
