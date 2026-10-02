@@ -143,7 +143,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureDaemonObservability();
   configureExecutionRouterRulesPath(argv);
-  await ensureChatGptBrowserWorkspace();
+  try {
+    await ensureChatGptBrowserWorkspace();
+  } catch (error) {
+    process.stderr.write(`Browser Workspace bootstrap skipped: ${errorMessage(error)}\n`);
+  }
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
   const auth = await githubAuthContext(argv); const client = auth.client;
