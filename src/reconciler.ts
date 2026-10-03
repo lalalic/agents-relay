@@ -118,6 +118,7 @@ export class Reconciler extends ReconcilerReviewBase {
         && task.executionId === null
         && task.kind !== 'planner'
         && task.adapter !== 'orchestrator'
+        && (!['codex', 'chatgpt'].includes(task.adapter) || Boolean(task.routing))
         && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
       .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
       .slice(0, capacity);

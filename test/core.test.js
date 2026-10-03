@@ -1893,6 +1893,24 @@ test('concurrent reconciler instances route one queued generation only once', as
   await a.close(); await b.close(); await stopEvents();
 });
 
+test('model task waits for durable routing before dispatch', async () => {
+  const t=task('route-before-dispatch');
+  t.routing=undefined;
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  await reconciler.reconcile('j');
+  assert.equal(adapter.launches,0);
+  assert.equal((await store.load('j')).tasks[0].attempt,0);
+  t.routing={provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()};
+  await store.saveTask(t);
+  await reconciler.reconcile('j');
+  assert.equal(adapter.launches,1);
+  assert.equal((await store.load('j')).tasks[0].attempt,1);
+  await reconciler.close();
+});
+
 test('concurrent terminal reconciliation commits one execution generation', async () => {
   const t=task('atomic-terminal','RUNNING');
   t.executionId='atomic-terminal-execution';
