@@ -4,6 +4,10 @@ Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs
 
 V2 separates **operational execution state** from that collaboration record. A local RelayStore may use SQLite/WAL for runtime snapshots, event idempotency and a durable GitHub projection outbox. ProjectedDurableStore bootstraps from the existing GitHub representation, commits Job/Plan/Task runtime changes locally, and lets GitHubProjectionWriter project them asynchronously. GitHub therefore remains the human-readable durable Job/Plan/Task/Review surface without being required for every high-frequency runtime transition.
 
+The canonical V2 architecture contract is
+[DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
+the runtime; they do not replace that contract.
+
 ## V2 architecture
 
 ```mermaid
