@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { Task } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,6 +78,24 @@ export function resolveRepositoryProjectPath(repositoryRoot: string, projectPath
   const rel = relative(root, target);
   if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Job projectPath escapes repository root');
   return target;
+}
+
+export function isProjectRunPath(path: string | undefined): boolean {
+  if (!path) return false;
+  const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
+  return normalized === 'runs' || normalized.startsWith('runs/');
+}
+
+export function taskUsesCanonicalProjectRun(task: Task, tasks: Task[]): boolean {
+  const byId = new Map(tasks.map(item => [item.id, item]));
+  const seen = new Set<string>();
+  let current: Task | undefined = task;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.output?.kind === 'file' && isProjectRunPath(current.output.path)) return true;
+    current = current.parentTaskId ? byId.get(current.parentTaskId) : undefined;
+  }
+  return false;
 }
 
 async function git(path: string, args: string[]): Promise<string> {
