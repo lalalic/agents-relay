@@ -1330,7 +1330,7 @@ test('terminal event published during launch cannot be overwritten back to runni
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  await new Promise(resolve=>setTimeout(resolve,20));
+  await reconciler.idle();
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.state,'SUCCEEDED');
   assert.equal(durable.result.summary,'instant complete');

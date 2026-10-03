@@ -313,8 +313,8 @@ test('reconciler emits worker.selected before model.selected after code routing'
     const job = { id: 'route-events', title: 'routing', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task] };
     const store = new InMemoryStore(job);
     const events = [];
-    const adapter = { name: 'codex', id: 'codex', capabilities: ['model'], launch() { throw new Error('must not launch'); } };
-    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], maxConcurrent: 0, emit: event => events.push(event) });
+    const adapter = { name: 'codex', id: 'codex', capabilities: ['model'], launch() { return { id: 'held', promise: new Promise(() => {}), cancel() {} }; } };
+    const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: new MemoryEventBus(), maxConcurrent: 1, emit: event => events.push(event) });
     await reconciler.reconcile('route-events');
     const routingEvents = events.filter(event => event.type === 'worker.selected' || event.type === 'model.selected');
     assert.deepEqual(routingEvents.map(event => event.type), ['worker.selected', 'model.selected']);
