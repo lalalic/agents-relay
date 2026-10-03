@@ -16,7 +16,7 @@ export { executionEventSource } from './reconciler-runtime.js';
 export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
-import { prepareManagedExecutionWorktree } from './workspace.js';
+import { prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
@@ -392,7 +392,8 @@ export class Reconciler extends ReconcilerReviewBase {
     try {
       const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
-      if (['codex', 'chatgpt'].includes(task.adapter) && this.store.pullRequestHead && task.executionId) {
+      const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
+      if (['codex', 'chatgpt'].includes(task.adapter) && this.store.pullRequestHead && task.executionId && !canonicalProjectRun) {
         managedHead = await this.store.pullRequestHead();
         if (!managedHead) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
         projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, managedHead, task.executionId);
@@ -413,8 +414,11 @@ export class Reconciler extends ReconcilerReviewBase {
     let execution: Execution;
     const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
     const baseWorkerInput = await managedWorkerInput(job, task, executionContext);
+    const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
     const workerInput = managedHead
       ? `${baseWorkerInput}\n\n[Managed PR checkout]\nExecution cwd: ${executionContext.project.path}\nExpected PR head: ${managedHead.ref} @ ${managedHead.sha}\nThis checkout is isolated from the user's primary checkout. Commit only here. Push durable changes with: git push origin HEAD:${managedHead.ref}\nDo not switch, reset, merge into, or commit on the primary checkout.`
+      : canonicalProjectRun
+        ? `${baseWorkerInput}\n\n[Canonical Neo project run]\nExecution cwd: ${executionContext.project.path}\nThis Task owns or descends from a durable runs/ artifact. Work directly in this canonical project directory so all continuations, reviews, QA, and publication steps share the same runs/ evidence. Do not create or switch to an Agents Relay task worktree for this runtime work. Keep generated/private execution artifacts under runs/ and do not commit them.`
       : baseWorkerInput;
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;

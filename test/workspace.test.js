@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import test from './test-runtime.js';
 import { marker, JOB_MARKER } from '../dist/markers.js';
 import { aggregateManagedGitHubJobs } from '../dist/pool.js';
-import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRepositoryPath } from '../dist/workspace.js';
+import { discoverGitRepositories, discoverWorkspaceRepositories, githubRepositoryFromRemote, isProjectRunPath, prepareManagedExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRepositoryPath, taskUsesCanonicalProjectRun } from '../dist/workspace.js';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -50,6 +50,24 @@ test('job project paths are repository-relative and cannot escape the repository
   assert.equal(resolveRepositoryProjectPath('/tmp/repo', 'neo-build-log'), '/tmp/repo/neo-build-log');
   assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '/etc'), /repository-relative/);
   assert.throws(() => resolveRepositoryProjectPath('/tmp/repo', '../outside'), /escapes repository root/);
+});
+
+test('runs artifacts use the canonical project runtime across nested Tasks', () => {
+  const base = {
+    jobId: 'job', kind: 'work', priority: 'P1', storySize: 'S', dependencies: [], capabilities: [],
+    adapter: 'codex', continuation: null, continuationDeliveredAt: null, state: 'QUEUED', attempt: 0,
+    maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null,
+    result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), input: 'work',
+  };
+  const episode = { ...base, id: 'episode', parentTaskId: null, output: { kind: 'file', path: 'runs/2026-10-02/package.md' } };
+  const review = { ...base, id: 'review', parentTaskId: 'episode', output: { kind: 'task_pr' } };
+  const unrelated = { ...base, id: 'code', parentTaskId: null, output: { kind: 'task_pr' } };
+  assert.equal(isProjectRunPath('runs/2026-10-02/qa.md'), true);
+  assert.equal(isProjectRunPath('./runs/2026-10-02/qa.md'), true);
+  assert.equal(isProjectRunPath('src/runs.ts'), false);
+  assert.equal(taskUsesCanonicalProjectRun(episode, [episode, review, unrelated]), true);
+  assert.equal(taskUsesCanonicalProjectRun(review, [episode, review, unrelated]), true);
+  assert.equal(taskUsesCanonicalProjectRun(unrelated, [episode, review, unrelated]), false);
 });
 
 test('workspace repository parsing ignores non-GitHub remotes', () => {

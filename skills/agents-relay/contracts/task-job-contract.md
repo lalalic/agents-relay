@@ -125,6 +125,20 @@ The scheduler heartbeat filters cached managed Jobs, reloads each due Job to val
 
 ## Task evidence and head identity
 
+### Canonical Neo Project runs boundary
+
+`runs/` is durable runtime evidence, not source code and not temporary checkout state. When a Task's declared file output is under `runs/`, that Task and every semantic descendant execute directly in the canonical resolved project directory. Agents Relay MUST NOT create or switch those Tasks into per-execution Git worktrees.
+
+This is a strong execution boundary:
+
+- tracked source/code work may use a managed PR worktree;
+- Neo Project runtime work under `runs/` uses the canonical project directory;
+- continuations, reviews, QA, render, and publication Tasks beneath a `runs/` owner reuse that same canonical runtime directory;
+- `runs/` remains ignored/private and must not be committed merely to move evidence between Tasks;
+- a new Task/worktree must never make prior run evidence disappear.
+
+For example, a `neo-build-log` episode whose output is `runs/2026-10-02/package.md` executes in the canonical `neo/neo-build-log` project directory, and its review/render/publish descendants see the same `runs/2026-10-02/` tree.
+
 Task inputs must make evidence freshness and target identity explicit when those facts affect correctness. A Task may bind its own review, audit, or source evidence to an immutable SHA/version. That frozen target belongs to that Task; it must not be propagated mechanically into later dependent work. A downstream release, deploy, publication, or other Task that runs after dependencies complete must resolve the current durable Job/PR head at execution time unless the Job objective explicitly requires the earlier immutable target.
 
 When success depends on the actual current UI, browser state, store listing, runtime state, or another externally observable surface, the Task contract must require fresh evidence from that real current surface. Reusing an existing screenshot, prepared asset, cached observation, or older evidence is valid only when the Job explicitly permits it.
