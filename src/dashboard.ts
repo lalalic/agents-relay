@@ -30,7 +30,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   })));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -256,6 +256,7 @@ export function serveDashboard(
         if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
         let result: Job;
         if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task);
+        else if (body.action === 'start' && isTaskId(requestedTaskId) && resolvedActions?.taskStart) result = await resolvedActions.taskStart(requestedJobId, requestedTaskId);
         else if (body.action === 'retry' && isTaskId(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
         else if (body.action === 'cancel' && isTaskId(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);
         else if (body.action === 'complete' && isTaskId(requestedTaskId) && typeof body.summary === 'string' && body.summary.trim() && resolvedActions?.taskComplete) result = await resolvedActions.taskComplete(requestedJobId, requestedTaskId, body.summary);

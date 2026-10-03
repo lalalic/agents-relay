@@ -5,11 +5,10 @@ import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
-import { ReconcilerRuntimeBase, type EventHandlingResult, withExecutionBoundary } from './reconciler-runtime.js';
+import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 
-const taskRouteClaims = new Set<string>();
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
@@ -153,69 +152,61 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reason: 'worker-router',
     };
   }
-  protected async routeExecutableTasks(job: Job): Promise<void> {
+  protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
+    if (task.routing) return { task, routed: false };
+    if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
+
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    for (const candidate of job.tasks.filter(item => item.kind !== 'planner' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
-      const claimKey = `${job.id}/${candidate.id}`;
-      if (taskRouteClaims.has(claimKey)) continue;
-      taskRouteClaims.add(claimKey);
-      try {
-        await withExecutionBoundary(job.id, candidate.id, async () => {
-          const freshJob = await this.store.load(job.id);
-          const task = freshJob.tasks.find(item => item.id === candidate.id);
-          if (!task || !['QUEUED', 'BLOCKED'].includes(task.state) || task.workerSelection || !task.output) return;
-      const requirements = task.workerRequirements ?? { capabilities: [] };
-      const taskFacts = {
-        job: {
-          id: freshJob.id, title: freshJob.title, objective: freshJob.objective ?? null,
-          description: freshJob.description ?? null, priority: freshJob.priority ?? null,
-          executionMode: freshJob.executionMode, repository: freshJob.repository,
-          prNumber: freshJob.prNumber, state: freshJob.state,
-        },
-        task: {
-          id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
-          priority: task.priority ?? null, agentName: task.agentName ?? null,
-          parentTaskId: task.parentTaskId, dependencies: task.dependencies,
-          capabilities: task.capabilities, input: task.input,
-          attachments: task.attachments ?? [], output: task.output ?? null,
-          state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
-        },
-        storySize: task.storySize ?? 'M',
-      };
-      const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
-      const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? freshJob.tasks.find(item => item.id === task.parentTaskId) : undefined;
-      const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
-      const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
-        ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
-        : [];
-      const routed = await routeExecution(candidates, requirements, {
-        decisionEngine: this.options.decisionEngine,
-        decisionMode: this.options.decisionMode,
-        taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
-        usage,
-        registered,
-        chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
-        routingConstraints,
-        excludedRoutes,
-        auditStore: this.options.decisionAuditStore,
-        auditTask: task,
-      });
-      task.workerSelection = routed.selection;
-      task.adapter = routed.candidate.adapter;
-      task.routing = routed.candidate.routing;
-      task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
-      task.updatedAt = new Date().toISOString();
-      await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
-        });
-      } finally {
-        taskRouteClaims.delete(claimKey);
-      }
-    }
+    const requirements = task.workerRequirements ?? { capabilities: [] };
+    const taskFacts = {
+      job: {
+        id: job.id, title: job.title, objective: job.objective ?? null,
+        description: job.description ?? null, priority: job.priority ?? null,
+        executionMode: job.executionMode, repository: job.repository,
+        prNumber: job.prNumber, state: job.state,
+      },
+      task: {
+        id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
+        priority: task.priority ?? null, agentName: task.agentName ?? null,
+        parentTaskId: task.parentTaskId, dependencies: task.dependencies,
+        capabilities: task.capabilities, input: task.input,
+        attachments: task.attachments ?? [], output: task.output ?? null,
+        state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
+      },
+      storySize: task.storySize ?? 'M',
+    };
+    const routingConstraints = undefined;
+    const parent = task.agentName === 'troubleshooter' && task.parentTaskId
+      ? job.tasks.find(item => item.id === task.parentTaskId)
+      : undefined;
+    const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
+    const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
+      ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
+      : [];
+    const routed = await routeExecution(candidates, requirements, {
+      decisionEngine: this.options.decisionEngine,
+      decisionMode: this.options.decisionMode,
+      taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
+      usage,
+      registered,
+      chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
+      routingConstraints,
+      excludedRoutes,
+      auditStore: this.options.decisionAuditStore,
+      auditTask: task,
+    });
+    task.workerSelection = routed.selection;
+    task.adapter = routed.candidate.adapter;
+    task.routing = routed.candidate.routing;
+    task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
+    task.updatedAt = new Date().toISOString();
+    await this.store.saveTask(task);
+    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', 'Worker ' + routed.selection.workerId + ' selected for task ' + task.id, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', 'Selected ' + task.routing.model + ' · thinking ' + (task.routing.reasoning ?? 'unknown'), 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
+    return { task, routed: true };
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);

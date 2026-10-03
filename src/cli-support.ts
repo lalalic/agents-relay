@@ -66,7 +66,7 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
-export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'retry'|'cancel'|'complete'; summary?: string; task?: Task }): Promise<Job> {
+export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'; summary?: string; task?: Task }): Promise<Job> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
@@ -117,15 +117,20 @@ export async function withEventBus<T>(
 }
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
 export async function publishTaskUnblocked(bus: EventBus | undefined, job: Job, taskId: string, reason: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'task.unblocked', 'unblocked', `Task ${taskId} unblocked: ${reason}`, 'orchestrator', { repository: job.repository, prNumber: job.prNumber, reason })); } catch (error) { process.stderr.write(`warning: unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }
+export async function publishOrchestratorTaskStarted(bus: EventBus | undefined, job: Job, task: Task): Promise<void> {
+  if (!bus) return;
+  try {
+    await bus.publish(eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started by orchestrator`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }));
+  } catch (error) {
+    process.stderr.write(`warning: orchestrator task start event unavailable for ${job.id}/${task.id}: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+}
 export async function publishOrchestratorTaskCompletion(bus: EventBus | undefined, job: Job, task: Task, summary: string): Promise<void> {
   if (!bus) return;
-  const events = [
-    eventFor(job.id, task.id, task.parentTaskId, 'task.started', 'running', `Task ${task.id} started by orchestrator`, 'orchestrator', { adapter: 'orchestrator' }, { agent: 'relay', component: 'agents-relay' }),
-    eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed by orchestrator`, 'orchestrator', { adapter: 'orchestrator', summary }, { agent: 'relay', component: 'agents-relay' }),
-  ];
-  for (const event of events) {
-    try { await bus.publish(event); }
-    catch (error) { process.stderr.write(`warning: orchestrator task event unavailable for ${job.id}/${task.id}: ${error instanceof Error ? error.message : String(error)}\n`); }
+  try {
+    await bus.publish(eventFor(job.id, task.id, task.parentTaskId, 'task.completed', 'succeeded', `Task ${task.id} completed by orchestrator`, 'orchestrator', { adapter: 'orchestrator', summary }, { agent: 'relay', component: 'agents-relay' }));
+  } catch (error) {
+    process.stderr.write(`warning: orchestrator task completion event unavailable for ${job.id}/${task.id}: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 }
 export async function publishDependentUnblocked(bus: EventBus | undefined, targets: readonly { repository: string; prNumber: number; jobId: string; taskId: string }[], reason: string): Promise<void> { if (!bus) return; for (const target of targets) { try { await bus.publish(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Task ${target.taskId} unblocked: ${reason}`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, reason })); } catch (error) { process.stderr.write(`warning: dependent unblock event unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } } }

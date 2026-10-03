@@ -278,7 +278,7 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
 
   const store = new InMemoryStore(createdJob);
   const events = [];
-  const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:0,emit:event=>events.push(event)});
+  const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:1,eventBus:new MemoryEventBus(),emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const routed = (await store.load('j')).tasks.find(item=>item.id==='auto-route');
   assert.equal(routed.adapter,'chatgpt');
@@ -291,26 +291,6 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   const modelIndex = events.findIndex(event=>event.type==='model.selected');
   assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
   await rm(directory,{recursive:true,force:true});
-});
-
-test('reviewer specialist tasks without a preselected route are routed automatically', async () => {
-  const specialist = task('specialist-review', 'QUEUED');
-  delete specialist.routing;
-  specialist.agentName = 'reviewer';
-  specialist.workerRequirements = { capabilities: [] };
-  const store = new InMemoryStore(job([specialist]));
-  const events = [];
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeChatGptAdapter()], maxConcurrent: 0, emit: event => events.push(event) });
-  await reconciler.reconcile('j');
-  const routed = (await store.load('j')).tasks.find(item => item.id === 'specialist-review');
-  assert.equal(routed?.adapter, 'chatgpt');
-  assert.equal(routed?.workerSelection?.adapter, 'chatgpt');
-  assert.equal(routed?.routing?.provider, 'chatgpt');
-  assert.equal(routed?.routing?.model, 'account-defaults');
-  const workerIndex = events.findIndex(event => event.type === 'worker.selected');
-  const modelIndex = events.findIndex(event => event.type === 'model.selected');
-  assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
-  await reconciler.close();
 });
 
 test('CLI explicit worker/model routing remains a supported compatibility constraint', async () => {
@@ -375,9 +355,13 @@ test('CLI task complete terminalizes the same orchestrator self task', async () 
   await writeFile(file, JSON.stringify(job([])));
   let child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','do it now'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  let saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks.find(item => item.id === 'self').state, 'RUNNING');
   child = spawn(process.execPath, [join('dist','cli.js'),'task','complete','--file',file,'--task-id','self','--summary','done in creator turn'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  const saved = JSON.parse(await readFile(file, 'utf8'));
+  saved = JSON.parse(await readFile(file, 'utf8'));
   const completed = saved.tasks.find(item => item.id === 'self');
   assert.equal(completed.state, 'SUCCEEDED');
   assert.equal(completed.result.summary, 'done in creator turn');
@@ -1893,21 +1877,37 @@ test('concurrent reconciler instances route one queued generation only once', as
   await a.close(); await b.close(); await stopEvents();
 });
 
-test('model task waits for durable routing before dispatch', async () => {
-  const t=task('route-before-dispatch');
+test('unrouted model task is routed and claimed in the same execution reconcile', async () => {
+  const t=task('route-at-claim');
   t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
   const store=new InMemoryStore(job([t]));
   const bus=new MemoryEventBus();
   const adapter=new FakeAdapter();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   await reconciler.reconcile('j');
-  assert.equal(adapter.launches,0);
-  assert.equal((await store.load('j')).tasks[0].attempt,0);
-  t.routing={provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()};
-  await store.saveTask(t);
-  await reconciler.reconcile('j');
+  const durable=(await store.load('j')).tasks[0];
   assert.equal(adapter.launches,1);
-  assert.equal((await store.load('j')).tasks[0].attempt,1);
+  assert.equal(durable.attempt,1);
+  assert.ok(durable.executionId);
+  assert.ok(durable.routing);
+  assert.ok(durable.workerSelection);
+  await reconciler.close();
+});
+
+test('routing failure leaves execution generation unclaimed', async () => {
+  const t=task('route-failure');
+  t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],eventBus:new MemoryEventBus()});
+  await reconciler.reconcile('j');
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.attempt,0);
+  assert.equal(durable.executionId,null);
+  assert.equal(durable.routing,undefined);
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error ?? '',/No executable worker\+model route/);
   await reconciler.close();
 });
 
