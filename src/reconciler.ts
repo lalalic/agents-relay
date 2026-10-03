@@ -107,7 +107,6 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
-    await this.routeExecutableTasks(await this.store.load(jobId));
     const scheduled = schedule(await this.store.load(jobId));
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
@@ -118,7 +117,6 @@ export class Reconciler extends ReconcilerReviewBase {
         && task.executionId === null
         && task.kind !== 'planner'
         && task.adapter !== 'orchestrator'
-        && (!['codex', 'chatgpt'].includes(task.adapter) || Boolean(task.routing))
         && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
       .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
       .slice(0, capacity);
@@ -354,13 +352,6 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   private async launchCorrelated(job: Job, task: Task): Promise<void> {
-    const adapter = this.options.adapters.find(x => x.name === task.adapter);
-    if (!adapter) {
-      await transitionTaskEvent(task, 'fail');
-      task.error = `No adapter ${task.adapter}`;
-      await this.store.saveTask(task);
-      return;
-    }
     if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
       await transitionTaskEvent(task, 'block');
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
@@ -369,9 +360,17 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     const claimedTask = await withExecutionBoundary(job.id, task.id, async () => {
       const freshJob = await this.store.load(job.id);
-      const freshTask = freshJob.tasks.find(item => item.id === task.id);
+      let freshTask = freshJob.tasks.find(item => item.id === task.id);
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
+
+      if (!freshTask.routing && freshTask.adapter !== 'orchestrator') {
+        freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
+      }
+      if (['codex', 'chatgpt'].includes(freshTask.adapter) && !freshTask.routing) {
+        throw new Error('Task ' + freshTask.id + ' requires routing metadata before execution claim');
+      }
+
       const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
       const startedAt = (this.options.now ?? new Date()).getTime();
       freshTask.attempt += 1;
@@ -388,6 +387,12 @@ export class Reconciler extends ReconcilerReviewBase {
     }) ?? null;
     if (!claimedTask) return;
     task = claimedTask;
+
+    const adapter = this.options.adapters.find(x => x.name === task.adapter);
+    if (!adapter) {
+      await this.failLaunch(job.id, task.id, task.executionId, 'No adapter ' + task.adapter);
+      return;
+    }
     let executionContext: ExecutionContext;
     let managedHead: { ref: string; sha: string } | null = null;
     try {

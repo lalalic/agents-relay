@@ -13,10 +13,10 @@ import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { applyJobActivateAction } from './job-actions.js';
-import { applyOrchestratorCompleteAction } from './task-actions.js';
+import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -304,6 +304,19 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId, 'control.task.create');
     return await store.load(jobId);
   };
+  const workspaceTaskStart = async (jobId: string, taskId: string) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
+    const job = await store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    await applyOrchestratorStartAction(task);
+    await store.saveTask(task);
+    await publishOrchestratorTaskStarted(bus, job, task);
+    await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId, 'control.task.start');
+    return await store.load(jobId);
+  };
   const workspaceTaskComplete = async (jobId: string, taskId: string, summary: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -375,6 +388,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     cancel: workspaceJobAction('cancel'),
     jobSetState: workspaceJobSetState,
     taskCreate: workspaceTaskCreate,
+    taskStart: workspaceTaskStart,
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),
     taskComplete: workspaceTaskComplete,

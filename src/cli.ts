@@ -18,7 +18,7 @@ import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js';
 import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
-import { applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
+import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -124,7 +124,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     updatedAt: now
   }, { defer: hasArg(args, '--draft') });
 }
-async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
+async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
   if (!jobId) throw new Error('--id is required for managed task commands');
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -147,9 +147,9 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete
 }
 
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
-  if (managed && ['create','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel'|'complete', args); return; }
+  if (managed && ['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -172,6 +172,13 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
+  if (action === 'start') {
+    await applyOrchestratorStartAction(task);
+    await store.saveTask(task);
+    await saveLocal(localFile, await store.load(job.id));
+    console.log(JSON.stringify(task, null, 2));
+    return;
+  }
   if (action === 'complete') {
     const summary = arg(args, '--summary');
     if (!summary) throw new Error('task complete requires --summary');

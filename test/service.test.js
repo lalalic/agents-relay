@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from './test-runtime.js';
 import { normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
-import { publishOrchestratorTaskCompletion, requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
+import { publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
 
 
@@ -184,6 +184,7 @@ test('orchestrator task completion publishes correlated lifecycle events best-ef
     subscribe: async () => async () => {},
     subscribeAll: async () => async () => {},
   };
+  await publishOrchestratorTaskStarted(bus, job, task);
   await publishOrchestratorTaskCompletion(bus, job, task, 'done');
   assert.deepEqual(events.map(event => [event.type, event.status, event.job_id, event.task_id]), [
     ['task.started', 'running', 'self-job', 'self-task'],
@@ -198,7 +199,7 @@ test('orchestrator task completion publishes correlated lifecycle events best-ef
     subscribe: async () => async () => {},
     subscribeAll: async () => async () => {},
   }, job, task, 'durable already'));
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 1);
 
   const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const save = relayd.indexOf('await store.saveTask(task);', relayd.indexOf('const workspaceTaskComplete'));
@@ -211,9 +212,10 @@ test('managed CLI task mutations enter relayd control plane before local truth c
   const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
-  assert.match(cli, /managed && \['create','complete','retry','cancel'\]\.includes\(action\)/);
+  assert.match(cli, /managed && \['create','start','complete','retry','cancel'\]\.includes\(action\)/);
   assert.match(support, /\/api\/task-command/);
   assert.match(relayd, /taskCreate: workspaceTaskCreate/);
+  assert.match(relayd, /taskStart: workspaceTaskStart/);
   assert.match(relayd, /taskComplete: workspaceTaskComplete/);
   assert.match(relayd, /taskRetry: workspaceTaskAction\('retry'\)/);
   assert.match(relayd, /taskCancel: workspaceTaskAction\('cancel'\)/);
