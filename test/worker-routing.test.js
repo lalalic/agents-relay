@@ -217,7 +217,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
     name: 'codex',
     id: 'codex',
     capabilities: ['model', 'codex'],
-    launch() { throw new Error('maxConcurrent=0 should prevent launch'); },
+    launch() { return { id: 'held', promise: new Promise(() => {}), cancel() {} }; },
   };
   const usageSnapshotProvider = async () => ({
     generatedAt: now,
@@ -228,7 +228,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
     owner: 'test',
     adapters: [adapter],
     eventBus: bus,
-    maxConcurrent: 0,
+    maxConcurrent: 1,
     usageSnapshotProvider,
   });
   await reconciler.reconcile('routing-job');

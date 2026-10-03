@@ -144,13 +144,13 @@ test('reconcile automatically creates and routes one troubleshooter for failed w
     name: 'codex',
     id: 'codex',
     capabilities: ['model', 'codex'],
-    launch() { throw new Error('maxConcurrent=0 should prevent launch'); },
+    launch() { return { id: 'held', promise: new Promise(() => {}), cancel() {} }; },
   };
   const reconciler = managedReconciler(store, {
     owner: 'test',
     adapters: [adapter],
     eventBus: new MemoryEventBus(),
-    maxConcurrent: 0,
+    maxConcurrent: 1,
     emit: event => events.push(event),
   });
 
@@ -203,8 +203,8 @@ test('auto-routed troubleshooter avoids parent route that failed before task.sta
     failed.routing = { provider:'zai', model:'glm-5.3-flash', profile:'zai', reasoning:'high', decidedBy:'test', decidedAt:now() };
     failed.error = 'Worker original exited before publishing task.started';
     const store = new InMemoryStore(job([failed]));
-    const adapter = { name:'codex', id:'codex', capabilities:['model','codex','local_repo','iterative_tools'], launch(){ throw new Error('not launched'); } };
-    const reconciler = managedReconciler(store, { owner:'test', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:0 });
+    const adapter = { name:'codex', id:'codex', capabilities:['model','codex','local_repo','iterative_tools'], launch(){ return { id:'held', promise:new Promise(() => {}), cancel(){} }; } };
+    const reconciler = managedReconciler(store, { owner:'test', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:1 });
     await reconciler.reconcile('neo-pr40');
     const durable = await store.load('neo-pr40');
     const recovery = durable.tasks.find(task => task.agentName === 'troubleshooter');

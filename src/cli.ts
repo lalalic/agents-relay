@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs';
-import { once } from 'node:events';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events';
+import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto';
 import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js';
@@ -28,11 +26,7 @@ import { parseAgentGraph } from './agent-graph.js';
 import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
 import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
 export { helpText } from './cli-help.js';
-import {
-  SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
-  storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus,
-} from './cli-support.js';
+import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
@@ -145,7 +139,6 @@ async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'
   if (!task) throw new Error(`Task ${id} missing after ${action}`);
   console.log(JSON.stringify(task, null, 2));
 }
-
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));

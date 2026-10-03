@@ -29,7 +29,6 @@ import { executionRouterRulesPath } from './routing-policy.js';
 import { workerCandidates } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
-
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 /** Initialize the process-wide structured observability sink once, from environment. */
 export function configureDaemonObservability(env: NodeJS.ProcessEnv = process.env): RelayObservability {
