@@ -1,34 +1,67 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { textOption, arg } from './cli-support.js';
 import { runEscalationGraph, type EscalationRequest, type EscalationResult } from './workflow/escalation.js';
 
-function runNeoEscalation(request: EscalationRequest): Promise<EscalationResult> {
-  const args = ['escalation', '--intent', request.intent, '--blocked-on', request.blockedOn];
-  if (request.context) args.push('--context', request.context);
-  if (request.onNeedsUser) args.push('--on-needs-user', request.onNeedsUser);
-  if (request.cwd) args.push('--cwd', request.cwd);
-  return new Promise((resolve, reject) => {
-    const child = spawn('neo', args, { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', code => {
-      let parsed: EscalationResult;
-      try {
-        parsed = JSON.parse(stdout.trim()) as EscalationResult;
-      } catch {
-        reject(new Error(`neo escalation returned invalid JSON (exit ${code ?? 'unknown'}): ${stderr || stdout}`));
-        return;
-      }
-      if (!['resolved', 'failed', 'needs_user'].includes(parsed.status)) {
-        reject(new Error(`neo escalation returned invalid status ${String(parsed.status)}`));
-        return;
-      }
-      resolve(parsed);
+export function neoEscalationArgs(
+  handoffPath: string,
+  policyPath: string | undefined,
+  cwd: string | undefined,
+): string[] {
+  return [
+    'escalation', '--handoff-file', handoffPath,
+    ...(policyPath ? ['--on-needs-user-file', policyPath] : []),
+    ...(cwd ? ['--cwd', cwd] : []),
+  ];
+}
+
+function handoffText(request: EscalationRequest): string {
+  return [
+    '# Intent', request.intent.trim(),
+    '', '# Blocked on', request.blockedOn.trim(),
+    ...(request.context?.trim() ? ['', '# Context', request.context.trim()] : []),
+    '',
+  ].join('\n');
+}
+
+export async function runNeoEscalation(request: EscalationRequest): Promise<EscalationResult> {
+  const tempRoot = await mkdtemp(join(tmpdir(), 'agents-relay-escalation-'));
+  try {
+    const handoffPath = join(tempRoot, 'handoff.md');
+    await writeFile(handoffPath, handoffText(request), { encoding: 'utf8', mode: 0o600 });
+    let policyPath: string | undefined;
+    if (request.onNeedsUser) {
+      policyPath = join(tempRoot, 'on-needs-user.md');
+      await writeFile(policyPath, request.onNeedsUser, { encoding: 'utf8', mode: 0o600 });
+    }
+    const args = neoEscalationArgs(handoffPath, policyPath, request.cwd);
+    return await new Promise((resolve, reject) => {
+      const child = spawn('neo', args, { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', code => {
+        let parsed: EscalationResult;
+        try {
+          parsed = JSON.parse(stdout.trim()) as EscalationResult;
+        } catch {
+          reject(new Error(`neo escalation returned invalid JSON (exit ${code ?? 'unknown'}): ${stderr || stdout}`));
+          return;
+        }
+        if (!['resolved', 'failed', 'needs_user'].includes(parsed.status)) {
+          reject(new Error(`neo escalation returned invalid status ${String(parsed.status)}`));
+          return;
+        }
+        resolve(parsed);
+      });
     });
-  });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 }
 
 export async function runEscalationCommand(args: string[]): Promise<void> {
