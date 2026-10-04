@@ -247,6 +247,8 @@ GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles 
 
 `adapter: orchestrator` is reserved for synchronous self-work by the exact orchestrator turn that creates the Task. Relay deliberately does not auto-start these Tasks during reconciliation. The creator must perform the work before ending the turn and terminalize the same Task with `npx agents-relay task complete --task-id <id> --summary <summary> ...`. If work should continue asynchronously or in a later turn, use a real worker adapter instead.
 
+As a narrow recovery exception, reconciliation converts a `QUEUED` work Task that still has `adapter: orchestrator`, no execution identity, and is at least 30 minutes past `createdAt` into a normal ChatGPT-routable Task. This preserves the Task identity, intent, dependencies, output, lineage, priority, and story size while clearing stale routing state. `RUNNING` and terminal Tasks are never converted; the 30-minute rescue does not weaken the synchronous self-task contract for newly created work.
+
 For work that was completed outside the relay but must be represented truthfully in durable history, use `npx agents-relay record --task-id <id> --summary <summary> --commit <sha>`. Recorded tasks use the `orchestrator` adapter and terminal `SUCCEEDED` state; they do not pretend a shell/model worker executed the work. This is a repair/backfill mechanism—normal work should be created as a durable Task before execution. For managed jobs, the GitHub PR body is the canonical Job surface: hidden Job metadata marker plus the visible Markdown objective.
 
 ### Automatic task troubleshooting

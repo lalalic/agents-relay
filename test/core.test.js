@@ -349,6 +349,33 @@ test('reconciler leaves orchestrator self work queued for its creating orchestra
   assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),false);
 });
 
+test('reconciler rescues stale queued orchestrator work into ChatGPT execution', async () => {
+  const at = '2026-10-04T06:00:00.000Z';
+  const self = task('stale');
+  self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0; self.capabilities = ['implementation'];
+  self.createdAt = '2026-10-04T05:29:59.999Z'; self.updatedAt = self.createdAt;
+  const store = new InMemoryStore({ ...job([self]), executionMode: 'fixed' });
+  const events = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at), emit: event => events.push(event) });
+  await reconciler.reconcile('j');
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.adapter, 'chatgpt');
+  assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'], runtime: 'chatgpt' });
+  assert.equal(durable.routing, undefined); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
+  assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
+});
+
+test('reconciler does not rescue young, running, or terminal orchestrator tasks', async () => {
+  const at = '2026-10-04T06:00:00.000Z';
+  const young = task('young'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = '2026-10-04T05:30:00.001Z';
+  const running = task('running', 'RUNNING'); running.adapter = 'orchestrator'; running.routing = undefined; running.createdAt = '2026-10-04T04:00:00.000Z'; running.executionId = 'active';
+  const done = task('done', 'SUCCEEDED'); done.adapter = 'orchestrator'; done.routing = undefined; done.createdAt = '2026-10-04T04:00:00.000Z';
+  const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
+  await reconciler.reconcile('j');
+  assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'orchestrator', 'orchestrator']);
+});
+
 test('CLI task complete terminalizes the same orchestrator self task', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-complete-'));
   const file = join(directory, 'job.json');

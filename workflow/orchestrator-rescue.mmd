@@ -1,0 +1,13 @@
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+check["state: check"]
+skip["state: skip"]
+rescued["state: rescued"]
+rescuable["guard: rescuable"]
+rescue["action: task.rescueOrchestrator"]
+idle -->|on: orchestrator.rescue.reconcile| check
+check -->|on: orchestrator.rescue.reconcile| rescuable
+rescuable -->|false| skip
+rescuable -->|true| rescue
+rescue -->|to: rescued| rescued
