@@ -131,9 +131,9 @@ from the exact worker terminal event or the normal task timeout.
 12. Relay reconciles dependents and/or resumes the parent continuation.
 13. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
-The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Its owned Temporary Chat tab uses the configurable `after-start` policy by default; `never` keeps it open for tests/debugging, and `after-terminal` waits for a new, correlated `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled` event before closing it. Stale or wrong-task events never satisfy either barrier. If no start acknowledgement arrives within 60 seconds, Relay closes only the owned tab under `after-start` and records an explicit `worker_start_timeout` start-ack failure; process-exit events remain distinct from task terminal events.
+The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Browser execution itself is a one-shot `browser-workspace platform run chatgpt temporary-submit --auto-session --config <file>` action: Browser Workspace creates/releases the fresh Temporary Chat session and Relay does not perform browser self-heal. Stale or wrong-task lifecycle events never satisfy Relay's worker barriers, and start-ack failure remains an explicit `worker_start_timeout`. Process-exit events remain distinct from task terminal events.
 
-Configure the daemon or CLI service with `--chatgpt-tab-close-policy after-start|never|after-terminal`, or set `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY`. The default is `after-start`.
+`--chatgpt-tab-close-policy after-start|never|after-terminal` and `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY` remain accepted for compatibility with existing Relay event-barrier behavior; they no longer control the Browser Workspace auto-session lifetime. The default remains `after-start`.
 
 ## Continuations
 
