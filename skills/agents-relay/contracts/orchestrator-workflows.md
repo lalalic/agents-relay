@@ -36,6 +36,8 @@ A **P0 job** (alias: **self job**) is executed directly by the current active or
 5. P0/self jobs do not require the normal reviewer gate unless the user explicitly asks for review.
 6. After implementation and local verification, the orchestrator merges the job itself and completes normal post-merge reconciliation.
 
+Recovery exception: reconciliation may rescue only a `QUEUED` work Task with `adapter: orchestrator` that has no execution identity and is at least 30 minutes past `createdAt`. It converts that Task in place to a normal ChatGPT-routable Task, preserving its durable intent and Task identity while clearing stale routing state. `RUNNING` and terminal Tasks are not rescued. This is a stale-task safety net, not an asynchronous handoff mechanism for newly created self-work.
+
 `job create` still only creates durable job state; the P0 workflow requires the orchestrator to follow it immediately with task creation and execution.
 
 ## Merge completion vs deployment evidence
