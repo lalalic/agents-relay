@@ -352,7 +352,7 @@ test('reconciler leaves orchestrator self work queued for its creating orchestra
 test('reconciler rescues stale queued orchestrator work into ChatGPT execution', async () => {
   const at = '2026-10-04T06:00:00.000Z';
   const self = task('stale');
-  self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0;
+  self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0; self.capabilities = ['implementation'];
   self.createdAt = '2026-10-04T05:29:59.999Z'; self.updatedAt = self.createdAt;
   const store = new InMemoryStore({ ...job([self]), executionMode: 'fixed' });
   const events = [];
@@ -360,7 +360,7 @@ test('reconciler rescues stale queued orchestrator work into ChatGPT execution',
   await reconciler.reconcile('j');
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.adapter, 'chatgpt');
-  assert.deepEqual(durable.workerRequirements, { capabilities: [], runtime: 'chatgpt' });
+  assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'], runtime: 'chatgpt' });
   assert.equal(durable.routing, undefined); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
   assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
 });

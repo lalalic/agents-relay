@@ -21,7 +21,7 @@ import { createReviewChairExecutionPlan } from './review-chair.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
-import { decideOrchestratorRescue } from './workflow/orchestrator-rescue.js';
+import { applyOrchestratorRescue } from './workflow/orchestrator-rescue.js';
 import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
@@ -164,16 +164,9 @@ export class Reconciler extends ReconcilerReviewBase {
       if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       for (const task of (await this.store.load(jobId)).tasks) {
-        const decision = decideOrchestratorRescue(task, now);
-        if (!decision.accepted || !decision.actions.some(action => action.id === 'task.rescueOrchestrator')) continue;
-        task.adapter = 'chatgpt';
-        task.workerRequirements = { capabilities: [], runtime: 'chatgpt' };
-        task.workerSelection = undefined;
-        task.routing = undefined;
-        task.timeoutMs = 0;
-        task.updatedAt = new Date(now).toISOString();
+        const rescue = applyOrchestratorRescue(task, now); if (!rescue.rescued) continue;
         await this.store.saveTask(task);
-        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.orchestrator_rescued', 'queued', `Stale orchestrator task ${task.id} converted to ChatGPT execution`, 'orchestrator', { ageMs: now - Date.parse(task.createdAt), adapter: 'chatgpt' }, { agent: 'relay', component: 'agents-relay' }));
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.orchestrator_rescued', 'queued', `Stale orchestrator task ${task.id} converted to ChatGPT execution`, 'orchestrator', { ageMs: rescue.ageMs, adapter: 'chatgpt' }, { agent: 'relay', component: 'agents-relay' }));
       }
       await this.recoverPlannerChildren(job);
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {

@@ -29,3 +29,18 @@ export function decideOrchestratorRescue(task: Task, now: number): GraphDecision
     isTransientState: state => state === 'check', maxSteps: 2,
   });
 }
+
+
+export function applyOrchestratorRescue(task: Task, now: number): { rescued: boolean; ageMs: number } {
+  const decision = decideOrchestratorRescue(task, now);
+  const rescued = decision.accepted && decision.actions.some(action => action.id === 'task.rescueOrchestrator');
+  const ageMs = now - Date.parse(task.createdAt);
+  if (!rescued) return { rescued: false, ageMs };
+  task.adapter = 'chatgpt';
+  task.workerRequirements = { capabilities: [...task.capabilities], runtime: 'chatgpt' };
+  task.workerSelection = undefined;
+  task.routing = undefined;
+  task.timeoutMs = 0;
+  task.updatedAt = new Date(now).toISOString();
+  return { rescued: true, ageMs };
+}
