@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import { createSign } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { GitHubClient, GitHubGraphqlDiagnostics, GitHubRateLimitBucket, GitHubRateLimitSnapshot } from './store.js';
 import { GitHubRuntimeRateUsage, GitHubTransportResponse, emptyGitHubRuntimeRateUsage, observeRuntimeRateLimit, parseGitHubCliHeaders, runtimeRejection } from './github-runtime-usage.js';
+import { spawnOwnedProcess } from './owned-process.js';
 
 export type GitHubAppAuthOptions = { appId: string; installationId: string; privateKey: string };
 
@@ -117,11 +117,11 @@ export class GhApiClient implements GitHubClient {
     if (rateLimited) this.assertAvailable();
     const commandArgs = includeHeaders ? [args[0] ?? '', '--include', ...args.slice(1)] : args;
     return await new Promise<GitHubTransportResponse>((resolve) => {
-      const child = spawn('gh', commandArgs, { env }); let stdout = ''; let stderr = '';
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      const child = spawnOwnedProcess('gh', commandArgs, { invocation: 'github.api', spawn: { env } }); let stdout = ''; let stderr = '';
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
       child.on('error', error => resolve({ status: null, headers: {}, body: '', stderr: error.message }));
-      if (input !== undefined) child.stdin.write(input); child.stdin.end();
+      if (input !== undefined) child.stdin?.write(input); child.stdin?.end();
       child.on('close', code => {
         const response = parseGitHubCliHeaders(stdout, includeHeaders);
         const failed = code !== 0;
@@ -181,8 +181,8 @@ export class GhApiClient implements GitHubClient {
   }
   async localLogin(): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
-      const child = spawn('gh', ['auth', 'status', '--active', '--json', 'hosts']); let stdout = '';
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      const child = spawnOwnedProcess('gh', ['auth', 'status', '--active', '--json', 'hosts'], { invocation: 'github.auth-status' }); let stdout = '';
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.on('error', () => resolve(null));
       child.on('close', () => {
         try {

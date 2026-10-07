@@ -3,8 +3,8 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { spawn } from 'node:child_process';
 import type { BrowserWorkspaceCapacity } from './types.js';
+import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
 
 export type AccountUsageWindow = {
   usedPercent: number;
@@ -73,20 +73,20 @@ export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityRead
   async read(): Promise<BrowserWorkspaceCapacity> {
     const observedAt = this.now().toISOString();
     return await new Promise(resolve => {
-      const child = spawn(this.command, [], { stdio: ['pipe', 'pipe', 'ignore'] });
+      const child = spawnOwnedProcess(this.command, [], { invocation: 'usage.browser-workspace', timeoutMs: this.timeoutMs, spawn: { stdio: ['pipe', 'pipe', 'ignore'] } });
       let output = '';
       let settled = false;
       const finish = (capacity: BrowserWorkspaceCapacity): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        child.kill();
+        void terminateOwnedProcess(child, 'cancel');
         resolve(capacity);
       };
       const unavailable = (reason: string): BrowserWorkspaceCapacity => ({ name: 'Harness', poolSize: null, idle: null, leased: null, available: null, observedAt, reason });
       const timer = setTimeout(() => finish(unavailable('Browser Workspace capacity probe timed out.')), this.timeoutMs);
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', chunk => { output += chunk; });
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', chunk => { output += chunk; });
       child.once('error', () => finish(unavailable('Browser Workspace capacity probe could not be started.')));
       child.once('close', code => {
         if (settled) return;
@@ -117,7 +117,7 @@ export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityRead
         }
         finish(unavailable(code === 0 ? 'Browser Workspace capacity probe returned no usable capacity.' : `Browser Workspace capacity probe exited with code ${code ?? 'unknown'}.`));
       });
-      child.stdin.end('import json\nprint(json.dumps(workspace_capacity()))\n');
+      child.stdin?.end('import json\nprint(json.dumps(workspace_capacity()))\n');
     });
   }
 }
@@ -180,9 +180,11 @@ export class CodexApiUsageReader implements UsageReader {
   async read(): Promise<AccountUsageSnapshot> {
     const generatedAt = this.now().toISOString();
     return await new Promise(resolve => {
-      const child = spawn('codex', ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      const child = spawnOwnedProcess('codex', ['app-server', '--stdio'], { invocation: 'usage.codex-app-server', timeoutMs: 10_000, spawn: { stdio: ['pipe', 'pipe', 'ignore'] } });
+      if (!child.stdout) { resolve({ available: false, generatedAt, fiveHour: null, weekly: null, reason: 'Codex app-server stdout unavailable.' }); return; }
       const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-      const finish = (snapshot: AccountUsageSnapshot) => { lines.close(); child.kill(); resolve(snapshot); };
+      let queryTimer: NodeJS.Timeout | undefined;
+      const finish = (snapshot: AccountUsageSnapshot) => { lines.close(); if (queryTimer) clearTimeout(queryTimer); void terminateOwnedProcess(child, 'cancel'); resolve(snapshot); };
       const timer = setTimeout(() => finish({ available: false, generatedAt, fiveHour: null, weekly: null, reason: 'Codex app-server rate-limit request timed out.' }), 10_000);
       lines.on('line', line => {
         try {
@@ -200,8 +202,8 @@ export class CodexApiUsageReader implements UsageReader {
         } catch { return; }
       });
       child.once('error', () => { clearTimeout(timer); finish({ available: false, generatedAt, fiveHour: null, weekly: null, reason: 'Codex app-server could not be started.' }); });
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'agents-relay', version: '1' }, capabilities: {} } }) + '\n');
-      setTimeout(() => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} }) + '\n'), 100);
+      child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'agents-relay', version: '1' }, capabilities: {} } }) + '\n');
+      queryTimer = setTimeout(() => child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} }) + '\n'), 100);
     });
   }
 }

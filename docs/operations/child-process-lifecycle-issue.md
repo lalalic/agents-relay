@@ -23,3 +23,13 @@ Implement a reusable, platform-aware lifecycle mechanism for processes spawned b
 ## Safety constraints
 
 Do not restart NeoY, PM2 or Chrome as part of regression tests. Do not kill unrelated active services. Use test-owned disposable child trees only.
+
+## Confirmed cause and resolution
+
+Planner, adapter, GitHub, continuation, usage-probe, escalation, decision, and workspace helpers launched child processes independently. Planner abort and timeout signalled only the immediate PID. When an npm/shell/Codex descendant inherited stdout or stderr, Node's child `close` event waited for that descendant even after the direct child exited; the planner promise therefore never settled, the CLI never reached event-bus/reconciler cleanup, and the abandoned wrapper tree survived its launcher. The overall planner timeout did fire, but its direct-PID SIGTERM did not own or terminate the descendant group.
+
+All Relay subprocess launches now converge on `src/owned-process.ts`. On POSIX each disposable launch receives its own process group; Windows uses direct graceful termination followed by targeted `taskkill /t /f`. Abort, timeout, cancellation, retry cleanup, direct leader exit, and orderly shutdown use SIGTERM plus a bounded grace period and SIGKILL. A detached, stdio-free supervisor watches the parent relationship and terminates only its assigned process group if the Relay parent is killed, covering owner crashes without process-name matching. Existing startup/lease reconciliation remains the durable-state authority while the supervisor handles the abandoned OS process tree.
+
+Structured observations record the secret-safe invocation identity, executable basename, PID, process group, termination reason, signal, exit status, and elapsed duration. CLI `plan` and local `reconcile` explicitly close their reconciler and event-bus resources before returning. Regression tests create only disposable process trees and verify normal wrapper completion, cancellation, timeout, competing-group isolation, CLI planner completion, and parent SIGKILL cleanup with fresh PIDs.
+
+Markcut preview/player process ownership remains a separate follow-on in Markcut; Relay does not inspect or terminate those unowned services.

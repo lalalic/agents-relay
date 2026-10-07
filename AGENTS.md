@@ -21,6 +21,7 @@ architecture-sensitive work.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
+- Every disposable subprocess launched by Relay must use the shared owned-process lifecycle so direct exit, cancellation, timeout, retry, and parent death clean the exact process group without process-name matching.
 
 ## Workflow authority classification
 
