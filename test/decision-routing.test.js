@@ -472,8 +472,8 @@ test('execution router makes one decision over complete routes with compact task
     assert.equal(calls[0].contract.type, 'choice');
     assert.ok(calls[0].contract.choices.includes('worker=codex provider=openai model=gpt-test reasoning=medium default=true'));
     assert.ok(calls[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt model=account-defaults reasoning=provider-default default=true'));
-    assert.ok(Array.isArray(calls[0].request.facts.worker_candidates));
-    assert.ok(Array.isArray(calls[0].request.facts.effective_choices));
+    assert.equal(calls[0].request.facts.worker_candidates, undefined);
+    assert.equal(calls[0].request.facts.effective_choices, undefined);
     assert.equal(calls[0].request.facts.context.task_shape.story_size, 'M');
     assert.equal(calls[0].request.facts.context.task_shape.preferred_worker, 'chatgpt');
     assert.equal(calls[0].request.facts.preferred_routes, undefined);
@@ -588,17 +588,10 @@ test('execution router exposes explicit five-hour and weekly code-plan windows t
       credits: [],
     },
   });
-  const codex = calls[0].request.facts.worker_candidates.find(item => item.id === 'codex');
-  const openai = codex.providers.openai;
-  assert.deepEqual(openai.code_plan.five_hour, {
-    remaining_percent: 80,
-    reset_at: 1790000000,
-    reset_in_minutes: openai.code_plan.five_hour.reset_in_minutes,
-  });
-  assert.equal(openai.code_plan.weekly.remaining_percent, 40);
-  assert.equal(openai.usage, undefined);
-  assert.equal(openai.resourceRemainingPercent, undefined);
-  assert.equal(openai.resourceWindows, undefined);
+  assert.equal(calls[0].request.facts.worker_candidates, undefined);
+  assert.equal(calls[0].request.facts.effective_choices, undefined);
+  assert.ok(calls[0].contract.choices.some(choice => choice.includes('provider=openai')));
+  assert.ok(calls[0].request.facts.context.task_shape.story_size === 'M');
 });
 
 test('execution task shape keeps router policy simple', () => {

@@ -369,8 +369,6 @@ export async function routeExecution(
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
-    worker_candidates: workerProviderFacts(routes),
-    effective_choices: effectiveChoices,
   })) as Record<string, unknown>;
 
   const question = appendRoutingInstruction(
