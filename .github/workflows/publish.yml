@@ -135,3 +135,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ steps.publish.outputs.version }}
           PACKAGE_REGISTRY: https://registry.npmjs.org
+      - name: Record failed publish on originating PR
+        if: ${{ failure() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/report-package-failed.mjs
