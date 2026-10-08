@@ -179,7 +179,6 @@ export abstract class ReconcilerRuntimeBase {
     const unsubscribe = await this.options.eventBus.subscribe(jobId, async event => {
       if (settled || event.type !== 'task.started' || event.job_id !== jobId || event.task_id !== taskId) return;
       if (eventSourceId(event) !== sourceId) return;
-      if (!event.timestamp || new Date(event.timestamp).getTime() < launchBarrier) return;
       settled = true;
       if (timer) clearTimeout(timer);
       resolveAck();
@@ -238,7 +237,6 @@ export abstract class ReconcilerRuntimeBase {
   }
   protected async markWorkerStarted(event: EventRecord): Promise<EventHandlingResult> {
     const live = this.live.get(event.task_id);
-    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return { applied: false, reconcile: false, reason: 'task.started.stale' };
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
@@ -247,11 +245,10 @@ export abstract class ReconcilerRuntimeBase {
         return Boolean(exactLiveExecution || claimedExecution || this.isRecoverableWatchdogFailure(task));
       },
       facts: (_job, task) => ({
-        recoverableExecution: this.isRecoverableWatchdogFailure(task)
-          && (!event.timestamp || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime()),
+        recoverableExecution: this.isRecoverableWatchdogFailure(task),
       }),
       mutate: (_job, task) => {
-        task.updatedAt = event.timestamp || new Date().toISOString();
+        task.updatedAt = new Date().toISOString();
       },
     });
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' };
@@ -402,18 +399,15 @@ export abstract class ReconcilerRuntimeBase {
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
           // A duplicate launch can leave one worker orphaned after another worker
           // has already produced the terminal fact. Accept only a known execution
-          // from the same durable attempt and only when its fact is newer than its
-          // launch. A prior retry attempt cannot complete a newer generation.
-          if (!prior || prior.attempt !== task.attempt || !event.timestamp || new Date(event.timestamp).getTime() < new Date(prior.startedAt).getTime()) return false;
+          // from the same durable attempt. A prior retry attempt cannot complete a newer generation.
+          if (!prior || prior.attempt !== task.attempt) return false;
         }
         const terminalWaiter = this.terminalWaiters.get(task.id);
-        return !terminalWaiter || Boolean(event.timestamp && new Date(event.timestamp).getTime() >= terminalWaiter.launchBarrier);
+        return !terminalWaiter || terminalWaiter.executionId === executionIdFromSource(eventSourceId(event), _job.id, task.id);
       },
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
-        const freshEnough = processExitedAfterPublishedTerminal
-          || !event.timestamp
-          || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime();
+        const freshEnough = processExitedAfterPublishedTerminal || this.isCorrelatedWorkerEvent(task, event);
         return { recoverableExecution: this.isRecoverableWatchdogFailure(task) && freshEnough };
       },
       mutate: (job, task) => {
@@ -429,7 +423,7 @@ export abstract class ReconcilerRuntimeBase {
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
         task.executionId = null;
-        task.updatedAt = event.timestamp || new Date().toISOString();
+        task.updatedAt = new Date().toISOString();
         this.terminalWaiters.get(task.id)?.resolve();
         this.terminalWaiters.delete(task.id);
         const reportedTag = acceptedReportedTag(job, event.data);

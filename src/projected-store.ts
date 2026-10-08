@@ -1,4 +1,5 @@
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
+import { publishLocalCommit } from './local-commit-events.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget, type BlockerResolutionSummary } from './blockers.js';
 import type { Comment, DurableStore, PullRequestState } from './store.js';
 import { DurableDefinitionConflictError, isDurableDefinitionConflict, sameTaskDefinition } from './store-task-definition.js';
@@ -231,6 +232,7 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'save_job', value } satisfies ProjectedPayload,
       priority: ['COMPLETED', 'CANCELLED'].includes(job.state) ? 100 : 20,
     });
+    publishLocalCommit(job);
     observability().record({
       stage: 'store', event: 'store.commit', outcome: 'succeeded',
       message: `Job ${job.id} committed`,
@@ -253,6 +255,7 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'append_plan', value: plan } satisfies ProjectedPayload,
       priority: 30,
     });
+    publishLocalCommit(job);
   }
 
   async savePlan(plan: Plan): Promise<void> {
@@ -268,6 +271,7 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'save_plan', value: plan } satisfies ProjectedPayload,
       priority: 30,
     });
+    publishLocalCommit(job);
   }
 
   async appendTask(task: Task): Promise<void> {
@@ -285,6 +289,7 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'append_task', value: task } satisfies ProjectedPayload,
       priority: 40,
     });
+    publishLocalCommit(job);
     observability().record({
       stage: 'store', event: 'store.commit', outcome: 'succeeded',
       message: `Task ${task.id} appended`,
@@ -309,6 +314,7 @@ export class ProjectedDurableStore implements DurableStore {
       payload: { operation: 'save_task', value } satisfies ProjectedPayload,
       priority: terminal ? 100 : 50,
     });
+    publishLocalCommit(job);
     observability().record({
       stage: 'store', event: 'store.commit', outcome: 'succeeded',
       message: `Task ${task.id} committed (${task.state})`,

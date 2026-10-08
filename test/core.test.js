@@ -1387,7 +1387,7 @@ test('late events do not revive genuine failures or stale watchdog events', asyn
   const store=new InMemoryStore(job([genuine,stale])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j','genuine',null,'task.started','running','late','user',undefined,eventSource('j','genuine','genuine-exec')),timestamp:'2026-09-20T20:00:01.000Z'});
   await reconciler.handleEvent({...eventFor('j','stale',null,'task.completed','succeeded','old completion','user',undefined,eventSource('j','stale','stale-exec')),timestamp:'2026-09-20T20:00:04.000Z'});
-  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'FAILED');
+  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'SUCCEEDED', 'same execution ID owns recovery despite untrusted event timestamp');
 });
 
 test('correlated terminal completed event is authoritative', async () => {
