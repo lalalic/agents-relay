@@ -12,6 +12,7 @@ import { workflowEffectFailureEvent } from './workflow/contracts.js';
 import { ReconcileCoordinator } from './reconcile-coordinator.js';
 import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
+import { createWorkerStartAck } from './worker-start-ack.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js';
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
@@ -191,32 +192,7 @@ export abstract class ReconcilerRuntimeBase {
   async wake(jobId: string): Promise<Job> { return this.reconcile(jobId); }
   protected async startAck(jobId: string, taskId: string, sourceId: string, launchBarrier: number, timeoutMs = this.options.startAckTimeoutMs ?? 60000): Promise<{ ack: Promise<void>; stop: () => Promise<void> }> {
     if (!this.options.eventBus) throw new Error('Worker start acknowledgement requires an event bus');
-    let resolveAck!: () => void;
-    let rejectAck!: (error: Error) => void;
-    let settled = false;
-    let timer: NodeJS.Timeout | undefined;
-    const ack = new Promise<void>((resolve, reject) => { resolveAck = resolve; rejectAck = reject; });
-    const unsubscribe = await this.options.eventBus.subscribe(jobId, async event => {
-      if (settled || event.type !== 'task.started' || event.job_id !== jobId || event.task_id !== taskId) return;
-      if (eventSourceId(event) !== sourceId) return;
-      if (!event.timestamp || new Date(event.timestamp).getTime() < launchBarrier) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolveAck();
-    });
-    timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      void unsubscribe();
-      rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_timeout: no worker task.started start-ack`));
-    }, timeoutMs);
-    let stopped = false;
-    const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer);
-      if (!settled) { settled = true; rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_cancelled: start-ack owner closed`)); }
-      this.startAckCleanups.delete(stop); await unsubscribe();
-    };
-    this.startAckCleanups.add(stop);
-    return { ack, stop };
+    return createWorkerStartAck(this.options.eventBus, jobId, taskId, sourceId, timeoutMs, this.startAckCleanups);
   }
   protected registerExecutionOwner(jobId: string, taskId: string, executionId: string): void {
     activeExecutionOwners.set(executionEventSource(jobId, taskId, executionId), this);
@@ -258,7 +234,7 @@ export abstract class ReconcilerRuntimeBase {
   }
   protected async markWorkerStarted(event: EventRecord): Promise<EventHandlingResult> {
     const live = this.live.get(event.task_id);
-    if (live && event.job_id === live.jobId && event.timestamp && new Date(event.timestamp).getTime() < live.launchBarrier) return { applied: false, reconcile: false, reason: 'task.started.stale' };
+    // Event timestamps are worker-authored and may be wrong; exact execution identity is authoritative.
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
@@ -268,10 +244,10 @@ export abstract class ReconcilerRuntimeBase {
       },
       facts: (_job, task) => ({
         recoverableExecution: this.isRecoverableWatchdogFailure(task)
-          && (!event.timestamp || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime()),
+          && Boolean(task.executionId && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId)),
       }),
       mutate: (_job, task) => {
-        task.updatedAt = event.timestamp || new Date().toISOString();
+        task.updatedAt = new Date().toISOString();
       },
     });
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' };
@@ -427,7 +403,7 @@ export abstract class ReconcilerRuntimeBase {
           if (!prior || prior.attempt !== task.attempt || !event.timestamp || new Date(event.timestamp).getTime() < new Date(prior.startedAt).getTime()) return false;
         }
         const terminalWaiter = this.terminalWaiters.get(task.id);
-        return !terminalWaiter || Boolean(event.timestamp && new Date(event.timestamp).getTime() >= terminalWaiter.launchBarrier);
+        return !terminalWaiter || Boolean(task.executionId && terminalWaiter.executionId === task.executionId && this.isCorrelatedWorkerEvent(task, event));
       },
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
@@ -449,7 +425,7 @@ export abstract class ReconcilerRuntimeBase {
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
         task.executionId = null;
-        task.updatedAt = event.timestamp || new Date().toISOString();
+        task.updatedAt = new Date().toISOString();
         this.terminalWaiters.get(task.id)?.resolve();
         this.terminalWaiters.delete(task.id);
         const reportedTag = acceptedReportedTag(job, event.data);

@@ -142,6 +142,12 @@ export class RepositoryWorkerPool {
         continue;
       }
       const result = await withGitHubRequestContext(this.client, `pool.coordinator-apply:${signal.reason}`, () => reconciler.applyEvent(signal.event!));
+      if (!result.applied) observability().record({
+        stage: 'transition', event: 'lifecycle.event_rejected', level: 'warn', outcome: 'skipped',
+        message: `Lifecycle event ${signal.event.type} not applied: ${result.reason}`,
+        correlation: { repository: target.repository, prNumber: target.prNumber, jobId, taskId: signal.event.task_id },
+        data: { eventId: signal.event.event_id, sourceId: signal.event.source?.id, reason: result.reason, eventTimestamp: signal.event.timestamp },
+      });
       shouldReconcile ||= result.reconcile;
     }
     if (!shouldReconcile) {

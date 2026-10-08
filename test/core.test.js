@@ -2112,3 +2112,21 @@ test('CLI task update rejects malformed Agent Graph before replacing durable gra
   assert.equal(saved.tasks[0].agentGraph,'flowchart LR\nreviewer --> planner');
   await rm(directory,{recursive:true,force:true});
 });
+
+test('valid current execution start uses execution identity instead of worker midnight timestamp', async () => {
+  const t=task('midnight-start'); t.executionId='current-generation'; t.leaseOwner='relay-owner'; t.attempt=1;
+  t.executionHistory=[{id:'current-generation',attempt:1,startedAt:'2026-10-08T10:17:00.000Z'}];
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  const oldClock={...eventFor('j',t.id,null,'task.started','running','starting','orchestrator',undefined,eventSource('j',t.id,t.executionId)),timestamp:'2026-10-08T00:00:00.000Z'};
+  await reconciler.handleEvent(oldClock);
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'RUNNING');
+  assert.notEqual(saved.updatedAt,oldClock.timestamp);
+});
+
+test('previous execution cannot start current generation despite newer timestamp', async () => {
+  const t=task('reject-previous'); t.executionId='generation-two'; t.leaseOwner='relay-owner'; t.attempt=2;
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
+  await reconciler.handleEvent(eventFor('j',t.id,null,'task.started','running','old worker','orchestrator',undefined,eventSource('j',t.id,'generation-one')));
+  assert.equal((await store.load('j')).tasks[0].state,'QUEUED');
+});
