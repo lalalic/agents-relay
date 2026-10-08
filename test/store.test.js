@@ -9,11 +9,15 @@ test('rendered job/task markers do not duplicate human markdown content', async 
   const durableJob = job('dedupe');
   durableJob.objective = '# Goal\n\nKeep this visible only.';
   durableJob.description = durableJob.objective;
+  durableJob.reviewerThreadId = 'reviewer-thread';
+  durableJob.creatorThreadId = 'creator-thread';
   const jobBody = renderJobBody(durableJob);
   const jobMarker = jobBody.slice(0, jobBody.indexOf('-->') + 3);
   assert.doesNotMatch(jobMarker, /Keep this visible only/);
   assert.doesNotMatch(jobMarker, /description/);
   assert.equal(parseJob(jobBody)?.objective, durableJob.objective);
+  assert.equal(parseJob(jobBody)?.reviewerThreadId, 'reviewer-thread');
+  assert.equal(parseJob(jobBody)?.creatorThreadId, 'creator-thread');
   assert.equal(jobBody.split('Keep this visible only.').length - 1, 1);
   assert.equal(parseJob(renderJobComment(durableJob))?.objective, durableJob.objective);
 
@@ -259,7 +263,7 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const client = new ManagedGitHubClient();
   const trusted = new Set(['bot']);
-  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body', autoMerge: false };
+  const options = { id: 'managed', title: 'Managed work', head: 'feat/managed', base: 'main', body: 'body', autoMerge: false, reviewerThreadId: 'reviewer-thread', creatorThreadId: 'creator-thread' };
 
   const first = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
   const second = await ensureManagedGitHubJob(client, 'owner/repo', trusted, options);
@@ -269,6 +273,8 @@ test('managed job creation creates one PR and one durable job marker idempotentl
   assert.equal(second.job.objective, 'body');
   assert.equal(first.job.autoMerge, true);
   assert.equal(second.job.autoMerge, true);
+  assert.equal(first.job.reviewerThreadId, 'reviewer-thread');
+  assert.equal(first.job.creatorThreadId, 'creator-thread');
   assert.equal(client.pulls.length, 1);
   const comments = client.comments.get(first.pr.number) ?? [];
   assert.equal(comments.filter(item => parseJob(item.body)?.id === 'managed').length, 0);

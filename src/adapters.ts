@@ -2,7 +2,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
+import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
 
@@ -15,6 +15,7 @@ export type Execution = {
   launched?: Promise<void>;
   processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string };
   pid?: number;
+  deliveryReceipt?: Record<string, unknown>;
 };
 export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
@@ -113,10 +114,13 @@ export class CodexAdapter implements WorkerAdapter {
   }
 }
 
-export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabClosePolicy?: ChatGptTabClosePolicy };
+export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabClosePolicy?: ChatGptTabClosePolicy; thread?: ChatGptThreadDelivery };
 export type BrowserWorkerResponse = {
-  operation: 'submit';
+  operation?: 'submit' | 'new-turn';
   status: 'submitted';
+  mode?: 'new-turn';
+  project_id?: string | null;
+  thread_id?: string | null;
   temporary?: boolean;
   diagnostic_thread_id?: string | null;
   user_message_id?: string | null;
@@ -149,7 +153,7 @@ function parseDriverJson(output: string): BrowserWorkerResponse {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
       const value = JSON.parse(lines[index]) as Record<string, unknown>;
-      if (value.operation !== 'submit' || value.status !== 'submitted') continue;
+      if (value.status !== 'submitted' || (value.operation !== undefined && value.operation !== 'submit' && value.operation !== 'new-turn')) continue;
       return value as BrowserWorkerResponse;
     } catch {
       // Browser-harness diagnostics may precede the final JSON observation.
@@ -217,14 +221,21 @@ function autoSessionBrowserWorkerRunner(): ChatGptAgentRunner {
     const promise = (async (): Promise<string> => {
       const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
       try {
-        await writeFile(configFile, JSON.stringify({
+        const delivery = request.thread;
+        await writeFile(configFile, JSON.stringify(delivery ? {
+          project_id: delivery.projectId ?? _route.projectId ?? null,
+          thread_id: delivery.threadId,
+          message: request.prompt,
+          idempotency_key: delivery.requestId,
+        } : {
           prompt: request.prompt,
           file: request.files ?? [],
         }));
         if (signal.aborted) throw new Error('browser-worker execution aborted');
+        const action = delivery ? 'new-turn' : 'temporary-submit';
         const output = await browserWorkspaceCommand(
           cli,
-          ['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile],
+          ['platform', 'run', 'chatgpt', action, '--auto-session', '--config', configFile],
           undefined,
           signal,
         );
@@ -247,10 +258,10 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
   }
   if (!value || typeof value !== 'object') throw new Error('browser-worker returned an invalid JSON response');
   const response = value as BrowserWorkerResponse;
-  if (response.operation !== 'submit' || response.status !== 'submitted') {
+  const verified = response.verified === true || response.verified_by !== undefined;
+  if (response.status !== 'submitted' || !verified) {
     throw new Error('browser-worker did not return a submitted receipt');
   }
-  if (response.verified !== true) throw new Error('browser-worker submission was not verified');
   return response;
 }
 
@@ -288,13 +299,22 @@ export class ChatGptAdapter implements WorkerAdapter {
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
       const run = (this.runner ?? autoSessionBrowserWorkerRunner())(
         definition,
-        { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
+        {
+          prompt: task.input,
+          ...(task.attachments?.length ? { files: task.attachments } : {}),
+          ...(task.chatgptThreadDelivery ? { thread: task.chatgptThreadDelivery } : {}),
+          tabClosePolicy: policy,
+        },
         route,
         controller.signal,
       );
       try {
         const output = await (run.submitted ?? run.promise);
         const response = parseBrowserWorkerResponse(output);
+        if (task.chatgptThreadDelivery && (typeof response.thread_id !== 'string' || response.thread_id !== task.chatgptThreadDelivery.threadId)) {
+          throw new Error('browser-worker submitted to an unexpected ChatGPT thread');
+        }
+        execution.deliveryReceipt = { ...response };
         launchResolve();
         if (policy === 'after-start' && context.waitForWorkerStart) await context.waitForWorkerStart;
         else if (policy === 'after-terminal') {
@@ -307,6 +327,8 @@ export class ChatGptAdapter implements WorkerAdapter {
           summary: 'ChatGPT task submitted; terminal task state is event-owned',
           data: {
             submitted: true,
+            mode: response.mode ?? 'temporary-submit',
+            threadId: response.thread_id ?? response.diagnostic_thread_id ?? null,
             diagnosticThreadId: response.diagnostic_thread_id ?? null,
             userMessageId: response.user_message_id ?? null,
             verifiedBy: response.verified_by ?? null,

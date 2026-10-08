@@ -95,9 +95,68 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
 test('ChatGptAdapter default runner uses Browser Workspace one-shot auto-session', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile\]/);
+  assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--auto-session', '--config', configFile\]/);
+  assert.match(source, /thread_id: delivery\.threadId/);
+  assert.match(source, /idempotency_key: delivery\.requestId/);
   assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
+});
+
+test('ChatGptAdapter submits an existing-thread reviewer request as one verified new turn', async () => {
+  const requests = [];
+  const adapter = new ChatGptAdapter({
+    agentRunner: (_definition, request) => {
+      requests.push(request);
+      return {
+        promise: Promise.resolve(JSON.stringify({
+          status: 'submitted',
+          mode: 'new-turn',
+          project_id: 'project-1',
+          thread_id: 'review-thread',
+          verified_by: 'user-turn',
+          user_message_id: 'review-turn',
+        })),
+        cancel() {},
+      };
+    },
+  });
+  const execution = adapter.launch(task({
+    chatgptThreadDelivery: {
+      kind: 'new-turn',
+      threadId: 'review-thread',
+      threadSource: 'creator',
+      requestId: 'job:review:sha',
+      jobId: 'job',
+      prNumber: 7,
+      reviewHeadSha: 'sha',
+      projectId: 'project-1',
+    },
+  }), new AbortController().signal);
+  const result = await execution.promise;
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].thread?.threadId, 'review-thread');
+  assert.equal(requests[0].thread?.threadSource, 'creator');
+  assert.equal(result.data.mode, 'new-turn');
+  assert.equal(result.data.threadId, 'review-thread');
+  assert.equal(result.data.verifiedBy, 'user-turn');
+});
+
+test('ChatGptAdapter never reports an existing-thread turn on the wrong thread', async () => {
+  const adapter = new ChatGptAdapter({
+    agentRunner: () => ({
+      promise: Promise.resolve(JSON.stringify({
+        status: 'submitted', mode: 'new-turn', thread_id: 'other-thread', verified_by: 'user-turn',
+      })),
+      cancel() {},
+    }),
+  });
+  await assert.rejects(adapter.launch(task({
+    chatgptThreadDelivery: {
+      kind: 'new-turn', threadId: 'review-thread', threadSource: 'reviewer', requestId: 'request',
+      jobId: 'job', prNumber: 7, reviewHeadSha: 'sha',
+    },
+  }), new AbortController().signal).promise, /unexpected ChatGPT thread/);
 });
 
 test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {

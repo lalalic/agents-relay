@@ -16,7 +16,7 @@ import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
 import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
-import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
+import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState, runtimeReviewer } from '../dist/cli.js';
 import { relayControlJob } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
 
@@ -1589,12 +1589,63 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.routing?.model, 'account-defaults');
   assert.equal(reviewer?.routing?.decidedBy, 'execution-router:fallback');
   assert.equal(reviewer?.routing?.decisionEvidence?.fallback, true);
-  assert.match(reviewer?.input ?? '', /Review existing PR #1 at exactly head SHA sha-review-1/);
+  assert.match(reviewer?.input ?? '', /Review PR #1 at exactly head SHA sha-review-1\./);
   assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);
 
   await reconciler.reconcile('j');
   saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
+});
+
+test('review thread metadata persists and resolves reviewer, creator, then CLI override', async () => {
+  const { resolveReviewerThreadDestination } = await import('../dist/reviewer-thread.js');
+  assert.deepEqual(resolveReviewerThreadDestination({ reviewerThreadId: 'reviewer', creatorThreadId: 'creator' }), {
+    threadId: 'reviewer', source: 'reviewer',
+  });
+  assert.deepEqual(resolveReviewerThreadDestination({ reviewerThreadId: undefined, creatorThreadId: 'creator' }), {
+    threadId: 'creator', source: 'creator',
+  });
+  assert.deepEqual(resolveReviewerThreadDestination({ reviewerThreadId: 'reviewer', creatorThreadId: 'creator' }, ' override '), {
+    threadId: 'override', source: 'override',
+  });
+  assert.equal(resolveReviewerThreadDestination({}), null);
+  assert.throws(() => resolveReviewerThreadDestination({ reviewerThreadId: ' ' }), /reviewer thread ID/);
+  assert.equal(runtimeReviewer(['--thread-id', ' override ']).threadId, 'override');
+  assert.throws(() => runtimeReviewer(['--thread-id', ' ']), /--thread-id/);
+});
+
+test('thread-bound final review uses the selected durable thread and records delivery', async () => {
+  const work = task('work', 'SUCCEEDED');
+  const reviewJob = { ...job([work]), headSha: 'sha-threaded', creatorThreadId: 'creator-thread' };
+  const store = new InMemoryStore(reviewJob);
+  const bus = new MemoryEventBus();
+  const adapter = new FakeAdapter();
+  const reviewer = { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, maxConcurrent: 0, reviewer });
+  await reconciler.reconcile('j');
+  const reviewerTask = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(reviewerTask?.adapter, 'chatgpt');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.threadId, 'creator-thread');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'creator');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.reviewHeadSha, 'sha-threaded');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.requestId, 'j:final-review-sha-threaded:sha-threaded');
+  assert.match(reviewerTask?.input ?? '', /Job ID: j/);
+  assert.match(reviewerTask?.input ?? '', /Review head SHA: sha-threaded/);
+});
+
+test('review thread override wins over durable metadata', async () => {
+  const work = task('work', 'SUCCEEDED');
+  const reviewJob = { ...job([work]), headSha: 'sha-override', reviewerThreadId: 'reviewer-thread', creatorThreadId: 'creator-thread' };
+  const store = new InMemoryStore(reviewJob);
+  const adapter = new FakeAdapter();
+  const reconciler = managedReconciler(store, {
+    owner: 'test', adapters: [adapter], maxConcurrent: 0,
+    reviewer: { threadId: 'override-thread', adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: now() } },
+  });
+  await reconciler.reconcile('j');
+  const reviewerTask = (await store.load('j')).tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.threadId, 'override-thread');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'override');
 });
 
 test('final review created after the first dispatch pass is dispatched in the same reconcile', async () => {

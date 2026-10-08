@@ -56,7 +56,8 @@ test('default Browser Workspace CLI uses status discovery and no lifecycle CLI c
 test('ChatGPT adapter uses Browser Workspace one-shot auto-session platform run', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /autoSessionBrowserWorkerRunner/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile\]/);
+  assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--auto-session', '--config', configFile\]/);
   assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
   assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);

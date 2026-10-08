@@ -1,0 +1,53 @@
+import type { Job, Task, WorkerRequirements } from './types.js';
+import { arg, hasArg } from './cli-support.js';
+
+export type ReviewThreadDestination = {
+  threadId: string;
+  source: 'override' | 'reviewer' | 'creator';
+};
+
+export function normalizeThreadId(value: unknown, label = 'thread ID'): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new Error(`${label} must be a string`);
+  const threadId = value.trim();
+  if (!threadId) throw new Error(`${label} cannot be empty`);
+  if (threadId.length > 256) throw new Error(`${label} cannot exceed 256 characters`);
+  return threadId;
+}
+
+export function resolveReviewerThreadDestination(
+  job: Pick<Job, 'reviewerThreadId' | 'creatorThreadId'>,
+  override?: string,
+): ReviewThreadDestination | null {
+  const overridden = override === undefined ? undefined : normalizeThreadId(override, '--thread-id');
+  if (overridden) return { threadId: overridden, source: 'override' };
+  const reviewerThreadId = job.reviewerThreadId ? normalizeThreadId(job.reviewerThreadId, 'Job reviewer thread ID') : undefined;
+  if (reviewerThreadId) return { threadId: reviewerThreadId, source: 'reviewer' };
+  const creatorThreadId = job.creatorThreadId ? normalizeThreadId(job.creatorThreadId, 'Job creator thread ID') : undefined;
+  return creatorThreadId ? { threadId: creatorThreadId, source: 'creator' } : null;
+}
+
+export function chatgptThreadRequirements(configured: WorkerRequirements | undefined): WorkerRequirements {
+  const base = configured ?? { capabilities: ['model'] };
+  const capabilities = new Set([...base.capabilities, 'model', 'chatgpt', 'browser-workspace']);
+  return { ...base, capabilities: [...capabilities], runtime: 'chatgpt' };
+}
+
+export function runtimeReviewer(args: readonly string[] = []) {
+  const values = [...args];
+  const threadId = arg(values, '--thread-id', '');
+  if (hasArg(values, '--thread-id')) normalizeThreadId(threadId, '--thread-id');
+  return { requirements: { capabilities: ['model'] }, ...(threadId.trim() ? { threadId: threadId.trim() } : {}) };
+}
+
+export async function recordThreadDelivery(
+  store: { load(jobId: string): Promise<{ tasks: Task[] }>; saveTask(task: Task): Promise<unknown> },
+  jobId: string, taskId: string, executionId: string, workerTask: Task,
+): Promise<void> {
+  const delivery = workerTask.chatgptThreadDelivery;
+  if (!delivery || delivery.deliveredAt) return;
+  const current = (await store.load(jobId)).tasks.find(item => item.id === taskId);
+  if (current?.executionId !== executionId || current.state !== 'RUNNING' || !current.chatgptThreadDelivery) return;
+  current.chatgptThreadDelivery = { ...current.chatgptThreadDelivery, deliveredAt: new Date().toISOString() };
+  await store.saveTask(current);
+}

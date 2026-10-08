@@ -7,18 +7,12 @@ import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTas
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
-import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js';
-import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
-import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
-import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js';
-export { helpText } from './cli-help.js';
-import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js';
-export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
+import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
   repositoryName: string,
   trustedAuthors: ReadonlySet<string>,
-  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string }
+  options: { id: string; title?: string; objective?: string; projectPath?: string; priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule']; tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation']; prNumber?: number; head?: string; base?: string; body?: string; reviewerThreadId?: string; creatorThreadId?: string }
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed GitHub jobs');
   const pr = await resolvePullRequest(client, repositoryName, { prNumber: options.prNumber, head: options.head, base: options.base, title: options.title, body: options.body });
@@ -41,6 +35,8 @@ export async function ensureManagedGitHubJob(
     tag: options.tag,
     autoMerge: true,
     reviewEnabled: options.reviewEnabled ?? true,
+    ...(options.reviewerThreadId ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') } : {}),
+    ...(options.creatorThreadId ? { creatorThreadId: normalizeThreadId(options.creatorThreadId, 'creator thread ID') } : {}),
     prNumber: pr.number,
     repository: repositoryName,
     continuation: options.continuation ?? null,
@@ -300,6 +296,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       tag: jobTagFromArgs(args),
       reviewEnabled: !hasArg(args, '--no-review'),
       continuation: continuation(args),
+      ...(hasArg(args, '--reviewer-thread-id') ? { reviewerThreadId: arg(args, '--reviewer-thread-id') } : {}),
+      ...(hasArg(args, '--creator-thread-id') ? { creatorThreadId: arg(args, '--creator-thread-id') } : {}),
       prNumber,
       head: arg(args, '--head') || undefined,
       base: arg(args, '--base', 'main'),
@@ -341,6 +339,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--review') && hasArg(args, '--no-review')) throw new Error('choose only one of --review or --no-review');
   if (hasArg(args, '--review')) job.reviewEnabled = true;
   if (hasArg(args, '--no-review')) job.reviewEnabled = false;
+  if (hasArg(args, '--reviewer-thread-id')) job.reviewerThreadId = normalizeThreadId(arg(args, '--reviewer-thread-id'), '--reviewer-thread-id');
+  if (hasArg(args, '--creator-thread-id')) job.creatorThreadId = normalizeThreadId(arg(args, '--creator-thread-id'), '--creator-thread-id');
   if (hasArg(args, '--continue-kind') || hasArg(args, '--continue-target')) {
     const next = continuation(args);
     if (!next) throw new Error('--continue-kind and --continue-target must be supplied together');
@@ -351,8 +351,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(await store.load(id), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtimeReviewer() { return { requirements: { capabilities: ['model'] } }; }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => resolveRepositoryProjectPath(await resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()), job.projectPath) }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => resolveRepositoryProjectPath(await resolveManagedProjectPath(job.repository, arg(args, '--project-path'), arg(args, '--workspace-root') || defaultWorkspaceRoot()), job.projectPath) }); }
 export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, action: 'start' | 'reconcile' | 'cancel'): (jobId: string) => Promise<Job> {
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);

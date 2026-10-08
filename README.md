@@ -151,6 +151,16 @@ Use `job update` for partial mutable metadata changes on an already healthy Job 
 npx agents-relay job update --repo OWNER/REPO --pr 6 --id job-6 --priority P0 --no-auto-merge
 ~~~
 
+Review destinations are durable Job facts. `job create` and `job update` accept
+`--reviewer-thread-id` and `--creator-thread-id`; a reviewer ID takes precedence
+over the creator/origin ID. A local runtime invocation may pass
+`--thread-id` as an explicit one-run review override. When a destination exists,
+final-review routing requires a ChatGPT/browser-workspace worker and submits the
+review request as a verified `new-turn` to that existing thread with the Job ID,
+PR number, and immutable review head SHA. Failure still follows the ordinary
+review task retry/recovery path; a transport failure is never treated as
+review delivery.
+
 `job update` validates the trusted Job marker first. Missing, malformed, duplicated, mismatched, or conflicting bindings fail with a precise diagnostic and are not repaired implicitly. The orchestrator handles exceptional repair explicitly according to the Job contract, then retries the update. `job show` reads one Job and `job list` lists managed Jobs in a repository.
 
 Managed GitHub task create/update/show/list/retry/cancel and reconcile/serve commands also require a durable Job marker. Orchestrators do not need raw GitHub commands for normal Job creation or metadata updates: Agents Relay uses its authenticated GitHub client internally.

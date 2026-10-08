@@ -133,6 +133,15 @@ from the exact worker terminal event or the normal task timeout.
 
 The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Browser execution itself is a one-shot `browser-workspace platform run chatgpt temporary-submit --auto-session --config <file>` action: Browser Workspace creates/releases the fresh Temporary Chat session and Relay does not perform browser self-heal. Stale or wrong-task lifecycle events never satisfy Relay's worker barriers, and start-ack failure remains an explicit `worker_start_timeout`. Process-exit events remain distinct from task terminal events.
 
+When a durable Job review thread exists (`reviewerThreadId`, then
+`creatorThreadId`, then a runtime `--thread-id` override), final-review routing
+requires ChatGPT Browser Workspace and uses the supported `new-turn` action
+against that existing thread instead of a fresh Temporary Chat. The request
+carries the Job/PR/review-head correlation and deterministic request ID. Browser
+Workspace verifies the accepted turn and exact thread; Relay persists
+`deliveredAt` only after that verified submission succeeds and never records
+review delivery on launch, transport, verification, or persistence failure.
+
 `--chatgpt-tab-close-policy after-start|never|after-terminal` and `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY` remain accepted for compatibility with existing Relay event-barrier behavior; they no longer control the Browser Workspace auto-session lifetime. The default remains `after-start`.
 
 ## Continuations
