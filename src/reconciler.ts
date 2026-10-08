@@ -419,9 +419,10 @@ export class Reconciler extends ReconcilerReviewBase {
       transition: { graph: 'task-lifecycle', from: 'QUEUED', to: 'QUEUED', actions: ['effect.launchTask'] },
       data: { adapter: adapter.id, attempt: task.attempt, model: task.routing?.model ?? null },
     });
+    const e2eFaultTimeout = process.env.AGENTS_RELAY_E2E_FAULT_JOB === job.id && process.env.AGENTS_RELAY_E2E_FAULT_DIR ? 3500 : task.timeoutMs;
     const terminalTimer = setTimeout(() => {
       this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
-    }, Math.max(1, task.timeoutMs));
+    }, Math.max(1, e2eFaultTimeout));
     this.terminalTimers.set(task.id, terminalTimer);
 
     this.detach(
