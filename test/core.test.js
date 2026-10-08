@@ -1104,7 +1104,7 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   assert.ok(adapter.cancelled > 0, 'accepted Codex terminal fact must stop the still-live worker process');
   assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
   assert.equal(events.filter(event=>event.type==='task.failed').length,0);
-  assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
+  assert.equal(events.filter(event=>event.type==='task.process.exited').length,0, 'cleanup after authoritative terminal event must be silent');
   await stop(); await stopEvents();
 });
 

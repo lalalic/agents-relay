@@ -324,7 +324,7 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || (task.executionId !== executionId && !terminalExecutionClaimed(jobId, taskId, executionId))) return;
+    if (terminalExecutionClaimed(jobId, taskId, executionId) || !task || task.executionId !== executionId) return;
     if (task.adapter !== 'chatgpt' && task.executionId === executionId && live?.executionId === executionId)
       rearmTerminalEventDeadline(this.terminalTimers, taskId, task.timeoutMs - (Date.now() - live.launchBarrier),
         this.options.postExitTerminalGraceMs ?? 15_000, () => this.detach(this.timeoutTask(jobId, taskId, executionId), jobId, taskId, 'post-exit terminal event timeout'));
