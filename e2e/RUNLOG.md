@@ -110,3 +110,12 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Current branch commits:** `e007323` independent sentinel and NeoY handoff; `8862661` explicit controlled test rerun; `64a9d8e` verify terminal handoff status.
 - **Handoff blocker:** `chatgpt.turn` requires the stable ID of THIS conversation. Managed Chrome currently showed another conversation; therefore a thread ID was not inferred. The sentinel is monitoring, but **deliveryConfigured=false** and will not send to an unverified thread. Configure `E2E_CHATGPT_THREAD_ID` then restart sentinel with `--handoff-command /Users/chengli/Workspace/agents-relay/e2e/neo-handoff.mjs` to enable safe automatic handoff.
 - **Status:** E2E-001 FAIL, automatic turn delivery NOT YET ENABLED. This is not a closed loop until the target Thread is bound and a delivery completes.
+
+## 2026-10-08 — E2E-001 attempt 11 and Sentinel stall false positive
+
+- **Reported issue:** independent Sentinel sent `STALLED` for `implement-autonomy-smoke-20261008` as `QUEUED` with no execution ID immediately after retry; subsequent authoritative read confirmed the Task advanced to `RUNNING`, attempt 11, execution `a415e775-ea7d-4c62-9a7a-ab79957f665b`.
+- **Root cause (Sentinel):** stall detection used only the timestamp of the last EventBus entry. A recently updated/retried Task was incorrectly treated as stalled when no new events had yet been observed.
+- **Solution:** commit `586bc25` evaluates Task `updatedAt`/`createdAt` alongside the job's latest event timestamp, and reports only genuinely stale active tasks.
+- **Separate test failure:** `npm test` failed source-size guard because `src/reconciler-runtime.ts` exceeded 500 lines (520 reported by the test). Move execution-boundary locking to its own module while preserving the exported API.
+- **Validation:** `npm run build` and full `npm test`: 605/605 passed after extraction. This does not establish E2E completion; review/merge remain outstanding.
+- **Browser Workspace composer fix:** independent browser-workspace branch `fix/e2e-composer-readiness-20261008`, commit `63fea32` retries transient composer discovery failures; ChatGPT contract tests 17/17 passed. Attempt 11 was triggered by `node e2e/trigger.mjs --mode retry --task-id implement-autonomy-smoke-20261008` and must be observed to terminal result before claiming this fix passes live.

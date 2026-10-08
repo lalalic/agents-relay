@@ -18,7 +18,6 @@ export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
-
 export function executionEventSource(jobId: string, taskId: string, executionId: string): string { return `job/${jobId}/task/${taskId}/execution/${executionId}`; }
 function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
 function executionIdFromSource(sourceId: string | undefined, jobId: string, taskId: string): string | undefined {
@@ -28,27 +27,8 @@ function executionIdFromSource(sourceId: string | undefined, jobId: string, task
 
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
-const executionBoundaryLocks = new Map<string, Promise<void>>();
-
-/**
- * Serialize the durable execution-generation boundary across reconciler
- * instances in one relay process. Launch, routing, and terminal persistence
- * must not observe and write the same queued generation concurrently.
- */
-export async function withExecutionBoundary<T>(jobId: string, taskId: string, work: () => Promise<T>): Promise<T> {
-  const key = `${jobId}/${taskId}`;
-  const previous = executionBoundaryLocks.get(key);
-  let release!: () => void;
-  const current = new Promise<void>(resolve => { release = resolve; });
-  executionBoundaryLocks.set(key, current);
-  if (previous) await previous;
-  try {
-    return await work();
-  } finally {
-    release();
-    if (executionBoundaryLocks.get(key) === current) executionBoundaryLocks.delete(key);
-  }
-}
+import { withExecutionBoundary } from './execution-boundary.js';
+export { withExecutionBoundary } from './execution-boundary.js';
 function claimTerminalExecution(sourceId: string): void {
   terminalExecutionClaims.add(sourceId);
   const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
