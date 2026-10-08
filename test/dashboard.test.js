@@ -722,3 +722,10 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.match(dashboardHtml, /\.router-rules-pane\{min-width:0;max-width:100%;overflow:hidden\}/);
   assert.match(dashboardHtml, /\.audit-log\{[^}]*overflow:auto;min-width:0\}/);
 });
+
+
+test('dashboard applies live authoritative job and task state from SSE without polling', () => {
+  assert.match(dashboardHtml, /stream.addEventListener\('relay',message=>\{const payload=parseMessage\(message\);if\(payload\?\.job\)/);
+  assert.doesNotMatch(dashboardHtml, /scheduleLifecycleRefresh|streamHasOpened/);
+  assert.doesNotMatch(dashboardHtml, /setInterval\(\(\)=>\{if\(location.hash!==/);
+});

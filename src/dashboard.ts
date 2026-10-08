@@ -135,7 +135,7 @@ export function serveDashboard(
             taskState: task?.state ?? null,
             taskUpdatedAt: task?.updatedAt ?? null,
           } : null;
-          const payload = JSON.stringify({ event, statePatch });
+          const payload = JSON.stringify({ event, statePatch, job: durable });
           for (const client of clients) client.write(`event: relay\ndata: ${payload}\n\n`);
         });
       } catch {
