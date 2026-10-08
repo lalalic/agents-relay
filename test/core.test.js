@@ -19,6 +19,7 @@ import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from '../dist/cli.js';
 import { relayControlJob } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
+import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -1570,6 +1571,21 @@ test('merged PR authoritatively completes jobs stuck in failed, blocked, or canc
     const result=await reconciler.reconcile('j');
     assert.equal(result.state,'COMPLETED', state);
   }
+});
+
+test('dependent planned reviewer freezes latest PR head only at execution', async () => {
+  const implementation = task('implement', 'SUCCEEDED');
+  const review = {
+    ...task('review', 'QUEUED', ['implement']), agentName: 'reviewer',
+    planningDecisionId: 'plan-7', reviewHeadSha: 'stale-planning-head',
+  };
+  const store = new InMemoryStore({ ...job([implementation, review]), headSha: 'new-head' });
+  store.pullRequestHead = async () => ({ ref: 'e2e-fix', sha: 'new-head' });
+  await bindPlannedReviewHead(store, review);
+  const persisted = (await store.load('j')).tasks.find(item => item.id === 'review');
+  assert.equal(persisted.reviewHeadSha, 'new-head');
+  assert.equal(persisted.state, 'QUEUED');
+  assert.equal(persisted.attempt, 0);
 });
 
 test('completed jobs create one SHA-bound reviewer task and suppress duplicates', async () => {

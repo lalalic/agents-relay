@@ -119,3 +119,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Separate test failure:** `npm test` failed source-size guard because `src/reconciler-runtime.ts` exceeded 500 lines (520 reported by the test). Move execution-boundary locking to its own module while preserving the exported API.
 - **Validation:** `npm run build` and full `npm test`: 605/605 passed after extraction. This does not establish E2E completion; review/merge remain outstanding.
 - **Browser Workspace composer fix:** independent browser-workspace branch `fix/e2e-composer-readiness-20261008`, commit `63fea32` retries transient composer discovery failures; ChatGPT contract tests 17/17 passed. Attempt 11 was triggered by `node e2e/trigger.mjs --mode retry --task-id implement-autonomy-smoke-20261008` and must be observed to terminal result before claiming this fix passes live.
+
+## 2026-10-08 — E2E-001 Review head frozen before implementation (attempt 1)
+
+- **Observed:** implementation task `implement-autonomy-smoke-20261008` SUCCEEDED at attempt 11. Its downstream `review-autonomy-smoke-20261008` entered BLOCKED at attempt 1 with `reviewHeadSha` mismatch. Durable Review head was `d470873322ae6fed9e4ee8da91226f8086a0465c`, while live PR #2 and Job head were `6a18e937b72bd615e56aeba3113bc2af168ba08f`.
+- **Root cause:** `materializePlannerChild` froze the dependent Review's SHA at planning time, before the implementation dependency could update the PR head. Thus review of the latest implementation was impossible even though Review's instruction explicitly requested head binding at execution time.
+- **Solution:** defer SHA binding for planner-created dependent Review tasks; immediately before an eligible Review execution claim, obtain the latest PR head through the repository store and persist it on that Review Task. Preserve already-bound independent/final Review tasks.
+- **Validation:** build and full `npm test` PASS 607/607, including two dedicated executable Review-head binding regression tests. Live Review still requires an unblock/rerun and an observed terminal Review result, not yet PASS.
