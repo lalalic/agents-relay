@@ -92,11 +92,13 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
   assert.match(definition, /Browser Workspace/);
 });
 
-test('ChatGptAdapter default runner uses Browser Workspace one-shot auto-session', async () => {
+test('ChatGptAdapter default runner uses Browser Workspace caller-owned session', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile\]/);
-  assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
+  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['session', 'start'\]/);
+  assert.match(source, /\['session', 'stop', sessionId\]/);
+  assert.doesNotMatch(source, /\['session', 'exec'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
 });
 

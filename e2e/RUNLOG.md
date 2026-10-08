@@ -66,3 +66,12 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
 - **Fix commit:** pending this runtime-contract correction.
 - **Live result:** attempt 5 on the branch daemon still used the no-flag build and failed `browser-worker driver returned no submitted receipt`; the corrected build is ready for the next production retry. E2E-001 remains **FAIL**, not PASS.
+
+## 2026-10-08 10:08 America/Toronto — E2E-006 CLI-version split diagnosed
+
+- **Evidence:** after reloading with `862e6a5`, the production `npx browser-workspace` invocation failed attempt 6 with `unrecognized arguments: --auto-session`, while the interactive `/Users/chengli/.local/bin/browser-workspace` help exposed that flag. The two process environments resolve different Browser Workspace CLI generations.
+- **Related lifecycle evidence:** attempt 4 emitted a late `task.completed` for execution `616d91fa-e71d-4d39-8ba8-d2ab1104c1c2` after its delivery failure, while the current durable Task remained failed on attempt 5. The stale completion was not treated as the authoritative current attempt; PR head `6a18e937b72bd615e56aeba3113bc2af168ba08f` nevertheless confirms the worker had performed the requested change.
+- **Root cause:** Relay’s browser adapter depended on a version-specific one-shot flag. The production worker’s `npx` tool does not accept it; omitting it on the newer tool returns `session_id_required` with exit 0, which Relay surfaced as no submitted receipt.
+- **Solution:** use the common explicit session lifecycle: `session start`, `platform run ... --session-id`, and `session stop` in `finally`, avoiding both one-shot flag variants and preserving cleanup.
+- **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
+- **Fix commit:** pending this compatibility repair. Live retry is pending the new build reload; E2E-001 remains **FAIL**, not PASS.

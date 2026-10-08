@@ -211,7 +211,23 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
   await admin.ensureWorkspace(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE);
 }
 
-function autoSessionBrowserWorkerRunner(): ChatGptAgentRunner {
+async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal): Promise<string> {
+  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start'], undefined, signal));
+  const sessionId = session.session_id;
+  if (typeof sessionId !== 'string' || !sessionId) throw new Error('browser-workspace session start returned no session_id');
+  try {
+    return await browserWorkspaceCommand(
+      cli,
+      ['platform', 'run', 'chatgpt', 'temporary-submit', '--session-id', sessionId, '--config', configFile],
+      undefined,
+      signal,
+    );
+  } finally {
+    await browserWorkspaceCommand(cli, ['session', 'stop', sessionId]).catch(() => {});
+  }
+}
+
+function browserWorkerRunner(): ChatGptAgentRunner {
   const cli = browserWorkspaceCli();
   return (_definition, request, _route, signal): AgentRun => {
     const promise = (async (): Promise<string> => {
@@ -222,12 +238,7 @@ function autoSessionBrowserWorkerRunner(): ChatGptAgentRunner {
           file: request.files ?? [],
         }));
         if (signal.aborted) throw new Error('browser-worker execution aborted');
-        const output = await browserWorkspaceCommand(
-          cli,
-          ['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile],
-          undefined,
-          signal,
-        );
+        const output = await runBrowserWorker(cli, configFile, signal);
         return JSON.stringify(parseDriverJson(output));
       } finally {
         await unlink(configFile).catch(() => {});
@@ -286,7 +297,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const definition = await readFile(new URL('../agents/chatgpt-worker.agent.md', import.meta.url), 'utf8');
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? autoSessionBrowserWorkerRunner())(
+      const run = (this.runner ?? browserWorkerRunner())(
         definition,
         { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
         route,
