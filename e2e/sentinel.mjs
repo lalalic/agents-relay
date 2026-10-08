@@ -65,7 +65,8 @@ async function tick(){
  if(working)return;working=true;
  try{
   const newEvents=events();
-  if(newEvents.length)state.lastEventAt=newEvents.at(-1).event.timestamp||new Date().toISOString();
+  // Worker-reported timestamps are not trusted for liveness.
+  if(newEvents.length)state.lastEventAt=new Date().toISOString();
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
    try{
@@ -80,8 +81,9 @@ async function tick(){
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
   const j=snapshot(),gh=github(),issue=detect(j,gh);
-  if(j.state==='COMPLETED'&&gh.state==='MERGED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.github=gh;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,pr,jobId}));process.exit(0)}
+  if(j.state==='COMPLETED'&&gh.state==='MERGED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.github=gh;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,pr,jobId}));process.exit(0)}
   if(state.phase==='passed')state.phase='monitoring';
+  if(!issue && state.phase==='awaiting_repair'){state.phase='monitoring';state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;}
   if(issue){
    const fingerprint=JSON.stringify(issue);
    if(state.pendingTransferId) {save(statePath,state);return;}
