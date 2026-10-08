@@ -64,7 +64,7 @@ test('ChatGPT adapter uses Browser Workspace caller-owned session platform run',
   assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /\['session', 'start'\]/);
   assert.match(source, /\['session', 'stop', sessionId\]/);
-  assert.doesNotMatch(source, /\['session', 'exec'/);
+  assert.match(source, /\['session', 'exec', sessionId\]/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
   assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
   assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'browser-workspace']);
