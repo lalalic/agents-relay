@@ -184,9 +184,9 @@ test('managed PR execution worktrees isolate concurrent jobs from the primary ch
     await exec('git', ['-C', primary, 'remote', 'set-url', 'origin', githubRemote]);
     await exec('git', ['-C', primary, 'config', 'url.file://' + bare + '/.insteadOf', githubRemote]);
 
-    const first = await prepareManagedExecutionWorktree(primary, 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-a');
-    const second = await prepareManagedExecutionWorktree(primary, 'owner/repo', 8, { ref: 'feature-b', sha: heads['feature-b'] }, 'exec-b');
-    const nested = await prepareManagedExecutionWorktree(join(primary, 'neo-build-log'), 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-nested');
+    const first = await prepareManagedExecutionWorktree(primary, 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-a', root);
+    const second = await prepareManagedExecutionWorktree(primary, 'owner/repo', 8, { ref: 'feature-b', sha: heads['feature-b'] }, 'exec-b', root);
+    const nested = await prepareManagedExecutionWorktree(join(primary, 'neo-build-log'), 'owner/repo', 7, { ref: 'feature-a', sha: heads['feature-a'] }, 'exec-nested', root);
 
     assert.notEqual(first, second);
     assert.equal(nested.endsWith('/neo-build-log'), true);
@@ -220,7 +220,7 @@ test('managed PR execution worktree fails closed when expected head is stale', a
     await exec('git', ['-C', primary, 'remote', 'set-url', 'origin', githubRemote]);
     await exec('git', ['-C', primary, 'config', 'url.file://' + bare + '/.insteadOf', githubRemote]);
     await assert.rejects(
-      prepareManagedExecutionWorktree(primary, 'owner/repo', 9, { ref: 'main', sha: '0'.repeat(40) }, 'stale'),
+      prepareManagedExecutionWorktree(primary, 'owner/repo', 9, { ref: 'main', sha: '0'.repeat(40) }, 'stale', root),
       new RegExp('head changed.*' + actual),
     );
   } finally { await rm(root, { recursive: true, force: true }); }

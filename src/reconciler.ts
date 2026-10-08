@@ -7,17 +7,19 @@ import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adap
 import { eventFor } from './events.js';
 import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy } from './planner.js';
 import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
-import { ExecutionContext, ExecutionRole, agentContractPrompt, executionContextPrompt, resolveExecutionContext } from './execution-context.js';
-import { agentGraphPrompt, validateAgentSelection } from './agent-graph.js';
+import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
+import { validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
-import { prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
-import { createReviewChairExecutionPlan } from './review-chair.js';
-import { taskTagWorkerPrompt } from './task-tag.js';
+import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
+import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
+import { jobHasActiveExecution } from './job-execution-slot.js';
+import { managedWorkerInput } from './managed-worker-input.js';
+export { managedWorkerInput } from './managed-worker-input.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
 import { applyOrchestratorRescue } from './workflow/orchestrator-rescue.js';
@@ -25,59 +27,6 @@ import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
-export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
-  if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository || job.prNumber <= 0) return task.input;
-  const selectedAgent = task.agentName && context ? await agentContractPrompt(context, task.agentName) : '';
-  const selectedGraph = task.agentGraph && context ? await agentGraphPrompt(context, task.agentGraph) : '';
-  const chairPlan = task.review?.role === 'chair' && context
-    ? createReviewChairExecutionPlan(context.agents, task.review.target)
-    : null;
-  if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
-  if (!task.executionId) throw new Error(`Task ${task.id} requires an executionId before worker input is built`);
-  const sourceId = executionEventSource(job.id, task.id, task.executionId);
-  const prUrl = `https://github.com/${job.repository}/pull/${job.prNumber}`;
-  const taskUrl = task.taskUrl ?? `${prUrl}#issuecomment-${task.id}`;
-  const output = task.output.kind === 'file'
-    ? `file\nPath: ${task.output.path}`
-    : `task/PR\nPR: ${prUrl}\nTask: ${task.id}`;
-  const taskTag = taskTagWorkerPrompt(job); return `[Agents Relay managed task]
-Job URL: ${prUrl}
-Job ID: ${job.id}
-Task URL: ${taskUrl}
-Task ID: ${task.id}
-Project: ${task.projectName ?? context?.project.name ?? 'unspecified'}
-Retrieve the durable job and task from GitHub before doing the work. Use whatever GitHub access this environment provides: the URLs, a GitHub integration/tool, or GitHub CLI/API. GitHub is the source of truth for task intent and declared output.
-${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? selectedAgent + '\n\n' : ''}${selectedGraph ? selectedGraph + '\n\n' : ''}${chairPlan ? `[Review Chair execution plan]\n${JSON.stringify(chairPlan, null, 2)}\n\nUse this runtime-discovered panel to create sibling durable specialist Tasks. Preserve each specialistTasks entry as review metadata, keep the target immutable, and synthesize structured results with synthesizeReview semantics before returning the unified revision plan.\n\n` : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
-[Output contract]
-${output}
-${taskTag}[Execution event contract — mandatory]
-Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
-Your exact event source identity is: ${sourceId}
-Every lifecycle event for this execution MUST set source.id to that exact string. Do not derive, rename, or replace it.
-Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
-publish through the federated MCP tool events__publish; do not open NATS directly.
-For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
-As your FIRST execution action, before reading files, editing code, running commands, or doing other work,
-you MUST publish exactly one canonical task.started event for this exact Job/Task.
-
-${task.adapter === 'chatgpt' ? `Because ChatGPT execution continues asynchronously after the submit process exits, you MUST keep reporting liveness while the task is active. Publish meaningful progress/milestone events when there is real progress to report. If no meaningful milestone has been published for 30 seconds during active work, publish a non-terminal task.heartbeat event with status running, visibility orchestrator, this exact source.id, and a concise description of the current operation. Continue heartbeats after each further 30 seconds of active silence until a terminal task event is published. Do not invent percentage progress.` : `You MAY publish progress events while working. For long silent active work, follow the events-bus heartbeat policy.`}
-Before returning or allowing the worker process to exit, you MUST publish exactly one canonical terminal event:
-- task.completed only after the declared output is durable;
-- task.failed for implementation, tool, command, test, patch, commit, push, runtime, or other execution failure that prevents completion;
-- task.blocked only when genuine human/external action is required;
-- task.cancelled only when execution was cancelled.
-
-If any execution step fails and you cannot continue, publish task.failed with the concrete reason BEFORE exiting.
-Never exit after task.started without publishing exactly one terminal task event.
-Do not publish duplicate terminal task events.
-The worker owns task.started and task terminal events. Relay-owned task.process.launched, task.process.exited,
-and task.process.async_exited are process lifecycle only and NEVER replace the worker task lifecycle.
-The ChatGPT/Codex conversation or process exit is never the task result.
-
-[Final event gate]
-Before your final return, verify that a terminal event for this exact Job/Task was published.
-If no terminal event has been published, publish task.failed before exiting.`;
-}
 export class Reconciler extends ReconcilerReviewBase {
   constructor(store: DurableStore, options: ReconcileOptions) {
     super(store, options);
@@ -96,6 +45,11 @@ export class Reconciler extends ReconcilerReviewBase {
       async context => this.cancelActiveTasks(context.jobId, String(context.data?.reason ?? 'Job terminated')),
     ));
     this.workflowEffects.register(new CallbackWorkflowEffectHandler(
+      'effect.cleanupJobWorktree',
+      async context => cleanupMergedJobWorktree(await this.store.load(context.jobId), this.options.projectPathForJob),
+      context => `effect.cleanupJobWorktree:${context.jobId}`,
+    ));
+    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
       'effect.mergePullRequest',
       async context => {
         const headSha = typeof context.data?.headSha === 'string' ? context.data.headSha : null;
@@ -112,14 +66,14 @@ export class Reconciler extends ReconcilerReviewBase {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
     }
     const capacity = Math.max(0, (this.options.maxConcurrent ?? 4) - this.live.size - this.plannerLive.size);
-    const dispatchable = scheduled.tasks
+    const dispatchable = (jobHasActiveExecution(scheduled) ? [] : scheduled.tasks)
       .filter(task => task.state === 'QUEUED'
         && task.executionId === null
         && task.kind !== 'planner'
         && task.adapter !== 'orchestrator'
         && dependencyReady(task, new Map(scheduled.tasks.map(item => [item.id, item]))))
       .sort((a, b) => compareTaskPriority(a, b, scheduled.priority ?? 'P2'))
-      .slice(0, capacity);
+      .slice(0, Math.min(capacity, 1));
     for (const task of dispatchable) {
       await transitionTaskEvent(task, 'dispatch', { dispatchable: true }, async actionId => {
         const outcomes = await this.workflowEffects.execute(
@@ -152,7 +106,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (prState !== 'OPEN') {
         await dispatchJobReconcile(job, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
           const outcomes = await this.workflowEffects.execute(
-            [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'],
+            [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'],
             { jobId: job.id, transitionKey: `terminal:${prState}`, data: { reason: `Pull request ${prState.toLowerCase()}` } },
           );
           await this.applyJobEffectOutcomes(job, outcomes);
@@ -198,7 +152,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.ensureFinalReview(finalState, prState, headSha);
       if (prState === 'OPEN') await this.dispatchExecutableTasks(jobId);
       await dispatchJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
-        const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
+        const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
       }, async () => { await this.store.saveJob(finalState); });
       const settled = await this.store.load(jobId);
@@ -363,11 +317,12 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.store.saveTask(task);
       return;
     }
-    const claimedTask = await withExecutionBoundary(job.id, task.id, async () => {
+    const claimedTask = await withExecutionBoundary(job.id, '__job_execution_slot__', async () => {
       const freshJob = await this.store.load(job.id);
       let freshTask = freshJob.tasks.find(item => item.id === task.id);
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
+      if (jobHasActiveExecution(freshJob, { taskId: freshTask.id })) return;
       if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask);
 
       if (!freshTask.routing && freshTask.adapter !== 'orchestrator') {
@@ -409,6 +364,7 @@ export class Reconciler extends ReconcilerReviewBase {
         managedHead = await this.store.pullRequestHead();
         if (!managedHead) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
         projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, managedHead, task.executionId);
+        if (role === 'reviewer') await assertCleanWorktreeAtHead(projectPath, managedHead.sha);
       }
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {

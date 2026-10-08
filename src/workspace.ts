@@ -1,7 +1,7 @@
-import { mkdir, readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import type { Task } from './types.js';
+import type { Job, Task } from './types.js';
 import { spawnOwnedProcess } from './owned-process.js';
 
 async function gitOutput(args: readonly string[]): Promise<string> {
@@ -117,7 +117,8 @@ export async function prepareManagedExecutionWorktree(
   repository: string,
   prNumber: number,
   head: ManagedPullRequestHead,
-  executionId: string,
+  _executionId: string,
+  workspaceRoot = defaultWorkspaceRoot(),
 ): Promise<string> {
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
   const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
@@ -128,13 +129,22 @@ export async function prepareManagedExecutionWorktree(
   if (fetched !== head.sha) throw new Error(`PR #${prNumber} head changed while preparing execution checkout (${head.sha} -> ${fetched})`);
 
   const safeRepo = repository.replace(/[^A-Za-z0-9_.-]+/g, '-');
-  const safeExecution = executionId.replace(/[^A-Za-z0-9_.-]+/g, '-');
-  const worktree = join(dirname(primary), '.worktrees', 'agents-relay', `${safeRepo}-pr-${prNumber}`, safeExecution);
+  // One stable checkout per Job; retries and reviewers share the same directory.
+  const worktree = managedJobWorktreePath(repository, prNumber, workspaceRoot);
   await mkdir(dirname(worktree), { recursive: true });
   try {
     const existingRoot = await git(worktree, ['rev-parse', '--show-toplevel']);
     const existingHead = await git(worktree, ['rev-parse', 'HEAD']);
-    if (resolve(existingRoot) !== resolve(worktree) || existingHead !== head.sha) throw new Error(`Existing execution worktree ${worktree} is not the expected PR head`);
+    if (await realpath(existingRoot) !== await realpath(worktree)) throw new Error(`Worktree ownership mismatch: ${worktree}`);
+    if (existingHead !== head.sha) {
+      // Never wipe dirty files or commits unique to this Job checkout. A clean
+      // ancestor can safely advance to the remote PR head without reset --hard.
+      const dirty = await git(worktree, ['status', '--porcelain']);
+      if (dirty) throw new Error(`Job worktree has changes while PR head advanced: ${worktree}`);
+      const ancestor = await gitOutput(['-C', worktree, 'merge-base', '--is-ancestor', existingHead, head.sha]).then(() => true, () => false);
+      if (!ancestor) throw new Error(`Job worktree has non-fast-forward history; preserve commits: ${worktree}`);
+      await git(worktree, ['merge', '--ff-only', head.sha]);
+    }
     return projectRelative ? join(worktree, projectRelative) : worktree;
   } catch (error) {
     try { await stat(worktree); } catch {
@@ -151,4 +161,68 @@ function repositoryPathRank(path: string, root: string): number {
   if (relativePath.startsWith('.worktrees/')) return 2;
   if (relativePath.startsWith('.backup/')) return 3;
   return 1;
+}
+
+/** Stable checkout identity for the entire managed PR/Job lifecycle. */
+export function managedJobWorktreePath(repository: string, prNumber: number, workspaceRoot = defaultWorkspaceRoot()): string {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(prNumber) || prNumber <= 0)
+    throw new Error('Invalid managed Job checkout identity');
+  return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-pr-${prNumber}`, 'job');
+}
+
+export type ManagedWorktreeCleanupResult = { status: 'removed' | 'absent' | 'blocked'; reason?: string };
+
+/**
+ * Graph-owned eligibility: called only after authoritative MERGED -> COMPLETED.
+ * This function only performs the mechanical, conservative cleanup effect.
+ */
+export async function cleanupCompletedJobWorktree(
+  projectPath: string,
+  job: Job,
+  workspaceRoot = defaultWorkspaceRoot(),
+): Promise<ManagedWorktreeCleanupResult> {
+  if (job.state !== 'COMPLETED') return { status: 'blocked', reason: 'Job is not completed' };
+  if (!job.headSha) return { status: 'blocked', reason: 'No durable PR head SHA' };
+  if (job.tasks.some(task => task.executionId !== null || task.leaseOwner !== null))
+    return { status: 'blocked', reason: 'Task still owns an execution or lease' };
+  if ((job.plans ?? []).some(plan => plan.executionId !== null || plan.leaseOwner !== null))
+    return { status: 'blocked', reason: 'Planner still owns an execution or lease' };
+
+  const worktree = managedJobWorktreePath(job.repository, job.prNumber, workspaceRoot);
+  let metadata;
+  try { metadata = await lstat(worktree); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'absent' };
+    throw error;
+  }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink())
+    return { status: 'blocked', reason: 'Worktree path is not an owned directory' };
+
+  const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
+  const origin = await git(primary, ['config', '--get', 'remote.origin.url']);
+  if (githubRepositoryFromRemote(origin) !== job.repository)
+    return { status: 'blocked', reason: 'Canonical repository identity mismatch' };
+  const registered = await git(primary, ['worktree', 'list', '--porcelain']);
+  const ownedRoot = await realpath(worktree);
+  const registeredPaths = registered.split('\n').filter(line => line.startsWith('worktree '));
+  const matching = await Promise.all(registeredPaths.map(async line => {
+    try { return await realpath(line.slice('worktree '.length)) === ownedRoot; } catch { return false; }
+  }));
+  if (!matching.includes(true))
+    return { status: 'blocked', reason: 'Worktree is not registered with the canonical repository' };
+  const head = await git(worktree, ['rev-parse', 'HEAD']);
+  if (head !== job.headSha)
+    return { status: 'blocked', reason: 'Worktree contains unique or stale commits' };
+  if (await git(worktree, ['status', '--porcelain']))
+    return { status: 'blocked', reason: 'Worktree has uncommitted or untracked changes' };
+  await git(primary, ['worktree', 'remove', worktree]);
+  return { status: 'removed' };
+}
+
+/** Reviewer must never inspect local, uncommitted content as an immutable SHA. */
+export async function assertCleanWorktreeAtHead(projectPath: string, headSha: string): Promise<void> {
+  const actual = await git(projectPath, ['rev-parse', 'HEAD']);
+  if (actual !== headSha) throw new Error(`Review checkout has stale HEAD: ${actual}, expected ${headSha}`);
+  if (await git(projectPath, ['status', '--porcelain']))
+    throw new Error(`Review checkout has uncommitted changes: ${projectPath}`);
 }
