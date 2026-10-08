@@ -399,8 +399,9 @@ export class Reconciler extends ReconcilerReviewBase {
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
       executionContext,
     };
+    const injectedExecution = injectedE2EExecution(workerTask);
     try {
-      execution = injectedE2EExecution(workerTask) ?? adapter.launch(workerTask, controller.signal, launchContext);
+      execution = injectedExecution ?? adapter.launch(workerTask, controller.signal, launchContext);
     } catch (error) {
       await startAckSetup?.stop();
       terminalWait?.cancel();
@@ -419,7 +420,7 @@ export class Reconciler extends ReconcilerReviewBase {
       transition: { graph: 'task-lifecycle', from: 'QUEUED', to: 'QUEUED', actions: ['effect.launchTask'] },
       data: { adapter: adapter.id, attempt: task.attempt, model: task.routing?.model ?? null },
     });
-    const e2eFaultTimeout = process.env.AGENTS_RELAY_E2E_FAULT_JOB === job.id && process.env.AGENTS_RELAY_E2E_FAULT_DIR ? 3500 : task.timeoutMs;
+    const e2eFaultTimeout = injectedExecution ? 3500 : task.timeoutMs;
     const terminalTimer = setTimeout(() => {
       this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
     }, Math.max(1, e2eFaultTimeout));
