@@ -15,3 +15,34 @@ Test PR: https://github.com/lalalic/agents-relay-e2e/pull/2
 - **Next validation:** Determine the real termination cause of `gh exited null`, fix the Planner execution path on this branch, rerun the production E2E job, and record observable task creation plus autonomous terminal state.
 
 Each later fix should have its own commit documenting observed bug, root cause, solution, and rerun outcome. Do not mark a scenario PASS without an observed end-to-end result.
+
+## 2026-10-08 09:35 America/Toronto — E2E-001 primary evidence audit
+
+- **Evidence checked:** `/private/tmp/relay-e2e-current.json`, `/private/tmp/relay-plan5-diagnostic.log`, the EventsBus JSONL history, existing `agents-relayd` process audit logs, the test checkout, and current branch status.
+- **Confirmed path cause:** `/Users/chengli/Workspace/agents-relay-e2e` exists and has the expected GitHub origin, but the production default workspace scan is `/Users/chengli/Workspace`; the test checkout is its sibling at `/Users/chengli/Workspace/agents-relay-e2e`. Therefore `plan-1` failed in `resolveWorkspaceRepositoryPath` before planner execution. This is confirmed evidence, not a hypothesis.
+- **Confirmed projection symptom:** plans 2–5 each produced valid `plannerResult.next_tasks` and `generatedTaskIds`, then ended `FAILED` with `gh exited null`; no Task marker was appended. EventsBus preserved the ordered start/wake/fail records, but the prior error string omitted the child termination signal. Existing owned-process audit records show the relevant `gh` processes and process-group termination, but do not identify the failing command or signal at the old diagnostic site.
+- **Current durable state:** Job `e2e-autonomy-smoke-20261008` is `ACTIVE`; PR #2 is `OPEN` at `d470873322ae6fed9e4ee8da91226f8086a0465c`; plans 1–5 are `FAILED`; Tasks remain empty. No unrelated production job was changed or restarted.
+- **Solution in progress:** use the existing production CLI/EventsBus path with the real checkout explicitly bound for this PR2 run; retain the existing `208e21d` diagnostic change and do not call the scenario fixed until durable Tasks, worker/review/merge, GitHub state, and event evidence are observed.
+
+## 2026-10-08 09:36 America/Toronto — E2E-001 post-fix execution blocker
+
+- **Fix commit:** `1a2d96c` (`fix(github): retry signal-terminated CLI projections`). The focused regression suite passed 8/8, including a direct `gh` SIGTERM followed by successful retry.
+- **Live rerun:** plan-7 completed through the real CLI with the real checkout path; its plan comment persisted and generated `implement-autonomy-smoke-20261008` (`QUEUED`) plus `review-autonomy-smoke-20261008` (`DRAFT`). EventsBus has `planner.started` and `job.wake` for plan-7 and no plan-7 failure.
+- **Confirmed new blocker:** existing production `agents-relayd` is online, but `/api/jobs?refresh=true` contains no `lalalic/agents-relay-e2e` Job and its event subscriber logged prior `reconcile.signal_unrouted` for this Job. Runtime summary showed 7 active production Jobs and 0 running Tasks. The E2E checkout was created at 09:23 after the original daemon discovery, so the daemon’s repository pool has not adopted it.
+- **Action authorized and required:** restart only the existing `agents-relayd` after the active-job check, allowing its configured `/Users/chengli/Workspace` scan to discover the already-present E2E checkout. No other production service/job is being changed.
+
+## 2026-10-08 09:37 America/Toronto — E2E-006 confirmed during E2E-001
+
+- **Production execution evidence:** after the scoped `agents-relayd` restart and repository discovery, PR2 implementation was routed to `chatgpt/browser-worker`; EventsBus recorded worker/model selection, then `task.failed` at delivery phase, followed by automatic Troubleshooter creation and launch.
+- **Confirmed root cause:** the shared Browser Workspace launcher imports `yaml`, but the runtime environment lacks the PyYAML module: `ModuleNotFoundError: No module named 'yaml'`. This is the documented E2E-006 failure and is directly present in the correlated terminal event; it is not inferred from a timeout.
+- **Current result:** implementation remains historically failed/queued for recovery; Troubleshooter `troubleshoot-implement-autonomy-smoke-20261008-a1` is `RUNNING` with execution `9878c2a3-fb2a-4651-ba60-063f8feb2528`. No manual retry or dependency removal was performed.
+- **Solution status:** awaiting the production Troubleshooter’s authoritative diagnosis and recovery event before changing source/runtime or calling E2E-006 fixed.
+
+## 2026-10-08 09:41 America/Toronto — E2E-006 follow-up failure diagnosed
+
+- **Evidence:** the automatic Troubleshooter execution was cancelled at 13:40:22Z after 274.7 seconds (`SIGTERM`, execution `9878c2a3-fb2a-4651-ba60-063f8feb2528`). The existing runtime then retried implementation attempt 2; its correlated `task.failed` event at 13:40:24Z reported `browser-workspace: error: unrecognized arguments: --auto-session`.
+- **Root cause:** Relay’s ChatGPT adapter encoded a removed Browser Workspace CLI flag. The installed launcher’s actual help accepts `--config`, `--url`, and `--session-id`; omitting `--session-id` is the supported temporary-session path. The earlier `yaml` import failure was therefore not the only production-path defect.
+- **Solution:** rename the internal runner to reflect the supported temporary-session behavior and remove the stale `--auto-session` argument. Updated both source-contract tests to reject the obsolete flag.
+- **Fix commit:** pending this repair’s commit.
+- **Local result:** build succeeded; adapter/browser-workspace focused suite passed `18/18`.
+- **Live result:** not yet rerun with the production daemon; implementation Task is currently `FAILED` on attempt 2, PR remains `OPEN`, and E2E-001 is still **FAIL**, not PASS.
