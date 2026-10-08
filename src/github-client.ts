@@ -122,10 +122,10 @@ export class GhApiClient implements GitHubClient {
       child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
       child.on('error', error => resolve({ status: null, headers: {}, body: '', stderr: error.message }));
       if (input !== undefined) child.stdin?.write(input); child.stdin?.end();
-      child.on('close', code => {
+      child.on('close', (code, signal) => {
         const response = parseGitHubCliHeaders(stdout, includeHeaders);
         const failed = code !== 0;
-        const message = failed ? stderr.trim() || response.body.trim() || `gh exited ${code}` : '';
+        const message = failed ? stderr.trim() || response.body.trim() || `gh exited ${code}; signal=${signal ?? "none"}` : '';
         if (failed && rateLimited) this.noteFailure(message);
         if (!failed && rateLimited) this.noteSuccess();
         resolve({ ...response, stderr: failed ? message : undefined });
