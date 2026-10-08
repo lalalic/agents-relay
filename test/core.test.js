@@ -574,6 +574,18 @@ test('startup recovery graph retries an old-owner Codex execution', async () => 
   const saved=(await store.load('j')).tasks[0];
   assert.equal(saved.state,'QUEUED'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
 });
+test('startup recovery reclaims a claimed QUEUED execution owned by a previous daemon', async () => {
+  const queued=task('orphan-queued','QUEUED');
+  queued.attempt=1; queued.maxAttempts=3; queued.executionId='old-queued-execution'; queued.leaseOwner='relayd-old'; queued.leaseExpiresAt='2099-09-25T17:00:00.000Z';
+  const store=new InMemoryStore(job([queued]));
+  const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
+  await reconciler.recoverStartupOrphans('j');
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.executionId,null);
+  assert.equal(saved.leaseOwner,null);
+  assert.equal(saved.attempt,1);
+});
 test('startup recovery leaves current-owner Codex and ChatGPT async executions untouched', async () => {
   const current=task('current-codex','RUNNING'); current.attempt=1; current.executionId='current'; current.leaseOwner='relayd-new'; current.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const chat=task('chat-async','RUNNING'); chat.adapter='chatgpt'; chat.attempt=1; chat.executionId='chat'; chat.leaseOwner='relayd-old'; chat.leaseExpiresAt='2099-09-25T17:00:00.000Z';
