@@ -59,8 +59,14 @@ test('GitHub issue-comment webhook extracts package publication marker only from
 
 test('GitHub publish-failure comment becomes correlated webhook event', () => {
   const marker = '<!-- agents-relay:package-publish-failed:v1 {"runId":"12345","attempt":1,"sha":"abcdef1234","stage":"Run test suite"} -->';
-  const payload = Buffer.from(JSON.stringify({ action:'created',repository:{full_name:'lalalic/agents-relay'}, issue:{number:263,pull_request:{}}, comment:{body:marker} }));
+  const payload = Buffer.from(JSON.stringify({ action:'created',repository:{full_name:'lalalic/agents-relay'}, issue:{number:263,pull_request:{}}, comment:{body:marker,user:{login:'github-actions[bot]'}} }));
   const wake = parseGitHubWebhook({'x-github-delivery':'publish-failed-test','x-github-event':'issue_comment'},payload);
   assert.equal(wake.publishFailure.runId,'12345');
   assert.equal(wake.publishFailure.stage,'Run test suite');
+});
+
+test('untrusted PR comment cannot fabricate package publish failure', () => {
+  const marker = '<!-- agents-relay:package-publish-failed:v1 {"runId":"12345","attempt":1,"sha":"abcdef1234","stage":"test"} -->';
+  const body=Buffer.from(JSON.stringify({action:'created',repository:{full_name:'lalalic/agents-relay'},issue:{number:263,pull_request:{}},comment:{body:marker,user:{login:'random-user'}}}));
+  assert.equal(parseGitHubWebhook({'x-github-delivery':'fake','x-github-event':'issue_comment'},body),null);
 });

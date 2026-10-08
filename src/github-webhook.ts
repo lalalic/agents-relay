@@ -84,7 +84,8 @@ export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): 
   if (event === 'issue_comment') {
     const comment = payload.comment as Record<string, unknown> | undefined;
     const publication = parsePackagePublicationMarker(comment?.body);
-    const publishFailure = parsePackagePublishFailureMarker(comment?.body);
+    const publishFailure = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]'
+      ? parsePackagePublishFailureMarker(comment?.body) : null;
     if (!publication && !publishFailure) return null;
     return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication, ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
   }
