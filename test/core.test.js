@@ -972,19 +972,19 @@ test('ChatGPT cancelled terminal event closes after-terminal tab and preserves r
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('sync adapter runtime exit clears overall timeout without completing the task', async () => {
-  const t=task('runtime-exit'); t.timeoutMs=30; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+test('sync adapter runtime exit without mandatory terminal event fails after bounded grace', async () => {
+  const t=task('runtime-exit'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus(); const events=[];
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,postExitTerminalGraceMs:20});
   const stopEvents=await bus.subscribe('j',async event=>events.push(event)); const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
   await bus.publish(eventFor('j','runtime-exit',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'runtime-exit')));
   adapter.resolvers[0].resolve({summary:'process exited zero'});
-  await new Promise(resolve=>setTimeout(resolve,70));
+  await new Promise(resolve=>setTimeout(resolve,100));
   const durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'RUNNING');
-  assert.equal(durable.failureReason,undefined);
+  assert.equal(durable.state,'FAILED');
+  assert.equal(durable.failureReason,'terminal_event_timeout');
   assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
-  assert.equal(events.filter(event=>event.type==='task.failed').length,0);
+  assert.equal(events.filter(event=>event.type==='task.failed').length,1);
   await reconciler.close();
   await stop(); await stopEvents();
 });
