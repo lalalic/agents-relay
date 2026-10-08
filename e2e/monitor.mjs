@@ -21,6 +21,7 @@ const task=job.tasks||[], plans=job.plans||[];
 const issues=[];
 if(plans.length && plans[plans.length-1].status==='FAILED')issues.push({code:'LATEST_PLANNER_FAILED',items:[{id:plans[plans.length-1].id,error:plans[plans.length-1].error}]});
 if(task.some(x=>x.state==='FAILED'))issues.push({code:'TASK_FAILED',items:task.filter(x=>x.state==='FAILED').map(x=>({id:x.id,error:x.error}))});
+if(task.some(x=>x.state==='BLOCKED'))issues.push({code:'TASK_BLOCKED',items:task.filter(x=>x.state==='BLOCKED').map(x=>({id:x.id,error:x.error}))});
 if(job.state==='COMPLETED'&&gh.state!=='MERGED')issues.push({code:'DURABLE_GITHUB_MISMATCH'});
 if(gh.state==='MERGED'&&job.state!=='COMPLETED')issues.push({code:'MERGED_BUT_JOB_NOT_COMPLETED'});
 if(job.state==='COMPLETED'&&task.some(x=>x.state==='FAILED'))issues.push({code:'COMPLETED_WITH_FAILED_TASKS'});
