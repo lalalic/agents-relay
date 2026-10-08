@@ -30,7 +30,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   })));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
+type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -250,12 +250,13 @@ export function serveDashboard(
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { jobId?: string; taskId?: string; action?: string; summary?: string; task?: Task };
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { jobId?: string; taskId?: string; action?: string; summary?: string; task?: Task; expectedUpdatedAt?: string };
         const requestedJobId = typeof body.jobId === 'string' ? body.jobId : '';
         const requestedTaskId = typeof body.taskId === 'string' ? body.taskId : '';
         if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
         let result: Job;
         if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task);
+        else if (body.action === 'update' && isTaskId(requestedTaskId) && body.task && body.expectedUpdatedAt && resolvedActions?.taskUpdate) result = await resolvedActions.taskUpdate(requestedJobId, requestedTaskId, body.task, body.expectedUpdatedAt);
         else if (body.action === 'start' && isTaskId(requestedTaskId) && resolvedActions?.taskStart) result = await resolvedActions.taskStart(requestedJobId, requestedTaskId);
         else if (body.action === 'retry' && isTaskId(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
         else if (body.action === 'cancel' && isTaskId(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);

@@ -14,6 +14,7 @@ export type Execution = {
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
   processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string };
+  pid?: number;
 };
 export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
@@ -106,7 +107,7 @@ export class CodexAdapter implements WorkerAdapter {
         }
       });
     });
-    execution = { id: randomUUID(), promise, launched, cancel: () => { void terminateOwnedProcess(child, 'cancel'); } };
+    execution = { id: randomUUID(), promise, launched, pid: child.pid, cancel: () => { void terminateOwnedProcess(child, 'cancel'); } };
     execution.threadId = bufferedThreadId;
     return execution;
   }

@@ -17,6 +17,7 @@ import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrche
 import { eventFor } from './events.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from './task-actions.js';
+import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -48,11 +49,9 @@ export async function overlayOperationalOverviews(
     return { ...item, job };
   }));
 }
-
 function managedOverviewKey(item: ManagedJobOverview): string {
   return item.job.repository + '#' + item.job.prNumber + ':' + item.job.id;
 }
-
 export function mergeOperationalInventory(
   current: readonly ManagedJobOverview[],
   discovered: readonly ManagedJobOverview[],
@@ -387,6 +386,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     cancel: workspaceJobAction('cancel'),
     jobSetState: workspaceJobSetState,
     taskCreate: workspaceTaskCreate,
+    taskUpdate: managedTaskUpdateHandler(jobId => { const row = cachedOverviews.find(item => item.job.id === jobId); if (!row) throw new Error('Job not found'); return { store: runtimeStore(row.job.repository, row.job.prNumber), repository: row.job.repository, prNumber: row.job.prNumber }; }, (repository, prNumber, jobId) => pool.reconcileTarget(repository, prNumber, jobId, 'control.task.update')),
     taskStart: workspaceTaskStart,
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),

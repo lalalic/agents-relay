@@ -1,6 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
 import { transitionTaskEvent } from './scheduler.js';
+import { reclaimStaleExecutionProcess } from './execution-process-tracker.js';
 
 export type ExecutionRecoveryPorts = {
   store: DurableStore;
@@ -32,15 +33,17 @@ export async function recoverExpiredExecutions(job: Job, now: number, ports: Exe
     const task = await currentGeneration(ports.store, job, stale);
     const recoverable = task && (task.state === 'RUNNING' || (task.state === 'QUEUED' && task.executionId !== null));
     if (!recoverable || task.leaseExpiresAt === null || new Date(task.leaseExpiresAt).getTime() > now) continue;
+    if (!await reclaimStaleExecutionProcess(ports.store, task, ports.owner)) continue;
     await recoverTask(task, 'lease.expired', 'lease_expired', ports);
   }
 }
 
 export async function recoverStartupOrphans(job: Job, ports: ExecutionRecoveryPorts): Promise<void> {
-  const candidates = job.tasks.filter(task => task.kind !== 'planner' && task.state === 'RUNNING' && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt');
+  const candidates = job.tasks.filter(task => task.kind !== 'planner' && (task.state === 'RUNNING' || task.state === 'QUEUED') && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt');
   for (const stale of candidates) {
     const task = await currentGeneration(ports.store, job, stale);
-    if (!task || task.state !== 'RUNNING' || task.adapter === 'chatgpt' || !task.executionId || !task.leaseOwner || task.leaseOwner === ports.owner) continue;
+    if (!task || !['RUNNING', 'QUEUED'].includes(task.state) || task.adapter === 'chatgpt' || !task.executionId || !task.leaseOwner || task.leaseOwner === ports.owner) continue;
+    if (!await reclaimStaleExecutionProcess(ports.store, task, ports.owner)) continue;
     await recoverTask(task, 'execution.orphaned', 'startup_orphaned', ports);
   }
 }

@@ -1,4 +1,5 @@
 import { Job, Plan, Task } from './types.js';
+import type { ExecutionProcessRecord } from './process-identity.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
 import { AgentRegistration } from './types.js';
@@ -81,7 +82,11 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
-export interface DurableStore { load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendPlan(plan: Plan): Promise<void>; savePlan(plan: Plan): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; applyPullRequestFacts?(facts: { state: PullRequestState; head: { ref: string; sha: string } | null; observedAt: string }): Promise<void>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
+export interface DurableStore {
+  recordExecutionProcess?(record: ExecutionProcessRecord): Promise<void>;
+  loadExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
+  finishExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<void>;
+  load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendPlan(plan: Plan): Promise<void>; savePlan(plan: Plan): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; applyPullRequestFacts?(facts: { state: PullRequestState; head: { ref: string; sha: string } | null; observedAt: string }): Promise<void>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {

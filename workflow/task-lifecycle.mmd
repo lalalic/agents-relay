@@ -120,6 +120,7 @@ queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
 queued -->|on: planner.unavailable| plannerUnavailableMark
 plannerUnavailableMark --> failed
+queued -->|on: execution.orphaned| orphanRetryAvailable
 queued -->|on: lease.expired| retryAvailableQueued
 retryAvailableQueued -->|true| leaseRetryQueuedClearError
 leaseRetryQueuedClearError --> leaseRetryQueuedClearLease
