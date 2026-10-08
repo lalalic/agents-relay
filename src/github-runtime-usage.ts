@@ -4,6 +4,7 @@ export type GitHubTransportResponse = {
   headers: Record<string, string>;
   body: string;
   stderr?: string;
+  signal?: NodeJS.Signals | null;
 };
 export type GitHubObservedRateLimit = {
   resource: GitHubRuntimeResource;

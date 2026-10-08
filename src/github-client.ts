@@ -116,21 +116,26 @@ export class GhApiClient implements GitHubClient {
   private async runGh(args: string[], input: string | undefined, env: NodeJS.ProcessEnv, rateLimited: boolean, includeHeaders: boolean): Promise<GitHubTransportResponse> {
     if (rateLimited) this.assertAvailable();
     const commandArgs = includeHeaders ? [args[0] ?? '', '--include', ...args.slice(1)] : args;
-    return await new Promise<GitHubTransportResponse>((resolve) => {
-      const child = spawnOwnedProcess('gh', commandArgs, { invocation: 'github.api', spawn: { env } }); let stdout = ''; let stderr = '';
-      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-      child.on('error', error => resolve({ status: null, headers: {}, body: '', stderr: error.message }));
-      if (input !== undefined) child.stdin?.write(input); child.stdin?.end();
-      child.on('close', (code, signal) => {
-        const response = parseGitHubCliHeaders(stdout, includeHeaders);
-        const failed = code !== 0;
-        const message = failed ? stderr.trim() || response.body.trim() || `gh exited ${code}; signal=${signal ?? "none"}` : '';
-        if (failed && rateLimited) this.noteFailure(message);
-        if (!failed && rateLimited) this.noteSuccess();
-        resolve({ ...response, stderr: failed ? message : undefined });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await new Promise<GitHubTransportResponse>((resolve) => {
+        const child = spawnOwnedProcess('gh', commandArgs, { invocation: 'github.api', spawn: { env } }); let stdout = ''; let stderr = '';
+        child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+        child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+        child.on('error', error => resolve({ status: null, headers: {}, body: '', stderr: error.message }));
+        if (input !== undefined) child.stdin?.write(input); child.stdin?.end();
+        child.on('close', (code, signal) => {
+          const response = parseGitHubCliHeaders(stdout, includeHeaders);
+          const failed = code !== 0;
+          const message = failed ? stderr.trim() || response.body.trim() || `gh exited ${code}; signal=${signal ?? "none"}` : '';
+          resolve({ ...response, stderr: failed ? message : undefined, signal });
+        });
       });
-    });
+      if (result.signal && attempt === 0) continue;
+      if (result.stderr && rateLimited) this.noteFailure(result.stderr);
+      if (!result.stderr && rateLimited) this.noteSuccess();
+      return result;
+    }
+    throw new Error('GitHub CLI retry exhausted');
   }
   private async spawnGh(args: string[], input?: string, env: NodeJS.ProcessEnv = process.env, rateLimited = true): Promise<string> {
     return (await this.runGh(args, input, env, rateLimited, false)).body;
