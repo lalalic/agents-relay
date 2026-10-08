@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { textOption, arg } from './cli-support.js';
 import { runEscalationGraph, type EscalationRequest, type EscalationResult } from './workflow/escalation.js';
+import { spawnOwnedProcess } from './owned-process.js';
 
 export function neoEscalationArgs(
   handoffPath: string,
@@ -38,11 +38,11 @@ export async function runNeoEscalation(request: EscalationRequest): Promise<Esca
     }
     const args = neoEscalationArgs(handoffPath, policyPath, request.cwd);
     return await new Promise((resolve, reject) => {
-      const child = spawn('neo', args, { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawnOwnedProcess('neo', args, { invocation: 'escalation.neo', spawn: { cwd: request.cwd ?? process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdout = '';
       let stderr = '';
-      child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-      child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+      child.stdout?.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+      child.stderr?.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
       child.on('error', reject);
       child.on('close', code => {
         let parsed: EscalationResult;

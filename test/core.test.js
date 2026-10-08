@@ -232,10 +232,16 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   const file = join(directory, 'job.json');
   const promptFile = join(directory, 'prompt.md');
   const plannerCommand = join(directory, 'planner.mjs');
+  const descendantFile = join(directory, 'planner-descendant.pid');
   const root = { ...job([]), objective: 'durable objective', executionMode: 'fixed', state: 'DRAFT' };
   await writeFile(file, JSON.stringify(root));
   await writeFile(promptFile, 'additional planning guidance');
-  await writeFile(plannerCommand, '#!/usr/bin/env node\nlet input="";for await (const chunk of process.stdin) input+=chunk;const value=JSON.parse(input);if(value.objective!=="durable objective"||value.caller_prompt!=="additional planning guidance") process.exit(7);process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"complete",next_tasks:[]}));\n');
+  await writeFile(plannerCommand, `#!/usr/bin/env node
+import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';
+let input="";for await (const chunk of process.stdin) input+=chunk;const value=JSON.parse(input);if(value.objective!=="durable objective"||value.caller_prompt!=="additional planning guidance") process.exit(7);
+const nested=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',process.stdout,'ignore']});nested.unref();writeFileSync(${JSON.stringify(descendantFile)},String(nested.pid));
+process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"complete",next_tasks:[]}));
+`);
   await chmod(plannerCommand, 0o755);
   const result = spawn(process.execPath, [join('dist','cli.js'),'plan','--file',file,'--project-path',process.cwd(),'--prompt-file',promptFile,'--planner-command',plannerCommand], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
@@ -246,6 +252,8 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   assert.equal(saved.plans[0].id, 'plan-1');
   assert.equal(saved.plans[0].guidance, 'additional planning guidance');
   assert.equal(saved.plans[0].plannerResult.objective_status, 'satisfied');
+  const descendantPid = Number(await readFile(descendantFile, 'utf8'));
+  assert.throws(() => process.kill(descendantPid, 0), error => error?.code === 'ESRCH');
 });
 test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));

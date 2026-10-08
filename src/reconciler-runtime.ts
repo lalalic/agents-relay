@@ -1,12 +1,7 @@
-import { DurableStore } from './store.js';
-import { Job, Task, EventRecord, ChatGptTabClosePolicy } from './types.js';
-import type { WorkerRequirements } from './types.js';
+import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
-import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
-import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js';
-import { ContinuationAdapter } from './continuation.js';
-import { EventBus, eventFor } from './events.js';
-import { ObjectivePlanner } from './planner.js';
+import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
+import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
 import type { ExecutionContextRoots } from './execution-context.js';
 import type { AccountUsageOverview } from './usage.js';
 import type { DecisionEngine, DecisionMode } from './decision.js';
@@ -67,7 +62,7 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly terminalTimers = new Map<string, NodeJS.Timeout>();
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
-  protected readonly terminalWaiters = new Map<string, TerminalWaiter>();
+  protected readonly terminalWaiters = new Map<string, TerminalWaiter>(); private readonly startAckCleanups = new Set<() => Promise<void>>();
   private readonly taskTransitions: DurableTaskTransitionRuntime;
   private readonly eventCoordinator: ReconcileCoordinator;
   private readonly detachedReconciles = new Set<Promise<unknown>>();
@@ -175,6 +170,7 @@ export abstract class ReconcilerRuntimeBase {
   async close(): Promise<void> {
     await this.eventCoordinator.settle();
     if (this.detachedReconciles.size > 0) await Promise.allSettled([...this.detachedReconciles]);
+    await Promise.allSettled([...this.startAckCleanups].map(stop => stop()));
     for (const live of this.live.values()) {
       const sourceId = executionEventSource(live.jobId, live.taskId, live.executionId);
       if (activeExecutionOwners.get(sourceId) === this) activeExecutionOwners.delete(sourceId);
@@ -215,7 +211,11 @@ export abstract class ReconcilerRuntimeBase {
       rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_timeout: no worker task.started start-ack`));
     }, timeoutMs);
     let stopped = false;
-    const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer); await unsubscribe(); };
+    const stop = async (): Promise<void> => { if (stopped) return; stopped = true; if (timer) clearTimeout(timer);
+      if (!settled) { settled = true; rejectAck(new StartAckTimeout(`Task ${taskId} worker_start_cancelled: start-ack owner closed`)); }
+      this.startAckCleanups.delete(stop); await unsubscribe();
+    };
+    this.startAckCleanups.add(stop);
     return { ack, stop };
   }
 
@@ -350,10 +350,10 @@ export abstract class ReconcilerRuntimeBase {
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
-      error ? 'failed' : 'succeeded',
-      error ?? result?.summary ?? 'Worker runtime exited',
-      'orchestrator',
-      { authoritative: false, waitingForTerminalEvent: true, processError: error },
+      live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
+      result?.summary ?? (error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
+      { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
+        signal: live?.execution.processExit?.signal ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
   }

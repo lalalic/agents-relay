@@ -13,18 +13,15 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
-import { discoverAgents } from './registry.js';
-import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
+import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
 import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
-import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js';
-import { helpText, usage } from './cli-help.js';
-import { parseAgentGraph } from './agent-graph.js';
-import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
-import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
+import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js';
+import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { shutdownOwnedProcesses } from './owned-process.js';
 export { helpText } from './cli-help.js';
 import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
@@ -409,7 +406,7 @@ export async function createService(args: string[]): Promise<Service> {
       const serverClosed = new Promise<void>((resolve, reject) => { dashboardServer.close(error => error ? reject(error) : resolve()); });
       dashboardServer.closeAllConnections();
       const watcherClosed = bus ? bus.close() : stopWatcher();
-      stopping = Promise.all([watcherClosed, serverClosed]).then(() => undefined, error => { throw error; });
+      stopping = Promise.all([reconciler.close(), watcherClosed, serverClosed, shutdownOwnedProcesses('parent-shutdown')]).then(() => undefined, error => { throw error; });
       return stopping;
     }
   };
@@ -457,10 +454,12 @@ async function main(): Promise<void> {
   if (command === 'plan') {
     const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined;
     await withEventBus(args, async bus => {
-      const result = await runtime(store, args, bus).planJob(job.id, guidance?.trim() || undefined);
-      await saveLocal(localFile, result.job);
-      await publishWake(bus, result.job, result.round.id, `Planning round ${result.round.id} completed`);
-      console.log(JSON.stringify(result.round, null, 2));
+      const reconciler = runtime(store, args, bus);
+      try {
+        const result = await reconciler.planJob(job.id, guidance?.trim() || undefined);
+        await saveLocal(localFile, result.job); await publishWake(bus, result.job, result.round.id, `Planning round ${result.round.id} completed`);
+        console.log(JSON.stringify(result.round, null, 2));
+      } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
     });
     return;
   }
@@ -487,10 +486,11 @@ async function main(): Promise<void> {
         return;
       }
       const reconciler = runtime(store, args, bus);
-      await reconciler.reconcile(job.id);
-      await reconciler.idle();
-      const finalState = await store.load(job.id); await saveLocal(localFile, finalState);
-      console.log(JSON.stringify(finalState, null, 2));
+      try {
+        await reconciler.reconcile(job.id); await reconciler.idle();
+        const finalState = await store.load(job.id); await saveLocal(localFile, finalState);
+        console.log(JSON.stringify(finalState, null, 2));
+      } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
     });
     return;
   }

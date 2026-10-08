@@ -26,7 +26,7 @@ import { decisionMode, LayaCliDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
-import { workerCandidates } from './worker-routing.js';
+import { workerCandidates } from './worker-routing.js'; import { shutdownOwnedProcesses } from './owned-process.js';
 import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
@@ -480,7 +480,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let interval: NodeJS.Timeout | undefined;
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();
   await flushProjectionsSafely();

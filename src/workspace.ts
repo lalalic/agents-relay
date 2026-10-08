@@ -1,11 +1,19 @@
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { Task } from './types.js';
+import { spawnOwnedProcess } from './owned-process.js';
 
-const execFileAsync = promisify(execFile);
+async function gitOutput(args: readonly string[]): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawnOwnedProcess('git', args, { invocation: 'workspace.git', spawn: { stdio: ['ignore', 'pipe', 'pipe'] } });
+    let stdout = ''; let stderr = '';
+    child.stdout?.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr?.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `git exited ${code}`)));
+  });
+}
 
 export type DiscoveredRepository = { path: string; repository: string };
 
@@ -36,7 +44,7 @@ export async function discoverGitRepositories(root: string): Promise<string[]> {
 }
 
 async function origin(path: string): Promise<string | null> {
-  try { return (await execFileAsync('git', ['-C', path, 'remote', 'get-url', 'origin'])).stdout.trim() || null; } catch { return null; }
+  try { return (await gitOutput(['-C', path, 'remote', 'get-url', 'origin'])).trim() || null; } catch { return null; }
 }
 
 export async function discoverWorkspaceRepositories(root: string): Promise<DiscoveredRepository[]> {
@@ -99,7 +107,7 @@ export function taskUsesCanonicalProjectRun(task: Task, tasks: Task[]): boolean 
 }
 
 async function git(path: string, args: string[]): Promise<string> {
-  return (await execFileAsync('git', ['-C', path, ...args])).stdout.trim();
+  return (await gitOutput(['-C', path, ...args])).trim();
 }
 
 export type ManagedPullRequestHead = { ref: string; sha: string };
