@@ -26,3 +26,14 @@ test('Relay history client reads events-bus API and returns newest requested eve
     assert.deepEqual(events.map(e=>e.event_id),['e4','e3']);
   } finally { await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
 });
+
+test('worker reported timestamp is preserved and dashboard history uses trusted receive time', async () => {
+  const { markEventReceived } = await import('../dist/event-received-time.js');
+  const original = {version:1,event_id:'received-at-test',job_id:'j',task_id:'review',parent_task_id:null,type:'task.started',status:'running',timestamp:'2026-10-08T04:00:00Z',visibility:'user',level:'info',message:'start'};
+  const received = markEventReceived(original,'2026-10-08T17:20:07Z');
+  assert.equal(received.receivedAt,'2026-10-08T17:20:07Z');
+  assert.equal(received.reportedAt,'2026-10-08T04:00:00Z');
+  assert.equal(received.timestamp,original.timestamp);
+  const again = markEventReceived(original,'2026-10-08T19:00:00Z');
+  assert.equal(again.receivedAt,received.receivedAt);
+});

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventRecord } from './types.js';
+import { markEventReceived } from './event-received-time.js';
 import type { NatsConnection, Subscription } from 'nats';
 type NatsModule = typeof import('nats');
 
@@ -7,7 +8,7 @@ export interface EventBus { publish(event: EventRecord): Promise<void>; subscrib
 export function subjectToken(value: string): string { if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(`Unsafe event subject token: ${value}`); return value; }
 export class MemoryEventBus implements EventBus {
   private readonly handlers = new Map<string, Set<(event: EventRecord) => Promise<void>>>();
-  async publish(event: EventRecord): Promise<void> { for (const handler of [...(this.handlers.get(event.job_id) ?? []), ...(this.handlers.get('*') ?? [])]) await handler(event); }
+  async publish(event: EventRecord): Promise<void> { for (const handler of [...(this.handlers.get(event.job_id) ?? []), ...(this.handlers.get('*') ?? [])]) await handler(markEventReceived(event)); }
   async subscribe(jobId: string, wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { const set = this.handlers.get(jobId) ?? new Set(); set.add(wake); this.handlers.set(jobId, set); return async () => { set.delete(wake); }; }
   async subscribeAll(wake: (event: EventRecord) => Promise<void>): Promise<() => Promise<void>> { const key = '*'; const set = this.handlers.get(key) ?? new Set(); set.add(wake); this.handlers.set(key, set); return async () => { set.delete(wake); }; }
 }
@@ -36,7 +37,7 @@ export class NatsEventBus implements EventBus {
           continue;
         }
         try {
-          await wake(event);
+          await wake(markEventReceived(event));
         } catch (error) {
           process.stderr.write(`warning: event handler failed for ${subject}: ${error instanceof Error ? error.message : String(error)}\n`);
         }
