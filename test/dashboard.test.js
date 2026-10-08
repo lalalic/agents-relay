@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 
@@ -728,4 +729,11 @@ test('dashboard applies live authoritative job and task state from SSE without p
   assert.match(dashboardHtml, /stream.addEventListener\('relay',message=>\{const payload=parseMessage\(message\);if\(payload\?\.job\)/);
   assert.doesNotMatch(dashboardHtml, /scheduleLifecycleRefresh|streamHasOpened/);
   assert.doesNotMatch(dashboardHtml, /setInterval\(\(\)=>\{if\(location.hash!==/);
+});
+
+
+test('SSE resolves each event against its own repository and PR durable store', () => {
+  assert.match(dashboardHtml, /stream.addEventListener\('relay'/);
+  const serverSource = readFileSync(new URL('../src/dashboard.ts', import.meta.url), 'utf8');
+  assert.match(serverSource, /eventStoreForJob\(job.repository, job.prNumber\)\.load\(job.id\)/);
 });

@@ -86,6 +86,7 @@ export function serveDashboard(
   actions?: DashboardActions,
   routerTestProvider?: (selection: { jobId: string; taskId: string }) => Promise<Record<string, unknown>>,
   decisionAuditProvider?: () => Promise<DecisionAuditRecord[]>,
+  eventStoreForJob?: (repository: string, prNumber: number) => DurableStore,
 ): Server {
   const legacyActions = typeof exactJobProvider === 'object' && exactJobProvider !== null ? exactJobProvider as DashboardActions : undefined;
   const legacyExactJobProvider = !exactJobProvider && githubUsageProvider ? githubUsageProvider as unknown as ((jobId: string, target?: { repository?: string; prNumber?: number }) => Promise<Job | null>) : undefined;
@@ -125,7 +126,9 @@ export function serveDashboard(
       subscribedJobs.add(job.id);
       try {
         await bus.subscribe(job.id, async event => {
-          const durable = await store.load(job.id).catch(() => null);
+          const durable = await (eventStoreForJob
+            ? eventStoreForJob(job.repository, job.prNumber).load(job.id)
+            : store.load(job.id)).catch(() => null);
           const task = durable?.tasks.find(candidate => candidate.id === event.task_id) ?? null;
           const statePatch = durable ? {
             jobId: durable.id,

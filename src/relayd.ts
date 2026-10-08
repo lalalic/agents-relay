@@ -453,7 +453,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       gates: result.audit?.gate_results ?? [],
     };
   },
-  async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5));
+  async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5), (repository, prNumber) => runtimeStore(repository, prNumber));
 
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
