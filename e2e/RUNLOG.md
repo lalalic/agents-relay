@@ -147,3 +147,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** Planner-created dependent reviewer instructions did not explicitly separate pre-merge code/artifact quality gates from downstream merge and complete-state E2E assertions, allowing the Reviewer to treat an expected future effect as an unsatisfied Review gate.
 - **Solution:** At execution-time SHA binding, append an idempotent instruction limiting the Review verdict to pre-merge PR artifact and tests. Defer merge/Job completion verification to the independent E2E Runner after approval. Existing legitimate artifact findings remain actionable.
 - **Validation:** Added tests verifying injection only once across repeat bindings. Full suite PASS 610/610 before Commit. Live Review rerun and automatic post-approval merge still require confirmation.
+
+## 2026-10-08 — Plan-10 no-work Review Gate recovery
+
+- **Observed:** independent E2E trigger produced successful `plan-10` with `objective_status=in_progress`, `next_tasks=[]`. Previous implementation was SUCCEEDED, prior reviewer had terminally completed, but Job remained ACTIVE, `review` null, and the normal Final Review gate never opened.
+- **Root cause:** autonomous `completionGateSatisfied` required an explicit Planner `satisfied` declaration even when the latest successful round had no remaining work and a reviewer had already completed, creating a pre-merge circular wait for the merge/COMPLETED stages.
+- **Solution:** Permit latest SUCCEEDED `in_progress` with zero planned tasks to enter Final Review only when an existing review Task has finished and implementation tasks all SUCCEEDED. Never borrow this permission from older plans or allow ordinary unfinished in-progress batches through.
+- **Validation:** full build and npm test 612/612 PASS including conditional gate and latest-plan failure regression tests; live PR #2 review/merge still requires observation.
