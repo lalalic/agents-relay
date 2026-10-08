@@ -30,6 +30,44 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     };
   }
 
+  private static reviewRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  private static reviewHeadSha(event: EventRecord): string | undefined {
+    const data = ReconcilerReviewBase.reviewRecord(event.data);
+    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
+    const review = ReconcilerReviewBase.reviewRecord(data.review);
+    return [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha, data.head_sha, data.headSha]
+      .find((value): value is string => typeof value === 'string' && value.length > 0);
+  }
+
+  private static reviewIssues(event: EventRecord): string[] {
+    const data = ReconcilerReviewBase.reviewRecord(event.data);
+    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
+    const review = ReconcilerReviewBase.reviewRecord(data.review);
+    const rawIssues = outcome.blocking_findings !== undefined ? outcome.blocking_findings
+      : outcome.blockingFindings !== undefined ? outcome.blockingFindings
+      : review.issues !== undefined ? review.issues
+      : data.issues;
+    if (!Array.isArray(rawIssues)) return [];
+    return rawIssues.map(item => {
+      if (typeof item === 'string') return item.trim();
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+      const value = item as Record<string, unknown>;
+      return (typeof value.summary === 'string' ? value.summary
+        : typeof value.message === 'string' ? value.message
+        : typeof value.finding === 'string' ? value.finding
+        : typeof value.title === 'string' ? value.title : '').trim();
+    }).filter(Boolean);
+  }
+
+  private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
+    const headSha = ReconcilerReviewBase.reviewHeadSha(event);
+    if (!headSha) return null;
+    return { headSha, issues: ReconcilerReviewBase.reviewIssues(event) };
+  }
+
   private async cancelStaleReviewTask(job: Job): Promise<void> {
     const staleTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     if (!staleTask || !['DRAFT', 'QUEUED', 'RUNNING'].includes(staleTask.state)) return;
@@ -211,9 +249,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
-    const reviewData = event.data?.review && typeof event.data.review === 'object' ? event.data.review as Record<string, unknown> : undefined;
-    const headSha = typeof reviewData?.headSha === 'string' ? reviewData.headSha : typeof event.data?.headSha === 'string' ? event.data.headSha : task?.reviewHeadSha;
-    if (!task || !headSha || task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    if (!task) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const normalizedEvidence = ReconcilerReviewBase.normalizeReviewEvidence(event, task);
+    if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const headSha = normalizedEvidence.headSha;
+    if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
 
@@ -227,12 +267,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const reviewDecision = await dispatchReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
       if (actionId === 'review.createFix') {
         needsReconcile = true;
-        const rawIssues = Array.isArray(reviewData?.issues) ? reviewData.issues : [];
-        const issues = rawIssues.map(item => {
-          if (typeof item === 'string') return item.trim();
-          if (item && typeof item === 'object') { const value = item as Record<string, unknown>; return (typeof value.summary === 'string' ? value.summary : typeof value.message === 'string' ? value.message : typeof value.title === 'string' ? value.title : '').trim(); }
-          return '';
-        }).filter(Boolean);
+        const issues = normalizedEvidence.issues;
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
         const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
@@ -258,7 +293,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (!reviewDecision.accepted) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const outcome = reviewOutcome(reviewDecision.target);
     if (!outcome) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    const evidence = { summary: event.message || 'Review ' + outcome, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
+    const reviewData = event.data?.review && typeof event.data.review === 'object' && !Array.isArray(event.data.review)
+      ? event.data.review as Record<string, unknown> : undefined;
+    const evidence = { summary: event.message || 'Review ' + outcome, data: {
+      ...(event.data ?? {}), review: { ...(reviewData ?? {}), headSha }, headSha, outcome, source: event.source,
+    } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
     job.updatedAt = job.review.updatedAt; await this.store.saveJob(job);
     return { applied: true, reconcile: needsReconcile, reason: 'review.' + outcome, reconcileMode: needsReconcile ? 'detached' : undefined };

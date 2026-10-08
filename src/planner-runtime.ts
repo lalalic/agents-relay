@@ -68,7 +68,6 @@ async function finishPlanner(
     plan.plannerResult = result;
     plan.assessment = result.assessment;
     plan.generatedTaskIds = result.next_tasks.map(item => item.id);
-    plan.headSha = plan.trigger.currentHeadSha ?? await ports.store.headSha?.() ?? job.headSha;
     plan.error = undefined;
     plan.retryFeedback = undefined;
     plan.leaseOwner = null;
@@ -106,6 +105,8 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
     if (!fresh || fresh.status !== 'PLANNING') return null;
     const live = ports.live.get(fresh.id);
     if (fresh.executionId && fresh.leaseOwner === ports.options.owner && live?.executionId === fresh.executionId) return null;
+    fresh.headSha = await ports.store.headSha?.() ?? fresh.headSha;
+    if (fresh.headSha) fresh.trigger = { ...fresh.trigger, currentHeadSha: fresh.headSha };
     const startedAt = (ports.options.now ?? new Date()).getTime();
     fresh.attempt = (fresh.attempt ?? 0) + 1;
     fresh.maxAttempts ??= fresh.manualPlanning ? 1 : 3;
