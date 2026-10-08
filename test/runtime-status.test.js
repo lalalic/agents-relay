@@ -33,3 +33,12 @@ test('schedule, review and PR facts project to runtime status',()=>{
   assert.equal(deriveJobRuntimeStatus(job([]),'MERGED'),'MERGED');
   assert.equal(deriveJobRuntimeStatus(job([]),'CLOSED'),'CANCELLED');
 });
+
+
+test('draft reviewer does not mask running or queued implementation',()=>{
+  const review=task('review','DRAFT','reviewer');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','RUNNING','implementation'),review],{reviewEnabled:true})),'RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','QUEUED','implementation'),review],{reviewEnabled:true})),'QUEUED');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),review],{reviewEnabled:true})),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','RUNNING','reviewer')],{reviewEnabled:true})),'REVIEWING');
+});

@@ -33,6 +33,11 @@ export function deriveJobRuntimeStatus(job: Job, prState: PullRequestRuntimeStat
     return 'WAITING';
   }
 
+  // Draft or queued reviewers must not mask implementation that is still active.
+  const implementation = implementationTasks(job);
+  if (implementation.some(task => task.state === 'RUNNING')) return 'RUNNING';
+  if (implementation.some(task => task.state === 'QUEUED')) return 'QUEUED';
+
   const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer');
   const reviewActive = reviewTasks.some(task => ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state))
     || job.review?.outcome === 'pending'
