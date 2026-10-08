@@ -53,14 +53,13 @@ test('default Browser Workspace CLI uses status discovery and no lifecycle CLI c
   assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);
 });
 
-test('ChatGPT adapter uses Browser Workspace one-shot temporary-session platform run', async () => {
+test('ChatGPT adapter uses Browser Workspace one-shot auto-session platform run', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /browserWorkerRunner/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--config', configFile\]/);
-  assert.doesNotMatch(source, /--auto-session/);
+  assert.match(source, /autoSessionBrowserWorkerRunner/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile\]/);
   assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
-  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
+  assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);
   assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'browser-workspace']);
 });
 

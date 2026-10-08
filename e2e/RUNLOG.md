@@ -53,3 +53,16 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Confirmed blocker:** PM2 launches `agents-relay@latest`, not this branch’s `dist`; therefore the committed adapter fix cannot affect the current worker until the shared daemon is reloaded with the repaired runtime. This is verified from PM2 metadata, not inferred.
 - **Safety check:** the existing daemon currently has 10 active Jobs and 2 unrelated running Codex Tasks in `lalalic/neox` (execution IDs `162825cb-9080-409b-a745-2db9c01e75be` and `67b506ef-68d1-4102-943a-ef5c735d9926`). No daemon restart or unrelated-job mutation will occur while those tasks are running.
 - **Next action:** monitor the shared tasks; after they drain, re-check active state and perform only the minimum scoped daemon reload needed to exercise commit `1856fdb`, then rerun the existing E2E Task through the production path.
+
+## 2026-10-08 09:57 America/Toronto — scoped validation reload authorized
+
+- **Safety evidence:** the pre-reload production summary now reports 10 active Jobs and `runningTasks: 0`; the two unrelated `lalalic/neox` executions have both drained. No unrelated task was cancelled or retried.
+- **Action:** replacing the existing same-name `agents-relayd` process with this branch’s built `dist/relayd-main.js`, preserving its workspace, port, concurrency, interval, refresh, and webhook-secret arguments. This is a validation reload only; no production-main merge or new daemon is being created.
+
+## 2026-10-08 10:02 America/Toronto — E2E-006 runtime contract revalidated
+
+- **New evidence:** after the canonical Browser Workspace P0 recovery completed, the current launcher help again exposes `--session-id | --auto-session`. An exact invocation without `--auto-session` exits `0` with JSON `session_id_required`; Relay correctly rejects that output as “no submitted receipt.”
+- **Correction:** the earlier `1856fdb` removal matched the pre-recovery CLI but not the repaired current runtime. Restored the explicit `--auto-session` flag and corresponding source-contract assertions in a new commit.
+- **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
+- **Fix commit:** pending this runtime-contract correction.
+- **Live result:** attempt 5 on the branch daemon still used the no-flag build and failed `browser-worker driver returned no submitted receipt`; the corrected build is ready for the next production retry. E2E-001 remains **FAIL**, not PASS.
