@@ -52,3 +52,10 @@ Graph sources: `workflow/*.mmd`; declared events/effects: `src/workflow/contract
 
 Review status: **audit only**. No runtime behavior is claimed fixed by this document.
 
+
+## Implementation review checkpoint — head 43d6878
+
+- Added bounded post-process-exit mandatory terminal-event wait, while retaining graph-owned authoritative completion. CLI one-shot shutdown and event-bus close are separately time-bounded; daemon mode is excluded.
+- Added operational SQLite execution-to-PID/PGID/start-identity mapping and PID-reuse/host-aware recovery; a live different daemon lease is guarded. Existing owned process-tree escalation is retained, and exit cleanup with ESRCH is classified as already gone rather than a task failure.
+- Routed managed CLI task update into the daemon's operational store via the task-command endpoint with optimistic updatedAt verification, instead of writing GitHub directly.
+- Full suite: 593 passed, 0 failed on head 43d6878 before independent review. Remaining delivery gate: full independent SHA-bound review, workflow Task reconciliation for the historical failed audit Task, and explicit merge decision.
