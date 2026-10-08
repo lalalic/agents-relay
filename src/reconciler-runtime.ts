@@ -332,9 +332,9 @@ export abstract class ReconcilerRuntimeBase {
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
       live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
-      result?.summary ?? (error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
+      result?.summary ?? (live?.execution.processExit?.terminationReason === 'parent-shutdown' ? 'Worker interrupted by daemon shutdown' : error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
       { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
-        signal: live?.execution.processExit?.signal ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error, executionId, pid: live?.execution.pid ?? null },
+        signal: live?.execution.processExit?.signal ?? null, terminationReason: live?.execution.processExit?.terminationReason ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error, executionId, pid: live?.execution.pid ?? null },
       { id: executionEventSource(jobId, taskId, executionId), agent: 'relay', component: 'agents-relay' },
     ));
   }

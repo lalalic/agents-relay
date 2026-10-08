@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
 import { ExecutionContext } from './execution-context.js';
-import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
+import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
 
 export type Execution = {
   id: string;
@@ -13,7 +13,7 @@ export type Execution = {
   threadId?: string;
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
-  processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string };
+  processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string; terminationReason: string | null };
   pid?: number;
 };
 export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
@@ -98,7 +98,7 @@ export class CodexAdapter implements WorkerAdapter {
       child.on('error', error => { launchedReject(error); reject(error); });
       child.once('spawn', launchedResolve);
       child.on('close', (code, signal) => {
-        execution.processExit = { exitCode: code, signal, stderr: stderrTail };
+        execution.processExit = { exitCode: code, signal, stderr: stderrTail, terminationReason: ownedProcessTerminationReason(child) };
         if (stdoutBuffer) consumeLine(stdoutBuffer);
         if (code === 0) {
           resolve({ summary: 'Codex runtime exited after task execution; terminal task state is event-owned' });

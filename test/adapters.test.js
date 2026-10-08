@@ -269,6 +269,7 @@ test('CodexAdapter cancellation force-kills a process that ignores SIGTERM', asy
     const startedAt = Date.now();
     execution.cancel();
     await assert.rejects(execution.promise);
+    assert.equal(execution.processExit?.terminationReason, 'cancel');
     assert.ok(Date.now() - startedAt < 3000, 'cancel should force the process to exit after the grace period');
   } finally {
     await rm(root, { recursive: true, force: true });
