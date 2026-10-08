@@ -154,3 +154,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** autonomous `completionGateSatisfied` required an explicit Planner `satisfied` declaration even when the latest successful round had no remaining work and a reviewer had already completed, creating a pre-merge circular wait for the merge/COMPLETED stages.
 - **Solution:** Permit latest SUCCEEDED `in_progress` with zero planned tasks to enter Final Review only when an existing review Task has finished and implementation tasks all SUCCEEDED. Never borrow this permission from older plans or allow ordinary unfinished in-progress batches through.
 - **Validation:** full build and npm test 612/612 PASS including conditional gate and latest-plan failure regression tests; live PR #2 review/merge still requires observation.
+
+## 2026-10-08 — Final Review created but not event-driven dispatched
+
+- **Observed:** after Plan-11 succeeded, `final-review-6a18e937b72b` was durably appended QUEUED, `review.created` published, Job Review PENDING, but no worker launched and runtime remained runningTasks=0.
+- **Root cause:** RepositoryWorkerPool.watch ignored `review.created` as neither a lifecycle fact nor a wake; the new Task's ready-to-run transition therefore relied on periodic reconciliation.
+- **Solution:** treat `review.created` as a wake-only event using the existing coordinator, not a task state transition or new authority path.
+- **Regression:** test publishes `review.created` and observes targeted reconcile without full scan. Build + npm test 613/613 PASS. Live rerun pending.

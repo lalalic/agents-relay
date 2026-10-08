@@ -640,6 +640,20 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await stop();
 });
 
+test('new final-review creation wakes repository pool without relying on polling', async () => {
+  const bus = new MemoryEventBus();
+  const calls = [];
+  const client = { request: async () => { throw new Error('no full scan required'); } };
+  const pool = new RepositoryWorkerPool(client, ['owner/repo'], new Set(['bot']), 4,
+    () => ({ reconcile: async id => { calls.push(id); } }));
+  const stop = await pool.watch(bus);
+  await bus.publish(eventFor('job-review', 'final-review-head', null, 'review.created', 'queued',
+    'Review Task created', 'orchestrator', {repository:'owner/repo',prNumber:2}));
+  await new Promise(resolve => setTimeout(resolve,0));
+  assert.deepEqual(calls, ['job-review']);
+  await stop();
+});
+
 test('scheduler timer enters through EventBus schedule.tick before scheduled graph reconciliation', async () => {
   const bus=new MemoryEventBus();
   const at=new Date('2026-09-29T18:05:00.000Z');
