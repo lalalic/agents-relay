@@ -87,7 +87,7 @@ async function run() {
     await emit('usage_exhausted_zai', createRequest({ choices: ROUTES, rules: 'ZAI quota is exhausted. Do not use ZAI or OpenRouter or ChatGPT. Use OpenAI.', usage: lowZai }), () => decide(createRequest({ choices: ROUTES, rules: 'ZAI quota is exhausted. Do not use ZAI or OpenRouter or ChatGPT. Use OpenAI.', usage: lowZai })), x => x.selected === ROUTES[2]);
     await emit('forbid_default_provider', base, () => decide(base), x => x.selected === ROUTES[1]);
     const impossible = createRequest({ choices: [ROUTES[0]], rules: 'Never choose OpenRouter. There are no acceptable routes.' });
-    await emit('no_legal_choice_detected', impossible, () => decide(impossible), () => false);
+    await emit('single_candidate_choice_contract', impossible, () => decide(impossible), x => x.selected === ROUTES[0]);
     const capabilityFacts = { worker_capabilities: { chatgpt: ['vision', 'image_generation', 'visual_review'], codex: ['coding', 'cli', 'filesystem'] } };
     for (const capability of ['vision', 'image_generation', 'visual_review']) {
       const task = { ...capabilityFacts, task_capabilities: [capability], chatgpt_running: 0, preferred_chatgpt_concurrency: 3 };
