@@ -28,5 +28,6 @@ test('execution routing always uses Jev; errors fall back through caller-owned C
 });
 test('task capability inference supports explicit declarations and visual requests', () => {
   assert.deepEqual(taskCapabilityFacts({ task: { input: 'Generate an image for this video', capabilities: ['model'] } }), ['model', 'image_generation']);
+  assert.deepEqual(taskCapabilityFacts({ task: { input: 'Perform final review of PR' } }), ['final_review']);
   assert.deepEqual(taskCapabilityFacts({ task: { taskCapabilities: ['visual_review'], capabilities: ['model'], input: 'generate an image' } }), ['visual_review', 'model']);
 });

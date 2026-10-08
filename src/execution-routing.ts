@@ -62,13 +62,14 @@ export function taskCapabilityFacts(taskFacts: Record<string, unknown>): string[
   if (Array.isArray(explicit) && explicit.length > 0) return [...new Set(tags)];
   const description = [task.input, task.title, task.description, task.role].filter(item => typeof item === 'string').join(' ').toLowerCase();
   if (/image generation|generate (an? )?image|生成图片|图片生成|生图/.test(description)) tags.push('image_generation');
+  if (/final review|final approval review|最终审核|最终审查|终审/.test(description)) tags.push('final_review');
   if (/visual review|image review|视觉审核|图片审核|画面审核/.test(description)) tags.push('visual_review');
   if (/vision|image understanding|图像理解|图片理解|看图/.test(description)) tags.push('vision');
   return [...new Set(tags)];
 }
 
 function workerCapabilityFacts(worker: WorkerCandidate): string[] {
-  const specializations = worker.adapter === 'chatgpt' ? ['vision', 'image_generation', 'visual_review'] : ['coding', 'cli', 'filesystem'];
+  const specializations = worker.adapter === 'chatgpt' ? ['vision', 'image_generation', 'visual_review', 'final_review'] : ['coding', 'cli', 'filesystem'];
   return [...new Set([...worker.capabilities, ...specializations])];
 }
 
@@ -405,7 +406,7 @@ export async function routeExecution(
 
   const question = appendRoutingInstruction(
     'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n' + routingInstruction,
-    'For vision, image generation and visual review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
+    'For vision, image generation, visual review, and final review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
   );
 
   let selected = fallback;
