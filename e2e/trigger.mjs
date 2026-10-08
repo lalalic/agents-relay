@@ -8,7 +8,7 @@ const repo=option('repo','lalalic/agents-relay-e2e'),pr=option('pr','2');
 const id=option('job','e2e-autonomy-smoke-20261008'),mode=option('mode','retry');
 const bin=resolve(root,'dist/cli.js');
 const cmd=(args)=>{const p=spawnSync(process.execPath,[bin,...args],{cwd:root,encoding:'utf8',timeout:120000,maxBuffer:8e6});if(p.status!==0)throw Error(p.stderr||p.stdout||`exit ${p.status}`);return p.stdout};
-if(!['plan','retry'].includes(mode))throw Error('mode must be plan or retry');
+if(!['plan','retry','unblock'].includes(mode))throw Error('mode must be plan, retry, or unblock');
 const target=['--repo',repo,'--pr',pr,'--id',id];
 let action;
 if(mode==='plan')action=['plan',...target];
