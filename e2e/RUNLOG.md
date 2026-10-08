@@ -168,3 +168,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** `createFinalReviewTask` embeds the entire Job objective including downstream E2E workflow acceptance in the pre-merge Review instruction without explicit phase separation. The earlier phase separation for planner-created reviews did not apply to the normal final-review factory.
 - **Solution:** in the final-review Task factory, explicitly scope the verdict to current immutable artifact, tests and genuine blocking code defects. Historic recovered worker failures must be reported independently, and downstream merge/COMPLETED assertions cannot be preconditions to the approval that causes them. Preserve pre-implementation PR baseline/seed files when evaluating change scope.
 - **Validation:** Build and complete `npm test` 613/613 PASS, including new final-review contract assertion. Await fresh live review, GitHub merge and durable COMPLETED before declaring E2E pass.
+
+## 2026-10-08 — Fresh E2E loop B verified; transient merge-state race
+
+- New PR #3 in `lalalic/agents-relay-e2e` merged at 2026-10-08T16:07:38Z. Durable `e2e-autonomy-loop-b-20261008` Job is `COMPLETED`; implementation and review Tasks both `SUCCEEDED`; latest planner `SUCCEEDED`.
+- Independent watcher briefly saw GitHub `MERGED` while the durable Job was still `ACTIVE`, generated `MERGED_JOB_NOT_COMPLETED`, then itself observed and recorded PASS at 16:07:47Z. This nine-second projection delay was eventual convergence, not a stuck Job.
+- Fix: defer `MERGED_JOB_NOT_COMPLETED` escalation until the normal configurable inactivity window has elapsed since GitHub `mergedAt`; retain a genuine mismatch error after that deadline. Commit recorded independently.
+- Revalidated via `node e2e/monitor.mjs --pr 3 --job e2e-autonomy-loop-b-20261008`: exit 0, PR MERGED, Job COMPLETED, no current issues. No repair Job/Task created.
