@@ -93,3 +93,11 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Fix commit:** pending this parser repair.
 - **Local result:** build and focused adapter/browser-workspace suite pass `22/22`.
 - **Live result:** attempt 8 failed before this fix with no submitted receipt; PR remains `OPEN`, and E2E-001 remains **FAIL** until a post-fix attempt reaches durable success/review/merge.
+
+## 2026-10-08 10:30 America/Toronto — E2E-006 external Browser Workspace readiness blocker verified
+
+- **Production retry:** after reloading the existing same-name daemon with the branch build containing `b063a9f`, the real production retry reached attempt 9 (`697efe93-47eb-4e8b-82dc-2ed06939acac`) and ended durably `FAILED` at 13:58:48Z. The Job remains `ACTIVE`; implementation Task attempt is 9/24 and review remains `DRAFT`. PR #2 remains `OPEN` at `6a18e937b72bd615e56aeba3113bc2af168ba08f`.
+- **Exact process failure:** Browser Workspace `0.4.1` returned `ok:false` with stderr ending at `session_daemon.py` `_submit_current_page` → `_fill_prompt_if_needed` → `_wait_for_composer` → `wait_until_stable`: `RuntimeError: Temporary Chat composer readiness was not observed ready`. Cleanup reported `caller_owned_session:true`.
+- **Root cause classification:** shared Browser Workspace/ChatGPT DOM readiness remains externally broken. This failure occurs inside the Browser Workspace session before a submit receipt exists; it is not a Relay command-construction or receipt-parser failure. Existing EventBus evidence also records the same readiness defect in other production jobs and the canonical Browser Workspace/P0 repair history.
+- **Relay validation:** `b063a9f` (`fix(browser-worker): parse stdout submission receipts`) has focused adapter/browser-workspace tests `22/22` passing and successfully handles the exact successful controlled CLI envelope. The failed attempt’s `result.ok:false`/stderr has no receipt for that parser to recover.
+- **Safety/state evidence:** production runtime summary after failure is `activeJobs:10, runningTasks:0`; no unrelated job/task was changed. EventsBus records the correlated attempt-9 failure. This scenario is **FAIL/BLOCKED**, not PASS; further Relay source edits would be guesswork until the shared Browser Workspace composer-readiness runtime is repaired and verified.
