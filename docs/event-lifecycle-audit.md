@@ -59,3 +59,19 @@ Review status: **audit only**. No runtime behavior is claimed fixed by this docu
 - Added operational SQLite execution-to-PID/PGID/start-identity mapping and PID-reuse/host-aware recovery; a live different daemon lease is guarded. Existing owned process-tree escalation is retained, and exit cleanup with ESRCH is classified as already gone rather than a task failure.
 - Routed managed CLI task update into the daemon's operational store via the task-command endpoint with optimistic updatedAt verification, instead of writing GitHub directly.
 - Full suite: 593 passed, 0 failed on head 43d6878 before independent review. Remaining delivery gate: full independent SHA-bound review, workflow Task reconciliation for the historical failed audit Task, and explicit merge decision.
+
+## Self-review and incident regression matrix (head d7254e2)
+
+Reviewed all 14 canonical workflow source files and the independent entrypoint sets: `cli.ts`, `cli-support.ts`, `dashboard.ts`, `dashboard-actions.ts`, `relayd.ts`, `pool.ts`, `reconciler.ts`, `reconciler-runtime.ts`, `execution-recovery.ts`, `task-actions.ts` and their graph runtime/effects.
+
+- Missing terminal worker event: process exit remains observational and post-exit deadline invokes `watchdog.failed` without assuming success; targeted regression passes.
+- Worker terminal before or after exit: historical and generation-aware tests pass. No new graph transition that would equate exit code zero to `SUCCEEDED` was introduced.
+- PID reuse, remote host, detached owned-process group and SIGTERM/SIGKILL escalation: new process tests pass. A missing PID ledger entry is backward-compatible, but recovery now checks if another daemon lease owner is still alive first.
+- `QUEUED` task from old owner: existing orphan test confirms graph transition to retryable queue; source file `workflow/task-lifecycle.mmd` now represents `execution.orphaned` on queued work.
+- User-initiated task update: managed CLI sends update to daemon operational store with an `updatedAt` compare; tests enforce immutable generation and graph-only lifecycle state transitions.
+- One-shot CLI completed while resources survive: bounded shutdown tests pass; service/daemon path is exempt. This does not prove an indefinitely blocked main promise can finish on its own.
+- Projected GitHub state vs operational SQLite: SQLite owns local execution PID metadata, while PR comments remain eventual collaboration projections.
+
+Latest run: `npm run test:publish` on Node.js v25.6.0, `d7254e2efbf6db13e6aaa8e541c84fccdf8f303e`: 593 tests, 593 passed, 0 failed. These are current-code regression checks; no assertion is made that previous production incidents were actually replayed with the original external services.
+
+**Task accounting:** `lifecycle-evidence-audit` failed after 3 runtime attempts despite committed audit artifact. Its downstream tasks `process-lifecycle-core`, `graph-action-consolidation`, `incident-replay-validation`, and `final-lifecycle-review` remain DRAFT because Relay has no authoritative `task.completed` for their dependency chain. Code and tests already cover much of their acceptance criteria, but committed code does not equal successfully terminalized Relay Tasks. Graph/action behavior beyond tested entrypoints and a full external-service incident replay remain follow-up verification work. Do not label these tasks SUCCEEDED without appropriate task completion evidence.
