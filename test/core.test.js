@@ -369,7 +369,7 @@ test('reconciler rescues stale queued orchestrator work into ChatGPT execution',
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.adapter, 'chatgpt');
   assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'], runtime: 'chatgpt' });
-  assert.equal(durable.routing, undefined); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
+  assert.notEqual(durable.routing?.provider, 'zai'); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
   assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
 });
 
@@ -987,6 +987,34 @@ test('sync adapter runtime exit without mandatory terminal event fails after bou
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
   await reconciler.close();
   await stop(); await stopEvents();
+});
+
+test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
+  class FailedExitAdapter extends FakeAdapter {
+    launch(t, signal) {
+      const execution = super.launch(t, signal);
+      execution.processExit = { exitCode: 1, signal: null, stderr: 'rate limit exceeded: Usage limit reached for 5 hour' };
+      return execution;
+    }
+  }
+  const t = task('rate-limited'); t.timeoutMs = 1000; t.routing = { provider: 'zai', model: 'glm-5.3-flash' };
+  const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus(); const events = [];
+  const adapter = new FailedExitAdapter();
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, postExitTerminalGraceMs: 20 });
+  const stopEvents = await bus.subscribe('j', async event => events.push(event)); const stop = await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j', 'rate-limited', null, 'task.started', 'running', 'worker began', 'user', undefined, await activeEventSource(store, 'rate-limited')));
+  adapter.resolvers[0].reject(new Error('rate limit exceeded: Usage limit reached for 5 hour'));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.state, 'QUEUED');
+  assert.notEqual(durable.routing?.provider, 'zai');
+  assert.equal(events.filter(event => event.type === 'task.rerouting').length, 1);
+  const failed = events.find(event => event.type === 'task.failed');
+  assert.equal(failed.data.reason, 'rate_limit_exceeded');
+  assert.equal(failed.data.exitCode, 1);
+  assert.match(failed.message, /Usage limit reached/);
+  await reconciler.close(); await stop(); await stopEvents();
 });
 
 test('async ChatGPT runtime exit keeps the overall terminal timeout active', async () => {
