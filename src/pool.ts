@@ -313,6 +313,11 @@ export class RepositoryWorkerPool {
           source,
         ));
       }
+      if (wake.publishFailure) {
+        await bus.publish(eventFor(job.id, 'release', null, 'package.publish_failed', 'failed',
+          `Publish workflow ${wake.publishFailure.runId} failed: ${wake.publishFailure.stage}`,
+          'user', { ...wake.publishFailure, repository: job.repository, prNumber: job.prNumber, deliveryId: wake.deliveryId }, source));
+      }
       await bus.publish(eventFor(job.id, 'github', null, 'github.webhook', 'queued', `GitHub webhook ${wake.event}${wake.action ? ':' + wake.action : ''}`, 'orchestrator', { deliveryId: wake.deliveryId, event: wake.event, action: wake.action, repository: job.repository, prNumber: job.prNumber }, source));
       return;
     }

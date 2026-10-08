@@ -55,3 +55,12 @@ test('GitHub issue-comment webhook extracts package publication marker only from
   const closed = Buffer.from(JSON.stringify({ action: 'closed', repository: { full_name: 'lalalic/agents-relay' }, pull_request: { number: 83, merged: true, head: { ref: 'feat/test', sha: 'def456' } } }));
   assert.deepEqual(parseGitHubWebhook({ 'x-github-delivery': 'delivery-closed', 'x-github-event': 'pull_request' }, closed)?.pullRequestFacts, { state: 'MERGED', head: { ref: 'feat/test', sha: 'def456' } });
 });
+
+
+test('GitHub publish-failure comment becomes correlated webhook event', () => {
+  const marker = '<!-- agents-relay:package-publish-failed:v1 {"runId":"12345","attempt":1,"sha":"abcdef1234","stage":"Run test suite"} -->';
+  const payload = Buffer.from(JSON.stringify({ action:'created',repository:{full_name:'lalalic/agents-relay'}, issue:{number:263,pull_request:{}}, comment:{body:marker} }));
+  const wake = parseGitHubWebhook({'x-github-delivery':'publish-failed-test','x-github-event':'issue_comment'},payload);
+  assert.equal(wake.publishFailure.runId,'12345');
+  assert.equal(wake.publishFailure.stage,'Run test suite');
+});
