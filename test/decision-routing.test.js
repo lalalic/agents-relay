@@ -212,7 +212,7 @@ test('user_input_rules are interpreted by Laya and never parsed into model choic
     ]);
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-6-astra')));
     assert.ok(!calls[0].contract.choices.some(item => item.includes('gpt-5.6-terra')));
-    assert.equal(calls[0].contract.question.includes('merged choice list'), true);
+    assert.equal(calls[0].contract.question.includes('User routing instructions have highest priority'), true);
     assert.equal(calls[0].request.facts.user_input_rules, undefined);
     assert.equal(calls[0].request.facts.routing_instruction, undefined);
     assert.match(calls[0].contract.question, /Use sol for complex work; otherwise prefer the configured default\./);
@@ -683,14 +683,18 @@ test('profile defaults merge with explicit [choices], deduplicate, and exclude u
     const calls = [];
     const engine = { name: 'capture', async decide(request, contract) { calls.push({ request, contract }); return { type: 'choice', choice: contract.choices[0] }; } };
     const worker = { workerId: 'codex', adapter: 'codex', runtime: 'codex', capabilities: ['model'] };
-    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath });
+    const result = await routeExecution([worker], { capabilities: [] }, { decisionEngine: engine, decisionMode: 'active', rulesPath, taskFacts: { storySize: 'L', job: { objective: 'HIDDEN_JOB_OBJECTIVE' }, task: { input: 'HIDDEN_TASK_INPUT' } } });
     assert.deepEqual(calls[0].contract.choices, [
       'worker=codex provider=openai model=gpt-5.6-luna reasoning=medium default=true',
       'worker=codex provider=openai model=gpt-5.6-sol reasoning=high default=false',
     ]);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].contract.question.includes('merged choice list'), true);
+    assert.equal(calls[0].contract.question.includes('User routing instructions have highest priority'), true);
     assert.equal(calls[0].request.facts.routing_instruction, undefined);
+    assert.equal(calls[0].request.facts.context.job, undefined);
+    assert.equal(calls[0].request.facts.context.task, undefined);
+    assert.equal(calls[0].request.facts.context.task_shape.story_size, 'L');
+    assert.doesNotMatch(JSON.stringify(calls[0].request.facts), /HIDDEN_JOB_OBJECTIVE|HIDDEN_TASK_INPUT/);
     assert.match(calls[0].contract.question, /Stay on openai\./);
     assert.deepEqual(result.audit.contract.effectiveChoices.map(item => item.source), ['profile-default', 'explicit-choice']);
     assert.equal(result.candidate.routing.model, 'gpt-5.6-luna');

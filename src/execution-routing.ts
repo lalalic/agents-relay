@@ -354,8 +354,6 @@ export async function routeExecution(
 
   const facts = JSON.parse(JSON.stringify({
     context: {
-      job: taskFacts.job ?? null,
-      task: taskFacts.task ?? taskFacts,
       task_shape: {
         story_size: taskShape.storySize,
         sustained_work: taskShape.sustainedWork,
@@ -376,8 +374,8 @@ export async function routeExecution(
   })) as Record<string, unknown>;
 
   const question = appendRoutingInstruction(
-    'Choose one complete route from the merged choice list. Relay has already merged profile defaults with the user\'s explicit [choices] and applied every authoritative hard gate, so only these routes are legal. Do not invent, add, or substitute routes that are not listed.',
-    routingInstruction,
+    'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Select an offered route that obeys them.\nUser routing instructions:\n' + routingInstruction,
+    'Choose exactly one listed route; do not invent routes.',
   );
 
   let selected = fallback;
