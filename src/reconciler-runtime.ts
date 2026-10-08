@@ -130,7 +130,15 @@ export abstract class ReconcilerRuntimeBase {
     const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
-    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) return this.applyTerminalEvent(event);
+    if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
+      const result = await this.applyTerminalEvent(event);
+      if (event.type !== 'task.failed' || event.source?.watchdog !== true || event.data?.workflowEvent !== 'watchdog.failed' || result.reconcile) return result;
+      // The watchdog has already committed FAILED. The graph owns the recovery
+      // action; this correlated event wakes the graph evaluation, not a retry.
+      const durable = (await this.store.load(event.job_id)).tasks.find(task => task.id === event.task_id);
+      return durable?.state === 'FAILED' && durable.executionHistory?.some(history => history.id === event.data?.executionId)
+        ? { applied: true, reconcile: true, reason: 'watchdog.failure-fact' } : result;
+    }
     if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) return this.applyReviewEvent(event);
     if (event.type === 'job.wake' || event.type === 'github.webhook') return { applied: true, reconcile: true, reason: event.type };
     return { applied: false, reconcile: false, reason: event.type };
@@ -308,7 +316,7 @@ export abstract class ReconcilerRuntimeBase {
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
       live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
-      result?.summary ?? (live?.execution.processExit?.terminationReason === 'parent-shutdown' ? 'Worker interrupted by daemon shutdown' : error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
+      result?.summary ?? (live?.execution.processExit?.terminationReason === 'parent-shutdown' ? 'Worker interrupted by daemon shutdown' : error ? `Worker exited: ${error}${live?.execution.processExit ? ` (exit=${live.execution.processExit.exitCode ?? 'null'}${live.execution.processExit.signal ? ` signal=${live.execution.processExit.signal}` : ''})` : ''}` : 'Worker runtime exited'), 'orchestrator',
       { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
         signal: live?.execution.processExit?.signal ?? null, terminationReason: live?.execution.processExit?.terminationReason ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error, executionId, pid: live?.execution.pid ?? null },
       { id: executionEventSource(jobId, taskId, executionId), agent: 'relay', component: 'agents-relay' },
@@ -347,14 +355,10 @@ export abstract class ReconcilerRuntimeBase {
       'failed',
       transition.task.error ?? failureMessage,
       'user',
-      { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed' },
+      { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed', executionId },
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     await this.emit(event);
-    // Watchdog already committed FAILED, so its emitted task.failed is a diagnostic
-    // duplicate and cannot trigger another Task transition. Wake job reconciliation
-    // explicitly so the canonical troubleshooter graph observes the FAILED task.
-    await this.eventCoordinator.accept({ jobId, reason: 'watchdog-terminal-failure' });
     // Provider quota failures are recoverable. Drop the stale selection so the
     // next launch runs the normal worker/model router with fresh usage data.
     if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
