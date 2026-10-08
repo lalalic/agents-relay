@@ -48,7 +48,7 @@ test('ChatGPT Browser Workspace bootstrap discovers product admin helper through
 
 test('default Browser Workspace CLI uses status discovery and no lifecycle CLI command', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /\{ command: 'npx', prefix: \['browser-workspace'\] \}/);
+  assert.match(source, /\{ command: 'uvx', prefix: \['browser-workspace'\] \}/);
   assert.match(source, /browserWorkspaceCommand\(browserWorkspaceCli\(command\), \['status'\]\)/);
   assert.match(source, /admin\.ensureWorkspace\(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE\)/);
   assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);

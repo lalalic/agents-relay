@@ -176,7 +176,7 @@ export function parseDriverJson(output: string): BrowserWorkerResponse {
 }
 type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
-  return override ? { command: override, prefix: [] } : { command: 'npx', prefix: ['browser-workspace'] };
+  return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['browser-workspace'] };
 }
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
