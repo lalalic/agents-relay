@@ -15,10 +15,11 @@ if(mode==='plan')action=['plan',...target];
 else{
  const j=JSON.parse(cmd(['job','show',...target]));
  const taskId=option('task-id',null);
- if(!taskId)throw Error('retry requires explicit --task-id to prevent unrelated Task retries');
+ if(!taskId)throw Error(`${mode} requires explicit --task-id to prevent unrelated Task changes`);
  const task=j.tasks?.find(t=>t.id===taskId);
- if(!task||task.state!=='FAILED')throw Error(`Task ${taskId} must be FAILED; observed ${task?.state||'missing'}`);
- action=['task','retry',...target,'--task-id',taskId];
+ const requiredState=mode==='retry'?'FAILED':'BLOCKED';
+ if(!task||task.state!==requiredState)throw Error(`Task ${taskId} must be ${requiredState}; observed ${task?.state||'missing'}`);
+ action=['task',mode,...target,'--task-id',taskId];
 }
 console.log(JSON.stringify({mode,repo,pr,jobId:id,argv:action,dryRun:argv.includes('--dry-run')}));
 if(!argv.includes('--dry-run'))process.stdout.write(cmd(action));
