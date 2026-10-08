@@ -10,6 +10,7 @@ import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workf
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
+import { recordThreadDelivery } from './reviewer-thread.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
@@ -391,9 +392,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
-    const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal'
-      ? this.terminalWait(task.id, durableExecutionId, startedAt - 1)
-      : null;
+    const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     const launchContext: LaunchContext = {
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
@@ -407,8 +406,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.failLaunch(job.id, task.id, task.executionId, error instanceof Error ? error.message : String(error));
       return;
     }
-
-    void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model, pid: execution.pid ?? null, executionId: durableExecutionId }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
+    void (execution.launched ?? Promise.resolve()).then(() => Promise.all([recordThreadDelivery(this.store, job.id, task.id, durableExecutionId, workerTask), this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model, pid: execution.pid ?? null, executionId: durableExecutionId }, { agent: 'relay', component: 'agents-relay' }))])).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 
     this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: startedAt, workerStarted: false, processSettled: false });

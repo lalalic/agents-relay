@@ -1,4 +1,4 @@
-import { Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js';
+import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { completionGateSatisfied, schedule, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
@@ -8,6 +8,7 @@ import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+import { chatgptThreadRequirements, resolveReviewerThreadDestination } from './reviewer-thread.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -107,17 +108,38 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const id = this.nextFinalReviewTaskId(job, headSha);
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
-    const reviewerRouting = await this.selectReviewer(reviewGateTasks);
+    const reviewThread = resolveReviewerThreadDestination(job, this.options.reviewer?.threadId);
+    const reviewerRouting = await this.selectReviewer(
+      reviewGateTasks,
+      reviewThread ? chatgptThreadRequirements(this.options.reviewer?.requirements) : undefined,
+    );
+    const chatgptThreadDelivery: ChatGptThreadDelivery | undefined = reviewThread ? {
+      kind: 'new-turn',
+      threadId: reviewThread.threadId,
+      threadSource: reviewThread.source,
+      requestId: `${job.id}:${id}:${headSha}`,
+      jobId: job.id,
+      prNumber: job.prNumber,
+      reviewHeadSha: headSha,
+      projectId: reviewerRouting.candidate.routing.projectId ?? null,
+    } : undefined;
+    const input = [
+      `Job ID: ${job.id}`,
+      `Review PR #${job.prNumber} at exactly head SHA ${headSha}.`,
+      `Review head SHA: ${headSha}`,
+      'Job objective: ' + (job.objective ?? job.description ?? job.title),
+      'Use the selected reviewer agent contract as the authoritative review protocol.',
+      'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
+      'Do not block approval because automatic merge, Job COMPLETED, or post-merge E2E evidence has not occurred yet.',
+      'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
+    ].join('\n\n');
     const task = createTaskEntity(job, {
       jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
-      input: 'Review existing PR #' + job.prNumber + ' at exactly head SHA ' + headSha + '. Job objective: ' + (job.objective ?? job.description ?? job.title) + '. Use the selected reviewer agent contract as the authoritative review protocol. ' +
-        'This is a PRE-MERGE artifact approval gate: inspect the exact PR head, requested changes, applicable source/test requirements, and genuine blocking defects in the proposed changes. ' +
-        'Do not block approval because automatic merge, Job COMPLETED, or post-merge E2E evidence has not occurred yet; those are downstream effects of review approval and independently verified later. ' +
-        'Do not treat historical failed attempts or launch anomalies as current artifact defects if the latest implementation and tests succeeded; report historical lifecycle observations separately. ' +
-        'Compare implementation changes with the PR head that existed before the implementation, not only against main: preserved seed or baseline files are not automatically unrelated additions.',
+      input,
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
+      chatgptThreadDelivery,
       reviewHeadSha: headSha, attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2,
       leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
       error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
@@ -144,7 +166,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const ready = schedule(await this.store.load(job.id));
     await this.store.saveJob(ready);
   }
-  protected async selectReviewer(implementationTasks: readonly Task[]): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
+  protected async selectReviewer(implementationTasks: readonly Task[], requirementsOverride?: WorkerRequirements): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
     const configured = this.options.reviewer;
     const registered = await this.store.listAgents();
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
@@ -179,7 +201,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       },
     };
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    const routed = await routeExecution(workers, configured?.requirements ?? { capabilities: ['model'] }, {
+    const routed = await routeExecution(workers, requirementsOverride ?? configured?.requirements ?? { capabilities: ['model'] }, {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
       taskFacts,

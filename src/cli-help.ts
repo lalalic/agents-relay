@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|review|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
 
@@ -8,6 +8,7 @@ Usage:
 Commands:
   job create|update|show|list|merge|unblock|cancel  Manage durable GitHub-backed jobs
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
+  review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
@@ -44,11 +45,20 @@ Common options:
 
 Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
+  review: `Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
+
+Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
+
+When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
+  'review request': `Request a review in an existing ChatGPT thread.
+
+Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a durable Job and its trusted marker.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
 With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
-Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-review, --tag JSON. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
+Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
 Job creation always enables auto-merge and never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
@@ -56,7 +66,7 @@ Example:
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, and continuation options. Updating the objective also updates the PR body.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, and continuation options. Updating the objective also updates the PR body.
 Unspecified fields are preserved. Marker/binding corruption is never repaired implicitly; update fails with a precise diagnostic instead.
 
 Example:
@@ -185,7 +195,7 @@ Example:
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 
-Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly.
+Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly. Local/runtime invocations may use --thread-id ID to override the durable reviewer/creator thread for ChatGPT review delivery.
 
 Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
@@ -198,7 +208,7 @@ Example:
   serve: `Run the dashboard and reconciliation service for a managed job.
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
-Common: --port PORT, --interval MS, --events nats (optional; reachable NATS is auto-detected).
+Common: --port PORT, --interval MS, --events nats (optional; reachable NATS is auto-detected), --thread-id ID (reviewer-thread override).
 
 Example:
   npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,

@@ -71,8 +71,8 @@ test('all service runtimes use the resource-aware reviewer policy', async () => 
   assert.deepEqual(reviewer.requirements, { capabilities: ['model'] });
   const cliSource = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const daemonSource = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(cliSource, /reviewer: runtimeReviewer\(\)/);
-  assert.match(daemonSource, /reviewer:runtimeReviewer\(\)/);
+  assert.match(cliSource, /reviewer: runtimeReviewer\(args\)/);
+  assert.match(daemonSource, /reviewer:runtimeReviewer\(argv\)/);
 });
 
 test('repository daemon wires account usage telemetry and the default planner into workspace reconciliation', async () => {
