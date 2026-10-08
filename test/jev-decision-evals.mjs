@@ -77,6 +77,7 @@ async function run() {
   const base = createRequest({ choices: ROUTES });
   await emit('invalid_output_rejected', base, async () => { assert.throws(() => parseResponse({ answers: { route: { choice: 'not_a_choice' } } }, base)); return { selected: 'rejected' }; }, x => x.selected === 'rejected');
   await emit('http_failure_handled', base, async () => { await assert.rejects(decide(base, { key: 'fake', fetcher: async () => ({ ok: false, status: 503 }) }), /jev_http_503/); return { selected: 'handled' }; }, x => x.selected === 'handled');
+  await emit('timeout_handled', base, async () => { await assert.rejects(decide(base, { key: 'fake', fetcher: async () => { throw new DOMException('request timed out', 'TimeoutError'); } }), /TimeoutError/); return { selected: 'handled' }; }, x => x.selected === 'handled');
   await emit('fallback_respects_known_exclusions', base, async () => ({ selected: safeFallback(ROUTES, ['openrouter', 'chatgpt']) }), x => x.selected === ROUTES[1]);
   await emit('audit_roundtrip', base, async () => { const e = auditEntry(base, { selected: ROUTES[1], usage: { input_tokens: 42, cost: 0.01 } }); assert.deepEqual(JSON.parse(JSON.stringify(e)).candidates, base.questions.route.criteria); return { selected: e.selected, usage: e.usage }; }, x => x.selected === ROUTES[1] && x.usage.input_tokens === 42);
   if (!process.env.JEV_LIVE) {
