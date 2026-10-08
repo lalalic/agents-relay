@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { recordedEventReceipt } from './event-received-time.js';
 
 export type EventsBusRuntime = { natsUrl: string; apiUrl: string; subjectPrefix: string; configPath: string };
 
@@ -35,5 +34,5 @@ export async function eventsBusHistory(jobId: string, taskId: string | null, lim
   if (!response.ok) throw new Error(`events-bus history unavailable: HTTP ${response.status}`);
   const body = await response.json() as { events?: { event?: import('./types.js').EventRecord }[] };
   const rows = Array.isArray(body.events) ? body.events : [];
-  return rows.map(row => row.event).filter((event): event is import('./types.js').EventRecord => Boolean(event)).map(recordedEventReceipt);
+  return rows.map(row => row.event).filter((event): event is import('./types.js').EventRecord => Boolean(event));
 }
