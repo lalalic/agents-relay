@@ -22,7 +22,7 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
-import { decisionMode, LayaCliDecisionEngine } from './decision.js';
+import { decisionMode, executionDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
@@ -200,7 +200,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       job, githubState: snapshot.facts!.state, draft: false, mergedAt: null, closedAt: null, publication: null,
     }));
   }));
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:new LayaCliDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(), projectPathForJob: async job => resolveRepositoryProjectPath(repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot), job.projectPath) });
   const refreshAll = async (full = false): Promise<ManagedJobOverview[]> => {
     if (client.rateLimitStatus().limited) return cachedOverviews;
     const scanRepositories = full ? repositories : recoveryScanRepositories(repositories, cachedOverviews, dormantProbeIndex++);
@@ -405,7 +405,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
     ], [], usage);
     const result = await routeExecution(workers, task.workerRequirements ?? { capabilities: task.capabilities ?? [] }, {
-      decisionEngine: new LayaCliDecisionEngine(),
+      decisionEngine: executionDecisionEngine(),
       decisionMode: 'active',
       taskFacts: {
         job: {
@@ -418,7 +418,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
           priority: task.priority ?? null, agentName: task.agentName ?? null,
           parentTaskId: task.parentTaskId, dependencies: task.dependencies,
-          capabilities: task.capabilities, input: task.input,
+          capabilities: task.capabilities, taskCapabilities: task.taskCapabilities, workerCapabilities: task.workerCapabilities, input: task.input,
           attachments: task.attachments ?? [], output: task.output ?? null,
           state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
         },

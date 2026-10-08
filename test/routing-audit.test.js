@@ -159,7 +159,10 @@ test('unified execution audit records full worker+model routes and selected rout
     assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=codex provider=openai model=gpt-test reasoning=medium default=true'));
     assert.ok(audit.decision_input.stages[0].contract.choices.includes('worker=chatgpt/browser-worker provider=chatgpt model=account-defaults reasoning=provider-default default=true'));
     assert.equal(audit.decision_input.stages[0].facts.runtime.chatgpt_running, 0);
-    assert.ok(Array.isArray(audit.decision_input.stages[0].facts.worker_candidates));
+    assert.equal(audit.decision_input.stages[0].facts.worker_candidates, undefined);
+    assert.equal(audit.decision_input.stages[0].facts.effective_choices, undefined);
+    assert.equal(audit.decision_input.stages[0].facts.context.job, undefined);
+    assert.equal(audit.decision_input.stages[0].facts.context.task, undefined);
     assert.ok(Array.isArray(audit.contract.effectiveChoices));
     assert.equal(audit.contract.routingInstruction, '');
   } finally {

@@ -210,7 +210,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
         priority: task.priority ?? null, agentName: task.agentName ?? null,
         parentTaskId: task.parentTaskId, dependencies: task.dependencies,
-        capabilities: task.capabilities, input: task.input,
+        capabilities: task.capabilities, taskCapabilities: task.taskCapabilities, workerCapabilities: task.workerCapabilities, input: task.input,
         attachments: task.attachments ?? [], output: task.output ?? null,
         state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
       },
