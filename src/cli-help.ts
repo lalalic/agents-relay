@@ -8,7 +8,7 @@ Usage:
 Commands:
   job create|update|show|list|merge|unblock|cancel  Manage durable GitHub-backed jobs
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
-  review request           Request graph-owned review in a specific ChatGPT thread
+  review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
@@ -47,13 +47,13 @@ Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
   review: `Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
-Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID --thread-id THREAD_ID
+Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
 
-The command persists the reviewer thread destination and wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
+When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
   'review request': `Request a review in an existing ChatGPT thread.
 
-Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID --thread-id THREAD_ID.
-Rejects pending reviews; records destination and wakes managed reconciliation.`,
+Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
+Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a durable Job and its trusted marker.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.

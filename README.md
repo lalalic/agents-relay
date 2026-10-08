@@ -151,6 +151,12 @@ Use `job update` for partial mutable metadata changes on an already healthy Job 
 npx agents-relay job update --repo OWNER/REPO --pr 6 --id job-6 --priority P0 --no-auto-merge
 ~~~
 
+Request an eligible new review with `npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID`.
+Pass optional `--thread-id THREAD_ID` to persist a reviewer-thread override for subsequent
+review routing. Without it, Relay uses the stored reviewer thread, then creator thread,
+or the legacy review path when neither exists. This request wakes graph-owned
+review orchestration; it is not a delivery receipt.
+
 Review destinations are durable Job facts. `job create` and `job update` accept
 `--reviewer-thread-id` and `--creator-thread-id`; a reviewer ID takes precedence
 over the creator/origin ID. A local runtime invocation may pass

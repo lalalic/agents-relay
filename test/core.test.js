@@ -1643,6 +1643,14 @@ test('review thread metadata persists and resolves reviewer, creator, then CLI o
   });
   assert.equal(resolveReviewerThreadDestination({}), null);
   assert.throws(() => resolveReviewerThreadDestination({ reviewerThreadId: ' ' }), /reviewer thread ID/);
+  const { reviewRequestThreadOverride } = await import('../dist/cli-review.js');
+  assert.equal(reviewRequestThreadOverride([]), undefined);
+  assert.equal(reviewRequestThreadOverride(['--thread-id', ' override ']), 'override');
+  assert.throws(() => reviewRequestThreadOverride(['--thread-id']), /--thread-id/);
+  assert.throws(() => reviewRequestThreadOverride(['--thread-id', ' ']), /--thread-id/);
+  assert.equal(resolveReviewerThreadDestination({ reviewerThreadId: 'reviewer', creatorThreadId: 'creator' }, reviewRequestThreadOverride([])).source, 'reviewer');
+  assert.equal(resolveReviewerThreadDestination({ creatorThreadId: 'creator' }, reviewRequestThreadOverride([])).source, 'creator');
+  assert.equal(resolveReviewerThreadDestination({}, reviewRequestThreadOverride([])), null);
   assert.equal(runtimeReviewer(['--thread-id', ' override ']).threadId, 'override');
   assert.throws(() => runtimeReviewer(['--thread-id', ' ']), /--thread-id/);
 });
