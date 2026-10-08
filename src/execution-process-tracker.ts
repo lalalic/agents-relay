@@ -31,6 +31,7 @@ export async function monitorExecutionProcess(
 export async function reclaimStaleExecutionProcess(store: DurableStore, task: Task, currentOwner?: string): Promise<boolean> {
   if (!task.executionId || !task.jobId || !store.loadExecutionProcess) return true;
   const record = await store.loadExecutionProcess(task.jobId, task.id, task.executionId);
+  if (task.leaseOwner && task.leaseOwner !== currentOwner && await activeRelayLeaseOwner(task.leaseOwner)) return false;
   if (!record || record.endedAt) return true;
   const state = await probeProcessRecord(record);
   if (state === 'gone' || state === 'reused') return true;
