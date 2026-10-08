@@ -43,7 +43,7 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Evidence:** the automatic Troubleshooter execution was cancelled at 13:40:22Z after 274.7 seconds (`SIGTERM`, execution `9878c2a3-fb2a-4651-ba60-063f8feb2528`). The existing runtime then retried implementation attempt 2; its correlated `task.failed` event at 13:40:24Z reported `browser-workspace: error: unrecognized arguments: --auto-session`.
 - **Root cause:** Relay’s ChatGPT adapter encoded a removed Browser Workspace CLI flag. The installed launcher’s actual help accepts `--config`, `--url`, and `--session-id`; omitting `--session-id` is the supported temporary-session path. The earlier `yaml` import failure was therefore not the only production-path defect.
 - **Solution:** rename the internal runner to reflect the supported temporary-session behavior and remove the stale `--auto-session` argument. Updated both source-contract tests to reject the obsolete flag.
-- **Fix commit:** pending this repair’s commit.
+- **Fix commit:** `1856fdb` (`fix(browser-worker): use supported temporary session CLI`).
 - **Local result:** build succeeded; adapter/browser-workspace focused suite passed `18/18`.
 - **Live result:** not yet rerun with the production daemon; implementation Task is currently `FAILED` on attempt 2, PR remains `OPEN`, and E2E-001 is still **FAIL**, not PASS.
 
@@ -64,7 +64,7 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **New evidence:** after the canonical Browser Workspace P0 recovery completed, the current launcher help again exposes `--session-id | --auto-session`. An exact invocation without `--auto-session` exits `0` with JSON `session_id_required`; Relay correctly rejects that output as “no submitted receipt.”
 - **Correction:** the earlier `1856fdb` removal matched the pre-recovery CLI but not the repaired current runtime. Restored the explicit `--auto-session` flag and corresponding source-contract assertions in a new commit.
 - **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
-- **Fix commit:** pending this runtime-contract correction.
+- **Fix commit:** `862e6a5` (`fix(browser-worker): restore explicit auto-session mode`).
 - **Live result:** attempt 5 on the branch daemon still used the no-flag build and failed `browser-worker driver returned no submitted receipt`; the corrected build is ready for the next production retry. E2E-001 remains **FAIL**, not PASS.
 
 ## 2026-10-08 10:08 America/Toronto — E2E-006 CLI-version split diagnosed
@@ -74,14 +74,14 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** Relay’s browser adapter depended on a version-specific one-shot flag. The production worker’s `npx` tool does not accept it; omitting it on the newer tool returns `session_id_required` with exit 0, which Relay surfaced as no submitted receipt.
 - **Solution:** use the common explicit session lifecycle: `session start`, `platform run ... --session-id`, and `session stop` in `finally`, avoiding both one-shot flag variants and preserving cleanup.
 - **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
-- **Fix commit:** pending this compatibility repair. Live retry is pending the new build reload; E2E-001 remains **FAIL**, not PASS.
+- **Fix commit:** `aeb86a1` (`fix(browser-worker): use explicit compatible session lifecycle`). Live retry is pending the new build reload; E2E-001 remains **FAIL**, not PASS.
 
 ## 2026-10-08 10:16 America/Toronto — E2E-006 receipt-envelope defect fixed
 
 - **Evidence:** explicit-session attempt 7 reached Browser Workspace but ended with `browser-worker driver returned no submitted receipt`. The installed generic runner returns `{platform, action, result:{...action receipt...}}`; the action source itself returns `operation=submit`, `status=submitted`, and `verified=true`.
 - **Root cause:** `parseDriverJson` only examined a top-level JSON object and discarded the valid receipt nested under `result`.
 - **Solution:** recursively unwrap `result`/`output`/`data` envelopes while preserving the existing submitted-receipt validation. Added executable nested-envelope tests.
-- **Fix commit:** pending this parser repair.
+- **Fix commit:** `7e13810` (`fix(browser-worker): unwrap platform receipt envelope`).
 - **Local result:** build and focused adapter/browser-workspace suite pass `20/20`.
 - **Live result:** attempt 7 is the first run before this parser fix; its durable Task is `FAILED`, PR remains `OPEN`, and E2E-001 remains **FAIL**. No PASS is claimed.
 
@@ -90,7 +90,7 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Primary process evidence:** exact cached production CLI run returned exit-success JSON with `result.ok=true` and `result.stdout` containing the submitted receipt JSON; the controlled Browser Workspace session was stopped cleanly afterward.
 - **Root cause:** the generic runner exposes the action receipt as JSON text in `result.stdout`, one envelope deeper than the previous parser fix handled.
 - **Solution:** recursively parse JSON strings in `result`/`stdout`/other supported envelopes. Added executable object-envelope and stdout-envelope tests.
-- **Fix commit:** pending this parser repair.
+- **Fix commit:** `b063a9f` (`fix(browser-worker): parse stdout submission receipts`).
 - **Local result:** build and focused adapter/browser-workspace suite pass `22/22`.
 - **Live result:** attempt 8 failed before this fix with no submitted receipt; PR remains `OPEN`, and E2E-001 remains **FAIL** until a post-fix attempt reaches durable success/review/merge.
 
