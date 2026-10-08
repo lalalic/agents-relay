@@ -88,6 +88,20 @@ async function run() {
     await emit('forbid_default_provider', base, () => decide(base), x => x.selected === ROUTES[1]);
     const impossible = createRequest({ choices: [ROUTES[0]], rules: 'Never choose OpenRouter. There are no acceptable routes.' });
     await emit('no_legal_choice_detected', impossible, () => decide(impossible), () => false);
+    const capabilityFacts = { worker_capabilities: { chatgpt: ['vision', 'image_generation', 'visual_review'], codex: ['coding', 'cli', 'filesystem'] } };
+    for (const capability of ['vision', 'image_generation', 'visual_review']) {
+      const task = { ...capabilityFacts, task_capabilities: [capability], chatgpt_running: 0, preferred_chatgpt_concurrency: 3 };
+      const rules = 'For this task, prefer ChatGPT Worker when its specialized visual capability is available and it has capacity. The user has not forbidden ChatGPT.';
+      const q = createRequest({ choices: ROUTES, rules, task });
+      await emit(`chatgpt_${capability}_available`, q, () => decide(q), x => x.selected === ROUTES[3]);
+    }
+    for (const [condition, details, rules] of [
+      ['at_capacity', { chatgpt_running: 3, preferred_chatgpt_concurrency: 3 }, 'ChatGPT is at concurrency capacity, so choose an available Codex worker; do not choose OpenRouter.'],
+      ['user_forbidden', { chatgpt_running: 0, preferred_chatgpt_concurrency: 3 }, 'User rule: Never choose ChatGPT Worker or OpenRouter. Choose Codex ZAI.'],
+    ]) {
+      const q = createRequest({ choices: ROUTES, rules, task: { ...capabilityFacts, task_capabilities: ['visual_review'], ...details } });
+      await emit(`chatgpt_visual_review_${condition}`, q, () => decide(q), x => x.selected === ROUTES[1]);
+    }
     for (const n of [10, 20, 50]) {
       const extra = Array.from({ length: n - 2 }, (_, i) => `codex::openai:alternative-model-${i}@medium`);
       const choices = [ROUTES[0], ...extra, ROUTES[1]];
