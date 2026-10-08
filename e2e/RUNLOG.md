@@ -84,3 +84,12 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Fix commit:** pending this parser repair.
 - **Local result:** build and focused adapter/browser-workspace suite pass `20/20`.
 - **Live result:** attempt 7 is the first run before this parser fix; its durable Task is `FAILED`, PR remains `OPEN`, and E2E-001 remains **FAIL**. No PASS is claimed.
+
+## 2026-10-08 10:23 America/Toronto — E2E-006 stdout-envelope defect fixed
+
+- **Primary process evidence:** exact cached production CLI run returned exit-success JSON with `result.ok=true` and `result.stdout` containing the submitted receipt JSON; the controlled Browser Workspace session was stopped cleanly afterward.
+- **Root cause:** the generic runner exposes the action receipt as JSON text in `result.stdout`, one envelope deeper than the previous parser fix handled.
+- **Solution:** recursively parse JSON strings in `result`/`stdout`/other supported envelopes. Added executable object-envelope and stdout-envelope tests.
+- **Fix commit:** pending this parser repair.
+- **Local result:** build and focused adapter/browser-workspace suite pass `22/22`.
+- **Live result:** attempt 8 failed before this fix with no submitted receipt; PR remains `OPEN`, and E2E-001 remains **FAIL** until a post-fix attempt reaches durable success/review/merge.

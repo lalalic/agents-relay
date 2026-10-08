@@ -70,6 +70,10 @@ test('Browser Workspace runner unwraps the generic platform result envelope', ()
   assert.equal(parseDriverJson('{"result":{"operation":"submit","status":"submitted"}}').status, 'submitted');
 });
 
+test('Browser Workspace runner unwraps a JSON receipt from platform stdout', () => {
+  assert.equal(parseDriverJson('{"result":{"stdout":"{\\"operation\\":\\"submit\\",\\"status\\":\\"submitted\\"}\\n"}}').status, 'submitted');
+});
+
 
 test('relayd best-effort bootstraps ChatGPT Browser Workspace before runtime startup', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');

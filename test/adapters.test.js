@@ -114,6 +114,11 @@ test('Browser Workspace generic runner receipt is accepted when nested under res
   );
 });
 
+test('Browser Workspace runner unwraps a JSON receipt nested in stdout', () => {
+  const receipt = parseDriverJson(JSON.stringify({ result: { ok: true, stdout: '{"operation":"submit","status":"submitted","verified":true}\n' } }));
+  assert.equal(receipt.verified, true);
+});
+
 test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-composer-cleared-'));
   try {

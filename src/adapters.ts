@@ -145,10 +145,13 @@ export class LaunchFailure extends Error {}
 export class StartAckTimeout extends LaunchFailure {}
 
 function findSubmittedReceipt(value: unknown): BrowserWorkerResponse | undefined {
+  if (typeof value === 'string') {
+    try { return findSubmittedReceipt(JSON.parse(value)); } catch { return undefined; }
+  }
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
   if (record.operation === 'submit' && record.status === 'submitted') return record as BrowserWorkerResponse;
-  for (const key of ['result', 'output', 'data']) {
+  for (const key of ['result', 'output', 'data', 'stdout']) {
     const nested = findSubmittedReceipt(record[key]);
     if (nested) return nested;
   }
