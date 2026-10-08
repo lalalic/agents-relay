@@ -126,3 +126,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** `materializePlannerChild` froze the dependent Review's SHA at planning time, before the implementation dependency could update the PR head. Thus review of the latest implementation was impossible even though Review's instruction explicitly requested head binding at execution time.
 - **Solution:** defer SHA binding for planner-created dependent Review tasks; immediately before an eligible Review execution claim, obtain the latest PR head through the repository store and persist it on that Review Task. Preserve already-bound independent/final Review tasks.
 - **Validation:** build and full `npm test` PASS 607/607, including two dedicated executable Review-head binding regression tests. Live Review still requires an unblock/rerun and an observed terminal Review result, not yet PASS.
+
+## 2026-10-08 — E2E-006 Review r2 Temporary Chat composer failure
+
+- **Observed:** `review-autonomy-smoke-20261008-r2` FAILED at attempt 1 with execution `fe4b4fc8-af77-411e-ab38-71ecc734331a`. Browser Workspace `temporary-submit` failed in `_wait_for_composer`: `Temporary Chat composer readiness was not observed ready`; no verified submission receipt. The review's head was already the current PR SHA, so this is a new delivery failure, not the earlier Review SHA problem.
+- **Cause addressed:** a URL-prefilled Temporary Chat can fail to mount an active composer during hydration. The existing retry only polls the same page; if the composer never appears it cannot recover from that page state. This is a plausible recovery path, not yet proven as the only cause of the live failure.
+- **Solution (browser-workspace source):** commit `fa868c1` on `fix/e2e-composer-readiness-20261008` catches only the pre-send composer-readiness failure, reopens a clean Temporary Chat without URL prompt prefill, reasserts temporary mode, and retries once. Other failures still propagate, avoiding duplicate sends.
+- **Validation:** syntax compilation and ChatGPT platform contract suite 18/18 PASS. Live Review retry still required to establish E2E PASS.
