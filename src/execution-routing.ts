@@ -378,7 +378,7 @@ export async function routeExecution(
   })) as Record<string, unknown>;
 
   const question = appendRoutingInstruction(
-    'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Select an offered route that obeys them.\nUser routing instructions:\n' + routingInstruction,
+    'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n' + routingInstruction,
     'Choose exactly one listed route; do not invent routes.',
   );
 
