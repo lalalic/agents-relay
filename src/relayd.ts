@@ -13,10 +13,10 @@ import { GitHubProjectionWriter, ProjectedDurableStore } from './projected-store
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { githubAuthContext } from './github-auth.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { applyJobActivateAction } from './job-actions.js';
-import { applyOrchestratorCompleteAction } from './task-actions.js';
+import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from './task-actions.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
@@ -26,10 +26,9 @@ import { decisionMode, executionDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { executionRouterRulesPath } from './routing-policy.js';
-import { workerCandidates } from './worker-routing.js';
+import { workerCandidates } from './worker-routing.js'; import { shutdownOwnedProcesses } from './owned-process.js';
 import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
-
 export interface DaemonArguments { repository: string | null; workspaceRoot: string | null; pullRequest: number | null; jobId: string | null; serviceArguments: string[]; }
 /** Initialize the process-wide structured observability sink once, from environment. */
 export function configureDaemonObservability(env: NodeJS.ProcessEnv = process.env): RelayObservability {
@@ -304,6 +303,19 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId, 'control.task.create');
     return await store.load(jobId);
   };
+  const workspaceTaskStart = async (jobId: string, taskId: string) => {
+    const overview = cachedOverviews.find(item => item.job.id === jobId);
+    if (!overview) throw new Error(`Managed job ${jobId} not found`);
+    const store = runtimeStore(overview.job.repository, overview.job.prNumber);
+    const job = await store.load(jobId);
+    const task = job.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    await applyOrchestratorStartAction(task);
+    await store.saveTask(task);
+    await publishOrchestratorTaskStarted(bus, job, task);
+    await pool.reconcileTarget(overview.job.repository, overview.job.prNumber, jobId, 'control.task.start');
+    return await store.load(jobId);
+  };
   const workspaceTaskComplete = async (jobId: string, taskId: string, summary: string) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -375,6 +387,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     cancel: workspaceJobAction('cancel'),
     jobSetState: workspaceJobSetState,
     taskCreate: workspaceTaskCreate,
+    taskStart: workspaceTaskStart,
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),
     taskComplete: workspaceTaskComplete,
@@ -467,7 +480,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let interval: NodeJS.Timeout | undefined;
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void stopWatch().finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();
   await flushProjectionsSafely();

@@ -21,6 +21,7 @@ import { createReviewChairExecutionPlan } from './review-chair.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
+import { applyOrchestratorRescue } from './workflow/orchestrator-rescue.js';
 import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
@@ -107,7 +108,6 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
-    await this.routeExecutableTasks(await this.store.load(jobId));
     const scheduled = schedule(await this.store.load(jobId));
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
@@ -163,6 +163,11 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
+      for (const task of (await this.store.load(jobId)).tasks) {
+        const rescue = applyOrchestratorRescue(task, now); if (!rescue.rescued) continue;
+        await this.store.saveTask(task);
+        await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.orchestrator_rescued', 'queued', `Stale orchestrator task ${task.id} converted to ChatGPT execution`, 'orchestrator', { ageMs: rescue.ageMs, adapter: 'chatgpt' }, { agent: 'relay', component: 'agents-relay' }));
+      }
       await this.recoverPlannerChildren(job);
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
@@ -353,13 +358,6 @@ export class Reconciler extends ReconcilerReviewBase {
   }
 
   private async launchCorrelated(job: Job, task: Task): Promise<void> {
-    const adapter = this.options.adapters.find(x => x.name === task.adapter);
-    if (!adapter) {
-      await transitionTaskEvent(task, 'fail');
-      task.error = `No adapter ${task.adapter}`;
-      await this.store.saveTask(task);
-      return;
-    }
     if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
       await transitionTaskEvent(task, 'block');
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
@@ -368,9 +366,17 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     const claimedTask = await withExecutionBoundary(job.id, task.id, async () => {
       const freshJob = await this.store.load(job.id);
-      const freshTask = freshJob.tasks.find(item => item.id === task.id);
+      let freshTask = freshJob.tasks.find(item => item.id === task.id);
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
+
+      if (!freshTask.routing && freshTask.adapter !== 'orchestrator') {
+        freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
+      }
+      if (['codex', 'chatgpt'].includes(freshTask.adapter) && !freshTask.routing) {
+        throw new Error('Task ' + freshTask.id + ' requires routing metadata before execution claim');
+      }
+
       const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
       const startedAt = (this.options.now ?? new Date()).getTime();
       freshTask.attempt += 1;
@@ -387,6 +393,12 @@ export class Reconciler extends ReconcilerReviewBase {
     }) ?? null;
     if (!claimedTask) return;
     task = claimedTask;
+
+    const adapter = this.options.adapters.find(x => x.name === task.adapter);
+    if (!adapter) {
+      await this.failLaunch(job.id, task.id, task.executionId, 'No adapter ' + task.adapter);
+      return;
+    }
     let executionContext: ExecutionContext;
     let managedHead: { ref: string; sha: string } | null = null;
     try {
@@ -443,7 +455,7 @@ export class Reconciler extends ReconcilerReviewBase {
     void (execution.launched ?? Promise.resolve()).then(() => this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model }, { agent: 'relay', component: 'agents-relay' }))).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error instanceof Error ? error.message : String(error), 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
 
-    this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: Date.now(), workerStarted: false, processSettled: false });
+    this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: startedAt, workerStarted: false, processSettled: false });
     this.registerExecutionOwner(job.id, task.id, durableExecutionId);
     observability().record({
       stage: 'transition', event: 'task.dispatch', outcome: 'succeeded',

@@ -1,10 +1,10 @@
-import { spawn } from 'node:child_process';
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy } from './types.js';
 import { ExecutionContext } from './execution-context.js';
+import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
 
 export type Execution = {
   id: string;
@@ -13,6 +13,7 @@ export type Execution = {
   threadId?: string;
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
+  processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string };
 };
 export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
@@ -45,24 +46,6 @@ function parseThreadStarted(line: string): string | undefined {
     return undefined;
   }
 }
-function signalChildTree(child: import('node:child_process').ChildProcess, signal: NodeJS.Signals): void {
-  if (child.pid && process.platform !== 'win32') {
-    try { process.kill(-child.pid, signal); return; } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-    }
-  }
-  child.kill(signal);
-}
-
-function terminateChild(child: import('node:child_process').ChildProcess, graceMs = 750): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  signalChildTree(child, 'SIGTERM');
-  const force = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) signalChildTree(child, 'SIGKILL');
-  }, graceMs);
-  force.unref();
-}
-
 function appendTail(current: string, chunk: string, maxBytes = 16384): string {
   const combined = current + chunk;
   return Buffer.byteLength(combined) <= maxBytes
@@ -78,11 +61,11 @@ export class CodexAdapter implements WorkerAdapter {
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
-    const child = spawn(this.command, buildCodexArgs(task.routing, task.input), {
-      shell: false,
-      cwd: task.routing.cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
+    const child = spawnOwnedProcess(this.command, buildCodexArgs(task.routing, task.input), {
+      invocation: `worker.codex:${task.id}`,
+      signal,
+      correlation: { jobId: task.jobId, taskId: task.id, executionId: task.executionId ?? undefined },
+      spawn: { shell: false, cwd: task.routing.cwd, stdio: ['ignore', 'pipe', 'pipe'] },
     });
     let stdoutBuffer = '';
     let stderrTail = '';
@@ -113,7 +96,8 @@ export class CodexAdapter implements WorkerAdapter {
     const promise = new Promise<Result>((resolve, reject) => {
       child.on('error', error => { launchedReject(error); reject(error); });
       child.once('spawn', launchedResolve);
-      child.on('close', code => {
+      child.on('close', (code, signal) => {
+        execution.processExit = { exitCode: code, signal, stderr: stderrTail };
         if (stdoutBuffer) consumeLine(stdoutBuffer);
         if (code === 0) {
           resolve({ summary: 'Codex runtime exited after task execution; terminal task state is event-owned' });
@@ -121,9 +105,8 @@ export class CodexAdapter implements WorkerAdapter {
           reject(new Error(stderrTail.trim() || `Codex exited ${code}`));
         }
       });
-      signal.addEventListener('abort', () => terminateChild(child), { once: true });
     });
-    execution = { id: randomUUID(), promise, launched, cancel: () => terminateChild(child) };
+    execution = { id: randomUUID(), promise, launched, cancel: () => { void terminateOwnedProcess(child, 'cancel'); } };
     execution.threadId = bufferedThreadId;
     return execution;
   }
@@ -177,18 +160,27 @@ type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
   return override ? { command: override, prefix: [] } : { command: 'npx', prefix: ['browser-workspace'] };
 }
-function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string): Promise<string> {
+function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cli.command, [...cli.prefix, ...args], { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const child = spawnOwnedProcess(cli.command, [...cli.prefix, ...args], {
+      invocation: 'browser-workspace.command',
+      signal,
+      spawn: { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] },
+    });
     let stdout = '';
     let stderr = '';
+    const abort = (): void => { void terminateOwnedProcess(child, 'abort'); };
     child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { stderr = appendTail(stderr, chunk.toString()); });
     child.on('error', reject);
     child.on('close', code => {
+      signal?.removeEventListener('abort', abort);
       if (code === 0) resolve(stdout.trim());
+      else if (signal?.aborted) reject(new Error('browser-worker execution aborted'));
       else reject(new Error(stderr.trim() || stdout.trim() || `browser-workspace exited ${code}`));
     });
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
     if (stdin !== undefined) {
       child.stdin?.end(stdin);
     }
@@ -218,98 +210,29 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
   await admin.ensureWorkspace(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE);
 }
 
-function sessionBrowserWorkerRunner(): ChatGptAgentRunner {
+function autoSessionBrowserWorkerRunner(): ChatGptAgentRunner {
   const cli = browserWorkspaceCli();
   return (_definition, request, _route, signal): AgentRun => {
-    const policy = request.tabClosePolicy ?? 'after-start';
-    let activeSessionId: string | undefined;
-    let released = false;
-    let releaseResolve!: () => void;
-    const releaseBarrier = new Promise<void>(resolve => { releaseResolve = resolve; });
-    const release = (): void => {
-      if (released) return;
-      released = true;
-      releaseResolve();
-    };
-
-    let submittedResolve!: (value: string) => void;
-    let submittedReject!: (error: Error) => void;
-    const submitted = new Promise<string>((resolve, reject) => {
-      submittedResolve = resolve;
-      submittedReject = reject;
-    });
     const promise = (async (): Promise<string> => {
       const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
       try {
         await writeFile(configFile, JSON.stringify({
           prompt: request.prompt,
           file: request.files ?? [],
-          close_policy: 'never',
         }));
-
-        const startOutput = await browserWorkspaceCommand(
-          cli,
-          ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE],
-        );
-        const started = parseWorkspaceJson(startOutput);
-        if (typeof started.session_id !== 'string') {
-          throw new Error('browser-workspace session start returned no session_id');
-        }
-        activeSessionId = started.session_id;
         if (signal.aborted) throw new Error('browser-worker execution aborted');
-
-        const source = await browserWorkspaceCommand(
+        const output = await browserWorkspaceCommand(
           cli,
-          ['platform', 'source', 'chatgpt', 'temporary-submit', '--config', configFile],
+          ['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile],
+          undefined,
+          signal,
         );
-
-        const execOutput = await browserWorkspaceCommand(
-          cli,
-          ['session', 'exec', activeSessionId],
-          source,
-        );
-        const wrapper = parseWorkspaceJson(execOutput);
-        if (wrapper.ok !== true) {
-          throw new Error(typeof wrapper.error === 'string' ? wrapper.error : 'browser-workspace session exec failed');
-        }
-        const receipt = parseDriverJson(typeof wrapper.stdout === 'string' ? wrapper.stdout : '');
-        const result = JSON.stringify(receipt);
-        submittedResolve(result);
-
-        if (policy === 'never') {
-          await unlink(configFile).catch(() => {});
-          activeSessionId = undefined;
-          return result;
-        }
-        await releaseBarrier;
-        if (activeSessionId) {
-          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
-          activeSessionId = undefined;
-        }
-        return result;
-
-      } catch (failure) {
-        if (activeSessionId) {
-          await browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]).catch(() => {});
-          activeSessionId = undefined;
-        }
+        return JSON.stringify(parseDriverJson(output));
+      } finally {
         await unlink(configFile).catch(() => {});
-        const error = failure instanceof Error ? failure : new Error(String(failure));
-        submittedReject(error);
-        throw error;
       }
     })();
-
-    const cancel = (): void => {
-      release();
-      if (activeSessionId) {
-        void browserWorkspaceCommand(cli, ['session', 'stop', activeSessionId]);
-        activeSessionId = undefined;
-      }
-    };
-    if (signal.aborted) cancel();
-    else signal.addEventListener('abort', cancel, { once: true });
-    return { promise, submitted, release, cancel };
+    return { promise, submitted: promise, cancel: () => {} };
   };
 }
 
@@ -362,7 +285,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const definition = await readFile(new URL('../agents/chatgpt-worker.agent.md', import.meta.url), 'utf8');
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? sessionBrowserWorkerRunner())(
+      const run = (this.runner ?? autoSessionBrowserWorkerRunner())(
         definition,
         { prompt: task.input, ...(task.attachments?.length ? { files: task.attachments } : {}), tabClosePolicy: policy },
         route,
@@ -374,7 +297,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         launchResolve();
         if (policy === 'after-start' && context.waitForWorkerStart) await context.waitForWorkerStart;
         else if (policy === 'after-terminal') {
-          if (!context.waitForTerminal) throw new Error('ChatGPT after-terminal tab close policy requires a terminal event barrier');
+          if (!context.waitForTerminal) throw new Error('ChatGPT after-terminal compatibility policy requires a terminal event barrier');
           await context.waitForTerminal;
         }
         if (policy !== 'never') run.release?.();

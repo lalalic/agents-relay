@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -210,7 +210,7 @@ export class LayaCliDecisionEngine implements DecisionEngine {
 
   private async run(extraArgs: readonly string[]): Promise<string> {
     return await new Promise<string>((resolve, reject) => {
-      const child = spawn(this.command, [...this.args, ...extraArgs], { stdio: ['ignore', 'pipe', 'pipe'], env: this.env ?? process.env });
+      const child = spawnOwnedProcess(this.command, [...this.args, ...extraArgs], { invocation: 'decision.laya', spawn: { stdio: ['ignore', 'pipe', 'pipe'], env: this.env ?? process.env } });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let settled = false;
@@ -221,11 +221,11 @@ export class LayaCliDecisionEngine implements DecisionEngine {
         if (error) reject(error); else resolve(output ?? '');
       };
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        void terminateOwnedProcess(child, 'timeout', 0);
         finish(new Error(`Laya CLI timed out after ${this.timeoutMs}ms`));
       }, this.timeoutMs);
-      child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
-      child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
+      child.stdout?.on('data', chunk => stdout.push(Buffer.from(chunk)));
+      child.stderr?.on('data', chunk => stderr.push(Buffer.from(chunk)));
       child.once('error', error => finish(error));
       child.once('close', code => {
         if (code !== 0) {

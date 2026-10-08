@@ -32,6 +32,15 @@ If an intermediate result does not need that independent lifecycle, keep it insi
 
 Keep sibling Tasks at a comparable abstraction level. Do not mix a whole product milestone with tiny implementation steps as peers.
 
+### Architecture Lens
+
+When the resolved project context exposes a canonical design-principles
+document or architecture contract, identify the principles materially relevant
+to each architecture-sensitive Task. Put only the resulting task-specific
+questions, constraints, or already-decided answers in that Task's input. Do not
+copy the full project principles into every Task. For Agents Relay itself, use
+DESIGN-PRINCIPLES.md and its Architecture Lens.
+
 The graph is the explanation for the decomposition: every emitted Task should map to a meaningful boundary in the graph, and important graph boundaries should not be omitted accidentally.
 
 ### Semantic ownership vs execution flow

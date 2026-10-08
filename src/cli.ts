@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs';
-import { once } from 'node:events';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events';
+import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto';
 import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js';
@@ -15,24 +13,17 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { decisionMode, executionDecisionEngine } from './decision.js';
 import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
-import { discoverAgents } from './registry.js';
-import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
+import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
-import { applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
+import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
-import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js';
-import { helpText, usage } from './cli-help.js';
-import { parseAgentGraph } from './agent-graph.js';
-import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
-import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
+import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js';
+import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { shutdownOwnedProcesses } from './owned-process.js';
 export { helpText } from './cli-help.js';
-import {
-  SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest,
-  storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode,
-  chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus,
-} from './cli-support.js';
+import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 export async function ensureManagedGitHubJob(
   client: GitHubClient,
@@ -124,7 +115,7 @@ async function workerTaskFromArgs(job: Job, args: string[], now: string): Promis
     updatedAt: now
   }, { defer: hasArg(args, '--draft') });
 }
-async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
+async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
   if (!jobId) throw new Error('--id is required for managed task commands');
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -145,11 +136,10 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel'|'complete
   if (!task) throw new Error(`Task ${id} missing after ${action}`);
   console.log(JSON.stringify(task, null, 2));
 }
-
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
-  if (managed && ['create','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel'|'complete', args); return; }
+  if (managed && ['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
   const { store, job, localFile } = await storeFor(args);
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
@@ -172,6 +162,13 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
+  if (action === 'start') {
+    await applyOrchestratorStartAction(task);
+    await store.saveTask(task);
+    await saveLocal(localFile, await store.load(job.id));
+    console.log(JSON.stringify(task, null, 2));
+    return;
+  }
   if (action === 'complete') {
     const summary = arg(args, '--summary');
     if (!summary) throw new Error('task complete requires --summary');
@@ -409,7 +406,7 @@ export async function createService(args: string[]): Promise<Service> {
       const serverClosed = new Promise<void>((resolve, reject) => { dashboardServer.close(error => error ? reject(error) : resolve()); });
       dashboardServer.closeAllConnections();
       const watcherClosed = bus ? bus.close() : stopWatcher();
-      stopping = Promise.all([watcherClosed, serverClosed]).then(() => undefined, error => { throw error; });
+      stopping = Promise.all([reconciler.close(), watcherClosed, serverClosed, shutdownOwnedProcesses('parent-shutdown')]).then(() => undefined, error => { throw error; });
       return stopping;
     }
   };
@@ -457,10 +454,12 @@ async function main(): Promise<void> {
   if (command === 'plan') {
     const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined;
     await withEventBus(args, async bus => {
-      const result = await runtime(store, args, bus).planJob(job.id, guidance?.trim() || undefined);
-      await saveLocal(localFile, result.job);
-      await publishWake(bus, result.job, result.round.id, `Planning round ${result.round.id} completed`);
-      console.log(JSON.stringify(result.round, null, 2));
+      const reconciler = runtime(store, args, bus);
+      try {
+        const result = await reconciler.planJob(job.id, guidance?.trim() || undefined);
+        await saveLocal(localFile, result.job); await publishWake(bus, result.job, result.round.id, `Planning round ${result.round.id} completed`);
+        console.log(JSON.stringify(result.round, null, 2));
+      } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
     });
     return;
   }
@@ -487,10 +486,11 @@ async function main(): Promise<void> {
         return;
       }
       const reconciler = runtime(store, args, bus);
-      await reconciler.reconcile(job.id);
-      await reconciler.idle();
-      const finalState = await store.load(job.id); await saveLocal(localFile, finalState);
-      console.log(JSON.stringify(finalState, null, 2));
+      try {
+        await reconciler.reconcile(job.id); await reconciler.idle();
+        const finalState = await store.load(job.id); await saveLocal(localFile, finalState);
+        console.log(JSON.stringify(finalState, null, 2));
+      } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
     });
     return;
   }

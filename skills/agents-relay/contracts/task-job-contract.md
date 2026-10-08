@@ -145,6 +145,14 @@ When success depends on the actual current UI, browser state, store listing, run
 
 This does not weaken immutable review semantics: final review and specialist review Tasks should continue to declare and inspect one exact immutable target/version.
 
+When project context exposes a canonical design-principles or architecture
+contract, Final Review must also verify the reviewed immutable target against
+the principles that materially apply to the Job objective and changed area.
+The reviewer should consume that project context rather than duplicating the
+full architecture contract in the review Task. A second authority path or
+stateful action is a blocking architecture finding when the project contract
+forbids it.
+
 ## Dependency vs block and authoritative unblock
 
 `dependencies` describe normal DAG ordering. Dependency completion does not create an unblock lifecycle event or Planner unblock trigger; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.

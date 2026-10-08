@@ -2,6 +2,11 @@
 
 Agents Relay is a generic, shareable async-agent runtime and skill.
 
+## Architecture contract
+
+Read DESIGN-PRINCIPLES.md before planning, implementation, or final review of
+architecture-sensitive work.
+
 ## Principles
 
 - GitHub PR state is durable collaborative truth. V2 Relay Store owns operational execution state; events remain wake-up/observability signals, never durable truth by themselves.
@@ -16,17 +21,20 @@ Agents Relay is a generic, shareable async-agent runtime and skill.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.
+- Every disposable subprocess launched by Relay must use the shared owned-process lifecycle so direct exit, cancellation, timeout, retry, and parent death clean the exact process group without process-name matching.
 
 ## Workflow authority classification
 
-Before implementing any feature or bug fix, identify which layer owns the behavior. Do not start with a procedural code change and classify it afterward.
+Before implementing any feature or bug fix, apply the task-relevant
+Architecture Lens from DESIGN-PRINCIPLES.md. Do not start with a procedural
+code change and classify it afterward.
 
 - **Graph** owns workflow policy: legal transitions, branching, eligibility, ordering, and decisions about **when**, **whether**, or **what happens next**. If existing workflow behavior changes, inspect the canonical `workflow/*.mmd` graphs first and change the owning graph when that policy belongs there.
 - **Action / effect** performs a concrete mutation or external side effect already selected by a graph. It may validate inputs and report success/failure, but it must not make a second workflow decision.
 - **TypeScript code** owns non-policy mechanics: facts, pure calculations, parsing/serialization, persistence primitives, leases/claims, I/O adapters, runtime projections, and concrete guard/action implementations.
-- Do not duplicate graph-owned policy in CLI, reconciler, scheduler, helper, or runtime `if`/`else` branches. Do not hide the same policy inside a composite boolean helper.
-- When ownership is ambiguous, resolve the classification explicitly before implementation. Prefer extending an existing graph/action boundary over inventing a parallel authority path.
-- Tests must exercise the chosen authority layer and, for workflow changes, protect against a second procedural path that can make the same decision.
+- Do not duplicate graph-owned policy in CLI, dashboard, reconciler, scheduler, webhook, daemon, API, helper, or runtime code.
+- For the same intent, every entry point must converge on the same graph/action semantics.
+- Final Review must verify the applicable Design Principles, not only code correctness.
 - Canonical workflow graph filenames and identities do not use `v1`/`v2`/etc suffixes. Git history is the version history; keep one stable current graph name.
 
 ## Execution context ownership

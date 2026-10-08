@@ -123,9 +123,12 @@ Required: --task-id ID and the normal Job storage options.`,
   'task list': `List durable Tasks for one Job.
 
 Required: the normal Job storage options.`,
+  'task start': `Mark one orchestrator-owned self Task RUNNING when the creating orchestrator actually begins the work.
+
+Required: --task-id ID and the normal Job storage options. The Task must use adapter=orchestrator and be QUEUED. Start must occur before task complete.`,
   'task complete': `Complete one orchestrator-owned Task after the creating orchestrator has finished the work.
 
-Required: --task-id ID, --summary TEXT, and the normal Job storage options. The Task must use adapter=orchestrator and be QUEUED or RUNNING. This command is for the same orchestrator turn that created the self-task; it is not a deferred handoff mechanism.`,
+Required: --task-id ID, --summary TEXT, and the normal Job storage options. The Task must use adapter=orchestrator and already be RUNNING. This command is for the same orchestrator turn that created the self-task; it is not a deferred handoff mechanism.`,
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

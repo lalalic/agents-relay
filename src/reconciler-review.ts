@@ -5,11 +5,10 @@ import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
-import { ReconcilerRuntimeBase, type EventHandlingResult, withExecutionBoundary } from './reconciler-runtime.js';
+import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 
-const taskRouteClaims = new Set<string>();
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
@@ -29,6 +28,44 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
     };
+  }
+
+  private static reviewRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  private static reviewHeadSha(event: EventRecord): string | undefined {
+    const data = ReconcilerReviewBase.reviewRecord(event.data);
+    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
+    const review = ReconcilerReviewBase.reviewRecord(data.review);
+    return [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha, data.head_sha, data.headSha]
+      .find((value): value is string => typeof value === 'string' && value.length > 0);
+  }
+
+  private static reviewIssues(event: EventRecord): string[] {
+    const data = ReconcilerReviewBase.reviewRecord(event.data);
+    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
+    const review = ReconcilerReviewBase.reviewRecord(data.review);
+    const rawIssues = outcome.blocking_findings !== undefined ? outcome.blocking_findings
+      : outcome.blockingFindings !== undefined ? outcome.blockingFindings
+      : review.issues !== undefined ? review.issues
+      : data.issues;
+    if (!Array.isArray(rawIssues)) return [];
+    return rawIssues.map(item => {
+      if (typeof item === 'string') return item.trim();
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+      const value = item as Record<string, unknown>;
+      return (typeof value.summary === 'string' ? value.summary
+        : typeof value.message === 'string' ? value.message
+        : typeof value.finding === 'string' ? value.finding
+        : typeof value.title === 'string' ? value.title : '').trim();
+    }).filter(Boolean);
+  }
+
+  private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
+    const headSha = ReconcilerReviewBase.reviewHeadSha(event);
+    if (!headSha) return null;
+    return { headSha, issues: ReconcilerReviewBase.reviewIssues(event) };
   }
 
   private async cancelStaleReviewTask(job: Job): Promise<void> {
@@ -131,7 +168,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }));
     const taskFacts = {
       role: 'reviewer',
-      taskCapabilities: ['final_review'],
       reviewer_diversity: {
         preference: 'Prefer a worker/provider-model identity different from implementation when otherwise suitable; this is a soft preference below user environment rules.',
         implementation_workers: implementationWorkers,
@@ -154,76 +190,70 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reason: 'worker-router',
     };
   }
-  protected async routeExecutableTasks(job: Job): Promise<void> {
+  protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
+    if (task.routing) return { task, routed: false };
+    if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
+
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
     const candidates = workerCandidates(this.options.adapters, registered, usage);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    for (const candidate of job.tasks.filter(item => item.kind !== 'planner' && item.adapter !== 'orchestrator' && ['QUEUED', 'BLOCKED'].includes(item.state) && item.output && !item.workerSelection && (item.workerRequirements || item.planningSource === 'model-planner'))) {
-      const claimKey = `${job.id}/${candidate.id}`;
-      if (taskRouteClaims.has(claimKey)) continue;
-      taskRouteClaims.add(claimKey);
-      try {
-        await withExecutionBoundary(job.id, candidate.id, async () => {
-          const freshJob = await this.store.load(job.id);
-          const task = freshJob.tasks.find(item => item.id === candidate.id);
-          if (!task || !['QUEUED', 'BLOCKED'].includes(task.state) || task.workerSelection || !task.output) return;
-      const requirements = task.workerRequirements ?? { capabilities: [] };
-      const taskFacts = {
-        job: {
-          id: freshJob.id, title: freshJob.title, objective: freshJob.objective ?? null,
-          description: freshJob.description ?? null, priority: freshJob.priority ?? null,
-          executionMode: freshJob.executionMode, repository: freshJob.repository,
-          prNumber: freshJob.prNumber, state: freshJob.state,
-        },
-        task: {
-          id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
-          priority: task.priority ?? null, agentName: task.agentName ?? null,
-          parentTaskId: task.parentTaskId, dependencies: task.dependencies,
-          capabilities: task.capabilities, taskCapabilities: task.taskCapabilities, workerCapabilities: task.workerCapabilities, input: task.input,
-          attachments: task.attachments ?? [], output: task.output ?? null,
-          state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
-        },
-        storySize: task.storySize ?? 'M',
-      };
-      const routingConstraints = task.routing ? { provider: task.routing.provider, model: task.routing.model, profile: task.routing.profile, reasoning: task.routing.reasoning } : undefined;
-      const parent = task.agentName === 'troubleshooter' && task.parentTaskId ? freshJob.tasks.find(item => item.id === task.parentTaskId) : undefined;
-      const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
-      const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
-        ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
-        : [];
-      const routed = await routeExecution(candidates, requirements, {
-        decisionEngine: this.options.decisionEngine,
-        decisionMode: this.options.decisionMode,
-        taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
-        usage,
-        registered,
-        chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
-        routingConstraints,
-        excludedRoutes,
-        auditStore: this.options.decisionAuditStore,
-        auditTask: task,
-      });
-      task.workerSelection = routed.selection;
-      task.adapter = routed.candidate.adapter;
-      task.routing = routed.candidate.routing;
-      task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
-      task.updatedAt = new Date().toISOString();
-      await this.store.saveTask(task);
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', `Worker ${routed.selection.workerId} selected for task ${task.id}`, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
-      await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', `Selected ${task.routing.model} · thinking ${task.routing.reasoning ?? 'unknown'}`, 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
-        });
-      } finally {
-        taskRouteClaims.delete(claimKey);
-      }
-    }
+    const requirements = task.workerRequirements ?? { capabilities: [] };
+    const taskFacts = {
+      job: {
+        id: job.id, title: job.title, objective: job.objective ?? null,
+        description: job.description ?? null, priority: job.priority ?? null,
+        executionMode: job.executionMode, repository: job.repository,
+        prNumber: job.prNumber, state: job.state,
+      },
+      task: {
+        id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
+        priority: task.priority ?? null, agentName: task.agentName ?? null,
+        parentTaskId: task.parentTaskId, dependencies: task.dependencies,
+        capabilities: task.capabilities, taskCapabilities: task.taskCapabilities, workerCapabilities: task.workerCapabilities, input: task.input,
+        attachments: task.attachments ?? [], output: task.output ?? null,
+        state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
+      },
+      storySize: task.storySize ?? 'M',
+    };
+    const routingConstraints = undefined;
+    const parent = task.agentName === 'troubleshooter' && task.parentTaskId
+      ? job.tasks.find(item => item.id === task.parentTaskId)
+      : undefined;
+    const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
+    const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
+      ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
+      : [];
+    const routed = await routeExecution(candidates, requirements, {
+      decisionEngine: this.options.decisionEngine,
+      decisionMode: this.options.decisionMode,
+      taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
+      usage,
+      registered,
+      chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
+      routingConstraints,
+      excludedRoutes,
+      auditStore: this.options.decisionAuditStore,
+      auditTask: task,
+    });
+    task.workerSelection = routed.selection;
+    task.adapter = routed.candidate.adapter;
+    task.routing = routed.candidate.routing;
+    task.timeoutMs = task.timeoutMs || taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
+    task.updatedAt = new Date().toISOString();
+    await this.store.saveTask(task);
+    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', 'Worker ' + routed.selection.workerId + ' selected for task ' + task.id, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
+    await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', 'Selected ' + task.routing.model + ' · thinking ' + (task.routing.reasoning ?? 'unknown'), 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
+    return { task, routed: true };
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);
     const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
-    const reviewData = event.data?.review && typeof event.data.review === 'object' ? event.data.review as Record<string, unknown> : undefined;
-    const headSha = typeof reviewData?.headSha === 'string' ? reviewData.headSha : typeof event.data?.headSha === 'string' ? event.data.headSha : task?.reviewHeadSha;
-    if (!task || !headSha || task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    if (!task) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const normalizedEvidence = ReconcilerReviewBase.normalizeReviewEvidence(event, task);
+    if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    const headSha = normalizedEvidence.headSha;
+    if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
 
@@ -237,12 +267,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const reviewDecision = await dispatchReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
       if (actionId === 'review.createFix') {
         needsReconcile = true;
-        const rawIssues = Array.isArray(reviewData?.issues) ? reviewData.issues : [];
-        const issues = rawIssues.map(item => {
-          if (typeof item === 'string') return item.trim();
-          if (item && typeof item === 'object') { const value = item as Record<string, unknown>; return (typeof value.summary === 'string' ? value.summary : typeof value.message === 'string' ? value.message : typeof value.title === 'string' ? value.title : '').trim(); }
-          return '';
-        }).filter(Boolean);
+        const issues = normalizedEvidence.issues;
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
         const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
@@ -268,7 +293,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (!reviewDecision.accepted) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const outcome = reviewOutcome(reviewDecision.target);
     if (!outcome) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    const evidence = { summary: event.message || 'Review ' + outcome, data: { ...(event.data ?? {}), review: reviewData ?? { headSha }, headSha, outcome } };
+    const reviewData = event.data?.review && typeof event.data.review === 'object' && !Array.isArray(event.data.review)
+      ? event.data.review as Record<string, unknown> : undefined;
+    const evidence = { summary: event.message || 'Review ' + outcome, data: {
+      ...(event.data ?? {}), review: { ...(reviewData ?? {}), headSha }, headSha, outcome, source: event.source,
+    } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
     job.updatedAt = job.review.updatedAt; await this.store.saveJob(job);
     return { applied: true, reconcile: needsReconcile, reason: 'review.' + outcome, reconcileMode: needsReconcile ? 'detached' : undefined };

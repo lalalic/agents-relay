@@ -1,5 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { neoEscalationArgs } from '../dist/cli-escalation.js';
 import { escalationGraph, runEscalationGraph } from '../dist/workflow/escalation.js';
 
 const request = { intent: 'finish release', blockedOn: 'identity prompt', context: 'browser authenticated' };
@@ -40,4 +41,18 @@ test('needs_user is the only graph path selecting block_for_user', async () => {
     blockForUser: () => { blocked = true; },
   });
   assert.equal(blocked, true);
+});
+
+test('Neo escalation adapter uses handoff files instead of legacy split options', () => {
+  const args = neoEscalationArgs('/tmp/handoff.md', '/tmp/policy.md', '/tmp/work');
+  assert.deepEqual(args, [
+    'escalation',
+    '--handoff-file', '/tmp/handoff.md',
+    '--on-needs-user-file', '/tmp/policy.md',
+    '--cwd', '/tmp/work',
+  ]);
+  assert.equal(args.includes('--intent'), false);
+  assert.equal(args.includes('--blocked-on'), false);
+  assert.equal(args.includes('--context'), false);
+  assert.equal(args.includes('--on-needs-user'), false);
 });

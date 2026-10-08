@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -7,6 +6,7 @@ import { ExecutionContext, executionContextPrompt } from './execution-context.js
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+import { spawnOwnedProcess } from './owned-process.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -126,7 +126,9 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   const decisionId = 'round' in planner ? planner.id : planner.id;
   const source = 'round' in planner ? planner.source : planner.planningSource ?? 'model-planner';
   const round = 'round' in planner ? planner.round : planner.planningRound ?? 1;
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round });
+  const plannerHeadSha = 'round' in planner ? planner.headSha : undefined;
+  const reviewHeadSha = spec.agentName === 'reviewer' ? plannerHeadSha ?? job.headSha : undefined;
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
@@ -363,14 +365,13 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command: string) { if (!command) throw new Error('Planner command is required'); }
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
     return await new Promise<PlannerResult>((resolve, reject) => {
-      const child = spawn(this.command, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawnOwnedProcess(this.command, [], { invocation: 'planner.command', signal, correlation: { jobId: context.job.id }, spawn: { stdio: ['pipe', 'pipe', 'pipe'] } });
       let stdout = ''; let stderr = '';
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
       child.on('error', reject);
       child.on('close', code => code === 0 ? (() => { try { resolve(parsePlannerOutput(stdout)); } catch (error) { reject(error); } })() : reject(new Error(stderr.trim() || `Planner exited ${code}`)));
-      signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
-      child.stdin.end(plannerInput(context));
+      child.stdin?.end(plannerInput(context));
     });
   }
 }
@@ -399,7 +400,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
     const prompt = instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
-      const child = spawn(this.command, ['exec', '--json', '--', prompt], { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', prompt], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '';
       let finalMessage = '';
       let stderrTail = '';
@@ -407,13 +408,13 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         const message = parsePlannerAgentMessage(line);
         if (message) finalMessage = message;
       };
-      child.stdout.on('data', (chunk: Buffer) => {
+      child.stdout?.on('data', (chunk: Buffer) => {
         stdoutBuffer += chunk.toString();
         const lines = stdoutBuffer.split(/\r?\n/);
         stdoutBuffer = lines.pop() ?? '';
         for (const line of lines) consume(line);
       });
-      child.stderr.on('data', (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-16384); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-16384); });
       child.on('error', reject);
       child.on('close', code => {
         if (stdoutBuffer) consume(stdoutBuffer);
@@ -421,7 +422,6 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         if (!finalMessage) { reject(new Error('Planner agent returned no final message')); return; }
         try { resolve(parsePlannerOutput(finalMessage)); } catch (error) { reject(error); }
       });
-      signal.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
     });
   }
 }

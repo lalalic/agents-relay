@@ -232,10 +232,16 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   const file = join(directory, 'job.json');
   const promptFile = join(directory, 'prompt.md');
   const plannerCommand = join(directory, 'planner.mjs');
+  const descendantFile = join(directory, 'planner-descendant.pid');
   const root = { ...job([]), objective: 'durable objective', executionMode: 'fixed', state: 'DRAFT' };
   await writeFile(file, JSON.stringify(root));
   await writeFile(promptFile, 'additional planning guidance');
-  await writeFile(plannerCommand, '#!/usr/bin/env node\nlet input="";for await (const chunk of process.stdin) input+=chunk;const value=JSON.parse(input);if(value.objective!=="durable objective"||value.caller_prompt!=="additional planning guidance") process.exit(7);process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"complete",next_tasks:[]}));\n');
+  await writeFile(plannerCommand, `#!/usr/bin/env node
+import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';
+let input="";for await (const chunk of process.stdin) input+=chunk;const value=JSON.parse(input);if(value.objective!=="durable objective"||value.caller_prompt!=="additional planning guidance") process.exit(7);
+const nested=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',process.stdout,'ignore']});nested.unref();writeFileSync(${JSON.stringify(descendantFile)},String(nested.pid));
+process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"complete",next_tasks:[]}));
+`);
   await chmod(plannerCommand, 0o755);
   const result = spawn(process.execPath, [join('dist','cli.js'),'plan','--file',file,'--project-path',process.cwd(),'--prompt-file',promptFile,'--planner-command',plannerCommand], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
@@ -246,6 +252,8 @@ test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1'
   assert.equal(saved.plans[0].id, 'plan-1');
   assert.equal(saved.plans[0].guidance, 'additional planning guidance');
   assert.equal(saved.plans[0].plannerResult.objective_status, 'satisfied');
+  const descendantPid = Number(await readFile(descendantFile, 'utf8'));
+  assert.throws(() => process.kill(descendantPid, 0), error => error?.code === 'ESRCH');
 });
 test('CLI task create stores optional project and agent metadata with parent', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-metadata-'));
@@ -278,7 +286,7 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
 
   const store = new InMemoryStore(createdJob);
   const events = [];
-  const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:0,emit:event=>events.push(event)});
+  const reconciler = managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],maxConcurrent:1,eventBus:new MemoryEventBus(),emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const routed = (await store.load('j')).tasks.find(item=>item.id==='auto-route');
   assert.equal(routed.adapter,'chatgpt');
@@ -291,26 +299,6 @@ test('CLI direct task creation can omit routing and reconciler selects one compl
   const modelIndex = events.findIndex(event=>event.type==='model.selected');
   assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
   await rm(directory,{recursive:true,force:true});
-});
-
-test('reviewer specialist tasks without a preselected route are routed automatically', async () => {
-  const specialist = task('specialist-review', 'QUEUED');
-  delete specialist.routing;
-  specialist.agentName = 'reviewer';
-  specialist.workerRequirements = { capabilities: [] };
-  const store = new InMemoryStore(job([specialist]));
-  const events = [];
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeChatGptAdapter()], maxConcurrent: 0, emit: event => events.push(event) });
-  await reconciler.reconcile('j');
-  const routed = (await store.load('j')).tasks.find(item => item.id === 'specialist-review');
-  assert.equal(routed?.adapter, 'chatgpt');
-  assert.equal(routed?.workerSelection?.adapter, 'chatgpt');
-  assert.equal(routed?.routing?.provider, 'chatgpt');
-  assert.equal(routed?.routing?.model, 'account-defaults');
-  const workerIndex = events.findIndex(event => event.type === 'worker.selected');
-  const modelIndex = events.findIndex(event => event.type === 'model.selected');
-  assert.ok(workerIndex >= 0 && modelIndex > workerIndex);
-  await reconciler.close();
 });
 
 test('CLI explicit worker/model routing remains a supported compatibility constraint', async () => {
@@ -369,15 +357,46 @@ test('reconciler leaves orchestrator self work queued for its creating orchestra
   assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),false);
 });
 
+test('reconciler rescues stale queued orchestrator work into ChatGPT execution', async () => {
+  const at = '2026-10-04T06:00:00.000Z';
+  const self = task('stale');
+  self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0; self.capabilities = ['implementation'];
+  self.createdAt = '2026-10-04T05:29:59.999Z'; self.updatedAt = self.createdAt;
+  const store = new InMemoryStore({ ...job([self]), executionMode: 'fixed' });
+  const events = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at), emit: event => events.push(event) });
+  await reconciler.reconcile('j');
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.adapter, 'chatgpt');
+  assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'], runtime: 'chatgpt' });
+  assert.equal(durable.routing, undefined); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
+  assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
+});
+
+test('reconciler does not rescue young, running, or terminal orchestrator tasks', async () => {
+  const at = '2026-10-04T06:00:00.000Z';
+  const young = task('young'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = '2026-10-04T05:30:00.001Z';
+  const running = task('running', 'RUNNING'); running.adapter = 'orchestrator'; running.routing = undefined; running.createdAt = '2026-10-04T04:00:00.000Z'; running.executionId = 'active';
+  const done = task('done', 'SUCCEEDED'); done.adapter = 'orchestrator'; done.routing = undefined; done.createdAt = '2026-10-04T04:00:00.000Z';
+  const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
+  await reconciler.reconcile('j');
+  assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'orchestrator', 'orchestrator']);
+});
+
 test('CLI task complete terminalizes the same orchestrator self task', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-complete-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
   let child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','do it now'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
+  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  let saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks.find(item => item.id === 'self').state, 'RUNNING');
   child = spawn(process.execPath, [join('dist','cli.js'),'task','complete','--file',file,'--task-id','self','--summary','done in creator turn'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  const saved = JSON.parse(await readFile(file, 'utf8'));
+  saved = JSON.parse(await readFile(file, 'utf8'));
   const completed = saved.tasks.find(item => item.id === 'self');
   assert.equal(completed.state, 'SUCCEEDED');
   assert.equal(completed.result.summary, 'done in creator turn');
@@ -1346,7 +1365,7 @@ test('terminal event published during launch cannot be overwritten back to runni
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
   await reconciler.reconcile('j');
-  await new Promise(resolve=>setTimeout(resolve,20));
+  await reconciler.idle();
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.state,'SUCCEEDED');
   assert.equal(durable.result.summary,'instant complete');
@@ -1734,6 +1753,63 @@ test('review changes-required creates one routable implementation fix task conta
   assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
 });
 
+test('PR 258-shaped reviewer evidence creates one idempotent fix and rejects malformed evidence', async () => {
+  const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
+  const source = { id: `job/relay-child-process-lifecycle/task/process-lifecycle-final-review/execution/reviewer`, agent: 'reviewer' };
+  const store = new InMemoryStore(job([task('work', 'SUCCEEDED')]));
+  Object.defineProperty(store, 'headSha', { value: async () => headSha });
+  const bus = new MemoryEventBus();
+  const emitted = [];
+  const unsubscribe = await bus.subscribeAll(async event => emitted.push(event));
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
+  await reconciler.reconcile('j');
+  let saved = await store.load('j');
+  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(reviewer);
+  assert.equal(reviewer.reviewHeadSha, headSha);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'missing head', 'orchestrator', {
+    outcome: { decision: 'changes_required', blocking_findings: [{ summary: 'must not succeed without SHA identity' }] },
+  }, source));
+  saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'pending');
+  assert.equal(saved.review?.evidence, null);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, reviewer.state);
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'changes required', 'orchestrator', {
+    outcome: {
+      decision: 'changes_required',
+      head_sha: headSha,
+      blocking_findings: [{
+        id: 'F1',
+        severity: 'blocking',
+        summary: 'Direct child close cancels forced group cleanup while an unref\u0027d descendant can still be alive.',
+      }],
+    },
+  }, source));
+  saved = await store.load('j');
+  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  assert.equal(fixes.length, 1);
+  assert.equal(fixes[0].id, 'review-fix-059c84f0');
+  assert.equal(fixes[0].parentTaskId, reviewer.id);
+  assert.deepEqual(fixes[0].dependencies, [reviewer.id]);
+  assert.equal(fixes[0].agentName, 'implementation');
+  assert.match(fixes[0].input, /Direct child close cancels forced group cleanup/);
+  assert.equal(saved.review?.outcome, 'changes_required');
+  assert.equal(saved.review?.headSha, headSha);
+  assert.equal(saved.review?.evidence?.data?.source?.id, source.id);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'duplicate event', 'orchestrator', {
+    outcome: { decision: 'changes_required', head_sha: headSha, blocking_findings: [{ summary: 'duplicate' }] },
+  }, source));
+  saved = await store.load('j');
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 1);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+  await unsubscribe();
+});
+
 test('review changes-required falls back to one fix task from the review message', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
   const store=new InMemoryStore(reviewJob);
@@ -1781,6 +1857,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await store.saveJob(changed);
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'stale approval', 'orchestrator', { headSha: 'sha-review-1' }));
   assert.equal((await store.load('j')).review?.headSha, 'sha-review-1');
+  assert.equal((await store.load('j')).tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
   await reconciler.reconcile('j');
   const refreshed = await store.load('j');
   assert.equal(refreshed.review?.headSha, 'sha-review-2');
@@ -1891,6 +1968,40 @@ test('concurrent reconciler instances route one queued generation only once', as
   assert.equal(events.filter(event=>event.type==='model.selected').length,1);
   assert.ok(durable.workerSelection);
   await a.close(); await b.close(); await stopEvents();
+});
+
+test('unrouted model task is routed and claimed in the same execution reconcile', async () => {
+  const t=task('route-at-claim');
+  t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  await reconciler.reconcile('j');
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(adapter.launches,1);
+  assert.equal(durable.attempt,1);
+  assert.ok(durable.executionId);
+  assert.ok(durable.routing);
+  assert.ok(durable.workerSelection);
+  await reconciler.close();
+});
+
+test('routing failure leaves execution generation unclaimed', async () => {
+  const t=task('route-failure');
+  t.routing=undefined;
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],eventBus:new MemoryEventBus()});
+  await reconciler.reconcile('j');
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.attempt,0);
+  assert.equal(durable.executionId,null);
+  assert.equal(durable.routing,undefined);
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error ?? '',/No executable worker\+model route/);
+  await reconciler.close();
 });
 
 test('concurrent terminal reconciliation commits one execution generation', async () => {

@@ -77,6 +77,26 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(child.routing, undefined);
 });
 
+test('planner binds reviewer children to the actual immutable PR head', async () => {
+  const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
+  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT', headSha: 'stale-head' });
+  store.headSha = async () => headSha;
+  let observedTriggerHeadSha;
+  const reconciler = managedReconciler(store, {
+    owner: 'test', adapters: [], maxConcurrent: 0,
+    planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{
+      id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
+    }] }; } },
+  });
+  const result = await reconciler.planJob('auto');
+  const reviewer = result.job.tasks.find(item => item.id === 'immutable-review');
+  assert.ok(reviewer);
+  assert.equal(observedTriggerHeadSha, headSha);
+  assert.equal(result.round.headSha, headSha);
+  assert.equal(reviewer.reviewHeadSha, headSha);
+  assert.match(reviewer.input, new RegExp(headSha));
+});
+
 test('planner hierarchy rejects planner parents, unknown parents, self parents, and cycles', () => {
   const plannerTask = { ...task('plan-1', 'SUCCEEDED'), kind: 'planner' };
   assert.throws(() => validatePlannerHierarchy([plannerTask], [{ ...spec('child'), parentTaskId: 'plan-1' }]), /cannot use planner round/);
