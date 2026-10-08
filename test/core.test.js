@@ -1765,6 +1765,63 @@ test('review changes-required creates one routable implementation fix task conta
   assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
 });
 
+test('PR 258-shaped reviewer evidence creates one idempotent fix and rejects malformed evidence', async () => {
+  const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
+  const source = { id: `job/relay-child-process-lifecycle/task/process-lifecycle-final-review/execution/reviewer`, agent: 'reviewer' };
+  const store = new InMemoryStore(job([task('work', 'SUCCEEDED')]));
+  Object.defineProperty(store, 'headSha', { value: async () => headSha });
+  const bus = new MemoryEventBus();
+  const emitted = [];
+  const unsubscribe = await bus.subscribeAll(async event => emitted.push(event));
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: bus, maxConcurrent: 0 });
+  await reconciler.reconcile('j');
+  let saved = await store.load('j');
+  const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.ok(reviewer);
+  assert.equal(reviewer.reviewHeadSha, headSha);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'missing head', 'orchestrator', {
+    outcome: { decision: 'changes_required', blocking_findings: [{ summary: 'must not succeed without SHA identity' }] },
+  }, source));
+  saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'pending');
+  assert.equal(saved.review?.evidence, null);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, reviewer.state);
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'changes required', 'orchestrator', {
+    outcome: {
+      decision: 'changes_required',
+      head_sha: headSha,
+      blocking_findings: [{
+        id: 'F1',
+        severity: 'blocking',
+        summary: 'Direct child close cancels forced group cleanup while an unref\u0027d descendant can still be alive.',
+      }],
+    },
+  }, source));
+  saved = await store.load('j');
+  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  assert.equal(fixes.length, 1);
+  assert.equal(fixes[0].id, 'review-fix-059c84f0');
+  assert.equal(fixes[0].parentTaskId, reviewer.id);
+  assert.deepEqual(fixes[0].dependencies, [reviewer.id]);
+  assert.equal(fixes[0].agentName, 'implementation');
+  assert.match(fixes[0].input, /Direct child close cancels forced group cleanup/);
+  assert.equal(saved.review?.outcome, 'changes_required');
+  assert.equal(saved.review?.headSha, headSha);
+  assert.equal(saved.review?.evidence?.data?.source?.id, source.id);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'duplicate event', 'orchestrator', {
+    outcome: { decision: 'changes_required', head_sha: headSha, blocking_findings: [{ summary: 'duplicate' }] },
+  }, source));
+  saved = await store.load('j');
+  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 1);
+  assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
+  await unsubscribe();
+});
+
 test('review changes-required falls back to one fix task from the review message', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
   const store=new InMemoryStore(reviewJob);
@@ -1812,6 +1869,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await store.saveJob(changed);
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'stale approval', 'orchestrator', { headSha: 'sha-review-1' }));
   assert.equal((await store.load('j')).review?.headSha, 'sha-review-1');
+  assert.equal((await store.load('j')).tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
   await reconciler.reconcile('j');
   const refreshed = await store.load('j');
   assert.equal(refreshed.review?.headSha, 'sha-review-2');

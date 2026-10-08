@@ -52,7 +52,7 @@ export async function redecideFailedTask(options: ModelRedecisionOptions): Promi
     rulesPath: options.rulesPath,
     auditStore: options.auditStore,
     auditTask: options.task,
-    taskFacts: { kind: options.task.kind ?? 'work', capabilities: options.task.capabilities, prior_routing: options.task.routing ?? null, fresh_usage_generated_at: usage.generatedAt },
+    taskFacts: { kind: options.task.kind ?? 'work', capabilities: options.task.capabilities, taskCapabilities: options.task.taskCapabilities, workerCapabilities: options.task.workerCapabilities, input: options.task.input, prior_routing: options.task.routing ?? null, fresh_usage_generated_at: usage.generatedAt },
     priorDecisionId: options.task.routing?.decisionId,
     priorFailure: options.evidence,
     excludedRoutes: options.task.routing ? [{ provider: options.task.routing.provider, model: options.task.routing.model, profile: options.task.routing.profile }] : [],
