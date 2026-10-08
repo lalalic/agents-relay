@@ -590,6 +590,11 @@ test('execution router exposes explicit five-hour and weekly code-plan windows t
   });
   assert.equal(calls[0].request.facts.worker_candidates, undefined);
   assert.equal(calls[0].request.facts.effective_choices, undefined);
+  const usage = calls[0].request.facts.usage_by_provider['codex::openai'];
+  assert.equal(usage.five_hour.remaining_percent, 80);
+  assert.equal(usage.five_hour.reset_at, 1790000000);
+  assert.equal(usage.weekly.remaining_percent, 40);
+  assert.equal(usage.weekly.reset_at, 1790500000);
   assert.ok(calls[0].contract.choices.some(choice => choice.includes('provider=openai')));
   assert.ok(calls[0].request.facts.context.task_shape.story_size === 'M');
 });

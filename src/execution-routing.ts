@@ -351,6 +351,11 @@ export async function routeExecution(
     source: isDefaultCandidate(route.model, discoveredDefaults.get(route.worker.workerId) ?? []) ? 'profile-default' : 'explicit-choice',
   }));
   const choiceLabels = routes.map((route, index) => executionChoiceLabel(route, effectiveChoices[index].default));
+  // Usage is keyed by worker/provider, not repeated for every route choice.
+  const usageByProvider = Object.fromEntries([...new Map(routes.map(route => [
+    route.worker.workerId + '::' + route.model.provider,
+    { worker: route.worker.workerId, provider: route.model.provider, ...codePlan(route.model) },
+  ])).entries()]);
 
   const facts = JSON.parse(JSON.stringify({
     context: {
@@ -365,6 +370,7 @@ export async function routeExecution(
         reviewer_diversity: taskFacts.reviewer_diversity,
       } : null,
     },
+    usage_by_provider: usageByProvider,
     runtime: {
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
