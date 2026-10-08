@@ -55,7 +55,7 @@ function detect(j,gh){
  if(last?.status==='PLANNING' && last.updatedAt && Date.now()-Date.parse(last.updatedAt)>Math.max(staleMs,Number(last.timeoutMs||0)))return {type:'PLANNER_STALLED',plan:{id:last.id,status:last.status,updatedAt:last.updatedAt,timeoutMs:last.timeoutMs}};
  if(last?.status==='FAILED'&&!tasks.some(x=>x.state==='QUEUED'||x.state==='RUNNING'))return {type:'PLANNER_FAILED',plan:{id:last.id,error:last.error}};
  const active=tasks.filter(x=>x.state==='QUEUED'||x.state==='RUNNING');
- const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);return recent.length>0 && Date.now()-Math.max(...recent)>staleMs;});
+ const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);if(!recent.length)return false;const deadline=Math.max(staleMs,x.state==='RUNNING'?Number(x.timeoutMs||0)+30000:0);return Date.now()-Math.max(...recent)>deadline;});
  if(!active.length && !failed.length && state.lastEventAt && Date.now()-Date.parse(state.lastEventAt)>staleMs)return {type:'NO_PROGRESS',jobState:j.state,taskStates:tasks.map(x=>({id:x.id,state:x.state}))};
  if(stale.length)return {type:'STALLED',tasks:stale.map(x=>({id:x.id,state:x.state,executionId:x.executionId,updatedAt:x.updatedAt}))};
  return null;

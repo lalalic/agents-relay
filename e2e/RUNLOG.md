@@ -175,3 +175,12 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - Independent watcher briefly saw GitHub `MERGED` while the durable Job was still `ACTIVE`, generated `MERGED_JOB_NOT_COMPLETED`, then itself observed and recorded PASS at 16:07:47Z. This nine-second projection delay was eventual convergence, not a stuck Job.
 - Fix: defer `MERGED_JOB_NOT_COMPLETED` escalation until the normal configurable inactivity window has elapsed since GitHub `mergedAt`; retain a genuine mismatch error after that deadline. Commit recorded independently.
 - Revalidated via `node e2e/monitor.mjs --pr 3 --job e2e-autonomy-loop-b-20261008`: exit 0, PR MERGED, Job COMPLETED, no current issues. No repair Job/Task created.
+
+## 2026-10-08 — Loop E controller false STALLED
+
+- Target: `lalalic/agents-relay-e2e#6`, Job `e2e-autonomy-loop-e-20261008`, reviewer execution `de476ff0-38d6-41d9-bd5b-6f62be7a452d`.
+- Evidence: local SQLite reported `RUNNING`, lease until `17:35:05Z`, `timeoutMs=900000`; Codex PID 51609 remained alive. `task.started` was committed at `17:21:44Z`. The independent sentinel emitted `STALLED` approximately four minutes after its last observed event, **well before** the Review's 15-minute execution deadline. No terminal failure had occurred.
+- Root cause: `e2e/sentinel.mjs` applied its fixed four-minute silence threshold to `RUNNING` tasks even when their configured `timeoutMs` was larger. This was a premature controller alarm, not proof of a stuck worker.
+- Repair: for `RUNNING` tasks the sentinel waits at least the declared task timeout plus 30 seconds before issuing `STALLED`; queued tasks retain the usual four-minute guard. This is the controller's deadline only; the Relay watchdog remains authoritative.
+- Regression: `test/e2e-sentinel.test.js` proves a 15-minute Review is not flagged at five minutes but is flagged after the deadline.
+- Next execution: restart the independent sentinel on PR #6 with fresh state, retaining the active review execution and avoiding any repair Job/Task.
