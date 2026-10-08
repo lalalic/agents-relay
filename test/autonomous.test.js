@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { managedReconciler } from './test-runtime.js';
-import { mkdtemp, writeFile, readFile, realpath, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, realpath, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
@@ -78,12 +78,15 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
 });
 
 test('planner binds reviewer children to the actual immutable PR head', async () => {
+  const contextRoot = await mkdtemp(join(tmpdir(), 'agents-relay-planner-reviewer-context-'));
+  await mkdir(join(contextRoot, 'agents'));
+  await writeFile(join(contextRoot, 'agents', 'reviewer.agent.md'), '---\nname: reviewer\n---\nReview the managed task.\n');
   const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
   const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT', headSha: 'stale-head' });
   store.headSha = async () => headSha;
   let observedTriggerHeadSha;
   const reconciler = managedReconciler(store, {
-    owner: 'test', adapters: [], maxConcurrent: 0,
+    owner: 'test', adapters: [], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
     planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{
       id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
     }] }; } },
@@ -95,6 +98,7 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
   assert.equal(result.round.headSha, headSha);
   assert.equal(reviewer.reviewHeadSha, headSha);
   assert.match(reviewer.input, new RegExp(headSha));
+  await rm(contextRoot, { recursive: true, force: true });
 });
 
 test('planner hierarchy rejects planner parents, unknown parents, self parents, and cycles', () => {
