@@ -1340,7 +1340,7 @@ test('final review ignores troubleshooter recovery history', async () => {
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
   assert.ok(review);
   assert.deepEqual(review.dependencies,['done']);
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
 });
 
 test('final review ignores explicitly superseded cancelled history', async () => {

@@ -1,0 +1,16 @@
+flowchart TD
+  input["Job runtime projection"] --> terminal{"PR merged, closed or Job cancelled?"}
+  terminal -->|yes| terminalStatus["MERGED / CANCELLED"]
+  terminal -->|no| draft{"Job DRAFT?"}
+  draft -->|yes| idle["IDLE"]
+  draft -->|no| scheduled{"Scheduled Job?"}
+  scheduled -->|yes| scheduledStatus["Scheduled task precedence"]
+  scheduled -->|no| implRunning{"Implementation RUNNING?"}
+  implRunning -->|yes| running["RUNNING"]
+  implRunning -->|no| implQueued{"Implementation QUEUED?"}
+  implQueued -->|yes| queued["QUEUED"]
+  implQueued -->|no| approved{"Review approved?"}
+  approved -->|yes| mergePending["MERGE_PENDING"]
+  approved -->|no| reviewerRunning{"Reviewer RUNNING?"}
+  reviewerRunning -->|yes| reviewing["REVIEWING"]
+  reviewerRunning -->|no| other["Remaining task states: RUNNING / QUEUED / BLOCKED / FAILED / WAITING / IDLE"]

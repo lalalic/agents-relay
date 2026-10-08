@@ -23,11 +23,11 @@ test('schedule, review and PR facts project to runtime status',()=>{
   assert.equal(deriveJobRuntimeStatus({...scheduled,tasks:[task('failed','FAILED'),task('running','RUNNING')]}),'RUNNING');
   assert.equal(deriveJobRuntimeStatus({...scheduled,tasks:[task('failed','FAILED'),task('queued','QUEUED')]}),'QUEUED');
   const reviewing=job([task('work','SUCCEEDED')],{reviewEnabled:true});
-  assert.equal(deriveJobRuntimeStatus(reviewing),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(reviewing),'IDLE');
   const cancelledRecovery=task('recovery','CANCELLED','troubleshooter'); cancelledRecovery.error='Cancelled by user';
-  assert.equal(deriveJobRuntimeStatus(job([task('work','SUCCEEDED'),cancelledRecovery],{reviewEnabled:true})),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(job([task('work','SUCCEEDED'),cancelledRecovery],{reviewEnabled:true})),'IDLE');
   const activeReview=job([task('work','SUCCEEDED'),task('review','QUEUED','reviewer')],{reviewEnabled:true,review:{taskId:'review',headSha:'abc',outcome:'started',updatedAt:now()}});
-  assert.equal(deriveJobRuntimeStatus(activeReview),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(activeReview),'QUEUED');
   const approved={...reviewing,review:{taskId:'review',headSha:'abc',outcome:'approved',updatedAt:now()}};
   assert.equal(deriveJobRuntimeStatus(approved),'MERGE_PENDING');
   assert.equal(deriveJobRuntimeStatus(job([]),'MERGED'),'MERGED');
@@ -39,6 +39,13 @@ test('draft reviewer does not mask running or queued implementation',()=>{
   const review=task('review','DRAFT','reviewer');
   assert.equal(deriveJobRuntimeStatus(job([task('implement','RUNNING','implementation'),review],{reviewEnabled:true})),'RUNNING');
   assert.equal(deriveJobRuntimeStatus(job([task('implement','QUEUED','implementation'),review],{reviewEnabled:true})),'QUEUED');
-  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),review],{reviewEnabled:true})),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),review],{reviewEnabled:true})),'WAITING');
   assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','RUNNING','reviewer')],{reviewEnabled:true})),'REVIEWING');
+});
+
+test('REVIEWING requires a running reviewer even when review metadata says started',()=>{
+  const base={reviewEnabled:true,review:{taskId:'review',headSha:'abc',outcome:'started',updatedAt:now()}};
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','QUEUED','reviewer')],base)),'QUEUED');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','DRAFT','reviewer')],base)),'WAITING');
+  assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','RUNNING','reviewer')],base)),'REVIEWING');
 });
