@@ -1,3 +1,4 @@
+import { injectedE2EExecution } from './e2e-fault-injection.js';
 import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
@@ -399,7 +400,7 @@ export class Reconciler extends ReconcilerReviewBase {
       executionContext,
     };
     try {
-      execution = adapter.launch(workerTask, controller.signal, launchContext);
+      execution = injectedE2EExecution(workerTask) ?? adapter.launch(workerTask, controller.signal, launchContext);
     } catch (error) {
       await startAckSetup?.stop();
       terminalWait?.cancel();
