@@ -8,6 +8,7 @@ import {
   CHATGPT_BROWSER_WORKSPACE_POOL_SIZE,
   ChatGptAdapter,
   ensureChatGptBrowserWorkspace,
+  parseDriverJson,
 } from '../dist/adapters.js';
 
 test('ChatGPT Browser Workspace bootstrap discovers product admin helper through status', async () => {
@@ -63,6 +64,10 @@ test('ChatGPT adapter uses Browser Workspace caller-owned session platform run',
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
   assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
   assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'browser-workspace']);
+});
+
+test('Browser Workspace runner unwraps the generic platform result envelope', () => {
+  assert.equal(parseDriverJson('{"result":{"operation":"submit","status":"submitted"}}').status, 'submitted');
 });
 
 

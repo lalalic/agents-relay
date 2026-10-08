@@ -75,3 +75,12 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Solution:** use the common explicit session lifecycle: `session start`, `platform run ... --session-id`, and `session stop` in `finally`, avoiding both one-shot flag variants and preserving cleanup.
 - **Local result:** build and focused adapter/browser-workspace suite pass `18/18`.
 - **Fix commit:** pending this compatibility repair. Live retry is pending the new build reload; E2E-001 remains **FAIL**, not PASS.
+
+## 2026-10-08 10:16 America/Toronto — E2E-006 receipt-envelope defect fixed
+
+- **Evidence:** explicit-session attempt 7 reached Browser Workspace but ended with `browser-worker driver returned no submitted receipt`. The installed generic runner returns `{platform, action, result:{...action receipt...}}`; the action source itself returns `operation=submit`, `status=submitted`, and `verified=true`.
+- **Root cause:** `parseDriverJson` only examined a top-level JSON object and discarded the valid receipt nested under `result`.
+- **Solution:** recursively unwrap `result`/`output`/`data` envelopes while preserving the existing submitted-receipt validation. Added executable nested-envelope tests.
+- **Fix commit:** pending this parser repair.
+- **Local result:** build and focused adapter/browser-workspace suite pass `20/20`.
+- **Live result:** attempt 7 is the first run before this parser fix; its durable Task is `FAILED`, PR remains `OPEN`, and E2E-001 remains **FAIL**. No PASS is claimed.

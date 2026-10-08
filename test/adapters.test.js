@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
+import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure, parseDriverJson } from '../dist/adapters.js';
 
 const route = { provider: 'openai', model: 'gpt-5' };
 const task = (overrides = {}) => ({
@@ -100,6 +100,18 @@ test('ChatGptAdapter default runner uses Browser Workspace caller-owned session'
   assert.match(source, /\['session', 'stop', sessionId\]/);
   assert.doesNotMatch(source, /\['session', 'exec'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
+});
+
+test('Browser Workspace generic runner receipt is accepted when nested under result', () => {
+  const receipt = parseDriverJson(JSON.stringify({
+    platform: 'chatgpt',
+    action: 'temporary-submit',
+    result: { ok: true, operation: 'submit', status: 'submitted', verified: true },
+  }));
+  assert.deepEqual(
+    { operation: receipt.operation, status: receipt.status, verified: receipt.verified },
+    { operation: 'submit', status: 'submitted', verified: true },
+  );
 });
 
 test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {

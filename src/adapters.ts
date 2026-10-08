@@ -144,13 +144,23 @@ export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatG
 export class LaunchFailure extends Error {}
 export class StartAckTimeout extends LaunchFailure {}
 
-function parseDriverJson(output: string): BrowserWorkerResponse {
+function findSubmittedReceipt(value: unknown): BrowserWorkerResponse | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.operation === 'submit' && record.status === 'submitted') return record as BrowserWorkerResponse;
+  for (const key of ['result', 'output', 'data']) {
+    const nested = findSubmittedReceipt(record[key]);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+export function parseDriverJson(output: string): BrowserWorkerResponse {
   const lines = output.trim().split(/\r?\n/).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
-      const value = JSON.parse(lines[index]) as Record<string, unknown>;
-      if (value.operation !== 'submit' || value.status !== 'submitted') continue;
-      return value as BrowserWorkerResponse;
+      const receipt = findSubmittedReceipt(JSON.parse(lines[index]));
+      if (receipt) return receipt;
     } catch {
       // Browser-harness diagnostics may precede the final JSON observation.
     }
