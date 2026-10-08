@@ -46,3 +46,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Fix commit:** pending this repair’s commit.
 - **Local result:** build succeeded; adapter/browser-workspace focused suite passed `18/18`.
 - **Live result:** not yet rerun with the production daemon; implementation Task is currently `FAILED` on attempt 2, PR remains `OPEN`, and E2E-001 is still **FAIL**, not PASS.
+
+## 2026-10-08 09:43 America/Toronto — E2E-006 live retry is deployment-blocked
+
+- **Production retry:** issued `task retry` through the existing daemon at `127.0.0.1:8787`; durable implementation attempt 3 (`5e84a481-2f5c-4a35-8a6c-2b17e9c8eb1b`) failed at 13:42:53Z with the same `--auto-session` CLI error. This is **not** a false pass and the E2E Job remains `ACTIVE`/PR `OPEN`.
+- **Confirmed blocker:** PM2 launches `agents-relay@latest`, not this branch’s `dist`; therefore the committed adapter fix cannot affect the current worker until the shared daemon is reloaded with the repaired runtime. This is verified from PM2 metadata, not inferred.
+- **Safety check:** the existing daemon currently has 10 active Jobs and 2 unrelated running Codex Tasks in `lalalic/neox` (execution IDs `162825cb-9080-409b-a745-2db9c01e75be` and `67b506ef-68d1-4102-943a-ef5c735d9926`). No daemon restart or unrelated-job mutation will occur while those tasks are running.
+- **Next action:** monitor the shared tasks; after they drain, re-check active state and perform only the minimum scoped daemon reload needed to exercise commit `1856fdb`, then rerun the existing E2E Task through the production path.
