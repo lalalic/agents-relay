@@ -13,6 +13,7 @@ export type Execution = {
   threadId?: string;
   onThreadStarted?: (threadId: string) => void;
   launched?: Promise<void>;
+  processExit?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string };
 };
 export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
@@ -95,7 +96,8 @@ export class CodexAdapter implements WorkerAdapter {
     const promise = new Promise<Result>((resolve, reject) => {
       child.on('error', error => { launchedReject(error); reject(error); });
       child.once('spawn', launchedResolve);
-      child.on('close', code => {
+      child.on('close', (code, signal) => {
+        execution.processExit = { exitCode: code, signal, stderr: stderrTail };
         if (stdoutBuffer) consumeLine(stdoutBuffer);
         if (code === 0) {
           resolve({ summary: 'Codex runtime exited after task execution; terminal task state is event-owned' });

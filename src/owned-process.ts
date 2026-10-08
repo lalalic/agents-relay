@@ -159,11 +159,17 @@ export function spawnOwnedProcess(command: string, args: readonly string[], opti
     if (!record.terminating) void terminateOwnedProcess(child, 'leader-exit');
   });
   child.once('close', () => {
-    if (record.forceTimer) clearTimeout(record.forceTimer);
     if (record.timeoutTimer) clearTimeout(record.timeoutTimer);
     options.signal?.removeEventListener('abort', abort);
-    record.supervisor?.kill('SIGTERM');
-    owned.delete(record.pid);
+    // The leader closing is not proof that its process group is gone.
+    // In particular, unref'd grandchildren need not inherit stdio.
+    // Preserve ownership and the force-kill timer through the grace window.
+    if (!record.terminating) void terminateOwnedProcess(child, 'leader-exit');
+    setTimeout(() => {
+      if (record.forceTimer) clearTimeout(record.forceTimer);
+      record.supervisor?.kill('SIGTERM');
+      owned.delete(record.pid);
+    }, record.graceMs + 100).unref();
   });
   return child;
 }

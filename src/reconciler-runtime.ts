@@ -350,10 +350,10 @@ export abstract class ReconcilerRuntimeBase {
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
-      error ? 'failed' : 'succeeded',
-      error ?? result?.summary ?? 'Worker runtime exited',
-      'orchestrator',
-      { authoritative: false, waitingForTerminalEvent: true, processError: error },
+      live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
+      result?.summary ?? (error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
+      { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
+        signal: live?.execution.processExit?.signal ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error },
       { agent: 'relay', component: 'agents-relay' },
     ));
   }

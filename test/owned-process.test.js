@@ -44,7 +44,7 @@ test('owned process cancellation terminates a nested disposable child tree', { s
   const nestedPid = await descendantPid(child);
   await terminateOwnedProcess(child, 'cancel', 75);
   await waitFor(() => !exists(nestedPid));
-  assert.equal(ownedProcessSnapshot().some(item => item.pid === child.pid), false);
+  await waitFor(() => !ownedProcessSnapshot().some(item => item.pid === child.pid));
 });
 
 test('owned process timeout kills descendants without touching a competing group', { skip: !posix }, async () => {
@@ -94,5 +94,26 @@ test('parent SIGKILL supervisor terminates its exact owned process group', { ski
   } finally {
     if (exists(parent.pid)) process.kill(parent.pid, 'SIGKILL');
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('leader close does not strand unref descendants without inherited pipes', { skip: !posix }, async () => {
+  const wrapper = `
+    const {spawn}=require('node:child_process');
+    const c=spawn(process.execPath,['-e',${JSON.stringify("process.on('SIGTERM',()=>{});setInterval(()=>{},1000)")}],{stdio:'ignore'});
+    c.unref();process.stdout.write(String(c.pid)+'\\n');
+  `;
+  const child = spawnOwnedProcess(process.execPath, ['-e', wrapper], {
+    invocation: 'test.unref-leader-close', graceMs: 100,
+    spawn: { stdio: ['ignore','pipe','ignore'] },
+  });
+  const closed = new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
+  const pid = await descendantPid(child);
+  try {
+    await closed;
+    await waitFor(() => !exists(pid), 3500);
+    await waitFor(() => !ownedProcessSnapshot().some(item => item.pid === child.pid));
+  } finally {
+    if (exists(pid)) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
   }
 });
