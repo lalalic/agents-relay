@@ -60,7 +60,7 @@ export async function activeRelayLeaseOwner(owner: string): Promise<boolean> {
   if (!match || Number(match[1]) <= 1) return false;
   try {
     const { stdout } = await execFileAsync('ps', ['-p', match[1], '-o', 'command='], { timeout: 1500, maxBuffer: 4096 });
-    return /(?:^|\/)agents-relayd(?:\s|$)/.test(stdout) || /\bagents-relayd\b/.test(stdout);
+    return /\bagents-relayd\b/.test(stdout) || /(?:^|\/)relayd(?:-main)?\.js(?:\s|$)/.test(stdout);
   } catch { return false; }
 }
 
