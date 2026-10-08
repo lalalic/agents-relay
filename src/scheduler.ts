@@ -9,7 +9,10 @@ import { observability } from './observability.js';
 export function completionGateSatisfied(job: Job): boolean {
   if (job.schedule) return false;
   if (job.executionMode !== 'autonomous') return true;
-  const planSatisfied = (job.plans ?? []).some(plan => plan.status === 'SUCCEEDED' && plan.objectiveStatus === 'satisfied');
+  const latest = [...(job.plans ?? [])].sort((a, b) => a.round - b.round).at(-1);
+  const previousReviewFinished = job.tasks.some(task => task.agentName === 'reviewer' && task.state === 'SUCCEEDED');
+  const planSatisfied = latest?.status === 'SUCCEEDED' && (latest.objectiveStatus === 'satisfied'
+    || (latest.objectiveStatus === 'in_progress' && latest.plannerResult?.next_tasks?.length === 0 && previousReviewFinished));
   const legacySatisfied = (job.plans?.length ?? 0) === 0 && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied');
   return (planSatisfied || legacySatisfied) && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
 }

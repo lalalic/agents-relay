@@ -1,4 +1,5 @@
 import { createServer, Server } from 'node:http';
+import { subscribeLocalCommits } from './local-commit-events.js';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,17 +126,7 @@ export function serveDashboard(
       subscribedJobs.add(job.id);
       try {
         await bus.subscribe(job.id, async event => {
-          const durable = await store.load(job.id).catch(() => null);
-          const task = durable?.tasks.find(candidate => candidate.id === event.task_id) ?? null;
-          const statePatch = durable ? {
-            jobId: durable.id,
-            jobState: durable.state,
-            jobUpdatedAt: durable.updatedAt,
-            taskId: task?.id ?? null,
-            taskState: task?.state ?? null,
-            taskUpdatedAt: task?.updatedAt ?? null,
-          } : null;
-          const payload = JSON.stringify({ event, statePatch });
+          const payload = JSON.stringify({ event });
           for (const client of clients) client.write(`event: relay\ndata: ${payload}\n\n`);
         });
       } catch {
@@ -143,6 +134,15 @@ export function serveDashboard(
       }
     }
   };
+
+  const unsubscribeLocalCommits = subscribeLocalCommits(durable => {
+    const known = lastKnownJobs?.find(job => job.id === durable.id && job.repository === durable.repository && job.prNumber === durable.prNumber);
+    const githubState = known?.githubState as 'OPEN' | 'CLOSED' | 'MERGED' | undefined;
+    const current = { ...durable, githubState, runtimeStatus: deriveJobRuntimeStatus(durable, githubState) };
+    if (lastKnownJobs && known) Object.assign(known, current);
+    const payload = JSON.stringify({ job: current });
+    for (const client of clients) client.write(`data: ${payload}\n\n`);
+  });
 
   const snapshot = async (requestedJobId = jobId, forceRefresh = false, target?: { repository?: string; prNumber?: number }): Promise<{ id: string; json: string }> => {
     await subscribeDiscovered();
@@ -460,19 +460,12 @@ export function serveDashboard(
     res.end('Not found');
   });
 
-  const interval = setInterval(() => {
-    if (clients.size === 0) return;
-    void snapshot().then(value => {
-      for (const client of clients) client.write(`data: ${value.json}\n\n`);
-    }).catch(() => undefined);
-  }, Math.max(10000, refreshMs));
-  interval.unref();
   const heartbeat = setInterval(() => {
     if (clients.size === 0) return;
     for (const client of clients) client.write(': heartbeat\n\n');
   }, SSE_HEARTBEAT_MS);
   heartbeat.unref();
-  server.on('close', () => { clearInterval(interval); clearInterval(heartbeat); clients.clear(); });
+  server.on('close', () => { unsubscribeLocalCommits(); clearInterval(heartbeat); clients.clear(); });
   server.listen(port, '127.0.0.1');
   return server;
 }

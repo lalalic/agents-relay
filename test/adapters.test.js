@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
+import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure, parseDriverJson } from '../dist/adapters.js';
 
 const route = { provider: 'openai', model: 'gpt-5' };
 const task = (overrides = {}) => ({
@@ -92,14 +92,14 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
   assert.match(definition, /Browser Workspace/);
 });
 
-test('ChatGptAdapter default runner uses Browser Workspace one-shot auto-session', async () => {
+test('ChatGptAdapter default runner uses Browser Workspace caller-owned session', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);
+  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
   assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--auto-session', '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /thread_id: delivery\.threadId/);
   assert.match(source, /idempotency_key: delivery\.requestId/);
-  assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
+  assert.match(source, /\['session', 'start'\]/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
 });
 
@@ -157,6 +157,24 @@ test('ChatGptAdapter never reports an existing-thread turn on the wrong thread',
       jobId: 'job', prNumber: 7, reviewHeadSha: 'sha',
     },
   }), new AbortController().signal).promise, /unexpected ChatGPT thread/);
+
+});
+
+test('Browser Workspace generic runner receipt is accepted when nested under result', () => {
+  const receipt = parseDriverJson(JSON.stringify({
+    platform: 'chatgpt',
+    action: 'temporary-submit',
+    result: { ok: true, operation: 'submit', status: 'submitted', verified: true },
+  }));
+  assert.deepEqual(
+    { operation: receipt.operation, status: receipt.status, verified: receipt.verified },
+    { operation: 'submit', status: 'submitted', verified: true },
+  );
+});
+
+test('Browser Workspace runner unwraps a JSON receipt nested in stdout', () => {
+  const receipt = parseDriverJson(JSON.stringify({ result: { ok: true, stdout: '{"operation":"submit","status":"submitted","verified":true}\n' } }));
+  assert.equal(receipt.verified, true);
 });
 
 test('ChatGptAdapter accepts composer-cleared submission receipts without a user turn id', async () => {
@@ -309,6 +327,7 @@ test('CodexAdapter cancellation force-kills a process that ignores SIGTERM', asy
     const startedAt = Date.now();
     execution.cancel();
     await assert.rejects(execution.promise);
+    assert.equal(execution.processExit?.terminationReason, 'cancel');
     assert.ok(Date.now() - startedAt < 3000, 'cancel should force the process to exit after the grace period');
   } finally {
     await rm(root, { recursive: true, force: true });

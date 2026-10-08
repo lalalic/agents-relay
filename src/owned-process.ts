@@ -37,6 +37,7 @@ type OwnedProcessRecord = {
   graceMs: number;
   correlation?: ObservabilityCorrelation;
   terminating: boolean;
+  terminationReason?: OwnedProcessTerminationReason;
   forceTimer?: NodeJS.Timeout;
   timeoutTimer?: NodeJS.Timeout;
   abort?: () => void;
@@ -45,6 +46,9 @@ type OwnedProcessRecord = {
 
 const owned = new Map<number, OwnedProcessRecord>();
 const byChild = new WeakMap<ChildProcess, OwnedProcessRecord>();
+export function ownedProcessTerminationReason(child: ChildProcess): OwnedProcessTerminationReason | null {
+  return byChild.get(child)?.terminationReason ?? null;
+}
 let exitHookInstalled = false;
 
 function audit(record: OwnedProcessRecord, event: string, outcome: 'started' | 'succeeded' | 'failed', data: Record<string, unknown>): void {
@@ -153,7 +157,7 @@ export function spawnOwnedProcess(command: string, args: readonly string[], opti
   }
 
   child.once('exit', (code, signal) => {
-    audit(record, 'process.exited', code === 0 ? 'succeeded' : 'failed', { exitStatus: code, signal });
+    audit(record, 'process.exited', code === 0 ? 'succeeded' : 'failed', { exitStatus: code, signal, terminationReason: record.terminationReason ?? null });
     // `close` waits for inherited stdio. End any descendants left behind by a
     // wrapper before they can keep the caller alive indefinitely.
     if (!record.terminating) void terminateOwnedProcess(child, 'leader-exit');
@@ -183,6 +187,7 @@ export async function terminateOwnedProcess(
   if (!record || !owned.has(record.pid)) return;
   if (!record.terminating) {
     record.terminating = true;
+    record.terminationReason = reason;
     const outcome = signalOwned(record, 'SIGTERM');
     audit(record, 'process.signal', outcome === 'error' ? 'failed' : 'succeeded', { reason, signal: 'SIGTERM', delivered: outcome === 'sent', alreadyGone: outcome === 'gone' });
     record.forceTimer = setTimeout(() => forceOwned(record, reason), graceMs ?? record.graceMs);

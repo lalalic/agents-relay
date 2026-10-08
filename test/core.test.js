@@ -19,6 +19,7 @@ import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState, runtimeReviewer } from '../dist/cli.js';
 import { relayControlJob } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
+import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -639,6 +640,20 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await stop();
 });
 
+test('new final-review creation wakes repository pool without relying on polling', async () => {
+  const bus = new MemoryEventBus();
+  const calls = [];
+  const client = { request: async () => { throw new Error('no full scan required'); } };
+  const pool = new RepositoryWorkerPool(client, ['owner/repo'], new Set(['bot']), 4,
+    () => ({ reconcile: async id => { calls.push(id); } }));
+  const stop = await pool.watch(bus);
+  await bus.publish(eventFor('job-review', 'final-review-head', null, 'review.created', 'queued',
+    'Review Task created', 'orchestrator', {repository:'owner/repo',prNumber:2}));
+  await new Promise(resolve => setTimeout(resolve,0));
+  assert.deepEqual(calls, ['job-review']);
+  await stop();
+});
+
 test('scheduler timer enters through EventBus schedule.tick before scheduled graph reconciliation', async () => {
   const bus=new MemoryEventBus();
   const at=new Date('2026-09-29T18:05:00.000Z');
@@ -1089,7 +1104,7 @@ test('normal terminal event remains authoritative when Codex exits afterward', a
   assert.ok(adapter.cancelled > 0, 'accepted Codex terminal fact must stop the still-live worker process');
   assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
   assert.equal(events.filter(event=>event.type==='task.failed').length,0);
-  assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
+  assert.equal(events.filter(event=>event.type==='task.process.exited').length,0, 'cleanup after authoritative terminal event must be silent');
   await stop(); await stopEvents();
 });
 
@@ -1325,7 +1340,7 @@ test('final review ignores troubleshooter recovery history', async () => {
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
   assert.ok(review);
   assert.deepEqual(review.dependencies,['done']);
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'REVIEWING');
+  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
 });
 
 test('final review ignores explicitly superseded cancelled history', async () => {
@@ -1372,7 +1387,7 @@ test('late events do not revive genuine failures or stale watchdog events', asyn
   const store=new InMemoryStore(job([genuine,stale])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   await reconciler.handleEvent({...eventFor('j','genuine',null,'task.started','running','late','user',undefined,eventSource('j','genuine','genuine-exec')),timestamp:'2026-09-20T20:00:01.000Z'});
   await reconciler.handleEvent({...eventFor('j','stale',null,'task.completed','succeeded','old completion','user',undefined,eventSource('j','stale','stale-exec')),timestamp:'2026-09-20T20:00:04.000Z'});
-  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'FAILED');
+  const durable=await store.load('j'); assert.equal(durable.tasks[0].state,'FAILED'); assert.equal(durable.tasks[1].state,'SUCCEEDED', 'same execution ID owns recovery despite untrusted event timestamp');
 });
 
 test('correlated terminal completed event is authoritative', async () => {
@@ -1572,6 +1587,21 @@ test('merged PR authoritatively completes jobs stuck in failed, blocked, or canc
   }
 });
 
+test('dependent planned reviewer freezes latest PR head only at execution', async () => {
+  const implementation = task('implement', 'SUCCEEDED');
+  const review = {
+    ...task('review', 'QUEUED', ['implement']), agentName: 'reviewer',
+    planningDecisionId: 'plan-7', reviewHeadSha: 'stale-planning-head',
+  };
+  const store = new InMemoryStore({ ...job([implementation, review]), headSha: 'new-head' });
+  store.pullRequestHead = async () => ({ ref: 'e2e-fix', sha: 'new-head' });
+  await bindPlannedReviewHead(store, review);
+  const persisted = (await store.load('j')).tasks.find(item => item.id === 'review');
+  assert.equal(persisted.reviewHeadSha, 'new-head');
+  assert.equal(persisted.state, 'QUEUED');
+  assert.equal(persisted.attempt, 0);
+});
+
 test('completed jobs create one SHA-bound reviewer task and suppress duplicates', async () => {
   const work = task('work', 'SUCCEEDED');
   const reviewJob = { ...job([work]), headSha: 'sha-review-1' };
@@ -1590,6 +1620,9 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.routing?.decidedBy, 'execution-router:fallback');
   assert.equal(reviewer?.routing?.decisionEvidence?.fallback, true);
   assert.match(reviewer?.input ?? '', /Review PR #1 at exactly head SHA sha-review-1\./);
+  assert.match(reviewer?.input ?? '', /Review PR #1 at exactly head SHA sha-review-1/);
+  assert.match(reviewer?.input ?? '', /PRE-MERGE artifact approval gate/);
+  assert.match(reviewer?.input ?? '', /Do not block approval because automatic merge/);
   assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);
 
   await reconciler.reconcile('j');
@@ -1899,6 +1932,45 @@ test('PR 258-shaped reviewer evidence creates one idempotent fix and rejects mal
   assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 1);
   assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
   await unsubscribe();
+});
+
+test('planner-created review binds its first authoritative verdict to Job review state', async () => {
+  const head = '0123456789abcdef0123456789abcdef01234567';
+  const implementation = task('implementation', 'SUCCEEDED');
+  const reviewer = { ...task('review-planned', 'RUNNING', ['implementation']), agentName: 'reviewer', planningDecisionId: 'plan-8', reviewHeadSha: head };
+  const store = new InMemoryStore({ ...job([implementation, reviewer]), headSha: head, review: null });
+  store.headSha = async () => head;
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: new MemoryEventBus(), maxConcurrent: 0 });
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'Unrequested seed artifact', 'orchestrator', {
+    outcome: { head_sha: head, decision: 'changes_required', blocking_findings: [{ summary: 'Remove unrequested seed artifact' }] },
+  }));
+  const saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'changes_required');
+  assert.equal(saved.review?.taskId, reviewer.id);
+  assert.equal(saved.review?.headSha, head);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  assert.equal(fixes.length, 1);
+  assert.match(fixes[0].input, /Remove unrequested seed artifact/);
+});
+
+test('planner-created review approval uses Job merge lifecycle without a seeded final review', async () => {
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const implementation = task('implementation', 'SUCCEEDED');
+  const reviewer = { ...task('review-planned', 'RUNNING', ['implementation']), agentName: 'reviewer', planningDecisionId: 'plan-8', reviewHeadSha: head };
+  const store = new InMemoryStore({ ...job([implementation, reviewer]), headSha: head, review: null });
+  store.headSha = async () => head;
+  let merges = 0;
+  store.mergePullRequest = async observedHead => { assert.equal(observedHead, head); merges += 1; };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: new MemoryEventBus(), maxConcurrent: 0 });
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', {
+    outcome: { head_sha: head, decision: 'approved', blocking_findings: [] },
+  }));
+  const saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'approved');
+  assert.equal(saved.review?.headSha, head);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  assert.equal(merges, 1);
 });
 
 test('review changes-required falls back to one fix task from the review message', async () => {

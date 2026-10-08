@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
 import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js';
@@ -13,8 +13,7 @@ import { ReconcilerReviewBase } from './reconciler-review.js';
 import { recordThreadDelivery } from './reviewer-thread.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
-export { executionEventSource } from './reconciler-runtime.js';
-export type { ReconcileOptions } from './reconciler-runtime.js';
+export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { pendingTroubleshooterTasks } from './troubleshooter.js';
 import { prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
@@ -370,6 +369,7 @@ export class Reconciler extends ReconcilerReviewBase {
       let freshTask = freshJob.tasks.find(item => item.id === task.id);
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
+      if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask);
 
       if (!freshTask.routing && freshTask.adapter !== 'orchestrator') {
         freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;

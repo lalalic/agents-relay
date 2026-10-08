@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GhApiClient } from '../dist/store.js';
@@ -121,6 +121,32 @@ test('Absent GitHub runtime headers stay backward compatible and unknown', async
     assert.equal(observed.headersCaptured, false);
     assert.equal(observed.remaining, null);
   });
+});
+
+test('GitHub transport retries a signal-terminated CLI projection', async () => {
+  const fake = await mkdtemp(join(tmpdir(), 'agents-relay-runtime-signal-'));
+  const script = join(fake, 'gh');
+  const handler = () => {
+    const fs = require('node:fs');
+    const path = process.env.AGENTS_RELAY_TEST_ATTEMPT_FILE;
+    const attempt = Number(fs.readFileSync(path, 'utf8') || '0');
+    fs.writeFileSync(path, String(attempt + 1));
+    if (attempt === 0) process.kill(process.pid, 'SIGTERM');
+    process.stdout.write(JSON.stringify({ ok: true }));
+    return 0;
+  };
+  await writeFile(script, `#!/usr/bin/env node\n(async()=>{process.exitCode=await (${handler.toString()})();})().catch(error=>{console.error(error);process.exitCode=1;});\n`);
+  await chmod(script, 0o755);
+  const attemptFile = join(fake, 'attempt');
+  await writeFile(attemptFile, '0');
+  const previous = process.env.AGENTS_RELAY_TEST_ATTEMPT_FILE;
+  process.env.AGENTS_RELAY_TEST_ATTEMPT_FILE = attemptFile;
+  try {
+    await withPath(fake, async () => await new GhApiClient().request('repos/owner/repo'));
+    assert.equal(Number(await readFile(attemptFile, 'utf8')), 2);
+  } finally {
+    if (previous === undefined) delete process.env.AGENTS_RELAY_TEST_ATTEMPT_FILE; else process.env.AGENTS_RELAY_TEST_ATTEMPT_FILE = previous;
+  }
 });
 
 test('CLI header parsing preserves status and resets header keys', () => {
