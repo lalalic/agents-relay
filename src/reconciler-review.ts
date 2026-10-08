@@ -112,7 +112,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
-      input: 'Review existing PR #' + job.prNumber + ' at exactly head SHA ' + headSha + '. Job objective: ' + (job.objective ?? job.description ?? job.title) + '. Use the selected reviewer agent contract as the authoritative review protocol.',
+      input: 'Review existing PR #' + job.prNumber + ' at exactly head SHA ' + headSha + '. Job objective: ' + (job.objective ?? job.description ?? job.title) + '. Use the selected reviewer agent contract as the authoritative review protocol. ' +
+        'This is a PRE-MERGE artifact approval gate: inspect the exact PR head, requested changes, applicable source/test requirements, and genuine blocking defects in the proposed changes. ' +
+        'Do not block approval because automatic merge, Job COMPLETED, or post-merge E2E evidence has not occurred yet; those are downstream effects of review approval and independently verified later. ' +
+        'Do not treat historical failed attempts or launch anomalies as current artifact defects if the latest implementation and tests succeeded; report historical lifecycle observations separately. ' +
+        'Compare implementation changes with the PR head that existed before the implementation, not only against main: preserved seed or baseline files are not automatically unrelated additions.',
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
       reviewHeadSha: headSha, attempt: 0, maxAttempts: this.options.reviewer?.maxAttempts ?? 2,
       leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null,
@@ -256,6 +260,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
+    // Planner-created reviewer tasks predate the final-review Job gate. Bind
+    // their first trustworthy review event to PENDING before dispatching it.
+    if (!job.review && task.planningDecisionId) {
+      job.review = { outcome: 'pending', headSha, taskId: task.id, evidence: null, updatedAt: event.timestamp || new Date().toISOString() };
+      await this.store.saveJob(job);
+    }
 
     const taskDecision = tryTransitionTaskEvent(task, event.type);
     if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: event.type + '.ignored' };

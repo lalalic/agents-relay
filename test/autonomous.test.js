@@ -389,7 +389,7 @@ test('fixed and autonomous work reaches runtime review after terminal events, no
     await settle(reconciler);
     const result = await store.load('auto');
     assert.equal(result.state, 'ACTIVE');
-    assert.equal(deriveJobRuntimeStatus(result, 'OPEN'), 'REVIEWING');
+    assert.equal(deriveJobRuntimeStatus(result, 'OPEN'), 'IDLE');
     if (mode === 'fixed') assert.equal(calls, 0);
     else assert.equal(result.tasks.find(t=>t.id==='work-1')?.state, 'SUCCEEDED');
     await stop();

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 
@@ -721,4 +722,57 @@ test('Router Rules tab exposes current router test and latest audit log', () => 
   assert.doesNotMatch(dashboardHtml, /const selected=result\.selected/);
   assert.match(dashboardHtml, /\.router-rules-pane\{min-width:0;max-width:100%;overflow:hidden\}/);
   assert.match(dashboardHtml, /\.audit-log\{[^}]*overflow:auto;min-width:0\}/);
+});
+
+
+test('dashboard applies live authoritative job and task state from SSE without polling', () => {
+  assert.match(dashboardHtml, /stream.addEventListener\('relay',message=>\{const payload=parseMessage\(message\);if\(payload\?\.job\)/);
+  assert.doesNotMatch(dashboardHtml, /scheduleLifecycleRefresh|streamHasOpened/);
+  assert.doesNotMatch(dashboardHtml, /setInterval\(\(\)=>\{if\(location.hash!==/);
+});
+
+
+test('SSE resolves each event against its own repository and PR durable store', () => {
+  assert.match(dashboardHtml, /stream.addEventListener\('relay'/);
+  const serverSource = readFileSync(new URL('../src/dashboard.ts', import.meta.url), 'utf8');
+  assert.match(serverSource, /subscribeLocalCommits\(durable =>/);
+});
+
+
+test('SSE lifecycle snapshot carries the computed runtime status instead of defaulting to IDLE', () => {
+  const source = readFileSync(new URL('../src/dashboard.ts', import.meta.url), 'utf8');
+  assert.match(source, /runtimeStatus: deriveJobRuntimeStatus\(durable, githubState\)/);
+  assert.match(source, /JSON.stringify\(\{ job: current \}\)/);
+});
+
+test('dashboard SSE streams committed local state immediately without a worker event or GitHub refresh', async () => {
+  const { publishLocalCommit } = await import('../dist/local-commit-events.js');
+  const job = { id: 'committed-sse', title: 'Committed SSE', executionMode: 'autonomous', repository: 'owner/repo', prNumber: 91, state: 'ACTIVE', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
+  await once(server, 'listening');
+  const addr = server.address();
+  const controller = new AbortController();
+  try {
+    const response = await fetch(`http://127.0.0.1:${addr.port}/events`, { signal: controller.signal });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    await reader.read(); // : connected
+    const task = { id: 'review', jobId: job.id, kind: 'work', agentName: 'reviewer', state: 'RUNNING' };
+    publishLocalCommit({ ...job, tasks: [task] });
+    const received = new TextDecoder().decode((await reader.read()).value);
+    assert.match(received, /"job":\{/);
+    assert.match(received, /"runtimeStatus":"REVIEWING"/);
+    assert.match(received, /"state":"RUNNING"/);
+    assert.match(received, /"id":"review"/);
+  } finally {
+    controller.abort();
+    await new Promise((resolve,reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+
+test('dashboard lifecycle status has no timer-driven snapshot fallback', () => {
+  const source = readFileSync(new URL('../src/dashboard.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /Math.max\(10000, refreshMs\)/);
+  assert.match(source, /subscribeLocalCommits\(durable =>/);
 });

@@ -19,7 +19,6 @@ export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
-
 export function executionEventSource(jobId: string, taskId: string, executionId: string): string { return `job/${jobId}/task/${taskId}/execution/${executionId}`; }
 function eventSourceId(event: EventRecord): string | undefined { return typeof event.source?.id === 'string' ? event.source.id : undefined; }
 function executionIdFromSource(sourceId: string | undefined, jobId: string, taskId: string): string | undefined {
@@ -29,27 +28,8 @@ function executionIdFromSource(sourceId: string | undefined, jobId: string, task
 
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
-const executionBoundaryLocks = new Map<string, Promise<void>>();
-
-/**
- * Serialize the durable execution-generation boundary across reconciler
- * instances in one relay process. Launch, routing, and terminal persistence
- * must not observe and write the same queued generation concurrently.
- */
-export async function withExecutionBoundary<T>(jobId: string, taskId: string, work: () => Promise<T>): Promise<T> {
-  const key = `${jobId}/${taskId}`;
-  const previous = executionBoundaryLocks.get(key);
-  let release!: () => void;
-  const current = new Promise<void>(resolve => { release = resolve; });
-  executionBoundaryLocks.set(key, current);
-  if (previous) await previous;
-  try {
-    return await work();
-  } finally {
-    release();
-    if (executionBoundaryLocks.get(key) === current) executionBoundaryLocks.delete(key);
-  }
-}
+import { withExecutionBoundary } from './execution-boundary.js';
+export { withExecutionBoundary } from './execution-boundary.js';
 function claimTerminalExecution(sourceId: string): void {
   terminalExecutionClaims.add(sourceId);
   const cleanup = setTimeout(() => terminalExecutionClaims.delete(sourceId), 60000);
@@ -320,7 +300,7 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (!task || (task.executionId !== executionId && !terminalExecutionClaimed(jobId, taskId, executionId))) return;
+    if (terminalExecutionClaimed(jobId, taskId, executionId) || !task || task.executionId !== executionId) return;
     if (task.adapter !== 'chatgpt' && task.executionId === executionId && live?.executionId === executionId)
       rearmTerminalEventDeadline(this.terminalTimers, taskId, task.timeoutMs - (Date.now() - live.launchBarrier),
         this.options.postExitTerminalGraceMs ?? 15_000, () => this.detach(this.timeoutTask(jobId, taskId, executionId), jobId, taskId, 'post-exit terminal event timeout'));
@@ -328,9 +308,9 @@ export abstract class ReconcilerRuntimeBase {
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
       live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
-      result?.summary ?? (error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
+      result?.summary ?? (live?.execution.processExit?.terminationReason === 'parent-shutdown' ? 'Worker interrupted by daemon shutdown' : error ? 'Worker runtime exited with error' : 'Worker runtime exited'), 'orchestrator',
       { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
-        signal: live?.execution.processExit?.signal ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error, executionId, pid: live?.execution.pid ?? null },
+        signal: live?.execution.processExit?.signal ?? null, terminationReason: live?.execution.processExit?.terminationReason ?? null, stderr: live?.execution.processExit?.stderr ?? '', processError: error, executionId, pid: live?.execution.pid ?? null },
       { id: executionEventSource(jobId, taskId, executionId), agent: 'relay', component: 'agents-relay' },
     ));
   }
@@ -398,18 +378,15 @@ export abstract class ReconcilerRuntimeBase {
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
           // A duplicate launch can leave one worker orphaned after another worker
           // has already produced the terminal fact. Accept only a known execution
-          // from the same durable attempt and only when its fact is newer than its
-          // launch. A prior retry attempt cannot complete a newer generation.
-          if (!prior || prior.attempt !== task.attempt || !event.timestamp || new Date(event.timestamp).getTime() < new Date(prior.startedAt).getTime()) return false;
+          // from the same durable attempt. A prior retry attempt cannot complete a newer generation.
+          if (!prior || prior.attempt !== task.attempt) return false;
         }
         const terminalWaiter = this.terminalWaiters.get(task.id);
         return !terminalWaiter || Boolean(task.executionId && terminalWaiter.executionId === task.executionId && this.isCorrelatedWorkerEvent(task, event));
       },
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
-        const freshEnough = processExitedAfterPublishedTerminal
-          || !event.timestamp
-          || new Date(event.timestamp).getTime() >= new Date(task.updatedAt).getTime();
+        const freshEnough = processExitedAfterPublishedTerminal || this.isCorrelatedWorkerEvent(task, event);
         return { recoverableExecution: this.isRecoverableWatchdogFailure(task) && freshEnough };
       },
       mutate: (job, task) => {

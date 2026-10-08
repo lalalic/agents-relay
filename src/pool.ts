@@ -250,7 +250,7 @@ export class RepositoryWorkerPool {
       if (ingressWebhook) return;
       if (routedWebhook) return;
       const lifecycle = ['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
-      const wake = event.type === 'job.wake' || event.type === 'github.webhook';
+      const wake = event.type === 'job.wake' || event.type === 'github.webhook' || event.type === 'review.created';
       if (!lifecycle && !wake) return;
       if (repository && prNumber) this.jobTargets.set(event.job_id, { repository, prNumber });
       await this.coordinator.acceptTransport({

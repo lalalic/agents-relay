@@ -8,6 +8,7 @@ import {
   CHATGPT_BROWSER_WORKSPACE_POOL_SIZE,
   ChatGptAdapter,
   ensureChatGptBrowserWorkspace,
+  parseDriverJson,
 } from '../dist/adapters.js';
 
 test('ChatGPT Browser Workspace bootstrap discovers product admin helper through status', async () => {
@@ -53,14 +54,24 @@ test('default Browser Workspace CLI uses status discovery and no lifecycle CLI c
   assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);
 });
 
-test('ChatGPT adapter uses Browser Workspace one-shot auto-session platform run', async () => {
+test('ChatGPT adapter uses Browser Workspace caller-owned session platform run', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /autoSessionBrowserWorkerRunner/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--auto-session', '--config', configFile\]/);
-  assert.doesNotMatch(source, /\['session', '(?:start|exec|stop)'/);
+  assert.match(source, /browserWorkerRunner/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', 'temporary-submit', '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['session', 'start'\]/);
+  assert.match(source, /\['session', 'stop', sessionId\]/);
+  assert.doesNotMatch(source, /\['session', 'exec'/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
-  assert.match(source, /this\.runner \?\? autoSessionBrowserWorkerRunner\(\)/);
+  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
   assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'browser-workspace']);
+});
+
+test('Browser Workspace runner unwraps the generic platform result envelope', () => {
+  assert.equal(parseDriverJson('{"result":{"operation":"submit","status":"submitted"}}').status, 'submitted');
+});
+
+test('Browser Workspace runner unwraps a JSON receipt from platform stdout', () => {
+  assert.equal(parseDriverJson('{"result":{"stdout":"{\\"operation\\":\\"submit\\",\\"status\\":\\"submitted\\"}\\n"}}').status, 'submitted');
 });
 
 
