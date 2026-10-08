@@ -9,14 +9,15 @@ const argv=process.argv.slice(2);
 const option=(k,def)=>{const i=argv.indexOf('--'+k);return i>=0?argv[i+1]:def};
 const repo=option('repo','lalalic/agents-relay-e2e'),pr=String(option('pr','2'));
 const jobId=option('job','e2e-autonomy-smoke-20261008');
+const runKey=`${repo}#${pr}/${jobId}`;
 const eventsPath=option('events','/Users/chengli/Library/Application Support/EventsBus/events.jsonl');
 const statePath=option('state',resolve(root,'e2e/reports/sentinel-state.json'));
 const handoffPath=option('out',resolve(root,'e2e/reports/pending-handoff.json'));
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||'');
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
-let state={offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null};
-try{state={...state,...JSON.parse(readFileSync(statePath,'utf8'))}}catch{}
+let state={runKey,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring'};
+try{const previous=JSON.parse(readFileSync(statePath,'utf8'));if(previous.runKey===runKey)state={...state,...previous}}catch{}
 function events(){
  let size;try{size=statSync(eventsPath).size}catch{return []}
  if(size<state.offset)state.offset=0;
@@ -32,14 +33,24 @@ function snapshot(){
  if(p.status!==0)throw Error(p.error?.message||p.stderr||'job show failed');
  return JSON.parse(p.stdout);
 }
-function detect(j){
+function github(){
+ const p=spawnSync('gh',['pr','view',pr,'-R',repo,'--json','state,mergedAt,headRefOid,url'],{encoding:'utf8',timeout:30000});
+ if(p.status!==0)throw Error(p.stderr||'GitHub PR query failed');
+ return JSON.parse(p.stdout);
+}
+function detect(j,gh){
  const tasks=j.tasks||[],plans=j.plans||[];
+ if(j.state==='COMPLETED' && gh.state==='MERGED' && tasks.filter(x=>x.agentName==='reviewer').some(x=>x.state==='SUCCEEDED') && tasks.filter(x=>x.kind==='work').some(x=>x.state==='SUCCEEDED'))return null;
+ if(['COMPLETED','CANCELLED','FAILED'].includes(j.state))return {type:'TERMINAL_INCONSISTENCY',jobState:j.state,prState:gh.state,reviewStates:tasks.filter(x=>x.agentName==='reviewer').map(x=>x.state)};
+ if(gh.state==='MERGED')return {type:'MERGED_JOB_NOT_COMPLETED',jobState:j.state};
+ if(gh.state==='CLOSED')return {type:'PR_CLOSED_WITHOUT_MERGE',jobState:j.state};
  const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
  if(failed.length)return {type:'TASK_FAILED',tasks:failed.map(x=>({id:x.id,state:x.state,error:x.error,executionId:x.executionId,attempt:x.attempt}))};
  const last=plans.at(-1);
  if(last?.status==='FAILED'&&!tasks.some(x=>x.state==='QUEUED'||x.state==='RUNNING'))return {type:'PLANNER_FAILED',plan:{id:last.id,error:last.error}};
  const active=tasks.filter(x=>x.state==='QUEUED'||x.state==='RUNNING');
- const stale=active.filter(x=>{ const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);return recent.length>0 && Date.now()-Math.max(...recent)>staleMs; });
+ const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);return recent.length>0 && Date.now()-Math.max(...recent)>staleMs;});
+ if(!active.length && !failed.length && state.lastEventAt && Date.now()-Date.parse(state.lastEventAt)>staleMs)return {type:'NO_PROGRESS',jobState:j.state,taskStates:tasks.map(x=>({id:x.id,state:x.state}))};
  if(stale.length)return {type:'STALLED',tasks:stale.map(x=>({id:x.id,state:x.state,executionId:x.executionId,updatedAt:x.updatedAt}))};
  return null;
 }
@@ -54,19 +65,22 @@ async function tick(){
    try{
     const transfer=JSON.parse(readFileSync(statusPath,'utf8'));
     if(transfer.status==='completed'){
-     state.delivered=true;state.pendingTransferId=null;
+     state.delivered=true;state.pendingTransferId=null;state.phase='awaiting_repair';
      console.log(JSON.stringify({event:'handoff_delivered',at:new Date().toISOString()}));
     }else if(transfer.status==='failed'){
-     state.delivered=false;state.pendingTransferId=null;
+     state.delivered=false;state.pendingTransferId=null;state.phase='monitoring';
      console.error('handoff failed:',transfer.error);
     }
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
-  const j=snapshot(),issue=detect(j);
+  const j=snapshot(),gh=github(),issue=detect(j,gh);
+  if(j.state==='COMPLETED'&&gh.state==='MERGED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.github=gh;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,pr,jobId}));process.exit(0)}
+  if(state.phase==='passed')state.phase='monitoring';
   if(issue){
    const fingerprint=JSON.stringify(issue);
+   if(state.pendingTransferId) {save(statePath,state);return;}
    if(fingerprint!==state.fingerprint || (!state.delivered && !state.pendingTransferId && handoffCommand && (!state.lastHandoffAt || Date.now()-Date.parse(state.lastHandoffAt)>60000))){
-    const payload={observedAt:new Date().toISOString(),repo,pr,jobId,branch:'fix/e2e-production-autonomy-20261008',issue,events:newEvents.slice(-15).map(e=>({cursor:e.cursor,type:e.event.type,taskId:e.event.task_id,message:e.event.message,timestamp:e.event.timestamp})),instruction:'Fix this in the existing ChatGPT thread: confirm root cause, directly edit existing branch, test, commit each fix, rerun E2E. Do not use Agents Relay Job/Task for repairs.'};
+    const payload={observedAt:new Date().toISOString(),repo,pr,jobId,branch:'fix/e2e-production-autonomy-20261008',issue,github:gh,events:newEvents.slice(-15).map(e=>({cursor:e.cursor,type:e.event.type,taskId:e.event.task_id,message:e.event.message,timestamp:e.event.timestamp})),instruction:'Fix this in the existing ChatGPT thread: confirm root cause, directly edit existing branch, test, commit each fix, rerun E2E. Do not use Agents Relay Job/Task for repairs.'};
     save(handoffPath,payload);state.fingerprint=fingerprint;state.delivered=false;state.lastHandoffAt=new Date().toISOString();
     if(handoffCommand){
       const result=spawnSync(handoffCommand,[handoffPath],{encoding:'utf8',cwd:root,timeout:30000});
