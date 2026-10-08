@@ -67,15 +67,15 @@ function audit(record: OwnedProcessRecord, event: string, outcome: 'started' | '
   });
 }
 
-function signalOwned(record: OwnedProcessRecord, signal: NodeJS.Signals): boolean {
+function signalOwned(record: OwnedProcessRecord, signal: NodeJS.Signals): 'sent' | 'gone' | 'error' {
   try {
     if (record.processGroup !== null) process.kill(-record.processGroup, signal);
-    else record.child.kill(signal);
-    return true;
+    else if (!record.child.kill(signal)) return 'gone';
+    return 'sent';
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return 'gone';
     audit(record, 'process.signal_failed', 'failed', { signal, error: error instanceof Error ? error.message : String(error) });
-    return false;
+    return 'error';
   }
 }
 
@@ -86,8 +86,8 @@ function forceOwned(record: OwnedProcessRecord, reason: OwnedProcessTerminationR
     audit(record, 'process.signal', result.status === 0 ? 'succeeded' : 'failed', { reason, signal: 'taskkill-/t-/f', exitStatus: result.status });
     return;
   }
-  const sent = signalOwned(record, 'SIGKILL');
-  audit(record, 'process.signal', sent ? 'succeeded' : 'failed', { reason, signal: 'SIGKILL' });
+  const outcome = signalOwned(record, 'SIGKILL');
+  audit(record, 'process.signal', outcome === 'error' ? 'failed' : 'succeeded', { reason, signal: 'SIGKILL', delivered: outcome === 'sent', alreadyGone: outcome === 'gone' });
 }
 
 function installExitHook(): void {
@@ -183,8 +183,8 @@ export async function terminateOwnedProcess(
   if (!record || !owned.has(record.pid)) return;
   if (!record.terminating) {
     record.terminating = true;
-    const sent = signalOwned(record, 'SIGTERM');
-    audit(record, 'process.signal', sent ? 'succeeded' : 'failed', { reason, signal: 'SIGTERM' });
+    const outcome = signalOwned(record, 'SIGTERM');
+    audit(record, 'process.signal', outcome === 'error' ? 'failed' : 'succeeded', { reason, signal: 'SIGTERM', delivered: outcome === 'sent', alreadyGone: outcome === 'gone' });
     record.forceTimer = setTimeout(() => forceOwned(record, reason), graceMs ?? record.graceMs);
     record.forceTimer.unref();
   }

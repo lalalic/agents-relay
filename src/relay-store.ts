@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
+import type { ExecutionProcessRecord } from './process-identity.js';
 import { observability } from './observability.js';
 import {
   ProjectionOutbox,
@@ -45,6 +46,9 @@ export interface RelayStore {
   loadPullRequestFacts(): Promise<PullRequestFacts | null>;
   savePullRequestFacts(facts: PullRequestFacts): Promise<void>;
   markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean>;
+  recordExecutionProcess(record: ExecutionProcessRecord): Promise<void>;
+  loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
+  finishExecutionProcess(jobId: string, taskId: string, executionId: string, at?: string): Promise<void>;
   enqueueProjection(request: ProjectionRequest): Promise<void>;
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
   completeProjection(id: number): Promise<void>;
@@ -126,6 +130,19 @@ export class SQLiteRelayStore implements RelayStore {
         stream TEXT,
         sequence INTEGER,
         received_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS execution_process (
+        job_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        lease_owner TEXT NOT NULL,
+        host TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        pgid INTEGER NOT NULL,
+        start_token TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        ended_at TEXT,
+        PRIMARY KEY(job_id,task_id,execution_id)
       );
       ${ProjectionOutbox.createTableSql()}
       ${ProjectionOutbox.createIndexSql()}
@@ -257,6 +274,33 @@ export class SQLiteRelayStore implements RelayStore {
       INSERT INTO pull_request_facts(id,state,head_ref,head_sha,observed_at) VALUES(1,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state,head_ref=excluded.head_ref,head_sha=excluded.head_sha,observed_at=excluded.observed_at
     `).run(facts.state, facts.head?.ref ?? null, facts.head?.sha ?? null, facts.observedAt);
+  }
+
+  async recordExecutionProcess(record: ExecutionProcessRecord): Promise<void> {
+    const existing = await this.loadExecutionProcess(record.jobId, record.taskId, record.executionId);
+    if (existing && (existing.pid !== record.pid || existing.pgid !== record.pgid || existing.host !== record.host || existing.startToken !== record.startToken)) {
+      throw new Error(`Conflicting process identity for ${record.jobId}/${record.taskId}/${record.executionId}`);
+    }
+    this.db.prepare(`INSERT OR IGNORE INTO execution_process
+      (job_id,task_id,execution_id,lease_owner,host,pid,pgid,start_token,observed_at,ended_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+      record.jobId, record.taskId, record.executionId, record.leaseOwner, record.host,
+      record.pid, record.pgid, record.startToken, record.observedAt, record.endedAt ?? null,
+    );
+  }
+
+  async loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null> {
+    const row = this.db.prepare(`SELECT lease_owner,host,pid,pgid,start_token,observed_at,ended_at
+      FROM execution_process WHERE job_id=? AND task_id=? AND execution_id=?`).get(jobId, taskId, executionId) as
+      { lease_owner: string; host: string; pid: number; pgid: number; start_token: string; observed_at: string; ended_at: string | null } | undefined;
+    return row ? { jobId, taskId, executionId, leaseOwner: row.lease_owner,
+      host: row.host, pid: row.pid, pgid: row.pgid, startToken: row.start_token,
+      observedAt: row.observed_at, endedAt: row.ended_at } : null;
+  }
+
+  async finishExecutionProcess(jobId: string, taskId: string, executionId: string, at = new Date().toISOString()): Promise<void> {
+    this.db.prepare('UPDATE execution_process SET ended_at=COALESCE(ended_at,?) WHERE job_id=? AND task_id=? AND execution_id=?')
+      .run(at, jobId, taskId, executionId);
   }
 
   async markEventProcessed(eventId: string, stream: string | null = null, sequence: number | null = null): Promise<boolean> {

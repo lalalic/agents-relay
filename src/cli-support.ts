@@ -66,7 +66,7 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
-export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'; summary?: string; task?: Task }): Promise<Job> {
+export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'|'update'; summary?: string; task?: Task; expectedUpdatedAt?: string }): Promise<Job> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
@@ -112,7 +112,13 @@ export async function withEventBus<T>(
   try {
     return await work(bus);
   } finally {
-    await bus?.close?.();
+    if (bus?.close) {
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<void>(resolve => { timer = setTimeout(resolve, 1_500); });
+      try { await Promise.race([bus.close(), deadline]); }
+      catch (error) { process.stderr.write('warning: event bus close failed: ' + (error instanceof Error ? error.message : String(error)) + '\n'); }
+      finally { if (timer) clearTimeout(timer); }
+    }
   }
 }
 export async function publishWake(bus: EventBus | undefined, job: Job, taskId: string, message: string): Promise<void> { if (!bus) return; try { await bus.publish(eventFor(job.id, taskId, null, 'job.wake', 'queued', message, 'orchestrator', { repository: job.repository, prNumber: job.prNumber })); } catch (error) { process.stderr.write(`warning: event wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`); } }

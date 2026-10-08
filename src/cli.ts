@@ -1,27 +1,16 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events';
-import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto';
-import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js';
-import { githubAuthContext } from './github-auth.js';
-import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js';
-import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
-import { CodexAdapter, ChatGptAdapter } from './adapters.js';
-import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
-import { NatsEventBus, eventFor, EventBus } from './events.js';
-import { serveDashboard } from './dashboard.js';
-import { codexAndZaiUsageRegistry } from './usage.js';
-import { decisionMode, LayaCliDecisionEngine } from './decision.js';
-import { Server } from 'node:http';
+import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, LayaCliDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js';
 import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js';
-import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, dispatchTaskAction } from './task-actions.js';
+import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { defaultWorkspaceRoot, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js';
 import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js';
-import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { shutdownOwnedProcesses } from './owned-process.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
+import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js';
 export { helpText } from './cli-help.js';
 import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayTaskCommand, withEventBus } from './cli-support.js';
 export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
@@ -140,7 +129,8 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const managed = Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
   if (managed && ['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
-  const { store, job, localFile } = await storeFor(args);
+  const loaded = await storeFor(args); const { store, localFile } = loaded;
+  const job = managed && action === 'update' ? await relayControlJob(args, loaded.job.id) : loaded.job;
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
   if (!id) throw new Error(`task ${action} requires --task-id`);
@@ -196,6 +186,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(outputTask, null, 2));
     return;
   }
+  const expectedUpdatedAt = task.updatedAt;
   if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
   if (hasArg(args, '--adapter')) {
     const adapter = arg(args, '--adapter') as AdapterName;
@@ -221,9 +212,12 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive');
   if (hasArg(args, '--draft') && task.state === 'QUEUED') await applyTaskHoldAction(task);
   if (hasArg(args, '--queue')) {
-    await store.saveTask(task);
-    const result = await dispatchTaskAction(store, { id: 'task.queue', jobId: job.id, taskId: id });
-    Object.assign(task, result.task);
+    if (managed) await applyTaskQueueAction(job, task);
+    else {
+      await store.saveTask(task);
+      const result = await dispatchTaskAction(store, { id: 'task.queue', jobId: job.id, taskId: id });
+      Object.assign(task, result.task);
+    }
   }
   if (hasArg(args, '--max-attempts') && task.maxAttempts < task.attempt) throw new Error('--max-attempts cannot be less than the current attempt count');
   const routingFlags = ['--provider','--model','--profile','--reasoning','--cwd','--chatgpt-project'];
@@ -242,6 +236,11 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
       decidedBy: 'cli:update', decidedAt: new Date().toISOString()
     };
     if (hasArg(args, '--reasoning') && !hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize ?? 'M', task.routing.reasoning);
+  }
+  if (managed) {
+    const updated = await relayTaskCommand(args, { jobId: job.id, taskId: id, action: 'update', task, expectedUpdatedAt });
+    console.log(JSON.stringify(updated.tasks.find(item => item.id === id), null, 2));
+    return;
   }
   task.updatedAt = new Date().toISOString();
   await store.saveTask(task);
@@ -496,4 +495,4 @@ async function main(): Promise<void> {
   }
   throw new Error(usage);
 }
-if (isEntrypoint(import.meta.url)) main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+if (isEntrypoint(import.meta.url)) void runCliEntrypoint(main, { serve: process.argv[2] === 'serve' });

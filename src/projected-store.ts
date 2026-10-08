@@ -3,6 +3,7 @@ import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDepe
 import type { Comment, DurableStore, PullRequestState } from './store.js';
 import { DurableDefinitionConflictError, isDurableDefinitionConflict, sameTaskDefinition } from './store-task-definition.js';
 import type { ProjectionConflictDiagnostic, ProjectionOutboxItem, PullRequestFacts, RelayStore } from './relay-store.js';
+import type { ExecutionProcessRecord } from './process-identity.js';
 import { decideProjectionFailure } from './workflow/projection-conflict-v2.js';
 import type { GitHubPullRequestSeed } from './store.js';
 import { classifyFailure, errorMessage, observability } from './observability.js';
@@ -197,6 +198,15 @@ export class ProjectedDurableStore implements DurableStore {
     this.projection = new GitHubProjectionWriter(relay, github, onConflict);
     this.seededFacts = pullRequestFactsFromSeed(seed);
     if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
+  }
+
+  // Process identities are operational SQLite records: never enqueue GitHub projection.
+  async recordExecutionProcess(record: ExecutionProcessRecord): Promise<void> { await this.relay.recordExecutionProcess(record); }
+  async loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null> {
+    return this.relay.loadExecutionProcess(jobId, taskId, executionId);
+  }
+  async finishExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<void> {
+    await this.relay.finishExecutionProcess(jobId, taskId, executionId);
   }
 
   /** Ingest trusted GitHub records without echoing them back through the projection outbox. */
