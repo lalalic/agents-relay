@@ -351,6 +351,10 @@ export abstract class ReconcilerRuntimeBase {
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     await this.emit(event);
+    // Watchdog already committed FAILED, so its emitted task.failed is a diagnostic
+    // duplicate and cannot trigger another Task transition. Wake job reconciliation
+    // explicitly so the canonical troubleshooter graph observes the FAILED task.
+    await this.eventCoordinator.accept({ jobId, reason: 'watchdog-terminal-failure' });
     // Provider quota failures are recoverable. Drop the stale selection so the
     // next launch runs the normal worker/model router with fresh usage data.
     if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {

@@ -1000,6 +1000,7 @@ test('sync adapter runtime exit without mandatory terminal event fails after bou
   assert.equal(durable.failureReason,'terminal_event_timeout');
   assert.equal(events.filter(event=>event.type==='task.process.exited').length,1);
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
+  assert.ok((await store.load('j')).tasks.some(item => item.agentName === 'troubleshooter' && item.parentTaskId === 'runtime-exit'), 'watchdog must wake reconciliation to create a troubleshooter without manual retry');
   await reconciler.close();
   await stop(); await stopEvents();
 });
