@@ -1866,6 +1866,45 @@ test('PR 258-shaped reviewer evidence creates one idempotent fix and rejects mal
   await unsubscribe();
 });
 
+test('planner-created review binds its first authoritative verdict to Job review state', async () => {
+  const head = '0123456789abcdef0123456789abcdef01234567';
+  const implementation = task('implementation', 'SUCCEEDED');
+  const reviewer = { ...task('review-planned', 'RUNNING', ['implementation']), agentName: 'reviewer', planningDecisionId: 'plan-8', reviewHeadSha: head };
+  const store = new InMemoryStore({ ...job([implementation, reviewer]), headSha: head, review: null });
+  store.headSha = async () => head;
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: new MemoryEventBus(), maxConcurrent: 0 });
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'Unrequested seed artifact', 'orchestrator', {
+    outcome: { head_sha: head, decision: 'changes_required', blocking_findings: [{ summary: 'Remove unrequested seed artifact' }] },
+  }));
+  const saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'changes_required');
+  assert.equal(saved.review?.taskId, reviewer.id);
+  assert.equal(saved.review?.headSha, head);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  assert.equal(fixes.length, 1);
+  assert.match(fixes[0].input, /Remove unrequested seed artifact/);
+});
+
+test('planner-created review approval uses Job merge lifecycle without a seeded final review', async () => {
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const implementation = task('implementation', 'SUCCEEDED');
+  const reviewer = { ...task('review-planned', 'RUNNING', ['implementation']), agentName: 'reviewer', planningDecisionId: 'plan-8', reviewHeadSha: head };
+  const store = new InMemoryStore({ ...job([implementation, reviewer]), headSha: head, review: null });
+  store.headSha = async () => head;
+  let merges = 0;
+  store.mergePullRequest = async observedHead => { assert.equal(observedHead, head); merges += 1; };
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [new FakeAdapter()], eventBus: new MemoryEventBus(), maxConcurrent: 0 });
+  await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', {
+    outcome: { head_sha: head, decision: 'approved', blocking_findings: [] },
+  }));
+  const saved = await store.load('j');
+  assert.equal(saved.review?.outcome, 'approved');
+  assert.equal(saved.review?.headSha, head);
+  assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
+  assert.equal(merges, 1);
+});
+
 test('review changes-required falls back to one fix task from the review message', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'fallback12345678'};
   const store=new InMemoryStore(reviewJob);

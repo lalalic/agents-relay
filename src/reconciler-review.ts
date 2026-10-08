@@ -256,6 +256,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.store.headSha?.();
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
+    // Planner-created reviewer tasks predate the final-review Job gate. Bind
+    // their first trustworthy review event to PENDING before dispatching it.
+    if (!job.review && task.planningDecisionId) {
+      job.review = { outcome: 'pending', headSha, taskId: task.id, evidence: null, updatedAt: event.timestamp || new Date().toISOString() };
+      await this.store.saveJob(job);
+    }
 
     const taskDecision = tryTransitionTaskEvent(task, event.type);
     if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: event.type + '.ignored' };

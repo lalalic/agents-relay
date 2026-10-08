@@ -133,3 +133,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Cause addressed:** a URL-prefilled Temporary Chat can fail to mount an active composer during hydration. The existing retry only polls the same page; if the composer never appears it cannot recover from that page state. This is a plausible recovery path, not yet proven as the only cause of the live failure.
 - **Solution (browser-workspace source):** commit `fa868c1` on `fix/e2e-composer-readiness-20261008` catches only the pre-send composer-readiness failure, reopens a clean Temporary Chat without URL prompt prefill, reasserts temporary mode, and retries once. Other failures still propagate, avoiding duplicate sends.
 - **Validation:** syntax compilation and ChatGPT platform contract suite 18/18 PASS. Live Review retry still required to establish E2E PASS.
+
+## 2026-10-08 — E2E-001 review.changes_required lost at Job review graph
+
+- **Reproduced:** Review `review-autonomy-smoke-20261008-r2` attempt 2 emitted authoritative `review.changes_required` for PR head `6a18e937b72bd615e56aeba3113bc2af168ba08f`. The Task became `SUCCEEDED`, but Job `review` remained null and no `review-fix-*` Task was produced; PR #2 stayed `OPEN`, Job `ACTIVE`.
+- **Root cause:** Planner-created reviewer Tasks were not registered as the Job's Review before the first verdict. `applyReviewEvent` transitioned the Task before dispatching the Review graph; the graph received `review.changes_required` in state `NONE`, which has no matching transition, and the verdict was dropped.
+- **Solution:** For an SHA-matched, current-head Planner-created reviewer with no existing Job Review, durably seed `review: PENDING` with that Task as owner before applying the event. Then the existing Review graph handles changes-required by creating its standard revision Task, or handles approval via normal auto-merge effects.
+- **Validation:** Added regression coverage for both Planner reviewer `review.changes_required -> review-fix` and `review.approved -> merge`. Build and full test suite PASS 610/610. Live PR #2 must be retested; no claim of passing E2E yet.
