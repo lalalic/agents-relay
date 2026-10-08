@@ -989,6 +989,33 @@ test('sync adapter runtime exit without mandatory terminal event fails after bou
   await stop(); await stopEvents();
 });
 
+test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
+  class FailedExitAdapter extends FakeAdapter {
+    launch(t, signal) {
+      const execution = super.launch(t, signal);
+      execution.processExit = { exitCode: 1, signal: null, stderr: 'rate limit exceeded: Usage limit reached for 5 hour' };
+      return execution;
+    }
+  }
+  const t = task('rate-limited'); t.timeoutMs = 1000;
+  const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus(); const events = [];
+  const adapter = new FailedExitAdapter();
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [adapter], eventBus: bus, postExitTerminalGraceMs: 20 });
+  const stopEvents = await bus.subscribe('j', async event => events.push(event)); const stop = await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j', 'rate-limited', null, 'task.started', 'running', 'worker began', 'user', undefined, await activeEventSource(store, 'rate-limited')));
+  adapter.resolvers[0].reject(new Error('rate limit exceeded: Usage limit reached for 5 hour'));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.state, 'FAILED');
+  assert.equal(durable.failureReason, 'rate_limit_exceeded');
+  assert.match(durable.error, /Usage limit reached/);
+  const failed = events.find(event => event.type === 'task.failed');
+  assert.equal(failed.data.reason, 'rate_limit_exceeded');
+  assert.equal(failed.data.exitCode, 1);
+  await reconciler.close(); await stop(); await stopEvents();
+});
+
 test('async ChatGPT runtime exit keeps the overall terminal timeout active', async () => {
   const t=task('async-runtime-exit'); t.adapter='chatgpt'; t.timeoutMs=40; const store=new InMemoryStore(job([t])); const adapter=new FakeChatGptAdapter(); const bus=new MemoryEventBus();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100});

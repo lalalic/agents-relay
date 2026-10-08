@@ -14,7 +14,7 @@ import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js';
 export type ReconcileOptions = { owner: string; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
-type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean };
+type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 type TerminalWaiter = { executionId: string; launchBarrier: number; resolve: () => void };
 
@@ -340,7 +340,7 @@ export abstract class ReconcilerRuntimeBase {
 
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
-    if (live?.executionId === executionId) live.processSettled = true;
+    if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task || (task.executionId !== executionId && !terminalExecutionClaimed(jobId, taskId, executionId))) return;
@@ -363,12 +363,17 @@ export abstract class ReconcilerRuntimeBase {
       live.controller.abort();
       live.execution.cancel();
     }
+    const exit = live?.executionId === executionId && live.processSettled ? live.execution.processExit : undefined;
+    const rawError = live?.executionId === executionId && live.processSettled ? (live.processError || exit?.stderr || '').trim() : '';
+    const failedExit = Boolean(exit && (exit.exitCode !== 0 || exit.signal));
+    const failureReason = failedExit ? (/rate.limit.exceeded|usage limit reached/i.test(rawError) ? 'rate_limit_exceeded' : 'worker_process_failed') : 'terminal_event_timeout';
+    const failureMessage = failedExit ? (rawError || `Worker exited with code ${exit?.exitCode ?? 'null'}${exit?.signal ? `, signal ${exit.signal}` : ''}`) : `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
     const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
       eligible: (_job, task) => task.executionId === executionId,
       mutate: (_job, task) => {
         this.clearExecution(task.id, executionId);
-        task.error = `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
-        task.failureReason = 'terminal_event_timeout';
+        task.error = failureMessage;
+        task.failureReason = failureReason;
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
       },
@@ -383,9 +388,9 @@ export abstract class ReconcilerRuntimeBase {
       transition.task.parentTaskId,
       'task.failed',
       'failed',
-      transition.task.error ?? `Task ${taskId} timed out waiting for the mandatory terminal worker event`,
+      transition.task.error ?? failureMessage,
       'user',
-      { reason: 'terminal_event_timeout', timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed' },
+      { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed' },
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
