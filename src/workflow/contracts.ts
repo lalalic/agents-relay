@@ -4,6 +4,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'cancel',
   'dispatch',
   'effect.cancelActiveTasks.failed',
+  'effect.cleanupJobWorktree.failed',
   'effect.launchTask.failed',
   'effect.mergePullRequest.failed',
   'execution.orphaned',
@@ -69,6 +70,7 @@ export const WORKFLOW_EFFECT_NAMES = [
   'effect.launchTask',
   'effect.cancelActiveTasks',
   'effect.mergePullRequest',
+  'effect.cleanupJobWorktree',
 ] as const;
 
 export type WorkflowEventName = typeof WORKFLOW_EVENT_NAMES[number];
@@ -81,6 +83,7 @@ export type WorkflowEffectPayloads = {
   'effect.launchTask': { attempt: number };
   'effect.cancelActiveTasks': { reason: string };
   'effect.mergePullRequest': { headSha: string };
+  'effect.cleanupJobWorktree': { prNumber: number };
 };
 
 export const WORKFLOW_EFFECT_POLICIES = {
@@ -93,6 +96,12 @@ export const WORKFLOW_EFFECT_POLICIES = {
   'effect.cancelActiveTasks': {
     idempotency: 'job-transition',
     failureEvent: 'effect.cancelActiveTasks.failed',
+    retry: 'workflow',
+    observability: 'workflow.effect',
+  },
+  'effect.cleanupJobWorktree': {
+    idempotency: 'job-completed',
+    failureEvent: 'effect.cleanupJobWorktree.failed',
     retry: 'workflow',
     observability: 'workflow.effect',
   },

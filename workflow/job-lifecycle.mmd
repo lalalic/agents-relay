@@ -68,3 +68,9 @@ cancelled -->|on: pr.merged| cancelCancelledMerge
 cancelCancelledMerge --> completed
 cancelled -->|on: effect.cancelActiveTasks.failed| cancelled
 completed -->|on: effect.cancelActiveTasks.failed| completed
+
+%% Cleanup eligibility belongs to the lifecycle graph and is retryable after restart.
+cleanupCompletedWorktree["action: effect.cleanupJobWorktree"]
+completed -->|on: pr.merged| cleanupCompletedWorktree
+cleanupCompletedWorktree --> completed
+completed -->|on: effect.cleanupJobWorktree.failed| completed

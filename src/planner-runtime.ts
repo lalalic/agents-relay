@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { jobHasActiveExecution } from './job-execution-slot.js';
 import type { ExecutionContext } from './execution-context.js';
 import { eventFor } from './events.js';
 import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy } from './planner.js';
@@ -99,10 +100,12 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
     await ports.emit(eventFor(job.id, plan.id, null, 'planner.failed', 'failed', `Planner ${plan.id}: Planner unavailable`, 'user'));
     return;
   }
-  const claimed = await withExecutionBoundary(job.id, plan.id, async () => {
+  const claimed = await withExecutionBoundary(job.id, '__job_execution_slot__', async () => {
     const freshJob = await ports.store.load(job.id);
     const fresh = (freshJob.plans ?? []).find(item => item.id === plan.id);
     if (!fresh || fresh.status !== 'PLANNING') return null;
+    // A Planner is an execution too: no overlapping worker or second Planner.
+    if (jobHasActiveExecution(freshJob, { planId: fresh.id })) return null;
     const live = ports.live.get(fresh.id);
     if (fresh.executionId && fresh.leaseOwner === ports.options.owner && live?.executionId === fresh.executionId) return null;
     fresh.headSha = await ports.store.headSha?.() ?? fresh.headSha;

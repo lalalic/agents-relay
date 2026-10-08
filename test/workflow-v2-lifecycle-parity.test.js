@@ -61,6 +61,8 @@ const jobCases = [
   ['ACTIVE','cancel',{},'CANCELLED'],
   ['ACTIVE','pr.closed',{notMerged:true},'CANCELLED'],
   ['CANCELLED','pr.merged',{},'COMPLETED'],
+  ['COMPLETED','pr.merged',{},'COMPLETED'],
+  ['COMPLETED','effect.cleanupJobWorktree.failed',{},'COMPLETED'],
   ['CANCELLED','effect.cancelActiveTasks.failed',{},'CANCELLED'],
   ['COMPLETED','effect.cancelActiveTasks.failed',{},'COMPLETED'],
 ];
@@ -94,7 +96,7 @@ const jobRuntime = new GraphRuntime(jobSource, {
     mergeCapable: boolGuard('mergeCapable'),
   },
   events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile']),
-  actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest']),
+  actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.cleanupJobWorktree']),
 });
 
 test('canonical Task lifecycle flowchart matches lifecycle API targets across the canonical corpus', () => {

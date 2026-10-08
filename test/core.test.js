@@ -2201,3 +2201,53 @@ test('previous execution cannot start current generation despite newer timestamp
   await reconciler.handleEvent(eventFor('j',t.id,null,'task.started','running','old worker','orchestrator',undefined,eventSource('j',t.id,'generation-one')));
   assert.equal((await store.load('j')).tasks[0].state,'QUEUED');
 });
+
+test('same Job dispatches at most one task until the active execution terminates', async () => {
+  const store = new InMemoryStore(job([task('first'), task('second')]));
+  const adapter = new FakeAdapter();
+  const bus = new MemoryEventBus();
+  const reconciler = managedReconciler(store, { owner:'serial-job-test', maxConcurrent:4, adapters:[adapter], eventBus:bus });
+  const stop = await reconciler.watch('j');
+  try {
+    await reconciler.reconcile('j');
+    assert.equal(adapter.launches, 1);
+    await reconciler.reconcile('j');
+    assert.equal(adapter.launches, 1, 'a repeated reconcile must not launch another Job task');
+    const claimed = (await store.load('j')).tasks.filter(t => t.executionId !== null);
+    assert.equal(claimed.length, 1);
+    const first = claimed[0];
+    const source = await activeEventSource(store, first.id);
+    await bus.publish(eventFor('j',first.id,null,'task.started','running','started','user',undefined,source));
+    await bus.publish(eventFor('j',first.id,null,'task.completed','succeeded','done','orchestrator',undefined,source));
+    await new Promise(resolve => setTimeout(resolve,25));
+    await reconciler.reconcile('j');
+    assert.equal(adapter.launches, 2, 'next Job task should run after terminal event');
+  } finally { await stop(); await reconciler.close(); }
+});
+
+test('separate Jobs each retain one independent execution slot', async () => {
+  const firstStore = new InMemoryStore(job([task('first'),task('second')]));
+  const secondJob = job([task('other')]);
+  secondJob.id='second-job'; secondJob.tasks[0].jobId='second-job';
+  const secondStore = new InMemoryStore(secondJob);
+  const adapterA = new FakeAdapter();
+  const adapterB = new FakeAdapter();
+  const bus = new MemoryEventBus();
+  const first = managedReconciler(firstStore,{owner:'cross-job-1',maxConcurrent:4,adapters:[adapterA],eventBus:bus});
+  const second = managedReconciler(secondStore,{owner:'cross-job-2',maxConcurrent:4,adapters:[adapterB],eventBus:bus});
+  try {
+    await Promise.all([first.reconcile('j'),second.reconcile('second-job')]);
+    assert.equal(adapterA.launches,1);
+    assert.equal(adapterB.launches,1);
+  } finally { await first.close(); await second.close(); }
+});
+
+test('P0 self execution occupies the Job slot without an execution UUID', async () => {
+  const self = task('orchestrator-owned', 'RUNNING');
+  self.adapter = 'orchestrator';
+  const store = new InMemoryStore(job([self, task('model-worker')]));
+  const adapter = new FakeAdapter();
+  const reconciler = managedReconciler(store, { owner:'p0-serialized', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:4 });
+  await reconciler.reconcile('j');
+  assert.equal(adapter.launches, 0);
+});
