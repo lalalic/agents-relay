@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { IncomingHttpHeaders } from 'node:http';
 
+export type PackagePublishFailure = { runId: string; attempt: number; sha: string; stage: string };
 export type PackagePublication = { package: string; version: string; registry: string | null; sha: string | null };
 export type GitHubPullRequestFacts = { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: { ref: string; sha: string } | null };
 export type GitHubWebhookWake = {
@@ -10,8 +11,23 @@ export type GitHubWebhookWake = {
   repository: string;
   pullRequest: number;
   publication: PackagePublication | null;
+  publishFailure?: PackagePublishFailure | null;
   pullRequestFacts: GitHubPullRequestFacts | null;
 };
+export const PACKAGE_FAILED_MARKER = 'agents-relay:package-publish-failed:v1';
+export function parsePackagePublishFailureMarker(body: unknown): PackagePublishFailure | null {
+  if (typeof body !== 'string') return null;
+  const prefix = '<!-- ' + PACKAGE_FAILED_MARKER + ' ';
+  const start = body.indexOf(prefix);
+  if (start < 0) return null;
+  const end = body.indexOf(' -->', start + prefix.length);
+  if (end < 0) return null;
+  try {
+    const data = JSON.parse(body.slice(start + prefix.length, end)) as Record<string, unknown>;
+    if (typeof data.runId !== 'string' || !/^\d+$/.test(data.runId) || !Number.isInteger(data.attempt) || Number(data.attempt) < 1 || typeof data.sha !== 'string' || !/^[a-f0-9]{7,40}$/i.test(data.sha) || typeof data.stage !== 'string' || !data.stage) return null;
+    return { runId: data.runId, attempt: Number(data.attempt), sha: data.sha, stage: data.stage };
+  } catch { return null; }
+}
 export const PACKAGE_PUBLISHED_MARKER = 'agents-relay:package-published:v1';
 
 export function parsePackagePublicationMarker(body: unknown): PackagePublication | null {
@@ -68,8 +84,10 @@ export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): 
   if (event === 'issue_comment') {
     const comment = payload.comment as Record<string, unknown> | undefined;
     const publication = parsePackagePublicationMarker(comment?.body);
-    if (!publication) return null;
-    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication, pullRequestFacts: null };
+    const publishFailure = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]'
+      ? parsePackagePublishFailureMarker(comment?.body) : null;
+    if (!publication && !publishFailure) return null;
+    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication, ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
   }
 
   const facts = pullRequestFacts(payload, action);
