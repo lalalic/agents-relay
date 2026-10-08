@@ -1,3 +1,4 @@
+import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
@@ -393,7 +394,22 @@ export abstract class ReconcilerRuntimeBase {
       { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed' },
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
-    this.detach(this.emit(event), jobId, taskId, 'timeout failure event');
+    await this.emit(event);
+    // Provider quota failures are recoverable. Drop the stale selection so the
+    // next launch runs the normal worker/model router with fresh usage data.
+    if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
+      const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
+      if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
+        await applyTaskRetryAction(current);
+        current.routing = undefined;
+        current.workerSelection = undefined;
+        await this.store.saveTask(current);
+        await this.emit(eventFor(jobId, taskId, current.parentTaskId,
+          'task.rerouting', 'queued', 'Provider rate limit reached; retrying with fresh routing and usage data',
+          'orchestrator', { previousFailure: failureReason, attempt: current.attempt, maxAttempts: current.maxAttempts }));
+        await this.eventCoordinator.accept({ jobId, reason: 'rate-limit-reroute' });
+      }
+    }
   }
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
     const liveAtTerminal = this.live.get(event.task_id); const terminalEventExecutionId = executionIdFromSource(eventSourceId(event), event.job_id, event.task_id);
