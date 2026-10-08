@@ -19,7 +19,7 @@ const job=JSON.parse(command(process.execPath,[bin,'job','show','--repo',repo,'-
 const gh=JSON.parse(command('gh',['pr','view',String(pr),'-R',repo,'--json','state,mergedAt,headRefOid,url']));
 const task=job.tasks||[], plans=job.plans||[];
 const issues=[];
-if(plans.some(x=>x.status==='FAILED'))issues.push({code:'PLANNER_FAILED',items:plans.filter(x=>x.status==='FAILED').map(x=>({id:x.id,error:x.error}))});
+if(plans.length && plans[plans.length-1].status==='FAILED')issues.push({code:'LATEST_PLANNER_FAILED',items:[{id:plans[plans.length-1].id,error:plans[plans.length-1].error}]});
 if(task.some(x=>x.state==='FAILED'))issues.push({code:'TASK_FAILED',items:task.filter(x=>x.state==='FAILED').map(x=>({id:x.id,error:x.error}))});
 if(job.state==='COMPLETED'&&gh.state!=='MERGED')issues.push({code:'DURABLE_GITHUB_MISMATCH'});
 if(gh.state==='MERGED'&&job.state!=='COMPLETED')issues.push({code:'MERGED_BUT_JOB_NOT_COMPLETED'});
