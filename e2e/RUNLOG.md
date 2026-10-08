@@ -161,3 +161,10 @@ Each later fix should have its own commit documenting observed bug, root cause, 
 - **Root cause:** RepositoryWorkerPool.watch ignored `review.created` as neither a lifecycle fact nor a wake; the new Task's ready-to-run transition therefore relied on periodic reconciliation.
 - **Solution:** treat `review.created` as a wake-only event using the existing coordinator, not a task state transition or new authority path.
 - **Regression:** test publishes `review.created` and observes targeted reconcile without full scan. Build + npm test 613/613 PASS. Live rerun pending.
+
+## 2026-10-08 — Final Review incorrectly required post-merge lifecycle evidence
+
+- **Observed:** `final-review-6a18e937b72b` attempt 1 emitted `task.blocked` at 14:50:28Z despite independently verifying exact PR fixture/test 3/3. Block reason cited old planner/delivery/duplicate-launch issues and missing PR auto-merge/Job COMPLETED evidence before approval.
+- **Root cause:** `createFinalReviewTask` embeds the entire Job objective including downstream E2E workflow acceptance in the pre-merge Review instruction without explicit phase separation. The earlier phase separation for planner-created reviews did not apply to the normal final-review factory.
+- **Solution:** in the final-review Task factory, explicitly scope the verdict to current immutable artifact, tests and genuine blocking code defects. Historic recovered worker failures must be reported independently, and downstream merge/COMPLETED assertions cannot be preconditions to the approval that causes them. Preserve pre-implementation PR baseline/seed files when evaluating change scope.
+- **Validation:** Build and complete `npm test` 613/613 PASS, including new final-review contract assertion. Await fresh live review, GitHub merge and durable COMPLETED before declaring E2E pass.

@@ -1620,6 +1620,8 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   assert.equal(reviewer?.routing?.decidedBy, 'execution-router:fallback');
   assert.equal(reviewer?.routing?.decisionEvidence?.fallback, true);
   assert.match(reviewer?.input ?? '', /Review existing PR #1 at exactly head SHA sha-review-1/);
+  assert.match(reviewer?.input ?? '', /PRE-MERGE artifact approval gate/);
+  assert.match(reviewer?.input ?? '', /Do not block approval because automatic merge/);
   assert.doesNotMatch(reviewer?.input ?? '', /review\.started|review\.approved|task\.completed/);
 
   await reconciler.reconcile('j');
