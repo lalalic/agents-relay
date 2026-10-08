@@ -42,7 +42,12 @@ function detect(j,gh){
  const tasks=j.tasks||[],plans=j.plans||[];
  if(j.state==='COMPLETED' && gh.state==='MERGED' && tasks.filter(x=>x.agentName==='reviewer').some(x=>x.state==='SUCCEEDED') && tasks.filter(x=>x.kind==='work').some(x=>x.state==='SUCCEEDED'))return null;
  if(['COMPLETED','CANCELLED','FAILED'].includes(j.state))return {type:'TERMINAL_INCONSISTENCY',jobState:j.state,prState:gh.state,reviewStates:tasks.filter(x=>x.agentName==='reviewer').map(x=>x.state)};
- if(gh.state==='MERGED')return {type:'MERGED_JOB_NOT_COMPLETED',jobState:j.state};
+ if(gh.state==='MERGED'){
+  // GitHub updates before the durable Job projection. Allow normal convergence.
+  const mergedAt=Date.parse(gh.mergedAt||'');
+  if(Number.isFinite(mergedAt) && Date.now()-mergedAt<staleMs)return null;
+  return {type:'MERGED_JOB_NOT_COMPLETED',jobState:j.state,mergedAt:gh.mergedAt};
+ }
  if(gh.state==='CLOSED')return {type:'PR_CLOSED_WITHOUT_MERGE',jobState:j.state};
  const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
  if(failed.length)return {type:'TASK_FAILED',tasks:failed.map(x=>({id:x.id,state:x.state,error:x.error,executionId:x.executionId,attempt:x.attempt}))};
