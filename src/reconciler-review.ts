@@ -131,6 +131,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }));
     const taskFacts = {
       role: 'reviewer',
+      taskCapabilities: ['visual_review'],
       reviewer_diversity: {
         preference: 'Prefer a worker/provider-model identity different from implementation when otherwise suitable; this is a soft preference below user environment rules.',
         implementation_workers: implementationWorkers,
@@ -179,7 +180,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
           id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
           priority: task.priority ?? null, agentName: task.agentName ?? null,
           parentTaskId: task.parentTaskId, dependencies: task.dependencies,
-          capabilities: task.capabilities, input: task.input,
+          capabilities: task.capabilities, taskCapabilities: task.taskCapabilities, workerCapabilities: task.workerCapabilities, input: task.input,
           attachments: task.attachments ?? [], output: task.output ?? null,
           state: task.state, attempt: task.attempt, maxAttempts: task.maxAttempts,
         },

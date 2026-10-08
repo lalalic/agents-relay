@@ -13,7 +13,7 @@ export type ChoiceDecisionContract = {
 
 export type DecisionContract = ChoiceDecisionContract;
 export type DecisionRequest = { facts: JsonValue };
-export type ChoiceDecisionResult = { type: 'choice'; choice: string; probabilities?: Record<string, number> };
+export type ChoiceDecisionResult = { type: 'choice'; choice: string; probabilities?: Record<string, number>; usage?: { input_tokens?: number; output_tokens?: number; cost?: number }; latencyMs?: number; model?: string };
 export type DecisionResult = ChoiceDecisionResult;
 export type DecisionMode = 'off' | 'shadow' | 'active';
 
@@ -95,6 +95,60 @@ export function parseChoiceDecision(raw: unknown, contract: ChoiceDecisionContra
   const parsedProbabilities = probabilities(answer.probabilities, contract.choices);
   if (parsedProbabilities) result.probabilities = parsedProbabilities;
   return result;
+}
+
+export type JevDecisionOptions = {
+  apiKey?: string;
+  endpoint?: string;
+  model?: string;
+  timeoutMs?: number;
+  fetcher?: typeof fetch;
+};
+
+/** OpenRouter Decisions API adapter; the choice contract remains engine-independent. */
+export class JevDecisionEngine implements DecisionEngine {
+  readonly name = 'openrouter-jev';
+  constructor(private readonly options: JevDecisionOptions = {}) {}
+
+  async decide(request: DecisionRequest, contract: DecisionContract): Promise<DecisionResult> {
+    validateDecisionRequest(request, contract);
+    const apiKey = this.options.apiKey ?? process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error('OPENROUTER_API_KEY is required for Jev');
+    const choices = Object.fromEntries(contract.choices.map((choice, index) => [`route_${index + 1}`, choice]));
+    const started = Date.now();
+    const response = await (this.options.fetcher ?? fetch)(this.options.endpoint ?? 'https://openrouter.ai/api/alpha/decisions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.options.model ?? 'typesafe/jev-1.13',
+        state: request.facts,
+        questions: { decision: { type: 'choice', instructions: contract.question, criteria: choices } },
+      }),
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 12_000),
+    });
+    if (!response.ok) throw new Error(`Jev Decisions API returned HTTP ${response.status}`);
+    const raw: unknown = await response.json();
+    const envelope = raw as { answers?: { decision?: { choice?: unknown; probabilities?: unknown } } };
+    const answer = envelope?.answers?.decision;
+    if (!answer || typeof answer.choice !== 'string' || !Object.hasOwn(choices, answer.choice)) {
+      throw new Error('Jev returned a choice outside the decision contract');
+    }
+    const mappedProbabilities = answer.probabilities && typeof answer.probabilities === 'object'
+      ? Object.fromEntries(Object.entries(answer.probabilities as Record<string, unknown>)
+        .filter(([id]) => Object.hasOwn(choices, id)).map(([id, p]) => [choices[id], p]))
+      : undefined;
+    return {
+      ...parseChoiceDecision({ choice: choices[answer.choice], probabilities: mappedProbabilities }, contract),
+      usage: (raw as { usage?: ChoiceDecisionResult['usage'] }).usage,
+      latencyMs: Date.now() - started,
+      model: (raw as { model?: string }).model,
+    };
+  }
+}
+
+/** Select router engine without changing caller-owned hard gates. */
+export function executionDecisionEngine(): DecisionEngine {
+  return new JevDecisionEngine();
 }
 
 export type LayaCliOptions = {

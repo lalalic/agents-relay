@@ -52,11 +52,31 @@ export function executionTaskShape(taskFacts: Record<string, unknown> = {}): {
   };
 }
 
+/** Explicit task capability tags override heuristic inference; legacy capabilities are additive. */
+export function taskCapabilityFacts(taskFacts: Record<string, unknown>): string[] {
+  const task = taskFacts.task && typeof taskFacts.task === 'object' ? taskFacts.task as Record<string, unknown> : taskFacts;
+  const explicit = task.taskCapabilities ?? task.task_capabilities;
+  const legacy = task.capabilities;
+  const tags = [...(Array.isArray(explicit) ? explicit : []), ...(Array.isArray(legacy) ? legacy : [])]
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  if (Array.isArray(explicit) && explicit.length > 0) return [...new Set(tags)];
+  const description = [task.input, task.title, task.description, task.role].filter(item => typeof item === 'string').join(' ').toLowerCase();
+  if (/image generation|generate (an? )?image|生成图片|图片生成|生图/.test(description)) tags.push('image_generation');
+  if (/visual review|image review|视觉审核|图片审核|画面审核/.test(description)) tags.push('visual_review');
+  if (/vision|image understanding|图像理解|图片理解|看图/.test(description)) tags.push('vision');
+  return [...new Set(tags)];
+}
+
+function workerCapabilityFacts(worker: WorkerCandidate): string[] {
+  const specializations = worker.adapter === 'chatgpt' ? ['vision', 'image_generation', 'visual_review'] : ['coding', 'cli', 'filesystem'];
+  return [...new Set([...worker.capabilities, ...specializations])];
+}
+
 export const EXECUTION_ROUTING_PRINCIPLES = [
   'Choose one complete executable route: worker plus provider/model/profile/reasoning.',
   'ChatGPT with MacBridge and Codex have broadly overlapping execution capabilities.',
   "Browser Workspace exhaustion is ChatGPT's primary hard execution constraint.",
-  'Codex is only the deterministic fallback when the decision engine fails.',
+  'Codex is the deterministic fallback when Jev fails; no second decision model is invoked.',
 ] as const;
 
 export type ExecutionRoutingOptions = {
@@ -156,7 +176,7 @@ type LayaDecisionStage = {
   name: string;
   facts: JsonValue;
   contract: { type: 'choice'; question: string; choices: string[] };
-  result: { choice: string; probabilities?: Record<string, number>; bypassed?: boolean };
+  result: { choice: string; probabilities?: Record<string, number>; bypassed?: boolean; usage?: { input_tokens?: number; output_tokens?: number; cost?: number }; latencyMs?: number; model?: string };
 };
 
 async function decideStage(
@@ -171,7 +191,7 @@ async function decideStage(
   if (choices.length === 1) return { name, facts, contract, result: { choice: choices[0], bypassed: true } };
   const decision = await engine.decide({ facts }, contract);
   if (decision.type !== 'choice') throw new Error('Execution router expected a choice result for '+name);
-  return { name, facts, contract, result: { choice: decision.choice, probabilities: decision.probabilities } };
+  return { name, facts, contract, result: { choice: decision.choice, probabilities: decision.probabilities, usage: decision.usage, latencyMs: decision.latencyMs, model: decision.model } };
 }
 
 function routeId(worker: WorkerCandidate, model: ModelCandidate): string {
@@ -370,6 +390,12 @@ export async function routeExecution(
         reviewer_diversity: taskFacts.reviewer_diversity,
       } : null,
     },
+    task_capabilities: taskCapabilityFacts(taskFacts),
+    task_worker_capabilities: (() => {
+      const task = taskFacts.task && typeof taskFacts.task === 'object' ? taskFacts.task as Record<string, unknown> : taskFacts;
+      return Array.isArray(task.workerCapabilities) ? task.workerCapabilities : [];
+    })(),
+    worker_capabilities: Object.fromEntries(workers.map(worker => [worker.workerId, workerCapabilityFacts(worker)])),
     usage_by_provider: usageByProvider,
     runtime: {
       chatgpt_running: chatgptRunning,
@@ -379,7 +405,7 @@ export async function routeExecution(
 
   const question = appendRoutingInstruction(
     'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n' + routingInstruction,
-    'Choose exactly one listed route; do not invent routes.',
+    'For vision, image generation and visual review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
   );
 
   let selected = fallback;
@@ -390,7 +416,7 @@ export async function routeExecution(
       const stage = await decideStage(options.decisionEngine, 'route', facts as JsonValue, question, choiceLabels);
       decisionStages.push(stage);
       const index = stage.result.choice ? choiceLabels.indexOf(stage.result.choice) : -1;
-      if (index < 0) throw new Error('Laya selected a route outside the merged choice list');
+      if (index < 0) throw new Error('Decision engine selected a route outside the merged choice list');
       selected = routes[index];
       evidence = {
         mode: options.decisionMode ?? 'active',
