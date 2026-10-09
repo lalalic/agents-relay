@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import type { Job, Task } from './types.js';
 import { spawnOwnedProcess } from './owned-process.js';
 
@@ -170,6 +171,49 @@ export function managedJobWorktreePath(repository: string, prNumber: number, wor
   return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-pr-${prNumber}`, 'job');
 }
 
+export function managedLocalJobWorktreePath(repository: string, jobId: string, workspaceRoot = defaultWorkspaceRoot()): string {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !jobId.trim()) throw new Error('Invalid local Job checkout identity');
+  const safeJob = jobId.replace(/[^A-Za-z0-9_.-]+/g, '-').slice(0, 72) || 'job';
+  const digest = createHash('sha256').update(jobId).digest('hex').slice(0, 12);
+  return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-job-${safeJob}-${digest}`, 'job');
+}
+
+export async function prepareLocalJobExecutionWorktree(projectPath: string, job: Job, workspaceRoot = defaultWorkspaceRoot()): Promise<string> {
+  if (job.prNumber !== 0 || !job.localMerge?.sourceRef) return resolveRepositoryProjectPath(projectPath, job.projectPath);
+  const sourceRef = job.localMerge.sourceRef;
+  if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(sourceRef) || sourceRef.includes('..') || sourceRef.endsWith('.lock'))
+    throw new Error('Local Job execution requires a valid refs/heads sourceRef');
+  const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
+  const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
+  let remote = '';
+  try { remote = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
+  const remoteRepository = remote ? githubRepositoryFromRemote(remote) : null;
+  if (remoteRepository && remoteRepository !== job.repository) throw new Error(`Primary checkout ${primary} does not match ${job.repository}`);
+  const sourceSha = await git(primary, ['rev-parse', '--verify', sourceRef]);
+  const worktree = managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot);
+  await mkdir(dirname(worktree), { recursive: true });
+  try {
+    const existingRoot = await git(worktree, ['rev-parse', '--show-toplevel']);
+    if (await realpath(existingRoot) !== await realpath(worktree)) throw new Error(`Worktree ownership mismatch: ${worktree}`);
+    const branch = await git(worktree, ['symbolic-ref', 'HEAD']);
+    if (branch !== sourceRef) throw new Error(`Local Job worktree is bound to ${branch}, expected ${sourceRef}`);
+    const existingHead = await git(worktree, ['rev-parse', 'HEAD']);
+    if (existingHead !== sourceSha) {
+      if (await git(worktree, ['status', '--porcelain'])) throw new Error(`Local Job worktree has changes while source ref advanced: ${worktree}`);
+      const ancestor = await gitOutput(['-C', worktree, 'merge-base', '--is-ancestor', existingHead, sourceSha]).then(() => true, () => false);
+      if (!ancestor) throw new Error(`Local Job worktree has non-fast-forward history; preserve commits: ${worktree}`);
+      await git(worktree, ['merge', '--ff-only', sourceSha]);
+    }
+    return projectRelative ? join(worktree, projectRelative) : worktree;
+  } catch (error) {
+    try { await stat(worktree); } catch {
+      await git(primary, ['worktree', 'add', worktree, sourceRef.slice('refs/heads/'.length)]);
+      return projectRelative ? join(worktree, projectRelative) : worktree;
+    }
+    throw error;
+  }
+}
+
 export type ManagedWorktreeCleanupResult = { status: 'removed' | 'absent' | 'blocked'; reason?: string };
 
 /**
@@ -182,13 +226,14 @@ export async function cleanupCompletedJobWorktree(
   workspaceRoot = defaultWorkspaceRoot(),
 ): Promise<ManagedWorktreeCleanupResult> {
   if (job.state !== 'COMPLETED') return { status: 'blocked', reason: 'Job is not completed' };
-  if (!job.headSha) return { status: 'blocked', reason: 'No durable PR head SHA' };
+  const expectedHead = job.prNumber === 0 ? (job.localMerge?.sourceSha ?? job.review?.headSha ?? job.headSha) : job.headSha;
+  if (!expectedHead) return { status: 'blocked', reason: 'No durable Job head SHA' };
   if (job.tasks.some(task => task.executionId !== null || task.leaseOwner !== null))
     return { status: 'blocked', reason: 'Task still owns an execution or lease' };
   if ((job.plans ?? []).some(plan => plan.executionId !== null || plan.leaseOwner !== null))
     return { status: 'blocked', reason: 'Planner still owns an execution or lease' };
 
-  const worktree = managedJobWorktreePath(job.repository, job.prNumber, workspaceRoot);
+  const worktree = job.prNumber === 0 ? managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot) : managedJobWorktreePath(job.repository, job.prNumber, workspaceRoot);
   let metadata;
   try { metadata = await lstat(worktree); }
   catch (error) {
@@ -199,8 +244,10 @@ export async function cleanupCompletedJobWorktree(
     return { status: 'blocked', reason: 'Worktree path is not an owned directory' };
 
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
-  const origin = await git(primary, ['config', '--get', 'remote.origin.url']);
-  if (githubRepositoryFromRemote(origin) !== job.repository)
+  let origin = '';
+  try { origin = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
+  const originRepository = origin ? githubRepositoryFromRemote(origin) : null;
+  if ((job.prNumber > 0 && originRepository !== job.repository) || (job.prNumber === 0 && originRepository && originRepository !== job.repository))
     return { status: 'blocked', reason: 'Canonical repository identity mismatch' };
   const registered = await git(primary, ['worktree', 'list', '--porcelain']);
   const ownedRoot = await realpath(worktree);
@@ -211,7 +258,7 @@ export async function cleanupCompletedJobWorktree(
   if (!matching.includes(true))
     return { status: 'blocked', reason: 'Worktree is not registered with the canonical repository' };
   const head = await git(worktree, ['rev-parse', 'HEAD']);
-  if (head !== job.headSha)
+  if (head !== expectedHead)
     return { status: 'blocked', reason: 'Worktree contains unique or stale commits' };
   if (await git(worktree, ['status', '--porcelain']))
     return { status: 'blocked', reason: 'Worktree has uncommitted or untracked changes' };

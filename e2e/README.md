@@ -136,7 +136,7 @@ The workload repo is replaceable. The runner must receive it as input:
 - logical repository name: `--repo OWNER/REPO`
 - local checkout: `--checkout /absolute/path`
 
-`prepare-round.mjs` must create an isolated E2E worktree under the workspace `.worktrees/e2e/` area instead of switching the user's current checkout.
+`prepare-round.mjs` creates only a fresh source branch ref and never switches the user's current checkout. Relay itself must create and own the stable managed execution worktree for that local Job.
 
 The workload objective should be deterministic and small. For Scenario 001, prefer a tiny fixture + test + commit so failures are attributable to Relay workflow, not application complexity.
 

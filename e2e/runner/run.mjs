@@ -58,7 +58,7 @@ const prep=[resolve(root,'e2e/runner/prepare-round.mjs'),'--repo',repo,'--checko
 const p=spawnSync(process.execPath,prep,{cwd:root,encoding:'utf8',timeout:240000,maxBuffer:8e6});
 if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||p.stdout||`prepare-round exited ${p.status}`);
 const receipt=JSON.parse(p.stdout);
-console.log(JSON.stringify({event:'round-prepared',scenario,round:Number(round),jobId:receipt.jobId,branch:receipt.branch,worktree:receipt.worktree},null,2));
+console.log(JSON.stringify({event:'round-prepared',scenario,round:Number(round),jobId:receipt.jobId,branch:receipt.branch,sourceRef:receipt.sourceRef},null,2));
 const watchArgs=[resolve(root,'e2e/runner/watch.mjs'),'--repo',repo,'--job',receipt.jobId,'--branch',process.env.E2E_RELAY_BRANCH||'test/v2-local-first-e2e-20261009','--thread',threadId,'--state',resolve(runDir,'watch-state.json'),'--out',resolve(runDir,'handoff.json')];
 const child=spawn(process.execPath,watchArgs,{cwd:root,stdio:'inherit',env:{...process.env,E2E_CHATGPT_THREAD_ID:threadId}});
 child.on('exit',(code,signal)=>{if(signal)console.error(`E2E watcher exited via ${signal}`);process.exitCode=code??1});

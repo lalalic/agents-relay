@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, managedJobWorktreePath, prepareManagedExecutionWorktree } from '../dist/workspace.js';
+import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -100,4 +100,27 @@ test('a completed Job ignores merged PR observations without GitHub-triggered cl
   assert.equal(result.accepted,false);
   assert.equal(result.target,null);
   assert.deepEqual(result.effects,[]);
+});
+
+
+test('local Job gets one stable source-ref worktree and cleanup removes it', async t => {
+  const f = await fixture(t);
+  git(f.repo, 'branch', 'local-job-source', f.head.sha);
+  const job = {
+    id:'local-job-1', state:'ACTIVE', repository:'example/isolated', prNumber:0,
+    tasks:[], plans:[], localMerge:{sourceRef:'refs/heads/local-job-source',targetRef:'refs/heads/main',status:'pending'}
+  };
+  const expected = managedLocalJobWorktreePath(job.repository, job.id, f.root);
+  const first = await prepareLocalJobExecutionWorktree(f.repo, job, f.root);
+  const second = await prepareLocalJobExecutionWorktree(f.repo, job, f.root);
+  assert.equal(first, expected);
+  assert.equal(second, expected);
+  assert.equal(git(expected,'symbolic-ref','HEAD'),'refs/heads/local-job-source');
+  assert.equal(git(expected,'rev-parse','HEAD'),f.head.sha);
+  await writeFile(join(expected,'file.txt'),'local job change\n');
+  git(expected,'add','file.txt');
+  git(expected,'commit','-m','local job result');
+  const sourceSha=git(expected,'rev-parse','HEAD');
+  job.state='COMPLETED'; job.localMerge={...job.localMerge,status:'succeeded',sourceSha,mergedCommitSha:sourceSha};
+  assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'removed'});
 });
