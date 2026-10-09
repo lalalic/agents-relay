@@ -70,6 +70,7 @@ test('E2E watcher gives QUEUED tasks their configured timeout plus grace', () =>
 test('Scenario 001 requires external PR creation and merge when daemon GitHub is enabled', () => {
   assert.match(source,/githubEnabled===true/);
   assert.match(source,/GITHUB_PR_NOT_CREATED/);
+  assert.match(source,/GITHUB_AUTH_UNAVAILABLE/);
   assert.match(source,/externalPrNumber/);
   assert.match(source,/GITHUB_PR_NOT_MERGED/);
 });

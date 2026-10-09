@@ -157,10 +157,18 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (noGitHub) process.env.AGENTS_RELAY_NO_GITHUB = '1';
   const normalized = normalizeDaemonArguments(argv);
   if (normalized.pullRequest && normalized.jobId) { await startService([...argv]); return; }
-  // Local authority starts without GitHub authentication. External audit transport
-  // is optional and may initialize independently after the daemon is online.
-  const client = noGitHub ? new DisabledGitHubClient() : new GhApiClient();
-  const trusted = new Set<string>();
+  // Local authority never depends on GitHub availability, but every enabled
+  // GitHub transport must use the same authenticated context as the CLI. Probe
+  // identity separately so an auth outage is observable without blocking startup.
+  const auth = noGitHub ? null : await githubAuthContext(argv, undefined, false);
+  const client = noGitHub ? new DisabledGitHubClient() : auth!.client;
+  const trusted = noGitHub ? new Set<string>() : auth!.trustedAuthors;
+  let githubAuthenticated: boolean | null = noGitHub ? false : null;
+  let githubAuthError: string | null = null;
+  if (!noGitHub) {
+    try { const login = await client.currentLogin(); trusted.add(login); githubAuthenticated = true; }
+    catch (error) { githubAuthenticated = false; githubAuthError = errorMessage(error); }
+  }
   const concurrency = Number(value(argv,'--concurrency','4'));
   const eventResolution = await resolveEventBus([...argv]);
   const bus = eventResolution.bus;
@@ -242,7 +250,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   }).trim();
   const syncGitHubBindings = async (): Promise<void> => {
-    if (noGitHub) return;
+    if (noGitHub || githubAuthenticated !== true) return;
+    if (client.rateLimitStatus().limited) return;
     const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
     for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
       if (!repositories.includes(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
@@ -418,7 +427,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>({ githubEnabled: !noGitHub, ...client.rateLimitStatus(), readPaths: { ...githubReadPaths } }),noGitHub ? undefined : () => client.rateLimitSnapshot(),exactJob, {
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>({ githubEnabled: !noGitHub, githubAuthenticated, githubAuthError, ...client.rateLimitStatus(), readPaths: { ...githubReadPaths } }),noGitHub ? undefined : () => client.rateLimitSnapshot(),exactJob, {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
     cancel: workspaceJobAction('cancel'),

@@ -527,3 +527,12 @@ test('lifecycle daemon never reads GitHub PR snapshots for coordinator or dashbo
   assert.match(pool, /if \(signal\.event\.type === 'github\.webhook'\) continue;/);
   assert.match(pool, /this\.reconcileLocalJob\(jobId/);
 });
+
+
+test('daemon source uses shared GitHub auth context and exposes auth status', async () => {
+  const source=await readFile(new URL('../src/relayd.ts',import.meta.url),'utf8');
+  assert.match(source,/githubAuthContext\(argv, undefined, false\)/);
+  assert.match(source,/githubAuthenticated/);
+  assert.match(source,/githubAuthError/);
+  assert.match(source,/githubAuthenticated !== true/);
+});

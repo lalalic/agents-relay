@@ -45,7 +45,7 @@ function snapshot(){
 function githubCapability(){
  const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/status'],{encoding:'utf8',timeout:30000,maxBuffer:1000000});
  if(p.status!==0)return {enabled:false,error:p.error?.message||p.stderr||'status unavailable'};
- try{const status=JSON.parse(p.stdout);return {enabled:status.githubEnabled===true,status};}catch(error){return {enabled:false,error:error.message};}
+ try{const status=JSON.parse(p.stdout);return {enabled:status.githubEnabled===true,authenticated:status.githubAuthenticated!==false,error:status.githubAuthError||null,status};}catch(error){return {enabled:false,error:error.message};}
 }
 
 function externalJobSnapshot(j){
@@ -155,6 +155,7 @@ async function tick(){
   let issue=detect(j);
   let external=null;
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
+  if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
   if(!issue&&github.enabled&&boundPr<=0){
     const age=Date.now()-Date.parse(j.createdAt||new Date().toISOString());
     if(age>60000)issue={type:'GITHUB_PR_NOT_CREATED',message:'GitHub is enabled but this Job has no external PR binding after 60s'};
