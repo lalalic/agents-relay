@@ -114,8 +114,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     throw new Error('Too many final review rounds for ' + headSha);
   }
 
+  private externalReviewPrNumber(job: Job): number {
+    return job.externalPrNumber && job.externalPrNumber > 0 ? job.externalPrNumber : job.prNumber;
+  }
+
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
     const id = this.nextFinalReviewTaskId(job, headSha);
+    const reviewPrNumber = this.externalReviewPrNumber(job);
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewThread = resolveReviewerThreadDestination(job, this.options.reviewer?.threadId);
@@ -129,13 +134,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       threadSource: reviewThread.source,
       requestId: `${job.id}:${id}:${headSha}`,
       jobId: job.id,
-      prNumber: job.prNumber,
+      prNumber: reviewPrNumber,
       reviewHeadSha: headSha,
       projectId: reviewerRouting.candidate.routing.projectId ?? null,
     } : undefined;
     const input = [
       `Job ID: ${job.id}`,
-      `Review PR #${job.prNumber} at exactly head SHA ${headSha}.`,
+      `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.`,
       `Review head SHA: ${headSha}`,
       'Job objective: ' + (job.objective ?? job.description ?? job.title),
       'Use the selected reviewer agent contract as the authoritative review protocol.',
@@ -240,7 +245,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         id: job.id, title: job.title, objective: job.objective ?? null,
         description: job.description ?? null, priority: job.priority ?? null,
         executionMode: job.executionMode, repository: job.repository,
-        prNumber: job.prNumber, state: job.state,
+        prNumber: this.externalReviewPrNumber(job), state: job.state,
       },
       task: {
         id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
@@ -313,7 +318,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
         const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
-          const input = 'Address all reviewer findings for PR #' + job.prNumber + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
+          const input = 'Address all reviewer findings for PR #' + this.externalReviewPrNumber(job) + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
           const fixTask = createTaskEntity(job, { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
           await this.store.appendTask(fixTask);
           await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + id + ' for ' + issues.length + ' reviewer finding(s)', 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));

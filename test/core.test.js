@@ -1743,7 +1743,7 @@ test('review thread metadata persists and resolves reviewer, creator, then CLI o
 
 test('thread-bound final review uses the selected durable thread and records delivery', async () => {
   const work = task('work', 'SUCCEEDED');
-  const reviewJob = { ...job([work]), headSha: 'sha-threaded', creatorThreadId: 'creator-thread' };
+  const reviewJob = { ...job([work]), prNumber: 0, externalPrNumber: 16, headSha: 'sha-threaded', creatorThreadId: 'creator-thread' };
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
@@ -1755,9 +1755,11 @@ test('thread-bound final review uses the selected durable thread and records del
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadId, 'creator-thread');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'creator');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.reviewHeadSha, 'sha-threaded');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.prNumber, 16);
   assert.equal(reviewerTask?.chatgptThreadDelivery?.requestId, 'j:final-review-sha-threaded:sha-threaded');
   assert.match(reviewerTask?.input ?? '', /Job ID: j/);
   assert.match(reviewerTask?.input ?? '', /Review head SHA: sha-threaded/);
+  assert.match(reviewerTask?.input ?? '', /Review PR #16 at exactly head SHA sha-threaded/);
 });
 
 test('review thread override wins over durable metadata', async () => {
