@@ -131,6 +131,28 @@ test('manual task.retry supersedes active automatic troubleshooter recovery for 
   assert.match(superseded.error,/Superseded by manual retry of root/);
 });
 
+
+
+test('troubleshooter task.recover retries original task without cancelling itself', async () => {
+  const failed={...task('root','FAILED'),error:'recoverable blocker',attempt:1,maxAttempts:3};
+  const recovery={...task('troubleshoot-root-a1','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const store=new InMemoryStore(job([failed,recovery]));
+  await dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:'root',recoveryTaskId:'troubleshoot-root-a1'});
+  const saved=await store.load('j');
+  const root=saved.tasks.find(item=>item.id==='root');
+  const activeRecovery=saved.tasks.find(item=>item.id==='troubleshoot-root-a1');
+  assert.equal(root.state,'QUEUED');
+  assert.equal(activeRecovery.state,'RUNNING');
+  assert.equal(activeRecovery.executionId,'recovery-exec');
+});
+
+test('task.recover rejects unrelated or inactive recovery tasks', async () => {
+  const failed={...task('root','FAILED'),error:'recoverable blocker',attempt:1,maxAttempts:3};
+  const unrelated={...task('troubleshoot-other-a1','RUNNING'),agentName:'troubleshooter',parentTaskId:'other',executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const store=new InMemoryStore(job([failed,unrelated]));
+  await assert.rejects(()=>dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:'root',recoveryTaskId:'troubleshoot-other-a1'}),/active Troubleshooter recovery/);
+});
+
 test('legacy planner Task is read-only under shared task.retry action', async () => {
   const failed = { ...task('planner-retry', 'FAILED'), kind: 'planner', error: 'invalid planner output', attempt: 3, maxAttempts: 3, executionId: 'old-execution', leaseOwner: 'old-owner', leaseExpiresAt: new Date(Date.now() + 1000).toISOString() };
   const store = new InMemoryStore(job([failed]));
@@ -938,6 +960,24 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,await activeEventSource(store,created.id)));
   await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,await activeEventSource(store,created.id)));
   await new Promise(resolve=>setTimeout(resolve,10)); await stop(); await rm(contextRoot,{recursive:true,force:true});
+});
+
+
+
+test('reviewer start acknowledgement timeout automatically wakes Troubleshooter recovery', async () => {
+  const contextRoot=await mkdtemp(join(tmpdir(),'agents-relay-reviewer-recovery-context-')); await mkdir(join(contextRoot,'agents')); await writeFile(join(contextRoot,'agents','reviewer.agent.md'),'---\nname: reviewer\n---\nReview the managed task.\n');
+  const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-recovery'}); const bus=new MemoryEventBus();
+  const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
+  const reviewer={adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}};
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,100));
+  const saved=await store.load('j');
+  const review=saved.tasks.find(item=>item.agentName==='reviewer');
+  assert.equal(review?.state,'FAILED');
+  assert.equal(review?.failureReason,'worker_start_timeout');
+  const recovery=saved.tasks.find(item=>item.agentName==='troubleshooter'&&item.parentTaskId===review?.id);
+  assert.ok(recovery,'reviewer start-ack failure must automatically create Troubleshooter work');
+  await stop(); await reconciler.close(); await rm(contextRoot,{recursive:true,force:true});
 });
 
 test('after-terminal ChatGPT tab close ignores stale and wrong-task terminal events', async () => {

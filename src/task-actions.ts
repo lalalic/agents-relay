@@ -4,6 +4,7 @@ import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from '
 import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
+export const TASK_RECOVER_ACTION = 'task.recover' as const;
 export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
 export const TASK_CANCEL_ACTION = 'task.cancel' as const;
 export const TASK_RELEASE_ACTION = 'task.release' as const;
@@ -11,12 +12,13 @@ export const TASK_HOLD_ACTION = 'task.hold' as const;
 export const TASK_START_ACTION = 'task.start' as const;
 export const TASK_COMPLETE_ACTION = 'task.complete' as const;
 export const TASK_QUEUE_ACTION = 'task.queue' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_START_ACTION | typeof TASK_COMPLETE_ACTION | typeof TASK_QUEUE_ACTION;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_RECOVER_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_START_ACTION | typeof TASK_COMPLETE_ACTION | typeof TASK_QUEUE_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
   jobId: string;
   taskId: string;
+  recoveryTaskId?: string;
 };
 
 export type TaskActionResult = { job: Job; task: Task };
@@ -152,8 +154,14 @@ export async function dispatchTaskAction(
   const job = await store.load(request.jobId);
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
-  const relatedMutations = selectRelatedTaskMutations(job, task, request.id);
+  const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(job, task, request.id);
   if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
+  else if (request.id === TASK_RECOVER_ACTION) {
+    const recovery = request.recoveryTaskId ? job.tasks.find(item => item.id === request.recoveryTaskId) : undefined;
+    if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED','RUNNING'].includes(recovery.state))
+      throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
+    await applyTaskRetryAction(task, { extendBudget: true });
+  }
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
   else if (request.id === TASK_RELEASE_ACTION) await applyTaskReleaseAction(task);

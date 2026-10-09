@@ -144,6 +144,9 @@ Required: --task-id ID, --summary TEXT, and the normal Job storage options. The 
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  'task recover': `Retry one failed/blocked durable Task from its active automatic Troubleshooter without cancelling that recovery Task.
+
+Required: --task-id ID, --recovery-task-id TROUBLESHOOTER_ID, and the normal Job storage options. The recovery Task must be an active Troubleshooter whose parentTaskId is the original Task.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

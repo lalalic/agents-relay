@@ -124,11 +124,13 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     console.log(JSON.stringify(task, null, 2));
     return;
   }
-  if (action === 'retry' || action === 'cancel') {
+  if (action === 'retry' || action === 'recover' || action === 'cancel') {
     let outputJob = job;
     let outputTask = task;
-    if (action === 'retry') {
-      const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: job.id, taskId: id });
+    if (action === 'retry' || action === 'recover') {
+      const recoveryTaskId = action === 'recover' ? arg(args, '--recovery-task-id') : '';
+      if (action === 'recover' && !recoveryTaskId) throw new Error('task recover requires --recovery-task-id');
+      const result = await dispatchTaskAction(store, { id: action === 'recover' ? 'task.recover' : 'task.retry', jobId: job.id, taskId: id, ...(recoveryTaskId ? { recoveryTaskId } : {}) });
       if (result.job.state === 'DRAFT') { await applyJobActivateAction(result.job); await store.saveJob(result.job); }
       outputJob = await store.load(job.id);
       outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;

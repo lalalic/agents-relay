@@ -302,6 +302,11 @@ export abstract class ReconcilerRuntimeBase {
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     this.detach(this.emit(event), jobId, taskId, 'worker failure event');
+    // failLaunch already committed the authoritative FAILED state. The emitted
+    // task.failed observation may be ignored as a duplicate, so explicitly wake
+    // graph reconciliation from the durable failure fact. This is required for
+    // automatic Troubleshooter recovery, including reviewer start-ack failures.
+    this.detach(this.eventCoordinator.accept({ jobId, reason: `worker-${phase}-failure` }), jobId, taskId, 'worker failure reconcile wake');
   }
 
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
