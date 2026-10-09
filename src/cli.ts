@@ -268,7 +268,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       continuation: continuation(args),
       ...(hasArg(args, '--reviewer-thread-id') ? { reviewerThreadId: arg(args, '--reviewer-thread-id') } : {}),
       ...(hasArg(args, '--creator-thread-id') ? { creatorThreadId: arg(args, '--creator-thread-id') } : {}),
-      prNumber,
+      ...(prValue ? { prNumber } : {}),
       head: arg(args, '--head') || undefined,
       base: arg(args, '--base', 'main'),
       body: arg(args, '--body') || objective || undefined
