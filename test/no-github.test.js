@@ -7,7 +7,7 @@ import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { GitHubStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -316,16 +316,44 @@ test('Review delivery merges into main while main remains checked out and stays 
   } finally {repo.close();}
 });
 
-test('checked-out main refuses dirty target without modifying any ref or file',()=>{
+test('checked-out main refuses tracked dirty target without modifying any ref or file',()=>{
   const repo=localRepository();
   try {
     repo.git('checkout','main');
     const prior=repo.git('rev-parse','main');
-    writeFileSync(join(repo.path,'untracked.txt'),'do not touch');
-    assert.throws(()=>deliverLocalMerge(repo.path,{...mergeRefs,sourceSha:repo.head}),/not clean/);
+    writeFileSync(join(repo.path,'base.txt'),'tracked local change');
+    assert.throws(()=>deliverLocalMerge(repo.path,{...mergeRefs,sourceSha:repo.head}),/tracked or index changes/);
     assert.equal(repo.git('rev-parse','HEAD'),prior);
     assert.equal(repo.git('rev-parse','main'),prior);
-    assert.equal(repo.git('status','--porcelain'),'?? untracked.txt');
+    assert.equal(readFileSync(join(repo.path,'base.txt'),'utf8'),'tracked local change');
+  } finally {repo.close();}
+});
+
+
+
+test('checked-out main merge ignores unrelated untracked files',()=>{
+  const repo=localRepository();
+  try {
+    repo.git('checkout','main');
+    writeFileSync(join(repo.path,'notes.local'),'keep me');
+    const result=deliverLocalMerge(repo.path,{...mergeRefs});
+    assert.equal(result.mergedCommitSha,repo.git('rev-parse','main'));
+    assert.equal(readFileSync(join(repo.path,'notes.local'),'utf8'),'keep me');
+  } finally {repo.close();}
+});
+
+test('checked-out main merge refuses incoming path collision with untracked file',()=>{
+  const repo=localRepository();
+  try {
+    repo.git('checkout','feature');
+    writeFileSync(join(repo.path,'incoming-only.txt'),'from feature');
+    repo.git('add','incoming-only.txt');repo.git('commit','-m','incoming path');
+    repo.git('checkout','main');
+    writeFileSync(join(repo.path,'incoming-only.txt'),'local untracked');
+    const prior=repo.git('rev-parse','main');
+    assert.throws(()=>deliverLocalMerge(repo.path,{...mergeRefs}),/untracked|would be overwritten|merge|exit/i);
+    assert.equal(repo.git('rev-parse','main'),prior);
+    assert.equal(readFileSync(join(repo.path,'incoming-only.txt'),'utf8'),'local untracked');
   } finally {repo.close();}
 });
 
@@ -424,7 +452,7 @@ test('dead cross-process lock recovers but a preexisting manual MERGE_HEAD is ne
     repo.git('add','base.txt');repo.git('commit','-m','manual target');
     assert.throws(()=>repo.git('merge','feature'));
     const before=repo.git('rev-parse','HEAD');
-    assert.throws(()=>deliverLocalMerge(repo.path,{...mergeRefs}),/MERGE_HEAD|not clean/);
+    assert.throws(()=>deliverLocalMerge(repo.path,{...mergeRefs}),/MERGE_HEAD|not clean|tracked or index changes/);
     assert.equal(repo.git('rev-parse','HEAD'),before);
     assert.ok(repo.git('rev-parse','--verify','MERGE_HEAD'));
   } finally {repo.close();}

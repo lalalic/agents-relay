@@ -55,8 +55,8 @@ function mergeCheckedOutTarget(repoPath: string, targetRef: string, sourceSha: s
       || git(worktree, 'rev-parse', 'HEAD') !== targetSha) {
     throw new Error('Local merge target moved before delivery');
   }
-  if (git(worktree, 'status', '--porcelain', '--untracked-files=all')) {
-    throw new Error('Local merge target worktree is not clean');
+  if (git(worktree, 'status', '--porcelain', '--untracked-files=no')) {
+    throw new Error('Local merge target worktree has tracked or index changes');
   }
   if (existsSync(resolve(worktree, git(worktree, 'rev-parse', '--git-path', 'MERGE_HEAD')))) {
     throw new Error('Existing MERGE_HEAD is not owned by Relay; manual resolution required');
