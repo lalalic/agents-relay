@@ -279,7 +279,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
   assert.match(dashboardHtml, /element\('div','job-primary'\)/);
   assert.match(dashboardHtml, /job\.state/);
   assert.match(dashboardHtml, /job\.runtimeStatus\|\|'IDLE'/);
-  assert.doesNotMatch(dashboardHtml, /states\.append\([^;]*job\.githubState/);
+  assert.match(dashboardHtml, /text\('PR Merged'\)/);
   assert.match(dashboardHtml, /field\('PR state',job\.githubState\|\|'UNKNOWN'\)/);
   assert.doesNotMatch(dashboardHtml, /actionButton\(job/);
   assert.doesNotMatch(dashboardHtml, /className='job-action'/);
