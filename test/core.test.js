@@ -1593,6 +1593,22 @@ test('managed model worker input contains durable links without duplicating stor
   assert.equal(t.input,'implement the change');
 });
 
+test('local model worker input includes authoritative task input and event contract', async () => {
+  const { managedWorkerInput } = await import('../dist/reconciler.js');
+  const t=task('local-worker'); t.executionId='local-execution'; t.adapter='codex'; t.projectName='agents-relay'; t.input='local durable work contract'; t.output={kind:'task_pr'};
+  const root=job([t]); root.prNumber=0; root.repository='lalalic/agents-relay';
+  const input=await managedWorkerInput(root,t);
+  assert.match(input,/\[Agents Relay managed task\]/);
+  assert.match(input,/Job: local j/);
+  assert.match(input,/Task URL: local:j\/task\/local-worker/);
+  assert.match(input,/Treat the following durable task input as the authoritative work contract; do not query GitHub\./);
+  assert.match(input,/local durable work contract/);
+  assert.match(input,/\[Execution event contract — mandatory\]/);
+  assert.match(input,/Your exact event source identity is: job\/j\/task\/local-worker\/execution\/local-execution/);
+  assert.doesNotMatch(input,/Retrieve the durable job and task from GitHub/);
+  assert.equal(t.input,'local durable work contract');
+});
+
 test('ChatGPT tasks do not carry durable resumable thread lifecycle', () => {
   const t=task('chat'); t.adapter='chatgpt'; t.threadId=null;
   assert.equal(t.threadId,null);
