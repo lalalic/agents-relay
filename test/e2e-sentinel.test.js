@@ -57,3 +57,11 @@ test('watcher supports controller expected-cancel marker instead of treating eve
   const cancelRunner=readFileSync(new URL('../e2e/runner/cancel-round.mjs', import.meta.url),'utf8');
   assert.match(cancelRunner,/expectedCancelMarker/);
 });
+
+
+test('E2E watcher gives QUEUED tasks their configured timeout plus grace', () => {
+  const job={state:'ACTIVE',tasks:[{id:'review',state:'QUEUED',timeoutMs:900000,updatedAt:new Date(Date.now()-300000).toISOString()}],plans:[]};
+  assert.equal(detect(job,300000),null);
+  job.tasks[0].updatedAt=new Date(Date.now()-950000).toISOString();
+  assert.equal(detect(job,950000).type,'STALLED');
+});

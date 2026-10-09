@@ -107,7 +107,7 @@ function detect(j){
  if(last?.status==='FAILED'&&!tasks.some(x=>x.state==='QUEUED'||x.state==='RUNNING'))return {type:'PLANNER_FAILED',plan:{id:last.id,error:last.error}};
  if(j.localMerge?.status==='failed')return {type:'LOCAL_MERGE_FAILED',localMerge:j.localMerge};
  const active=tasks.filter(x=>x.state==='QUEUED'||x.state==='RUNNING');
- const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);if(!recent.length)return false;const deadline=Math.max(staleMs,x.state==='RUNNING'?Number(x.timeoutMs||0)+30000:0);return Date.now()-Math.max(...recent)>deadline;});
+ const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);if(!recent.length)return false;const deadline=Math.max(staleMs,Number(x.timeoutMs||0)+30000);return Date.now()-Math.max(...recent)>deadline;});
  if(!active.length && state.lastEventAt && Date.now()-Date.parse(state.lastEventAt)>staleMs)return {type:'NO_PROGRESS',jobState:j.state,taskStates:tasks.map(x=>({id:x.id,state:x.state}))};
  if(stale.length)return {type:'STALLED',tasks:stale.map(x=>({id:x.id,state:x.state,executionId:x.executionId,updatedAt:x.updatedAt,timeoutMs:x.timeoutMs}))};
  return null;
