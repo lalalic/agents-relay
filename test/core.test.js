@@ -1633,6 +1633,20 @@ test('managed model worker input contains durable links without duplicating stor
   assert.equal(t.input,'implement the change');
 });
 
+test('local projected reviewer input exposes external PR while keeping local lifecycle authority', async () => {
+  const { managedWorkerInput } = await import('../dist/reconciler.js');
+  const t=task('local-reviewer'); t.executionId='review-execution'; t.adapter='chatgpt'; t.projectName='agents-relay'; t.agentName='reviewer'; t.input='Review PR #17 at exactly head SHA abc123.'; t.output={kind:'task_pr'};
+  const root=job([t]); root.prNumber=0; root.externalPrNumber=17; root.repository='lalalic/agents-relay';
+  const input=await managedWorkerInput(root,t);
+  assert.match(input,/Job: local j \(lifecycle authority\)/);
+  assert.match(input,/Projected GitHub PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
+  assert.match(input,/local SQLite Job is the lifecycle authority/);
+  assert.match(input,/Review the projected PR at https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
+  assert.match(input,/Review PR #17 at exactly head SHA abc123/);
+  assert.match(input,/Projected PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
+  assert.doesNotMatch(input,/do not query GitHub/);
+});
+
 test('local model worker input includes authoritative task input and event contract', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
   const t=task('local-worker'); t.executionId='local-execution'; t.adapter='codex'; t.projectName='agents-relay'; t.input='local durable work contract'; t.output={kind:'task_pr'};
