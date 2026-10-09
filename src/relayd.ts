@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { once } from 'node:events';
-import { execFileSync } from 'node:child_process';
+import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -245,10 +245,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     return binding;
   };
 
-  const gitText = (cwd: string, args: string[]): string => execFileSync('git', ['-C', cwd, ...args], {
-    encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  }).trim();
+  const gitText = async (cwd: string, args: string[]): Promise<string> => await new Promise<string>((resolve, reject) => {
+    const child = spawnOwnedProcess('git', ['-C', cwd, ...args], { invocation: 'workspace.git', timeoutMs: 120000, spawn: { stdio: ['ignore','pipe','pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } } });
+    let stdout=''; let stderr='';
+    child.stdout?.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr?.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', reject);
+    child.once('close', code => code===0 ? resolve(stdout.trim()) : reject(new Error(stderr.trim() || `git exited ${code}`)));
+  });
   const refreshGitHubAuthentication = async (): Promise<void> => {
     if (noGitHub) return;
     try {
@@ -277,10 +281,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       let relay = relayStores.get(snapshot.path);
       if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
-      const sourceSha = gitText(canonical, ['rev-parse', '--verify', sourceRef]);
+      const existingExternalPr = discovered.externalPrNumber ?? (discovered.prNumber > 0 ? discovered.prNumber : 0);
+      const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
+      if (terminal && existingExternalPr <= 0) continue;
+      const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]);
       const facts = await relay.loadPullRequestFacts();
       if (facts?.head?.sha !== sourceSha) {
-        gitText(canonical, ['push', 'origin', `${branch}:${branch}`]);
+        await gitText(canonical, ['push', 'origin', `${branch}:${branch}`]);
       }
       let job = (await relay.loadJob(discovered.id)) ?? discovered;
       let externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
@@ -306,9 +313,15 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
     cachedOverviews = await inventoryFromLocal();
   };
+  let githubBindingSyncInFlight: Promise<void> | null = null;
   const syncGitHubBindingsSafely = async (): Promise<void> => {
-    try { await syncGitHubBindings(); }
-    catch (error) { observability().record({ stage: 'projection', event: 'github.binding_sync_failed', level: 'warn', outcome: 'failed', message: `GitHub Job binding sync failed: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
+    if (githubBindingSyncInFlight) return githubBindingSyncInFlight;
+    githubBindingSyncInFlight = (async()=>{
+      try { await syncGitHubBindings(); }
+      catch (error) { observability().record({ stage: 'projection', event: 'github.binding_sync_failed', level: 'warn', outcome: 'failed', message: `GitHub Job binding sync failed: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
+      finally { githubBindingSyncInFlight = null; }
+    })();
+    return githubBindingSyncInFlight;
   };
   const pool = new RepositoryWorkerPool(
     concurrency,
