@@ -1,5 +1,5 @@
 import type { Job, Priority, ExecutionMode } from './types.js';
-import { resolvePullRequest, type GitHubClient, type PullRequest } from './store.js';
+import { type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobEntity } from './workflow/entity-creation.js';
 import { normalizeThreadId } from './reviewer-thread.js';
@@ -8,8 +8,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * Job lifecycle bootstrap: SQLite is authoritative. PR creation is an
- * optional one-time external adapter; an explicit PR number is offline-safe.
+ * Job lifecycle bootstrap: SQLite is authoritative. No GitHub request is
+ * required; an explicit PR number is optional external metadata.
  */
 export async function ensureManagedGitHubJob(
   _client: GitHubClient,
@@ -39,23 +39,17 @@ export async function ensureManagedGitHubJob(
       throw new Error('Immutable Job ID is already bound to a different repository or external PR');
     return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
   }
-  const pr = !options.noGitHub && options.head && options.prNumber === undefined
-    ? await resolvePullRequest(_client, repositoryName, {
-        head: options.head,
-        base: options.base,
-        title: options.title,
-        body: options.body ?? options.objective,
-      })
-    : placeholder;
+  const pr = placeholder;
   const number = pr.number;
   const local = openLocalManagedStore(repositoryName, number, {
-    directory, jobId: options.id, noGitHub: options.noGitHub,
-    client: _client, trustedAuthors: _trustedAuthors,
+    directory, jobId: options.id, noGitHub: true,
   });
   try {
     const existing = await local.relay.loadJob(options.id);
     if (existing) return { job: existing, pr };
     const now = new Date().toISOString();
+    const localMergeSource = options.localMergeSource ?? (options.head ? `refs/heads/${options.head}` : undefined);
+    const localMergeTarget = options.localMergeTarget ?? (options.head ? `refs/heads/${options.base ?? 'main'}` : undefined);
     const job = createJobEntity({
       id: options.id,
       title: options.title || pr.title || 'Agents Relay job',
@@ -66,7 +60,7 @@ export async function ensureManagedGitHubJob(
       executionMode: options.executionMode ?? 'fixed',
       tag: options.tag,
       autoMerge: true,
-      ...(options.localMergeSource && options.localMergeTarget ? { localMerge: { sourceRef: options.localMergeSource, targetRef: options.localMergeTarget, status: 'pending' as const } } : {}),
+      ...(localMergeSource && localMergeTarget ? { localMerge: { sourceRef: localMergeSource, targetRef: localMergeTarget, status: 'pending' as const } } : {}),
       reviewEnabled: options.reviewEnabled ?? true,
       ...(options.reviewerThreadId
         ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') }

@@ -250,9 +250,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'create') {
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
-    const auth = !noGitHubMode(args) && !prValue
-      ? await githubAuthContext(args)
-      : { client: new DisabledGitHubClient(), trustedAuthors: new Set<string>() };
+    const auth = { client: new DisabledGitHubClient(), trustedAuthors: new Set<string>() };
     const result = await ensureManagedGitHubJob(auth.client, repo, auth.trustedAuthors, {
       id, noGitHub: noGitHubMode(args),
       localMergeSource: arg(args, '--local-merge-source') || undefined,
@@ -268,7 +266,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       continuation: continuation(args),
       ...(hasArg(args, '--reviewer-thread-id') ? { reviewerThreadId: arg(args, '--reviewer-thread-id') } : {}),
       ...(hasArg(args, '--creator-thread-id') ? { creatorThreadId: arg(args, '--creator-thread-id') } : {}),
-      ...(prValue ? { prNumber } : {}),
+      prNumber,
       head: arg(args, '--head') || undefined,
       base: arg(args, '--base', 'main'),
       body: arg(args, '--body') || objective || undefined

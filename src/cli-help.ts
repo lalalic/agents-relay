@@ -59,7 +59,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
-With --head, reuse/create the PR for that head. With --pr, bind an external PR reference locally without a GitHub query.
+With --head, bind the local source branch and use --base as its local merge target without a GitHub query. With --pr, bind an existing external PR reference as optional metadata without a GitHub query.
 Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan follows durable Job creation with the first real Planner round, activates the Job, and publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 

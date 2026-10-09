@@ -293,31 +293,30 @@ test('managed no-GitHub Job creation is GitHub-independent and idempotent by imm
   } finally {await rm(directory,{recursive:true,force:true});}
 });
 
-test('managed GitHub-enabled Job creation resolves or creates the requested head PR once', async () => {
+test('managed head Job bootstrap is GitHub-independent and derives local merge refs', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory = await mkdtemp(join(tmpdir(), 'relay-github-job-create-'));
+  const directory = await mkdtemp(join(tmpdir(), 'relay-head-job-create-'));
   try {
-    const client = new ManagedGitHubClient();
+    let apiCalls = 0;
+    const client = {
+      request: async () => { apiCalls++; throw new Error('GitHub REST forbidden'); },
+      graphql: async () => { apiCalls++; throw new Error('GitHub GraphQL forbidden'); },
+    };
     const options = {
-      id: 'github-managed',
-      title: 'GitHub managed work',
-      objective: 'body',
-      head: 'feat/github-managed',
-      base: 'main',
-      body: 'body',
-      storeDirectory: directory,
+      id: 'head-managed', title: 'Head managed work', objective: 'body',
+      head: 'feat/head-managed', base: 'main', body: 'body', storeDirectory: directory,
     };
     const first = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
     const second = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
-    assert.equal(first.pr.number, 1);
-    assert.equal(first.job.prNumber, 1);
-    assert.equal(first.pr.head, 'feat/github-managed');
-    assert.equal(first.pr.base, 'main');
-    assert.equal(client.pulls.length, 1);
+    assert.equal(first.pr.number, 0);
+    assert.equal(first.job.prNumber, 0);
+    assert.equal(apiCalls, 0);
+    assert.deepEqual(first.job.localMerge, {
+      sourceRef: 'refs/heads/feat/head-managed', targetRef: 'refs/heads/main', status: 'pending',
+    });
     assert.equal(second.job.id, first.job.id);
-    assert.equal(second.pr.number, 1);
-    const sqlite = new SQLiteRelayStore(relayStorePath(directory, 'owner/repo', 1));
-    assert.equal((await sqlite.loadJob('github-managed')).prNumber, 1);
+    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory, 'head-managed'));
+    assert.equal((await sqlite.loadJob('head-managed')).prNumber, 0);
     sqlite.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
