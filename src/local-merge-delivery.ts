@@ -7,6 +7,10 @@ import { errorMessage, observability } from './observability.js';
 
 async function queueOptionalExternalMerge(store: DurableStore, job: Job, headSha: string | null, noGitHub: boolean): Promise<void> {
   const externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+  // A succeeded local Git merge is already authoritative delivery. Its GitHub projection
+  // is a fast-forward push of the durable target ref by the service binding sync, not
+  // a second independent GitHub merge decision.
+  if (job.localMerge?.status === 'succeeded') return;
   if (noGitHub || job.autoMerge === false || externalPrNumber <= 0 || !headSha || !store.mergePullRequest) return;
   try {
     await store.mergePullRequest(headSha);
@@ -58,7 +62,7 @@ export async function reconcileLocalGitCompletion(
             if (!projectPathForJob) throw new Error('Local Git merge requires an explicit project path');
             const repoPath = await projectPathForJob(finalState);
             const delivered = deliverLocalMerge(repoPath, { ...activeReceipt, sourceSha: activeReceipt.sourceSha ?? headSha ?? undefined });
-            finalState.localMerge = { ...activeReceipt, ...delivered, status: 'succeeded',
+            finalState.localMerge = { ...activeReceipt, ...delivered, status: 'succeeded', projectionStrategy: 'target_ref_push',
               error: undefined, nextAttemptAt: undefined, updatedAt: new Date().toISOString() };
           } catch (error) {
             const attempts = (activeReceipt.attempts ?? 0) + 1;

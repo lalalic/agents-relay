@@ -494,12 +494,12 @@ test('crash before lock owner and crash during recovery guard initialize are rec
   } finally {rmSync(root,{recursive:true,force:true});}
 });
 
-test('local completion queues optional external PR merge only after authoritative COMPLETED is durable', async()=>{
+test('authoritative local merge completion never enqueues a second GitHub merge decision', async()=>{
   const repo=localRepository();
   const db=new SQLiteRelayStore(':memory:');
   const remote=new (await import('../dist/store.js')).InMemoryStore();
   let merges=0;
-  remote.mergePullRequest=async sha=>{merges+=1;assert.equal(sha,repo.head);};
+  remote.mergePullRequest=async()=>{merges+=1;};
   const store=new LocalAuthorityDurableStore(db,remote,undefined,false);
   try {
     await store.saveJob({...job(),prNumber:0,externalPrNumber:77,headSha:repo.head,localMerge:{...mergeRefs}});
@@ -507,12 +507,11 @@ test('local completion queues optional external PR merge only after authoritativ
     const reconciler=managedReconciler(store,{owner:'external-merge-after-local',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
     const completed=await reconciler.reconcile('local-job');
     assert.equal(completed.state,'COMPLETED');
-    assert.equal((await store.load('local-job')).state,'COMPLETED');
-    assert.equal(merges,0,'GitHub merge must remain asynchronous projection');
-    assert.equal(await db.pendingProjectionCount(),1);
-    assert.deepEqual(await store.projection.flushOnce(),{projected:1,deferred:0});
-    assert.equal(merges,1);
-    assert.equal(await db.pendingProjectionCount(),0);
+    const durable=await store.load('local-job');
+    assert.equal(durable.state,'COMPLETED');
+    assert.equal(durable.localMerge?.projectionStrategy,'target_ref_push');
+    assert.equal(merges,0,'successful local merge must not ask GitHub to independently re-merge');
+    assert.equal(await db.pendingProjectionCount(),0,'target-ref projection is service-owned and no merge_pull_request outbox row is allowed');
     await reconciler.close();
   } finally {db.close();repo.close();}
 });

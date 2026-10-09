@@ -8,7 +8,7 @@ import { completionGateSatisfied } from './scheduler.js';
 
 export type LocalMergeReceipt = {
   sourceRef: string; targetRef: string; status: 'pending' | 'failed' | 'succeeded';
-  sourceSha?: string; mergedCommitSha?: string; attempts?: number;
+  sourceSha?: string; mergedCommitSha?: string; projectionStrategy?: 'target_ref_push'; attempts?: number;
   error?: string; nextAttemptAt?: string; updatedAt?: string;
 };
 

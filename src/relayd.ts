@@ -14,6 +14,7 @@ import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
+import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
@@ -311,9 +312,17 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       }
       const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
-      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && latestFacts?.state !== 'MERGED') {
-        const projected = new LocalAuthorityDurableStore(relay, github, undefined, false);
-        await projected.mergePullRequest(job.localMerge.sourceSha ?? sourceSha);
+      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
+        const projectedMerge = projectAuthoritativeLocalMerge(canonical, job);
+        const projectedState = await github.pullRequestState();
+        const projectedHead = await github.pullRequestHead();
+        await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });
+        observability().record({
+          stage: 'projection', event: 'github.local_merge_projected', outcome: 'succeeded',
+          message: `Projected authoritative local merge ${projectedMerge.localMergedCommitSha} to ${projectedMerge.targetRef}`,
+          correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
+          data: { ...projectedMerge, githubState: projectedState },
+        });
       }
     }
     cachedOverviews = await inventoryFromLocal();
