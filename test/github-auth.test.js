@@ -70,3 +70,10 @@ test('offline lifecycle creation preserves configured GitHub App client without 
     assert.deepEqual([...result.trustedAuthors],['bot-author']);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
+
+
+test('local GitHub login rejects nonzero gh auth status even when stdout names an active account', async () => {
+  const source=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../src/github-client.ts',import.meta.url),'utf8'));
+  assert.match(source,/child\.on\('close', \(code\) =>/);
+  assert.match(source,/if \(code !== 0\) \{ resolve\(null\); return; \}/);
+});

@@ -189,7 +189,8 @@ export class GhApiClient implements GitHubClient {
       const child = spawnOwnedProcess('gh', ['auth', 'status', '--active', '--json', 'hosts'], { invocation: 'github.auth-status' }); let stdout = '';
       child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.on('error', () => resolve(null));
-      child.on('close', () => {
+      child.on('close', (code) => {
+        if (code !== 0) { resolve(null); return; }
         try {
           const value = JSON.parse(stdout) as Record<string, unknown>; const hosts = value.hosts as Record<string, unknown[]> | undefined;
           const github = hosts?.['github.com']; const active = Array.isArray(github) ? github.find(item => (item as Record<string, unknown>).active === true) as Record<string, unknown> | undefined : undefined;
