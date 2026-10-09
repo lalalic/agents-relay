@@ -32,6 +32,20 @@ const branch=opt('branch',`e2e/${scenario}-r${round}`);
 const title=opt('title',`${scenario} round ${round}`);
 const date=new Date().toISOString().slice(0,10);
 const runDir=resolve(opt('run-dir',`e2e/runs/${date}/${scenario}/r${round}`));
+function e2ePreflight(){
+  if(!scenario.startsWith('001-')) return;
+  const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/status'],{encoding:'utf8',timeout:10000,maxBuffer:1000000});
+  if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||'Agents Relay status preflight unavailable');
+  const status=JSON.parse(p.stdout);
+  if(status.githubEnabled===true&&status.githubAuthenticated===false){
+    const failure={event:'preflight-failed',scenario,round:Number(round),type:'PRECONDITION_GITHUB_AUTH_UNAVAILABLE',message:status.githubAuthError||'GitHub is enabled but authentication is unavailable'};
+    mkdirSync(runDir,{recursive:true});
+    writeFileSync(resolve(runDir,'preflight.json'),JSON.stringify(failure,null,2)+'\n');
+    console.error(JSON.stringify(failure));
+    process.exit(2);
+  }
+}
+e2ePreflight();
 if(!threadId){
   const dir=mkdtempSync(join(tmpdir(),'agents-relay-e2e-thread-'));
   const config=join(dir,'config.json');

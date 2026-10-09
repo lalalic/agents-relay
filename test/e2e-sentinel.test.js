@@ -74,3 +74,11 @@ test('Scenario 001 requires external PR creation and merge when daemon GitHub is
   assert.match(source,/externalPrNumber/);
   assert.match(source,/GITHUB_PR_NOT_MERGED/);
 });
+
+
+test('Scenario 001 runner preflights GitHub authentication before creating a Job', () => {
+  const runner=readFileSync(new URL('../e2e/runner/run.mjs', import.meta.url),'utf8');
+  assert.match(runner,/function e2ePreflight\(\)/);
+  assert.match(runner,/PRECONDITION_GITHUB_AUTH_UNAVAILABLE/);
+  assert.ok(runner.indexOf('e2ePreflight();') < runner.indexOf("const prep=["));
+});
