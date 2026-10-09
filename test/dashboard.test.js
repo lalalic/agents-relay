@@ -777,3 +777,22 @@ test('dashboard lifecycle status has no timer-driven snapshot fallback', () => {
   assert.doesNotMatch(source, /Math.max\(10000, refreshMs\)/);
   assert.match(source, /subscribeLocalCommits\(durable =>/);
 });
+
+
+test('dashboard rejects stale live state patches and stale Job snapshots', () => {
+  assert.match(dashboardHtml, /function isFreshEnough\(incoming,current\)/);
+  assert.match(dashboardHtml, /isFreshEnough\(patch\.jobUpdatedAt,job\.updatedAt\)/);
+  assert.match(dashboardHtml, /isFreshEnough\(patch\.taskUpdatedAt,task\.updatedAt\)/);
+  assert.match(dashboardHtml, /function upsertFreshJob\(incoming\)/);
+  assert.match(dashboardHtml, /isFreshEnough\(incoming\.updatedAt,jobs\[index\]\.updatedAt\)/);
+});
+
+
+test('dashboard highlights failed/error events red and blocked/warn events amber', () => {
+  assert.match(dashboardHtml, /function eventSeverity\(event,level\)/);
+  assert.match(dashboardHtml, /outcome==='failed'/);
+  assert.match(dashboardHtml, /type\.endsWith\('\.failed'\)/);
+  assert.match(dashboardHtml, /event-error/);
+  assert.match(dashboardHtml, /event-warn/);
+  assert.match(dashboardHtml, /\.event-item\.event-error/);
+});
