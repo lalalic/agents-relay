@@ -2,7 +2,7 @@
 // Manual E2E entry point: prepare one fresh round, then monitor it until PASS or a handoff-worthy suspect.
 import {spawn, spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
-import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 const root=resolve(import.meta.dirname,'../..');
 const argv=process.argv.slice(2);
