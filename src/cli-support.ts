@@ -65,7 +65,8 @@ export async function storeFor(args: string[]): Promise<{ store: DurableStore; j
   if (!binding || binding.job.repository !== repo)
     throw new Error('Immutable local Job not found for repository: ' + jobId);
   const suppliedPr = arg(args, '--pr');
-  if (suppliedPr && binding.job.prNumber !== Number(suppliedPr))
+  const boundPr = binding.job.externalPrNumber ?? (binding.job.prNumber > 0 ? binding.job.prNumber : 0);
+  if (suppliedPr && boundPr !== Number(suppliedPr))
     throw new Error('Local Job external PR binding mismatch');
   return { store: binding.store, job: await binding.store.load(jobId), localFile: null };
 }

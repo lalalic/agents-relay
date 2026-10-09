@@ -82,7 +82,7 @@ async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'recover', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const managed = !noGitHubMode(args) && Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
   if (managed && ['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
   const loaded = await storeFor(args); const { store, localFile } = loaded;
@@ -297,7 +297,8 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const { store, job } = loaded;
   if (action === 'unblock') { await runJobUnblockCommand(args, store, job); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
-  if (job.repository !== repo || (prValue && job.prNumber !== prNumber)) {
+  const boundPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+  if (job.repository !== repo || (prValue && boundPrNumber !== prNumber)) {
     throw new Error('Local Job/PR binding mismatch');
   }
   if (action === 'merge') {
@@ -370,7 +371,7 @@ export async function createService(args: string[]): Promise<Service> {
   const webhook = !noGitHubMode(args) && repo && webhookSecret ? {
     secret: webhookSecret,
     repositories: new Set([repo]),
-    pullRequest: loaded.job.prNumber,
+    pullRequest: loaded.job.externalPrNumber ?? loaded.job.prNumber,
     wake: async (event: import('./github-webhook.js').GitHubWebhookWake): Promise<void> => {
       if (event.pullRequestFacts && loaded.store.applyPullRequestFacts) {
         await loaded.store.applyPullRequestFacts({

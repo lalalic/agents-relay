@@ -134,6 +134,22 @@ test('registry resolves unique ACTIVE Job over archived same-ID terminal snapsho
 });
 
 
+
+test('CLI local store accepts projected external PR binding while local prNumber remains zero', async () => {
+  const { storeFor } = await import('../dist/cli-support.js');
+  const root=await mkdtemp(join(tmpdir(),'relay-cli-external-binding-'));
+  const relay=new SQLiteRelayStore(join(root,'job.db'));
+  const previousHome=process.env.HOME;
+  try {
+    const at='2026-10-09T12:00:00.000Z';
+    await relay.saveJob({id:'bound-cli-job',repository:'owner/repo',prNumber:0,externalPrNumber:88,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]});
+    const loaded=await storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','88','--store-dir',root]);
+    assert.equal(loaded.job.prNumber,0);
+    assert.equal(loaded.job.externalPrNumber,88);
+    await assert.rejects(()=>storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','89','--store-dir',root]),/external PR binding mismatch/);
+  } finally { relay.close(); if(previousHome===undefined) delete process.env.HOME; else process.env.HOME=previousHome; await rm(root,{recursive:true,force:true}); }
+});
+
 test('registry upgrades a local Job to external GitHub merge capability after PR binding', async () => {
   const { createJobIdRegistryResolver } = await import('../dist/local-job-registry.js');
   const root=await mkdtemp(join(tmpdir(),'relay-external-binding-'));

@@ -278,6 +278,20 @@ export function parsePlannerResult(value: unknown): PlannerResult {
 }
 
 
+export function validatePlannerLifecycleOwnership(job: Job, specs: readonly PlannerTaskSpec[]): void {
+  if (job.prNumber !== 0 || !job.localMerge) return;
+  for (const spec of specs) {
+    const text = `${spec.id} ${spec.agentName ?? ''} ${spec.input}`.toLowerCase();
+    const localMerge = /\blocal[ -]merge\b|\blocal merge\b/.test(text);
+    const jobCompletion = /\bjob\b.{0,80}\bcompleted\b|\bcompleted\b.{0,80}\bjob\b/.test(text);
+    const externalMerge = /\b(?:external|github|projected)\b.{0,80}\bpr\b.{0,80}\bmerged\b|\bpr\b.{0,80}\bmerged\b/.test(text);
+    const ownsLifecycle = /\b(perform|execute|complete|trigger|drive|merge|transition|finish|finalize)\b/.test(text);
+    if (ownsLifecycle && [localMerge, jobCompletion, externalMerge].filter(Boolean).length >= 2) {
+      throw new Error(`Planner next task ${spec.id} attempts to own Graph lifecycle delivery; local merge, Job COMPLETED, and projected PR merge are Relay-owned effects and must not be worker Tasks`);
+    }
+  }
+}
+
 export function validatePlannerHierarchy(existing: readonly Task[], specs: readonly PlannerTaskSpec[]): void {
   const existingById = new Map(existing.map(task => [task.id, task]));
   const specsById = new Map(specs.map(spec => [spec.id, spec]));

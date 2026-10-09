@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -183,6 +183,14 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
   assert.equal(observed.guidance, 'original guidance');
   assert.equal(result.job.plans.filter(item => item.id === 'plan-1').length, 1);
   assert.equal(result.job.plans[0].status, 'SUCCEEDED');
+});
+
+
+test('local-first planner cannot delegate Relay-owned merge and completion lifecycle to a worker task', () => {
+  const root = { ...job([], 'autonomous'), prNumber:0, localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'} };
+  const release = { id:'release', agentName:'release', input:'Perform the required local merge, verify Job COMPLETED, and merge the projected GitHub PR.', output:{kind:'task_pr'}, storySize:'S' };
+  assert.throws(() => validatePlannerLifecycleOwnership(root, [release]), /Relay-owned effects/);
+  assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'verify',input:'Verify the implementation tests and report findings without changing lifecycle state.'}]));
 });
 
 test('planner input exposes semantic ownership separately from plan provenance', () => {
