@@ -306,8 +306,13 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
     const taskDecision = tryTransitionTaskEvent(task, event.type);
     if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
+    if (taskDecision.target !== 'RUNNING' && !this.finalizeReviewExecution(job.id, task, event)) {
+      return { applied: false, reconcile: false, reason: event.type + '.stale-execution' };
+    }
     task.error = null;
-    if (taskDecision.target !== 'RUNNING') { task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; }
+    if (taskDecision.target !== 'RUNNING') {
+      task.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
+    }
     await this.store.saveTask(task);
 
     let needsReconcile = false;

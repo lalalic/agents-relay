@@ -957,9 +957,21 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
-  await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,await activeEventSource(store,created.id)));
-  await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,await activeEventSource(store,created.id)));
-  await new Promise(resolve=>setTimeout(resolve,10)); await stop(); await rm(contextRoot,{recursive:true,force:true});
+  const source=await activeEventSource(store,created.id);
+  await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,source));
+  await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','generic review process completion','user',undefined,source));
+  await new Promise(resolve=>setTimeout(resolve,5));
+  let durable=await store.load('j');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'RUNNING','generic task.completed must not consume reviewer execution before review outcome');
+  assert.equal(durable.review?.outcome,'pending');
+  await bus.publish(eventFor('j',created.id,null,'review.changes_required','failed','review changes required','user',{outcome:{head_sha:'sha-review-timeout',blocking_findings:[{summary:'fix reviewer ordering regression'}]}},source));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  durable=await store.load('j');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'SUCCEEDED');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.executionId,null);
+  assert.equal(durable.review?.outcome,'changes_required');
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  await stop(); await rm(contextRoot,{recursive:true,force:true});
 });
 
 
