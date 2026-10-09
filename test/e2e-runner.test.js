@@ -53,3 +53,16 @@ test('review evidence normalizes observed snake_case and camelCase immutable hea
   assert.equal(reviewHeadSha({head_sha:'sha-top-level'}),'sha-top-level');
   assert.equal(reviewHeadSha({data:{}}),null);
 });
+
+test('scenario 004 installs deterministic failed-recovery gate and watcher accepts only durable exhaustion', async()=>{
+  const prepare=await read('../e2e/runner/prepare-round.mjs');
+  const watch=await read('../e2e/runner/watch.mjs');
+  assert.match(prepare,/function prepareScenario004/);
+  assert.match(prepare,/E2E004_TROUBLESHOOTER_MUST_FAIL/);
+  assert.match(prepare,/E2E004_TROUBLESHOOTER_FAILURE/);
+  assert.match(watch,/function scenario004Passed/);
+  assert.match(watch,/recoveryFailures/);
+  assert.match(watch,/recoveryExhausted/);
+  assert.match(watch,/RECURSIVE_RECOVERY/);
+  assert.match(watch,/expectedTerminalFailure:true/);
+});

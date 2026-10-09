@@ -16,7 +16,7 @@ import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
-import { pendingTroubleshooterTasks } from './troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks } from './troubleshooter.js';
 import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
@@ -113,6 +113,26 @@ export class Reconciler extends ReconcilerReviewBase {
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
+      }
+      {
+        const recoveryJob = await this.store.load(jobId);
+        for (const exhausted of exhaustedTroubleshooterRecoveries(recoveryJob)) {
+          const at = new Date().toISOString();
+          recoveryJob.recoveryFailures = [...(recoveryJob.recoveryFailures ?? []), {
+            taskId: exhausted.original.id,
+            recoveryTaskId: exhausted.recovery.id,
+            reason: exhausted.reason,
+            at,
+          }];
+          recoveryJob.updatedAt = at;
+          await this.store.saveJob(recoveryJob);
+          await this.emit(eventFor(job.id, exhausted.recovery.id, exhausted.original.id,
+            'recovery.exhausted', 'failed',
+            `Recovery exhausted for ${exhausted.original.id}: ${exhausted.reason}`,
+            'user',
+            { originalTaskId: exhausted.original.id, recoveryTaskId: exhausted.recovery.id, reason: exhausted.reason },
+            { agent: 'relay', component: 'agents-relay' }));
+        }
       }
       for (const task of job.tasks) if (task.state === 'CANCELLED') {
         this.cancelExecutionGeneration(job.id, task.id, task.executionId ?? task.executionHistory?.at(-1)?.id);

@@ -23,7 +23,7 @@ const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
-let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[]}};
+let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[],recoveryExhausted:0}};
 try{const previous=JSON.parse(readFileSync(statePath,'utf8'));if(previous.runKey===runKey)state={...state,...previous}}catch{}
 function events(){
  let size;try{size=statSync(eventsPath).size}catch{return []}
@@ -131,6 +131,37 @@ function scenario003(j){
  return null;
 }
 
+function scenario004(j){
+ const tasks=j.tasks||[];
+ const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
+ const recoveries=tasks.filter(x=>x.agentName==='troubleshooter');
+ const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
+ const root=ordinary[0];
+ if(j.state==='COMPLETED')return {type:'FALSE_COMPLETION',message:'Recovery-exhaustion scenario must not complete'};
+ if(recoveries.length>1)return {type:'RECURSIVE_RECOVERY',recoveries:recoveries.map(x=>({id:x.id,state:x.state,parentTaskId:x.parentTaskId}))};
+ if(reviews.length)return {type:'UNEXPECTED_REVIEW_AFTER_RECOVERY_EXHAUSTION',reviews:reviews.map(x=>({id:x.id,state:x.state}))};
+ if(j.localMerge?.status==='succeeded')return {type:'UNEXPECTED_MERGE_AFTER_RECOVERY_EXHAUSTION',localMerge:j.localMerge};
+ const recovery=recoveries[0];
+ if(root?.state==='FAILED'&&recovery?.state==='FAILED'){
+   const facts=(j.recoveryFailures||[]).filter(x=>x.taskId===root.id&&x.recoveryTaskId===recovery.id);
+   if(facts.length>1)return {type:'DUPLICATE_RECOVERY_EXHAUSTION_FACT',facts};
+   if(facts.length===0){
+     const age=recovery.updatedAt?Date.now()-Date.parse(recovery.updatedAt):0;
+     if(age>30000)return {type:'RECOVERY_EXHAUSTION_FACT_MISSING',root:root.id,recovery:recovery.id};
+   }
+ }
+ return null;
+}
+function scenario004Passed(j){
+ const tasks=j.tasks||[];
+ const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
+ const recoveries=tasks.filter(x=>x.agentName==='troubleshooter');
+ const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
+ const root=ordinary[0], recovery=recoveries[0];
+ const facts=(j.recoveryFailures||[]).filter(x=>root&&recovery&&x.taskId===root.id&&x.recoveryTaskId===recovery.id);
+ return j.state==='ACTIVE'&&j.runtimeStatus==='FAILED'&&root?.state==='FAILED'&&recoveries.length===1&&recovery?.state==='FAILED'&&facts.length===1&&reviews.length===0&&j.localMerge?.status!=='succeeded'&&Number(state.evidence.recoveryExhausted||0)>=1;
+}
+
 function detect(j){
  const tasks=j.tasks||[],plans=j.plans||[];
  const work=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
@@ -141,6 +172,9 @@ function detect(j){
   if(specific)return specific;
  } else if(scenario.startsWith('003-')){
   const specific=scenario003(j);
+  if(specific)return specific;
+ } else if(scenario.startsWith('004-')){
+  const specific=scenario004(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
@@ -179,6 +213,7 @@ async function tick(){
       if(head&&!state.evidence.reviewHeads.includes(head))state.evidence.reviewHeads.push(head);
     }
     if(e.type==='review.approved')state.evidence.reviewApproved=Number(state.evidence.reviewApproved||0)+1;
+    if(e.type==='recovery.exhausted')state.evidence.recoveryExhausted=Number(state.evidence.recoveryExhausted||0)+1;
   }
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
@@ -201,6 +236,10 @@ async function tick(){
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=detect(j);
   let external=null;
+  if(!issue&&scenario.startsWith('004-')&&scenario004Passed(j)){
+    state.phase='passed';state.passedAt=new Date().toISOString();state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);
+    console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,expectedTerminalFailure:true}));process.exit(0);return;
+  }
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
   if(!issue&&github.enabled&&boundPr<=0){

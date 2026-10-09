@@ -2469,3 +2469,34 @@ test('publication Webhook replay retains the same EventBus event identity per Jo
   assert.equal(publications.length, 2);
   assert.equal(publications[0].event_id, publications[1].event_id);
 });
+
+test('reviewer runtime recovery preserves exact immutable head and accepts verdict on recovered execution', async () => {
+  const implementation=task('implementation','SUCCEEDED');
+  const reviewer={...task('review-runtime-failed','FAILED',['implementation']),agentName:'reviewer',reviewHeadSha:'sha-review-recovered',error:'worker_start_timeout',failureReason:'worker_start_timeout',attempt:1,maxAttempts:3,routing:{provider:'openai',model:'gpt-5.6-luna',decidedBy:'test',decidedAt:now()},workerSelection:{workerId:'codex',adapter:'codex',capabilities:['model','codex'],selectedBy:'test',selectedAt:now()}};
+  const recovery={...task('troubleshoot-review-runtime-failed-a1','RUNNING'),agentName:'troubleshooter',parentTaskId:reviewer.id,executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const root={...job([implementation,reviewer,recovery]),headSha:'sha-review-recovered',review:{outcome:'pending',headSha:'sha-review-recovered',taskId:reviewer.id,evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(root); store.headSha=async()=> 'sha-review-recovered';
+  await dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:reviewer.id,recoveryTaskId:recovery.id});
+  let durable=await store.load('j');
+  let recovered=durable.tasks.find(item=>item.id===reviewer.id);
+  assert.equal(recovered.state,'QUEUED');
+  assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
+  assert.equal(recovered.id,reviewer.id);
+  recovery.state='SUCCEEDED'; recovery.executionId=null; recovery.leaseOwner=null; recovery.leaseExpiresAt=null;
+  await store.saveTask(recovery);
+
+  const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,maxConcurrent:1});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  const source=await activeEventSource(store,reviewer.id);
+  await bus.publish(eventFor('j',reviewer.id,null,'review.changes_required','failed','same-head review requires change','user',{outcome:{head_sha:'sha-review-recovered',blocking_findings:[{summary:'fix recovered review'}]}},source));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  durable=await store.load('j'); recovered=durable.tasks.find(item=>item.id===reviewer.id);
+  assert.equal(recovered.state,'SUCCEEDED');
+  assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
+  assert.equal(durable.review?.headSha,'sha-review-recovered');
+  assert.equal(durable.review?.outcome,'changes_required');
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  await stop(); await reconciler.close();
+});

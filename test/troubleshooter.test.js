@@ -1,6 +1,6 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { pendingTroubleshooterTasks, troubleshooterTaskId } from '../dist/troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, troubleshooterTaskId } from '../dist/troubleshooter.js';
 import { InMemoryStore } from '../dist/store.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { MemoryEventBus } from '../dist/events.js';
@@ -213,4 +213,31 @@ test('auto-routed troubleshooter avoids parent route that failed before task.sta
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = priorHome;
   }
+});
+
+test('failed Troubleshooter records one durable recovery.exhausted fact without recursive recovery', async () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.state = 'FAILED';
+  recovery.error = 'Troubleshooter runtime failed after diagnosis';
+  recovery.attempt = 1;
+  const root = job([failed, recovery]);
+  const store = new InMemoryStore(root);
+  const events = [];
+  const reconciler = managedReconciler(store, {
+    owner: 'test', adapters: [], eventBus: new MemoryEventBus(), maxConcurrent: 0,
+    emit: event => events.push(event),
+  });
+
+  await reconciler.reconcile(root.id);
+  await reconciler.reconcile(root.id);
+
+  const durable = await store.load(root.id);
+  assert.equal(durable.tasks.filter(task => task.agentName === 'troubleshooter').length, 1, 'must not recursively create a Troubleshooter for a Troubleshooter');
+  assert.equal(durable.recoveryFailures?.length, 1);
+  assert.equal(durable.recoveryFailures?.[0].taskId, failed.id);
+  assert.equal(durable.recoveryFailures?.[0].recoveryTaskId, recovery.id);
+  assert.match(durable.recoveryFailures?.[0].reason ?? '', /runtime failed/);
+  assert.equal(events.filter(event => event.type === 'recovery.exhausted').length, 1, 'reconcile must emit exhaustion once');
+  assert.deepEqual(pendingTroubleshooterTasks(durable), []);
 });

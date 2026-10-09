@@ -109,12 +109,12 @@ flowchart TD
 | Planner | Planner invalid output / transient failure | Automatic planner retry carries prior failure/context; no manual reconcile required | Implemented | `autonomous.test.js`, planner/runtime tests | None dedicated | **E2E GAP** |
 | Planner | Planner unavailable / retry exhausted | Persist failure; do not fabricate implementation work or completion | Implemented | workflow/core tests | None dedicated | **E2E GAP** |
 | Routing | Provider quota / rate limit | Preserve structured failure, refresh usage facts, reroute exact Task | Implemented in routing/recovery path | Router/core tests | `#6 PLANNED` | Planned E2E |
-| Routing | No viable worker/model | Preserve routing evidence; route to recovery/escalation rather than silent stall | Partial / needs explicit contract review | Some routing failure tests | None | **Possible CODE GAP + E2E GAP** |
+| Routing | No viable worker/model | Persist Task `FAILED` before any execution claim; Graph then exposes normal recovery path | Implemented | Core routing failure test proves no execution generation is claimed | None | **E2E GAP** |
 | Dispatch | Duplicate/concurrent launch | Per-Job execution slot + pool/global capacity control | Implemented | Core/local-job routing tests | Happy path exercises ordinary dispatch; stronger injection in `#5` | Mostly covered; fault E2E planned |
 | Worker | Ordinary worker `task.failed` / `task.blocked` | Graph creates exactly one relevant Troubleshooter; recover exact original Task | Implemented | Troubleshooter/core/local-authority tests | `#2 PASS`, `#3 RUNNING` | Covered |
 | Recovery | Recoverable blocker | Troubleshooter diagnoses event history, removes blocker, uses dedicated `task recover` | Implemented | Core/troubleshooter tests | `#2 PASS`, `#3 RUNNING` | Covered |
 | Recovery | Replacement business Task instead of original retry | Reject as invalid recovery; exact original Task must reactivate | Implemented by recovery contract / tests | Core/task-action tests | `#2 PASS` | Covered |
-| Recovery | Troubleshooter itself fails | Need defined recovery-of-recovery policy, retry budget, or escalation semantics | **Not implemented as automatic recovery** | Limited | None | **CODE GAP** |
+| Recovery | Troubleshooter itself fails | Preserve failed recovery, emit one durable `recovery.exhausted` fact, suppress recursive recovery, runtime remains `FAILED` | Implemented | Troubleshooter reconciliation/idempotence test | `#4 PLANNED` | **E2E GAP** |
 | Recovery | Genuine human/external blocker | Canonical escalation graph owns `resolved / failed / needs_user` outcome | Implemented pathway exists | Escalation/component tests need audit | `#4 PLANNED` | Needs E2E proof |
 | Worker runtime | Process exits without authoritative terminal | Terminal-event watchdog persists failure evidence and wakes recovery | Implemented | Strong core/workflow tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
 | Worker runtime | Late terminal from old execution generation | Compare event source/executionId to current generation and ignore stale terminal | Implemented | Strong core tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
@@ -123,7 +123,7 @@ flowchart TD
 | Review | Happy-path approval | Review exact immutable head; approval is local durable fact | Implemented | Strong core/review tests | `#1 PASS`, `#2 PASS` | Covered |
 | Review | `changes_required` | Create exactly one fix Task for reviewed head; fix creates new head; new independent review | Implemented | Strong core/review tests | `#3 RUNNING`, requires two rejection/fix generations | Running |
 | Review | Stale approval/review after head changes | Invalidate/cancel stale review; only current-head evidence counts | Implemented | Strong core tests | `#3 RUNNING` indirectly covers successive heads | Running / partial |
-| Review | Reviewer runtime/provider failure | Recover/reroute reviewer against same immutable head without human review | Generic runtime recovery exists, reviewer-specific path needs validation | Some start-ack/reviewer failure tests | No dedicated current scenario | **E2E GAP; audit for CODE GAP** |
+| Review | Reviewer runtime/provider failure | Recover/reroute the exact reviewer Task while preserving immutable `reviewHeadSha`; later verdict must bind to that same head | Implemented | Dedicated same-Task/same-head recovery test + start-ack tests | No dedicated current scenario | **E2E GAP** |
 | Local merge | Happy-path local merge | Shared merge lock, merge exact approved source head, durable receipt | Implemented | Strong no-GitHub/local merge tests | `#1 PASS`, `#2 PASS` | Covered |
 | Local merge | Merge conflict | Persist failed receipt, leave Job ACTIVE/non-COMPLETED, keep target clean | Implemented | Strong `no-github.test.js` coverage | None | **E2E GAP** |
 | Local merge | Dirty checked-out target / untracked collision | Refuse unsafe merge without mutating target | Implemented | Strong local merge tests | None | **E2E GAP** |
@@ -153,30 +153,13 @@ flowchart TD
 
 ## Known code gaps / architecture questions
 
-These should not be treated as merely missing E2E tests.
+No unresolved lifecycle CODE GAP remains from the current map after the `.29` recovery-exhaustion work. The items previously listed here were resolved/audited as follows:
 
-### 1. Troubleshooter failure policy
+1. **Troubleshooter failure policy** — implemented as bounded non-recursive recovery exhaustion: one durable `recovery.exhausted` fact, no Troubleshooter-for-Troubleshooter recursion, Job lifecycle remains `ACTIVE` with runtime `FAILED`.
+2. **No viable route** — already implemented: routing failure durably fails the Task before any execution generation is claimed; normal recovery semantics then apply.
+3. **Reviewer-specific runtime recovery** — audited and covered below E2E: dedicated `task recover` preserves the same reviewer Task and immutable `reviewHeadSha`; a later correlated verdict on the recovered execution drives the normal review graph.
 
-Today automatic Troubleshooter creation intentionally excludes Tasks whose `agentName` is already `troubleshooter`. Therefore a failed Troubleshooter does **not** automatically get another Troubleshooter.
-
-Decision required:
-
-- retry the same Troubleshooter with a bounded retry budget;
-- create a higher-level recovery generation;
-- invoke canonical escalation immediately;
-- or treat Troubleshooter failure as a terminal Job-level recovery failure.
-
-Whatever policy is selected must guarantee no infinite recovery recursion.
-
-### 2. No-viable-route terminal behavior
-
-Routing failure is tested, but the production contract should be explicit about what happens when **no provider/worker is viable after refresh/re-decision**. It should converge to a durable recovery/escalation state rather than remaining indefinitely queued.
-
-### 3. Reviewer-specific runtime recovery
-
-Generic Task watchdog/recovery exists, and reviewer start-ack failure has focused coverage, but we need to verify the architecture guarantees that reviewer runtime failure recovers/re-routes **the review of the exact same immutable head** without accidentally producing implementation work or accepting stale evidence.
-
-This may be only an E2E gap, but should be audited before declaring it so.
+New CODE GAPs discovered during later E2E rounds should be added here rather than hidden as scenario-specific workarounds.
 
 ## Important E2E gaps where code already exists
 

@@ -99,3 +99,21 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
   }
   return recoveries;
 }
+
+
+export function exhaustedTroubleshooterRecoveries(job: Job): Array<{ original: Task; recovery: Task; reason: string }> {
+  const results: Array<{ original: Task; recovery: Task; reason: string }> = [];
+  for (const recovery of job.tasks) {
+    if (recovery.agentName !== 'troubleshooter' || recovery.state !== 'FAILED' || !recovery.parentTaskId) continue;
+    const original = job.tasks.find(task => task.id === recovery.parentTaskId);
+    if (!original || !['FAILED','BLOCKED'].includes(original.state)) continue;
+    const alreadyRecorded = job.recoveryFailures?.some(item => item.taskId === original.id && item.recoveryTaskId === recovery.id);
+    if (alreadyRecorded) continue;
+    results.push({
+      original,
+      recovery,
+      reason: recovery.error ?? recovery.failureReason ?? `Troubleshooter ${recovery.id} ${recovery.state.toLowerCase()}`,
+    });
+  }
+  return results;
+}
