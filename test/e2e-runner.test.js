@@ -31,6 +31,7 @@ test('scenario 003 watcher requires recovery, two distinct rejected heads, fixes
   assert.match(source,/new Set\(state\.evidence\.reviewHeads/);
   assert.match(source,/REVIEW_FIX_LADDER_MISSING/);
   assert.match(source,/FINAL_REVIEW_APPROVAL_MISSING/);
+  assert.match(source,/UNEXPECTED_EXTRA_TROUBLESHOOTER/);
 });
 
 test('external injector stays outside SQLite and supports process, stale-event, and daemon faults', async()=>{

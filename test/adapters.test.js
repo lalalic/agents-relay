@@ -421,3 +421,25 @@ test('existing ChatGPT review turn is reconciled after an ambiguous exit or rest
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('CodexAdapter prefers structured turn.failed provider error over incidental stderr', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-codex-structured-failure-'));
+  try {
+    const command = join(root, 'codex');
+    await writeFile(command, [
+      '#!/bin/sh',
+      `printf '%s\\n' '${JSON.stringify({type:'thread.started',thread_id:'quota-thread'})}'`,
+      `printf '%s\\n' '${JSON.stringify({type:'error',message:'Reconnecting... rate limit exceeded'})}'`,
+      `printf '%s\\n' '${JSON.stringify({type:'turn.failed',error:{message:'rate limit exceeded: Weekly/Monthly Limit Exhausted'}})}'`,
+      "printf '%s\\n' 'Reading additional input from stdin...' >&2",
+      'exit 1',
+    ].join('\n'), { mode: 0o700 });
+    await chmod(command, 0o700);
+    const execution = new CodexAdapter(command).launch({ id:'task', input:'prompt', routing:{provider:'zai',model:'glm'} }, new AbortController().signal);
+    await assert.rejects(execution.promise, /rate limit exceeded: Weekly\/Monthly Limit Exhausted/);
+    assert.equal(execution.threadId, 'quota-thread');
+    assert.match(execution.processExit?.stderr ?? '', /Reading additional input from stdin/);
+  } finally {
+    await rm(root,{recursive:true,force:true});
+  }
+});

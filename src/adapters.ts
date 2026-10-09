@@ -48,6 +48,19 @@ function parseThreadStarted(line: string): string | undefined {
     return undefined;
   }
 }
+function parseCodexFailure(line: string): { message: string; priority: number } | undefined {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    if (value.type === 'turn.failed' && value.error && typeof value.error === 'object' && !Array.isArray(value.error)) {
+      const message = (value.error as Record<string, unknown>).message;
+      if (typeof message === 'string' && message.trim()) return { message: message.trim(), priority: 2 };
+    }
+    if (value.type === 'error' && typeof value.message === 'string' && value.message.trim()) {
+      return { message: value.message.trim(), priority: 1 };
+    }
+  } catch { /* non-JSON output is not structured Codex failure evidence */ }
+  return undefined;
+}
 function appendTail(current: string, chunk: string, maxBytes = 16384): string {
   const combined = current + chunk;
   return Buffer.byteLength(combined) <= maxBytes
@@ -71,6 +84,7 @@ export class CodexAdapter implements WorkerAdapter {
     });
     let stdoutBuffer = '';
     let stderrTail = '';
+    let structuredFailure: { message: string; priority: number } | undefined;
     let bufferedThreadId: string | undefined;
     let launchedResolve!: () => void;
     let launchedReject!: (error: Error) => void;
@@ -78,6 +92,8 @@ export class CodexAdapter implements WorkerAdapter {
     launched.catch(() => {});
     let execution: Execution;
     const consumeLine = (line: string): void => {
+      const failure = parseCodexFailure(line);
+      if (failure && (!structuredFailure || failure.priority >= structuredFailure.priority)) structuredFailure = failure;
       const threadId = parseThreadStarted(line);
       if (!threadId) return;
       bufferedThreadId = threadId;
@@ -104,7 +120,7 @@ export class CodexAdapter implements WorkerAdapter {
         if (code === 0) {
           resolve({ summary: 'Codex runtime exited after task execution; terminal task state is event-owned' });
         } else {
-          reject(new Error(stderrTail.trim() || `Codex exited ${code}`));
+          reject(new Error(structuredFailure?.message || stderrTail.trim() || `Codex exited ${code}`));
         }
       });
     });

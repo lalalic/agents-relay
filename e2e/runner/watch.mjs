@@ -103,6 +103,7 @@ function scenario003(j){
  const root=ordinary[0];
  const successfulRecovery=recoveries.find(x=>x.state==='SUCCEEDED');
  const failedRecovery=recoveries.find(x=>x.state==='FAILED'||x.state==='BLOCKED');
+ if(recoveries.length>1)return {type:'UNEXPECTED_EXTRA_TROUBLESHOOTER',recoveries:recoveries.map(x=>({id:x.id,state:x.state,attempt:x.attempt,parentTaskId:x.parentTaskId}))};
  if(failedRecovery)return {type:'TROUBLESHOOTER_FAILED',tasks:[{id:failedRecovery.id,state:failedRecovery.state,error:failedRecovery.error,attempt:failedRecovery.attempt}]};
  if(root && ['FAILED','BLOCKED'].includes(root.state)){
    const age=root.updatedAt?Date.now()-Date.parse(root.updatedAt):0;
