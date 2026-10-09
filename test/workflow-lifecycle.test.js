@@ -73,13 +73,15 @@ const taskCases = [
 
 const jobCases = [
   ['DRAFT','activate',{},'ACTIVE'],
-  ['DRAFT','pr.merged',{},'COMPLETED'],
   ['DRAFT','cancel',{},'CANCELLED'],
-  ['DRAFT','pr.closed',{notMerged:true},'CANCELLED'],
-  ['ACTIVE','pr.merged',{},'COMPLETED'],
+  ['ACTIVE','reconcile',{},'ACTIVE'],
+  ['ACTIVE','review.approved',{},'ACTIVE'],
+  ['ACTIVE','implementation.completed',{},'ACTIVE'],
   ['ACTIVE','cancel',{},'CANCELLED'],
-  ['ACTIVE','pr.closed',{notMerged:true},'CANCELLED'],
-  ['CANCELLED','pr.merged',{},'COMPLETED'],
+  ['ACTIVE','local.merge.requested',{localMergeReady:true},'ACTIVE'],
+  ['ACTIVE','local.completed',{localCompletionAllowed:true},'COMPLETED'],
+  ['ACTIVE','effect.deliverLocalMerge.failed',{},'ACTIVE'],
+  ['COMPLETED','effect.cleanupJobWorktree.failed',{},'COMPLETED'],
 ];
 
 test('Graph Engine is authoritative for the lifecycle transition corpus', () => {
@@ -124,31 +126,28 @@ test('planner unavailable is a canonical Task graph failure without attempt mani
   assert.equal(current.error,'No objective planner configured');
 });
 
-test('Job reconcile graph owns the no-review merge gate', () => {
-  const all={prOpen:true,reviewDisabled:true,implementationComplete:true,autoMerge:true,headAvailable:true,mergeCapable:true};
-  const allowed=decideJobLifecycle(job('ACTIVE'),'reconcile',all);
-  assert.equal(allowed.accepted,true);
-  assert.equal(allowed.target,'ACTIVE');
-  assert.deepEqual(allowed.effects,['effect.mergePullRequest']);
-  for(const key of Object.keys(all)){
-    const facts={...all,[key]:false};
-    const denied=decideJobLifecycle(job('ACTIVE'),'reconcile',facts);
-    assert.equal(denied.accepted,true,key);
-    assert.equal(denied.target,'ACTIVE',key);
-    assert.deepEqual(denied.effects,[],key);
+test('Job reconcile never invokes GitHub actions; local completion owns the terminal gate', () => {
+  const active=job('ACTIVE');
+  for (const prState of ['OPEN','MERGED','CLOSED','UNKNOWN']) {
+    const result=decideJobReconcile(active,{jobActive:true,implementationComplete:false,headAvailable:false,deliveryReady:false});
+    assert.equal(result.accepted,true);
+    assert.equal(result.target,'ACTIVE');
+    assert.deepEqual(result.effects,[]);
   }
+  const local=decideJobLifecycle(active,'local.completed',{localCompletionAllowed:true});
+  assert.equal(local.target,'COMPLETED');
 });
 
-test('Job reconcile adapter maps terminal PR facts into canonical Job graph events', () => {
-  const merged=decideJobReconcile(job('ACTIVE'),{prState:'MERGED',headSha:null,mergeCapable:false});
-  assert.equal(merged.accepted,true);
-  assert.equal(merged.target,'COMPLETED');
-  assert.deepEqual(merged.effects,['effect.cancelActiveTasks']);
-
-  const closed=decideJobReconcile(job('ACTIVE'),{prState:'CLOSED',headSha:null,mergeCapable:false});
-  assert.equal(closed.accepted,true);
-  assert.equal(closed.target,'CANCELLED');
-  assert.deepEqual(closed.effects,['effect.cancelActiveTasks']);
+test('terminal GitHub PR facts cannot complete, cancel, or clean a local Job', () => {
+  for (const status of ['MERGED','CLOSED']) {
+    for (const state of ['ACTIVE','COMPLETED','CANCELLED']) {
+      const result=decideJobReconcile(job(state),{jobActive:state==='ACTIVE',implementationComplete:false,headAvailable:false,deliveryReady:false});
+      assert.equal(result.target,state==='ACTIVE' ? 'ACTIVE' : null,status+'/'+state);
+      assert.deepEqual(result.effects,[],status+'/'+state);
+    }
+  }
+  assert.equal(decideJobLifecycle(job('ACTIVE'),'pr.merged',{}).accepted,false);
+  assert.equal(decideJobLifecycle(job('ACTIVE'),'pr.closed',{}).accepted,false);
 });
 
 test('job cancel graph owns active-work cancellation effect', () => {

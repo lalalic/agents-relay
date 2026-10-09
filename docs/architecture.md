@@ -1,5 +1,12 @@
 # Agents Relay v1 architecture
 
+> **Historical V1 reference.** This page documents the former GitHub-marker
+> lifecycle design and must not be used as the current V2 authority contract.
+> For V2, see [DESIGN-PRINCIPLES.md](../DESIGN-PRINCIPLES.md) and the
+> [README V2 architecture](../README.md#v2-architecture). In V2 all
+> Job/Task/Review/Recovery state resides in local SQLite; GitHub is external
+> PR/commit/review/merge I/O only.
+
 ## Goal
 
 Provide a generic, shareable async agent job system where agents can create durable child tasks, specialized workers execute them asynchronously, results are persisted, and the parent agent can continue when dependencies become ready.

@@ -51,20 +51,16 @@ const taskCases = [
 
 const jobCases = [
   ['DRAFT','activate',{},'ACTIVE'],
-  ['DRAFT','pr.merged',{},'COMPLETED'],
   ['DRAFT','cancel',{},'CANCELLED'],
-  ['DRAFT','pr.closed',{notMerged:true},'CANCELLED'],
-  ['ACTIVE','review.approved',{autoMerge:true},'ACTIVE'],
-  ['ACTIVE','implementation.completed',{autoMerge:true},'ACTIVE'],
-  ['ACTIVE','effect.mergePullRequest.failed',{},'ACTIVE'],
-  ['ACTIVE','pr.merged',{},'COMPLETED'],
+  ['ACTIVE','reconcile',{},'ACTIVE'],
+  ['ACTIVE','review.approved',{},'ACTIVE'],
+  ['ACTIVE','implementation.completed',{},'ACTIVE'],
   ['ACTIVE','cancel',{},'CANCELLED'],
-  ['ACTIVE','pr.closed',{notMerged:true},'CANCELLED'],
-  ['CANCELLED','pr.merged',{},'COMPLETED'],
-  ['COMPLETED','pr.merged',{},'COMPLETED'],
+  ['ACTIVE','local.completed',{localCompletionAllowed:true},'COMPLETED'],
+  ['ACTIVE','local.merge.requested',{localMergeReady:true},'ACTIVE'],
+  ['ACTIVE','effect.deliverLocalMerge.failed',{},'ACTIVE'],
   ['COMPLETED','effect.cleanupJobWorktree.failed',{},'COMPLETED'],
   ['CANCELLED','effect.cancelActiveTasks.failed',{},'CANCELLED'],
-  ['COMPLETED','effect.cancelActiveTasks.failed',{},'COMPLETED'],
 ];
 
 const taskSource = readFileSync(new URL('../workflow/task-lifecycle.mmd', import.meta.url), 'utf8');
@@ -94,9 +90,11 @@ const jobRuntime = new GraphRuntime(jobSource, {
     implementationComplete: boolGuard('implementationComplete'),
     headAvailable: boolGuard('headAvailable'),
     mergeCapable: boolGuard('mergeCapable'),
+    localCompletionAllowed: boolGuard('localCompletionAllowed'),
+    localMergeReady: boolGuard('localMergeReady'),
   },
-  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile']),
-  actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.cleanupJobWorktree']),
+  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
+  actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.deliverLocalMerge','effect.cleanupJobWorktree']),
 });
 
 test('canonical Task lifecycle flowchart matches lifecycle API targets across the canonical corpus', () => {
@@ -140,8 +138,7 @@ test('canonical guarded rejection and ambiguity match lifecycle API semantics', 
   assert.equal(v1.reason,'ambiguous');
   assert.deepEqual(v2,{ accepted:false, source:'QUEUED', reason:'ambiguous' });
 
-  const jobV1=decideJobLifecycle({id:'j',state:'ACTIVE'},'review.approved',{autoMerge:false});
-  const jobV2=jobRuntime.evaluateSync({ currentState:'ACTIVE', input:{transport:'event',id:'review.approved',payload:{}}, durableFacts:{autoMerge:false} });
+  const jobV1=decideJobLifecycle({id:'j',state:'ACTIVE'},'pr.merged',{});
   assert.equal(jobV1.accepted,false);
-  assert.deepEqual(jobV2,{ accepted:false, source:'ACTIVE', reason:'no_transition' });
+  assert.throws(() => jobRuntime.evaluateSync({ currentState:'ACTIVE', input:{transport:'event',id:'pr.merged',payload:{}}, durableFacts:{} }),/unknown event/);
 });

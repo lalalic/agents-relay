@@ -41,11 +41,11 @@ export async function applyManagedTaskUpdate(
 }
 
 export function managedTaskUpdateHandler(
-  locate: (jobId: string) => { store: DurableStore; repository: string; prNumber: number },
+  locate: (jobId: string) => { store: DurableStore; repository: string; prNumber: number } | Promise<{ store: DurableStore; repository: string; prNumber: number }>,
   wake: (repository: string, prNumber: number, jobId: string) => Promise<void>,
 ): (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job> {
   return async (jobId, taskId, task, expectedUpdatedAt) => {
-    const target = locate(jobId);
+    const target = await locate(jobId);
     const updated = await applyManagedTaskUpdate(target.store, jobId, taskId, task, expectedUpdatedAt);
     await wake(target.repository, target.prNumber, jobId);
     return updated;

@@ -9,15 +9,15 @@ architecture-sensitive work.
 
 ## Principles
 
-- GitHub PR state is durable collaborative truth. V2 Relay Store owns operational execution state; events remain wake-up/observability signals, never durable truth by themselves.
+- V2 SQLite Relay Store is the sole authoritative Job/Plan/Task/Review/Execution/Lease/Recovery state. GitHub only executes external PR/commit/review/merge effects; events are wake-ups/observability, never standalone durable truth.
 - Reconcile desired durable state into ephemeral worker executions.
-- One top-level objective maps to one PR; child tasks live inside that PR.
+- One top-level objective maps to one local Job (which may reference one external PR); child Tasks/Plans/Review state remain in local SQLite.
 - `job create` creates durable job state only. The top-level orchestrator decides whether to start work and, if so, submits the initial task batch separately. A zero-task autonomous job must remain idle; Relay must not invent its first planner/task batch.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
 - Keep provider/model routing separate from roles and capabilities.
-- Prefer standard library and small dependencies. Do not duplicate GitHub collaborative records in a competing database; V2 may use the built-in SQLite Relay Store for operational state, leases, event idempotency, materialized runtime views, and projection outbox.
+- Prefer standard library and small dependencies. SQLite is canonical lifecycle state, not a cache of GitHub comments. Do not hydrate/recover lifecycle from PR body/comments, or enqueue lifecycle projection writes. The outbox may hold only idempotent external PR actions.
 - TypeScript must use explicit types and avoid `any`.
 - UI must remain usable without a frontend framework unless a framework becomes necessary.
 - Tests must cover state transitions, parser/serialization, reconciliation, and recovery-sensitive logic.

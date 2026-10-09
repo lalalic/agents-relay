@@ -1,8 +1,9 @@
 # Agents Relay
 
-Agents Relay is a generic TypeScript runtime for durable asynchronous agent jobs coordinated through GitHub pull requests. The PR body stores the durable Job marker plus human-readable Job objective, while PR comments store durable Task and other append-friendly records; correlated terminal events are authoritative for model-backed task lifecycle transitions.
+Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
-V2 separates **operational execution state** from that collaboration record. A local RelayStore may use SQLite/WAL for runtime snapshots, event idempotency and a durable GitHub projection outbox. ProjectedDurableStore bootstraps from the existing GitHub representation, commits Job/Plan/Task runtime changes locally, and lets GitHubProjectionWriter project them asynchronously. GitHub therefore remains the human-readable durable Job/Plan/Task/Review surface without being required for every high-frequency runtime transition.
+V2 uses a read-only local SQLite Job Registry for discovery. The immutable jobId selects the Job Store even when prNumber is zero; scheduled slot claims are atomic across processes. GitHub is **audit-only**: its PR/head/publish events are persisted for reporting, never consulted to start, stop, or complete local Workflows. Local Git delivery and its confirmed merge receipt—not a remote PR MERGED fact—gate Graph completion. Job creation and local Task operations require no GitHub authentication or PR.
+
 
 The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
@@ -10,23 +11,27 @@ the runtime; they do not replace that contract.
 
 ## V2 architecture
 
-```mermaid
+\`\`\`mermaid
 flowchart LR
-    Human[Human / orchestrator] --> GH[GitHub PR + comments<br/>collaboration + audit surface]
-    GH --> Inbound[Typed inbound GitHub facts]
-    Worker[Workers / adapters] --> Events[Event Bus<br/>lifecycle + progress facts]
-    Inbound --> Coord[ReconcileCoordinator]
-    Events --> Coord
-    Coord --> Graphs[Executable Mermaid graphs<br/>workflow authority]
-    Graphs --> Runtime[TypeScript primitives<br/>facts + guards + effects]
-    Runtime --> Store[(SQLite/WAL RelayStore<br/>operational execution truth)]
-    Store --> Outbox[Projection outbox]
-    Outbox --> Writer[GitHubProjectionWriter]
-    Writer --> GH
-    Store --> Views[Dashboard / scheduler / recovery]
-```
+    Human[Human / orchestrator] --> CLI[CLI / Dashboard]
+    CLI --> Store[(SQLite / WAL<br/>Job Task Plan Review truth)]
+    Worker[Workers / adapters] --> Events[EventBus<br/>wake + observations]
+    Events --> Coordinator[ReconcileCoordinator]
+    Store --> Coordinator
+    Coordinator --> Graphs[Canonical Mermaid Graph Engine]
+    Graphs --> Effects[Stateless actions / effects]
+    Effects --> Store
+    Store --> Views[Dashboard / Scheduler / Recovery]
+    Effects --> Outbox[Durable external-action outbox]
+    Outbox --> GH[GitHub Commit / PR / Review / Merge API]
+    GH --> Facts[Confirmed external facts]
+    Facts --> Store
+\`\`\`
 
-RelayStore owns local operational execution facts; GitHub remains the human-readable collaboration and audit projection. Worker events are authoritative lifecycle inputs for model-backed tasks, but they are not a separate durable database. The graph engine owns workflow branching; TypeScript owns facts, persistence, locking/claims, I/O, and primitive guard/action implementations.
+SQLite holds the sole lifecycle authority; the Graph Engine selects every transition.
+GitHub operations are explicitly requested and confirmed by adapters, never used to
+discover or reconstruct Job/Task state. EventBus delivery wakes reconciliation;
+it cannot replace the durable SQLite record.
 
 ### Workflow graph navigation
 
@@ -53,7 +58,7 @@ These paths always represent the current canonical graphs. Historical graph defi
 
 ## Quick start
 
-For GitHub-backed work, create or adopt the PR through Agents Relay itself. This guarantees the durable job marker exists before any managed task is submitted.
+For new work, create a local Job through Agents Relay. The CLI can bind a known PR number without GitHub access; creating a new PR head uses the external GitHub adapter. Tasks are validated against the SQLite Job, not GitHub markers.
 
 ~~~sh
 cat > job.md <<'EOF'

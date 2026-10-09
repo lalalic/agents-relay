@@ -93,10 +93,11 @@ test('reviewer refuses dirty or stale Job checkout', async t => {
   await assert.rejects(() => assertCleanWorktreeAtHead(f.path,'0'.repeat(40)),/stale HEAD/);
 });
 
-test('completed Job replays graph-owned cleanup effect on merged PR', async () => {
+test('a completed Job ignores merged PR observations without GitHub-triggered cleanup', async () => {
   const { decideJobReconcile } = await import('../dist/workflow/job-reconcile-v2.js');
-  const decision = decideJobReconcile({ id:'example', state:'COMPLETED' }, { prState:'MERGED', headSha:null, mergeCapable:false });
-  assert.equal(decision.accepted,true);
-  assert.equal(decision.target,'COMPLETED');
-  assert.deepEqual(decision.effects,['effect.cleanupJobWorktree']);
+  const result=decideJobReconcile({ id:'example', state:'COMPLETED' },
+    { jobActive:false, implementationComplete:true, headAvailable:true, deliveryReady:true });
+  assert.equal(result.accepted,false);
+  assert.equal(result.target,null);
+  assert.deepEqual(result.effects,[]);
 });

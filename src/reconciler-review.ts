@@ -8,19 +8,29 @@ import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination } from './reviewer-thread.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
-  protected async currentHeadSha(job: Job): Promise<string | null> { return await this.store.headSha?.() ?? job.headSha ?? job.review?.headSha ?? null; }
-  private reviewFacts(job: Job, prState: string, headSha: string | null): Readonly<Record<string, unknown>> {
+  protected async currentHeadSha(job: Job): Promise<string | null> {
+    // GitHub PR head facts are audit-only. Source identity is local Git.
+    if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
+    try {
+      const project = await this.options.projectPathForJob(job);
+      if (job.localMerge?.sourceRef) return localSourceHead(project, job.localMerge.sourceRef);
+      return localWorkingHead(project);
+    } catch {
+      return job.headSha ?? job.review?.headSha ?? null;
+    }
+  }
+  private reviewFacts(job: Job, headSha: string | null): Readonly<Record<string, unknown>> {
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
     const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
       unscheduled: !job.schedule,
       reviewEnabled: job.reviewEnabled !== false,
-      prOpen: prState === 'OPEN',
       jobActive: job.state === 'ACTIVE',
       implementationComplete: implementationComplete(job),
       headAvailable: Boolean(headSha),
@@ -149,9 +159,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     return id;
   }
 
-  protected async ensureFinalReview(job: Job, prState: string, headSha: string | null): Promise<void> {
+  protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
     let reviewTaskId: string | null = null;
-    const decision = await dispatchReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, prState, headSha), async actionId => {
+    const decision = await dispatchReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, headSha), async actionId => {
       if (actionId !== 'review.create') throw new Error('Unsupported review reconcile action ' + actionId);
       if (!headSha) throw new Error('Review graph requested creation without a durable head SHA');
       reviewTaskId = await this.createFinalReviewTask(job, headSha); return {};
@@ -280,7 +290,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const headSha = normalizedEvidence.headSha;
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
-    const currentHeadSha = await this.store.headSha?.();
+    const currentHeadSha = await this.currentHeadSha(job);
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
@@ -311,13 +321,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         return {};
       }
       if (actionId === 'review.requestMerge') {
-        await transitionJobEvent(job, 'review.approved', { autoMerge: true }, async effectId => {
-          const outcomes = await this.workflowEffects.execute(
-            [effectId as 'effect.mergePullRequest'],
-            { jobId: job.id, taskId: task.id, transitionKey: 'review.approved:' + headSha, data: { headSha } },
-          );
-          await this.applyJobEffectOutcomes(job, outcomes);
-        }, async () => { await this.store.saveJob(job); });
+        // Approval is a local fact; only subsequent local Git delivery may complete the Job.
         return {};
       }
       throw new Error('Unsupported review event action ' + actionId);
@@ -332,6 +336,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     } };
     job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
     job.updatedAt = job.review.updatedAt; await this.store.saveJob(job);
+    // Review approval records evidence only. The subsequent Graph reconcile
+    // drives durable local Git merge delivery and terminalization.
+    if (outcome === 'approved') needsReconcile = true;
     return { applied: true, reconcile: needsReconcile, reason: 'review.' + outcome, reconcileMode: needsReconcile ? 'detached' : undefined };
   }
 

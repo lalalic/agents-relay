@@ -3,7 +3,7 @@ import { IncomingHttpHeaders } from 'node:http';
 
 export type PackagePublishFailure = { runId: string; attempt: number; sha: string; stage: string };
 export type PackagePublication = { package: string; version: string; registry: string | null; sha: string | null };
-export type GitHubPullRequestFacts = { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: { ref: string; sha: string } | null };
+export type GitHubPullRequestFacts = { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: { ref: string; sha: string } | null; observedAt?: string };
 export type GitHubWebhookWake = {
   deliveryId: string;
   event: 'pull_request' | 'issue_comment';
@@ -11,6 +11,7 @@ export type GitHubWebhookWake = {
   repository: string;
   pullRequest: number;
   publication: PackagePublication | null;
+  publicationObservedAt?: string;
   publishFailure?: PackagePublishFailure | null;
   pullRequestFacts: GitHubPullRequestFacts | null;
 };
@@ -63,8 +64,10 @@ function pullRequestFacts(payload: Record<string, unknown>, action: string | nul
   const ref = typeof head?.ref === 'string' ? head.ref : null;
   const sha = typeof head?.sha === 'string' ? head.sha : null;
   if (!ref || !sha) return null;
-  if (action === 'closed') return { state: pr.merged === true ? 'MERGED' : 'CLOSED', head: { ref, sha } };
-  return { state: 'OPEN', head: { ref, sha } };
+  const updated = typeof pr.updated_at === 'string' && Number.isFinite(Date.parse(pr.updated_at))
+    ? { observedAt: new Date(pr.updated_at).toISOString() } : {};
+  if (action === 'closed') return { state: pr.merged === true ? 'MERGED' : 'CLOSED', head: { ref, sha }, ...updated };
+  return { state: 'OPEN', head: { ref, sha }, ...updated };
 }
 
 export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): GitHubWebhookWake | null {
@@ -83,11 +86,17 @@ export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): 
 
   if (event === 'issue_comment') {
     const comment = payload.comment as Record<string, unknown> | undefined;
-    const publication = parsePackagePublicationMarker(comment?.body);
-    const publishFailure = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]'
+    const trustedPublisher = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]';
+    const publication = trustedPublisher ? parsePackagePublicationMarker(comment?.body) : null;
+    const publishFailure = trustedPublisher
       ? parsePackagePublishFailureMarker(comment?.body) : null;
     if (!publication && !publishFailure) return null;
-    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication, ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
+    const commentTime = (comment as Record<string, unknown> | undefined)?.created_at;
+    const publicationObservedAt = typeof commentTime === 'string' && Number.isFinite(Date.parse(commentTime))
+      ? new Date(commentTime).toISOString() : undefined;
+    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication,
+      ...(publicationObservedAt ? { publicationObservedAt } : {}),
+      ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
   }
 
   const facts = pullRequestFacts(payload, action);

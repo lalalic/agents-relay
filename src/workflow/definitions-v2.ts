@@ -49,6 +49,8 @@ export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
   implementationComplete: boolGuard('implementationComplete'),
   headAvailable: boolGuard('headAvailable'),
   mergeCapable: boolGuard('mergeCapable'),
+  localCompletionAllowed: boolGuard('localCompletionAllowed'),
+  localMergeReady: boolGuard('localMergeReady'),
 });
 
 function topologyTargets(graph: Graph, from: string): Set<string> {

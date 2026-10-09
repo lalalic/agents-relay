@@ -106,6 +106,7 @@ export class GitHubProjectionWriter {
     private readonly relay: RelayStore,
     private readonly github: DurableStore,
     private readonly onConflict?: ProjectionConflictObserver,
+    private readonly externalOnly = false,
   ) {}
 
   async flushOnce(limit = 50, now = new Date()): Promise<{ projected: number; deferred: number }> {
@@ -114,7 +115,22 @@ export class GitHubProjectionWriter {
     let deferred = 0;
     for (const item of items) {
       try {
+        if (this.externalOnly && !['merge_pull_request', 'close_pull_request', 'update_pr_body'].includes(item.operation)) {
+          // Drop legacy lifecycle projections; GitHub may not override SQLite truth.
+          await this.relay.completeProjection(item.id);
+          continue;
+        }
         await this.apply(item);
+        // Only a CONFIRMED external operation may create the corresponding
+        // fact; Graph Engine observes it and decides the local lifecycle.
+        if (item.operation === 'merge_pull_request' || item.operation === 'close_pull_request') {
+          const previous = await this.relay.loadPullRequestFacts();
+          await this.relay.savePullRequestFacts({
+            state: item.operation === 'merge_pull_request' ? 'MERGED' : 'CLOSED',
+            head: previous?.head ?? null,
+            observedAt: new Date().toISOString(),
+          });
+        }
         await this.relay.completeProjection(item.id);
         projected += 1;
         observability().record({
@@ -195,8 +211,9 @@ export class ProjectedDurableStore implements DurableStore {
     seed: GitHubPullRequestSeed | null = null,
     private readonly relatedStore?: (repository: string, prNumber: number) => DurableStore,
     onConflict?: ProjectionConflictObserver,
+    externalOnly = false,
   ) {
-    this.projection = new GitHubProjectionWriter(relay, github, onConflict);
+    this.projection = new GitHubProjectionWriter(relay, github, onConflict, externalOnly);
     this.seededFacts = pullRequestFactsFromSeed(seed);
     if (this.seededFacts) void this.relay.savePullRequestFacts(this.seededFacts).catch(() => { /* local seed is best effort; reads retain the seed */ });
   }

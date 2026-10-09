@@ -161,7 +161,7 @@ test('dashboard direct job lifecycle state override persists without changing ru
   const durable = await dashboardJobSetState(store)('j', 'COMPLETED');
   assert.equal(durable.state, 'COMPLETED');
   assert.equal((await store.load('j')).state, 'COMPLETED');
-  assert.equal(deriveJobRuntimeStatus(durable, 'OPEN'), 'IDLE');
+  assert.equal(deriveJobRuntimeStatus(durable, 'OPEN'), 'COMPLETED');
 });
 
 test('dashboard job lifecycle override cannot invent a transition absent from the canonical graph', async () => {
@@ -522,7 +522,7 @@ test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a
 test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=schedule(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
 test('RUNNING tasks cannot return to DRAFT', async () => { const current=task('running','RUNNING'); await assert.rejects(transitionTaskEvent(current,'hold'),/No enabled workflow transition from RUNNING on hold/); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
-test('repository pool orders open jobs globally by durable priority', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','low']); });
+test('repository pool orders all locally active jobs regardless of GitHub state', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','merged','low']); });
 test('startup reconciliation selects expired durable RUNNING leases after daemon restart', () => {
   const expired=task('expired','RUNNING'); expired.executionId='expired-exec'; expired.leaseExpiresAt='2026-09-19T16:46:23.718Z';
   const live=task('live','RUNNING'); live.executionId='live-exec'; live.leaseExpiresAt='2026-09-19T17:10:00.000Z';
@@ -611,11 +611,41 @@ test('startup recovery graph terminalizes an exhausted orphan without a new gene
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
 test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
 test('GitHub draft PR does not override ACTIVE job execution lifecycle', () => { const held={...job([]),id:'held'}; const item={job:held,githubState:'OPEN',draft:true,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['held']); });
-test('repository pool selects stale terminal jobs for lifecycle reconciliation', () => {
+test('repository pool never selects remote terminal facts as lifecycle transitions', () => {
   const open={...job([]),id:'open'}; const merged={...job([]),id:'merged',state:'ACTIVE'}; const completed={...job([]),id:'done',state:'COMPLETED'}; const closed={...job([]),id:'closed',state:'ACTIVE'};
   const items=[{job:open,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:merged,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:completed,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()},{job:closed,githubState:'CLOSED',draft:false,mergedAt:null,closedAt:now()}];
-  assert.deepEqual(new Set(terminalManagedJobs(items).map(x=>x.id)),new Set(['merged','closed']));
+  assert.deepEqual(terminalManagedJobs(items), []);
+  assert.deepEqual(runnableManagedJobs(items).map(item=>item.id).sort(), ['closed','merged','open']);
 });
+
+// Test-only adapter: legacy fixture arguments become local-only Job ID resolvers.
+// Production RepositoryWorkerPool intentionally has no PR binding or fallback.
+function localPoolFixture(_client, _repos, _trusted, concurrency, makeReconciler,
+  _rateLimited, _snapshot, makeStore, inventory, resolver) {
+  const known = new Map();
+  const localInventory = async () => {
+    const items = inventory ? await inventory() : [];
+    for (const item of items) known.set(item.job.id, item.job);
+    return items;
+  };
+  const localResolver = async jobId => {
+    if (resolver) {
+      const selected = await resolver(jobId);
+      if (selected) return selected;
+    }
+    if (!known.has(jobId) && inventory) await localInventory();
+    const root = known.get(jobId) ?? { ...job([]), id: jobId, repository: 'owner/repo', prNumber: 0 };
+    const store = makeStore ? makeStore(root.repository, root.prNumber) : new InMemoryStore(root);
+    return { job: root, store };
+  };
+  const pool = new RepositoryWorkerPool(concurrency, makeReconciler, localInventory, localResolver);
+  const reconcileKnown = pool.reconcileKnown.bind(pool);
+  pool.reconcileKnown = async items => {
+    for (const item of items) known.set(item.job.id, item.job);
+    return reconcileKnown(items);
+  };
+  return pool;
+}
 
 test('repository pool reuses startup discovery without another workspace scan', async () => {
   const calls=[];
@@ -623,7 +653,7 @@ test('repository pool reuses startup discovery without another workspace scan', 
   const root={...job([queued]),id:'startup-known',repository:'owner/repo',prNumber:7};
   const overview={job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null};
   const client={request:async()=>{throw new Error('startup known state must not scan REST');},graphql:async()=>{throw new Error('startup known state must not scan GraphQL');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{calls.push({id,maxConcurrent});}}));
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{calls.push({id,maxConcurrent});}}));
   await pool.reconcileKnown([overview]);
   assert.deepEqual(calls,[{id:'startup-known',maxConcurrent:1}]);
 });
@@ -632,7 +662,7 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   const bus=new MemoryEventBus();
   const calls=[];
   const client={request:async()=>{throw new Error('full scan should not run for targeted wake');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{calls.push({id,maxConcurrent});}}));
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{calls.push({id,maxConcurrent});}}));
   const stop=await pool.watch(bus);
   await bus.publish(eventFor('job-1','task-1',null,'job.wake','queued','wake','orchestrator',{repository:'owner/repo',prNumber:42}));
   await new Promise(resolve=>setTimeout(resolve,0));
@@ -644,7 +674,7 @@ test('new final-review creation wakes repository pool without relying on polling
   const bus = new MemoryEventBus();
   const calls = [];
   const client = { request: async () => { throw new Error('no full scan required'); } };
-  const pool = new RepositoryWorkerPool(client, ['owner/repo'], new Set(['bot']), 4,
+  const pool = localPoolFixture(client, ['owner/repo'], new Set(['bot']), 4,
     () => ({ reconcile: async id => { calls.push(id); } }));
   const stop = await pool.watch(bus);
   await bus.publish(eventFor('job-review', 'final-review-head', null, 'review.created', 'queued',
@@ -661,7 +691,7 @@ test('scheduler timer enters through EventBus schedule.tick before scheduled gra
   const store=new InMemoryStore(root);
   const seen=[]; let reconciles=0;
   const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async id=>{reconciles+=1; seen.push('reconcile:'+id);}}),()=>false,undefined,()=>store);
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async id=>{reconciles+=1; seen.push('reconcile:'+id);}}),()=>false,undefined,()=>store);
   const stopAudit=await bus.subscribeAll(async event=>{if(event.type==='schedule.tick')seen.push('bus:'+event.type);});
   const stopPool=await pool.watch(bus);
   await pool.scheduleTickSignal(bus,root,at);
@@ -680,7 +710,7 @@ test('scheduler timer without EventBus uses the same schedule coordinator path',
   const store=new InMemoryStore(root);
   let reconciles=0;
   const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{reconciles+=1;}}),()=>false,undefined,()=>store);
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{reconciles+=1;}}),()=>false,undefined,()=>store);
   await pool.scheduleTickSignal(undefined,root,at);
   assert.equal(reconciles,1);
   const durable=await store.load(root.id);
@@ -695,7 +725,7 @@ test('repository pool serializes same-job targeted reconcile with discovered rec
   const client={request:async()=>{throw new Error('unexpected request');}};
   let active=0, maxActive=0; const calls=[]; let releaseFirst;
   const firstGate=new Promise(resolve=>{releaseFirst=resolve;});
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({reconcile:async id=>{
     calls.push({id,maxConcurrent}); active+=1; maxActive=Math.max(maxActive,active);
     if(calls.length===1) await firstGate;
     active-=1;
@@ -711,60 +741,52 @@ test('repository pool serializes same-job targeted reconcile with discovered rec
   assert.equal(calls.length,2);
 });
 
-test('repository pool consumes a webhook PR snapshot for targeted reconciliation without duplicate reads', async () => {
+test('GitHub PR snapshots cannot seed or trigger local workflow execution', async () => {
   const root={...job([]),id:'seeded-job',repository:'owner/repo',prNumber:46};
-  let graphqlCalls=0;
-  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{graphqlCalls+=1;throw new Error('seeded reconcile must not re-read GraphQL');}};
-  const seen=[];
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(store,maxConcurrent)=>({reconcile:async id=>{
-    const loaded=await store.load(id);
-    const state=await store.pullRequestState();
-    const head=await store.pullRequestHead();
-    seen.push({id,maxConcurrent,title:loaded.title,state,head});
-  }}));
-  pool.seedTargetSnapshot('owner/repo',46,'seeded-job',{
-    prNode:{id:'PR_seed',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/seed',headRefOid:'seed-sha'},
-    comments:[],
-  });
-  await pool.reconcileTarget('owner/repo',46,'seeded-job');
-  assert.equal(graphqlCalls,0);
-  assert.deepEqual(seen,[{id:'seeded-job',maxConcurrent:4,title:'x',state:'OPEN',head:{ref:'feat/seed',sha:'seed-sha'}}]);
+  const store=new InMemoryStore(root);
+  let reconciles=0,githubCalls=0;
+  const client={request:async()=>{githubCalls++;throw Error('GitHub forbidden');},
+    graphql:async()=>{githubCalls++;throw Error('GitHub forbidden');}};
+  const pool=localPoolFixture(client,['owner/repo'],new Set(),4,
+    ()=>({reconcile:async()=>{reconciles++;}}),()=>false,undefined,
+    ()=>{throw Error('PR store used');},
+    async()=>[{job:root,githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}],
+    async id=>id===root.id?{job:root,store}:null);
+  await pool.reconcileTarget('owner/repo',46,root.id,'github.webhook:pull_request:closed');
+  assert.equal(reconciles,0);
+  assert.equal(githubCalls,0);
+  await pool.reconcileLocalJob(root.id);
+  assert.equal(reconciles,1);
 });
 
-test('runtime-only event cannot consume a pending webhook snapshot seed', async () => {
-  const bus=new MemoryEventBus();
+test('local runtime event is independent from pending GitHub PR snapshot seed', async () => {
   const root={...job([]),id:'seed-preserved-job',repository:'owner/repo',prNumber:47};
-  let graphqlCalls=0;
-  let reconciles=0;
-  const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{graphqlCalls+=1;throw new Error('webhook seed was lost before reconcile');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(store)=>({
-    applyEvent:async event=>({applied:true,reconcile:false,reason:event.type}),
-    reconcile:async id=>{
-      reconciles+=1;
-      if (reconciles >= 2) {
-        const loaded=await store.load(id);
-        assert.equal(loaded.id,'seed-preserved-job');
-      }
-    }
-  }));
-  await pool.reconcileTarget('owner/repo',47,'seed-preserved-job','setup-target');
-  pool.seedTargetSnapshot('owner/repo',47,'seed-preserved-job',{
-    prNode:{id:'PR_seed_preserved',state:'OPEN',merged:false,mergedAt:null,closedAt:null,body:renderJobBody(root),headRefName:'feat/seed-preserved',headRefOid:'seed-preserved-sha'},
-    comments:[],
-  });
+  const store=new InMemoryStore(root), bus=new MemoryEventBus();
+  let calls=0,githubCalls=0;
+  const pool=localPoolFixture({
+      request:async()=>{githubCalls++;throw Error('unexpected GitHub API');},
+      graphql:async()=>{githubCalls++;throw Error('unexpected GitHub API');},
+    },['owner/repo'],new Set(),4,()=>({
+      applyEvent:async()=>({applied:true,reconcile:true}),
+      reconcile:async()=>{calls++;},
+    }),()=>false,undefined,()=>{throw Error('Remote store forbidden');},
+    async()=>[{job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],
+    async id=>id===root.id?{job:root,store}:null);
   const stop=await pool.watch(bus);
-  await bus.publish(eventFor('seed-preserved-job','task-1',null,'task.started','running','started','orchestrator'));
-  await pool.reconcileTarget('owner/repo',47,'seed-preserved-job','github.webhook:pull_request:edited');
-  assert.equal(graphqlCalls,0);
-  assert.equal(reconciles,2);
-  await stop();
+  try {
+    await bus.publish(eventFor(root.id,'task-1',null,'task.started','running','started','orchestrator'));
+    for(let i=0;i<100&&calls===0;i++)await new Promise(resolve=>setTimeout(resolve,2));
+    assert.equal(calls,1);
+    assert.equal(githubCalls,0);
+    assert.equal((await store.load(root.id)).state,'ACTIVE');
+  } finally {await stop();}
 });
 
 test('repository pool coalesces concurrent targeted reconciles for the same job', async () => {
   const calls=[]; let release;
   const gate=new Promise(resolve=>{release=resolve;});
   const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,()=>({reconcile:async id=>{calls.push(id); await gate;}}));
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),4,()=>({reconcile:async id=>{calls.push(id); await gate;}}));
   const first=pool.reconcileTarget('owner/repo',45,'burst-job');
   const second=pool.reconcileTarget('owner/repo',45,'burst-job');
   const third=pool.reconcileTarget('owner/repo',45,'burst-job');
@@ -780,7 +802,7 @@ test('uncorrelated GitHub webhook signals never trigger GitHub refreshes', async
   let refreshCalls=0;
   let reconcileCalls=0;
   const client={request:async()=>{throw new Error('unexpected REST');},graphql:async()=>{throw new Error('unexpected GraphQL');}};
-  const pool=new RepositoryWorkerPool(
+  const pool=localPoolFixture(
     client,
     ['owner/repo'],
     new Set(['bot']),
@@ -802,7 +824,7 @@ test('repository pool emits package.published from a correlated publication webh
   const events=[];
   const client={request:async()=>{throw new Error('unexpected request');}};
   const root={...job([]),id:'release-job',repository:'owner/repo',prNumber:83};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{}}));
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{}}));
   const stop=await bus.subscribe('release-job',async event=>events.push(event));
   await pool.webhookWake(bus,root,{deliveryId:'delivery-123',event:'issue_comment',action:'created',repository:'owner/repo',pullRequest:83,publication:{package:'agents-relay',version:'1.2.3',registry:'https://registry.npmjs.org',sha:'abc123'},pullRequestFacts:null});
   assert.deepEqual(events.map(event=>event.type),['package.published','github.webhook']);
@@ -816,7 +838,7 @@ test('repository pool routes correlated task lifecycle events to the target reco
   const bus=new MemoryEventBus();
   const calls=[];
   const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({
+  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),4,(_store,maxConcurrent)=>({
     reconcile:async id=>{calls.push({kind:'reconcile',id,maxConcurrent});},
     applyEvent:async event=>{
       calls.push({kind:'event',type:event.type,jobId:event.job_id,taskId:event.task_id,maxConcurrent});
@@ -837,14 +859,21 @@ test('repository pool routes correlated task lifecycle events to the target reco
   await stop();
 });
 
-test('repository pool reconciles merged PRs even though they are not runnable', async () => {
-  const root={...job([]),id:'merged-pool',state:'ACTIVE',prNumber:14};
-  const comments=[{id:1,body:marker('agents-relay:job:v1',{...root,tasks:undefined}),updated_at:now(),user:{login:'bot'}}];
-  const client=graphCommentClient(comments,14,'MERGED');
-  const pool=new RepositoryWorkerPool(client,'owner/repo',new Set(['bot']),2,store=>managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]}));
+test('repository pool ignores locally recorded MERGED PR when local Job is still ACTIVE', async () => {
+  const root = { ...job([]), id: 'merged-pool', state: 'ACTIVE', prNumber: 14 };
+  const store = new InMemoryStore(root);
+  store.pullRequestState = async () => 'MERGED';
+  store.pullRequestHead = async () => null;
+  const api = { request: async () => { throw new Error('GitHub offline'); },
+    graphql: async () => { throw new Error('GitHub offline'); } };
+  const local = () => [{
+    job: root, githubState: 'MERGED', draft: false, mergedAt: null, closedAt: null,
+  }];
+  const pool = localPoolFixture(api, ['owner/repo'], new Set(),
+    2, runtime => managedReconciler(runtime, { owner: 'test', adapters: [] }),
+    () => true, undefined, () => store, local);
   await pool.reconcile();
-  assert.equal(comments.some(c=>c.body.includes('agents-relay:job:v1')),false);
-  assert.match(client.body,/\"state\":\"COMPLETED\"/);
+  assert.equal((await store.load('merged-pool')).state, 'ACTIVE');
 });
 test('task priority orders ready work and inherits job priority', () => { const a=task('a'), b=task('b'), c=task('c'); a.priority='P3'; b.priority='P0'; a.createdAt='2026-01-01T00:00:00.000Z'; b.createdAt='2026-01-02T00:00:00.000Z'; c.createdAt='2025-01-01T00:00:00.000Z'; assert.deepEqual([a,b,c].sort((x,y)=>compareTaskPriority(x,y,'P1')).map(x=>x.id), ['b','c','a']); });
 test('model task requires an event bus before launch', async () => {
@@ -1570,21 +1599,21 @@ test('ChatGPT tasks do not carry durable resumable thread lifecycle', () => {
   assert.equal(t.output.kind,'task_pr');
 });
 
-test('merged zero-task PR becomes COMPLETED even when scheduler would leave it OPEN', async () => {
+test('merged zero-task PR remains local ACTIVE without implementation completion', async () => {
   const root=job([]); const store=new InMemoryStore(root); store.pullRequestState=async()=> 'MERGED';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   const result=await reconciler.reconcile('j');
-  assert.equal(result.state,'COMPLETED');
+  assert.equal(result.state,'ACTIVE');
 });
 
-test('merged PR authoritatively completes jobs stuck in failed, blocked, or cancelled states', async () => {
+test('MERGED PR cannot change locally recorded failure, blocked or cancelled state', async () => {
   for (const state of ['FAILED','BLOCKED','CANCELLED']) {
     const root={...job([]),state};
     const store=new InMemoryStore(root);
     store.pullRequestState=async()=> 'MERGED';
     const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
     const result=await reconciler.reconcile('j');
-    assert.equal(result.state,'COMPLETED', state);
+    assert.equal(result.state,state, state);
   }
 });
 
@@ -1596,7 +1625,7 @@ test('dependent planned reviewer freezes latest PR head only at execution', asyn
   };
   const store = new InMemoryStore({ ...job([implementation, review]), headSha: 'new-head' });
   store.pullRequestHead = async () => ({ ref: 'e2e-fix', sha: 'new-head' });
-  await bindPlannedReviewHead(store, review);
+  await bindPlannedReviewHead(store, review, 'new-head');
   const persisted = (await store.load('j')).tasks.find(item => item.id === 'review');
   assert.equal(persisted.reviewHeadSha, 'new-head');
   assert.equal(persisted.state, 'QUEUED');
@@ -1753,13 +1782,13 @@ test('cancelled same-head review creates a versioned review round instead of con
   rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
   assert.equal(rounds.length,2);
 });
-test('reconcile persists a newly observed head before final review approval can auto-merge', async () => {
+test('reconcile ignores remote head and does not request GitHub merge after local approval', async () => {
   const oldHead = 'old-head-before-push';
   const newHead = 'new-head-after-push';
   const work = task('work', 'SUCCEEDED');
   const store = new InMemoryStore({ ...job([work]), headSha: oldHead });
   store.pullRequestState = async () => 'OPEN';
-  store.headSha = async () => newHead;
+  store.headSha = async () => { throw new Error('remote head must not be read'); };
   let mergedHead = null;
   store.mergePullRequest = async headSha => { mergedHead = headSha; };
   const reconciler = managedReconciler(store, {
@@ -1773,16 +1802,16 @@ test('reconcile persists a newly observed head before final review approval can 
   const afterReview = await store.load('j');
   const reviewer = afterReview.tasks.find(item => item.agentName === 'reviewer');
   assert.ok(reviewer);
-  assert.equal(afterReview.headSha, newHead);
-  assert.equal(reviewer.reviewHeadSha, newHead);
+  assert.equal(afterReview.headSha, oldHead);
+  assert.equal(reviewer.reviewHeadSha, oldHead);
 
   await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.approved', 'succeeded', 'approved', 'orchestrator', {
-    review: { headSha: newHead, summary: 'approved', blockingFindings: [] },
+    review: { headSha: oldHead, summary: 'approved', blockingFindings: [] },
   }));
   const completed = await store.load('j');
   assert.equal(completed.review?.outcome, 'approved');
   assert.equal(completed.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
-  assert.equal(mergedHead, newHead);
+  assert.equal(mergedHead, null);
 });
 
 test('autonomous in-progress batch advances planner without creating final review', async () => {
@@ -1886,11 +1915,11 @@ test('review changes-required creates one routable implementation fix task conta
   assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
 });
 
-test('PR 258-shaped reviewer evidence creates one idempotent fix and rejects malformed evidence', async () => {
+test('PR 258-shaped local review evidence creates one idempotent fix and rejects malformed evidence', async () => {
   const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
   const source = { id: `job/relay-child-process-lifecycle/task/process-lifecycle-final-review/execution/reviewer`, agent: 'reviewer' };
-  const store = new InMemoryStore(job([task('work', 'SUCCEEDED')]));
-  Object.defineProperty(store, 'headSha', { value: async () => headSha });
+  const store = new InMemoryStore({ ...job([task('work', 'SUCCEEDED')]), headSha });
+  Object.defineProperty(store, 'headSha', { value: async () => { throw new Error('remote head unavailable'); } });
   const bus = new MemoryEventBus();
   const emitted = [];
   const unsubscribe = await bus.subscribeAll(async event => emitted.push(event));
@@ -1963,7 +1992,7 @@ test('planner-created review binds its first authoritative verdict to Job review
   assert.match(fixes[0].input, /Remove unrequested seed artifact/);
 });
 
-test('planner-created review approval uses Job merge lifecycle without a seeded final review', async () => {
+test('planner-created review approval persists locally without requesting remote merge', async () => {
   const head = 'abcdef0123456789abcdef0123456789abcdef01';
   const implementation = task('implementation', 'SUCCEEDED');
   const reviewer = { ...task('review-planned', 'RUNNING', ['implementation']), agentName: 'reviewer', planningDecisionId: 'plan-8', reviewHeadSha: head };
@@ -1979,7 +2008,7 @@ test('planner-created review approval uses Job merge lifecycle without a seeded 
   assert.equal(saved.review?.outcome, 'approved');
   assert.equal(saved.review?.headSha, head);
   assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
-  assert.equal(merges, 1);
+  assert.equal(merges, 0);
 });
 
 test('review changes-required falls back to one fix task from the review message', async () => {
@@ -1994,8 +2023,8 @@ test('review changes-required falls back to one fix task from the review message
   assert.match(fixes[0].input,/fix the race and add coverage/);
 });
 
-test('approved review auto-merges by default and respects opt-out', async () => {
-  for (const [autoMerge, expected] of [[undefined,1],[false,0]]) {
+test('approved review never calls GitHub merge regardless of autoMerge policy', async () => {
+  for (const [autoMerge, expected] of [[undefined,0],[false,0]]) {
     const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-auto',autoMerge};
     const store=new InMemoryStore(reviewJob); let merges=0; let mergedSha=null;
     store.mergePullRequest=async sha=>{ merges+=1; mergedSha=sha; };
@@ -2030,6 +2059,13 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'stale approval', 'orchestrator', { headSha: 'sha-review-1' }));
   assert.equal((await store.load('j')).review?.headSha, 'sha-review-1');
   assert.equal((await store.load('j')).tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+  // The review event may already have started an event-driven reconcile.
+  // Wait for that pass before asserting on the next local head generation.
+  const deadline = Date.now() + 1000;
+  while (reconciler.reconciling) {
+    if (Date.now() > deadline) throw new Error('review reconcile did not drain');
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
   await reconciler.reconcile('j');
   const refreshed = await store.load('j');
   assert.equal(refreshed.review?.headSha, 'sha-review-2');
@@ -2051,7 +2087,7 @@ test('blocked review transitions reviewer task to BLOCKED', async () => {
   assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'BLOCKED');
 });
 
-test('approved reviewer remains SUCCEEDED after merged PR reconciliation', async () => {
+test('approved reviewer remains SUCCEEDED while external MERGED PR cannot terminate Job', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-merged-review',autoMerge:false};
   const store=new InMemoryStore(reviewJob); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-merged-review';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
@@ -2063,7 +2099,7 @@ test('approved reviewer remains SUCCEEDED after merged PR reconciliation', async
   assert.equal((await store.load('j')).tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
   store.pullRequestState=async()=> 'MERGED';
   const merged=await reconciler.reconcile('j');
-  assert.equal(merged.state,'COMPLETED');
+  assert.equal(merged.state,'ACTIVE');
   assert.equal(merged.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
   assert.equal(merged.tasks.find(item=>item.id===reviewer.id)?.error,null);
 });
@@ -2077,21 +2113,21 @@ test('open zero-task jobs remain create-only and do not consume reconciliation c
   assert.match(dashboardHtml, /Runtime status/);
 });
 
-test('merged PR cancels running work with task.cancelled lifecycle event', async () => {
+test('external MERGED PR does not cancel a locally RUNNING Task', async () => {
   const t=task('running-on-merge','RUNNING'); t.executionId='run-merge'; t.leaseOwner='worker'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
   const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'MERGED';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()]});
   const result=await reconciler.reconcile('j');
   const durable=result.tasks.find(item=>item.id===t.id);
-  assert.equal(result.state,'COMPLETED');
-  assert.equal(durable.state,'CANCELLED');
-  assert.equal(durable.error,'Pull request merged');
+  assert.equal(result.state,'ACTIVE');
+  assert.equal(durable.state,'RUNNING');
+  assert.equal(durable.error,null);
 });
 
-test('closed unmerged PR cancels queued work and job without launching', async () => {
+test('external CLOSED PR cannot cancel locally queued work', async () => {
   const t=task('closed-queued'); const store=new InMemoryStore(job([t])); store.pullRequestState=async()=> 'CLOSED'; const adapter=new FakeAdapter();
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter]}); const result=await reconciler.reconcile('j');
-  assert.equal(result.state,'CANCELLED'); assert.equal(result.tasks[0].state,'CANCELLED'); assert.equal(result.tasks[0].error,'Pull request closed'); assert.equal(adapter.launches,0);
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus(),maxConcurrent:0}); const result=await reconciler.reconcile('j');
+  assert.equal(result.state,'ACTIVE'); assert.equal(result.tasks[0].state,'QUEUED'); assert.equal(result.tasks[0].error,null); assert.equal(adapter.launches,0);
 });
 
 test('reconciler durably persists Graph dependency release transitions', async () => {
@@ -2210,16 +2246,21 @@ test('terminal fact from a duplicate same-attempt execution wins over its orphan
   assert.equal(durable.result?.summary,'durable output');
 });
 
-test('repository pool performs no GitHub-backed reconciliation while rate limited', async () => {
-  const calls=[];
-  const client={request:async()=>{calls.push('request'); throw new Error('must not call GitHub');},graphql:async()=>{calls.push('graphql'); throw new Error('must not call GitHub');}};
-  const pool=new RepositoryWorkerPool(client,['owner/repo'],new Set(['bot']),4,()=>({reconcile:async()=>{calls.push('reconcile');}}),()=>true);
+test('GitHub rate limit does not gate SQLite lifecycle reconciliation', async () => {
+  const calls = [];
+  const client = {
+    request: async () => { throw new Error('GitHub offline'); },
+    graphql: async () => { throw new Error('GitHub offline'); },
+  };
+  const root = { ...job([]), id: 'local-rate-limit', prNumber: 44 };
+  const inventory = () => [{ job: root, githubState: 'OPEN', draft: false, mergedAt: null, closedAt: null }];
+  const pool = localPoolFixture(client, ['owner/repo'], new Set(), 4,
+    () => ({ reconcile: async () => { calls.push('reconcile'); } }),
+    () => true, undefined, () => new InMemoryStore(root), inventory);
   await pool.reconcile();
-  await pool.reconcileTarget('owner/repo',44,'limited-job');
-  assert.deepEqual(calls,[]);
+  await pool.reconcileTarget('owner/repo', 44, 'local-rate-limit');
+  assert.ok(calls.length >= 1, 'SQLite reconciliation must proceed despite GitHub limits');
 });
-
-
 test('CLI task create rejects malformed Agent Graph before persistence', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-agent-graph-invalid-create-'));
   const file = join(directory, 'job.json');
@@ -2311,4 +2352,24 @@ test('P0 self execution occupies the Job slot without an execution UUID', async 
   const reconciler = managedReconciler(store, { owner:'p0-serialized', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:4 });
   await reconciler.reconcile('j');
   assert.equal(adapter.launches, 0);
+});
+
+test('publication Webhook replay retains the same EventBus event identity per Job', async () => {
+  const root = job([]); root.prNumber = 83; root.repository = 'owner/repo';
+  const bus = new MemoryEventBus();
+  const emitted = [];
+  await bus.subscribeAll(async event => { emitted.push(event); });
+  const pool = localPoolFixture({
+    request: async () => { throw new Error('no HTTP expected'); },
+    graphql: async () => { throw new Error('no GraphQL expected'); },
+  }, ['owner/repo'], new Set(), 1);
+  const wake = { deliveryId: 'same-publish-delivery', event: 'issue_comment', action: 'created',
+    repository: 'owner/repo', pullRequest: 83, publication: {
+      package: 'agents-relay', version: '3.1.0', registry: null, sha: 'abc123',
+    }, pullRequestFacts: null };
+  await pool.webhookWake(bus, root, wake);
+  await pool.webhookWake(bus, root, wake);
+  const publications = emitted.filter(event => event.type === 'package.published');
+  assert.equal(publications.length, 2);
+  assert.equal(publications[0].event_id, publications[1].event_id);
 });

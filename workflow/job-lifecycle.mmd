@@ -4,73 +4,32 @@ draft["state: DRAFT"]
 active["state: ACTIVE"]
 completed["state: COMPLETED"]
 cancelled["state: CANCELLED"]
-notMergedDraft["guard: notMerged"]
-notMergedActive["guard: notMerged"]
-autoMergeReview["guard: autoMerge"]
-autoMergeImplementation["guard: autoMerge"]
-prOpenReconcile["guard: prOpen"]
-reviewDisabledReconcile["guard: reviewDisabled"]
-implementationCompleteReconcile["guard: implementationComplete"]
-autoMergeReconcile["guard: autoMerge"]
-headAvailableReconcile["guard: headAvailable"]
-mergeCapableReconcile["guard: mergeCapable"]
-mergeReconcile["action: effect.mergePullRequest"]
-cancelDraftMerge["action: effect.cancelActiveTasks"]
-cancelDraftClose["action: effect.cancelActiveTasks"]
-mergeReview["action: effect.mergePullRequest"]
-mergeImplementation["action: effect.mergePullRequest"]
-cancelActiveMerge["action: effect.cancelActiveTasks"]
-cancelActiveClose["action: effect.cancelActiveTasks"]
-cancelCancelledMerge["action: effect.cancelActiveTasks"]
+
+cancelDraft["action: effect.cancelActiveTasks"]
+cancelActive["action: effect.cancelActiveTasks"]
+localCompletionGuard["guard: localCompletionAllowed"]
+localMergeReadyGuard["guard: localMergeReady"]
+localMergeDelivery["action: effect.deliverLocalMerge"]
 
 draft -->|on: activate| active
-draft -->|on: pr.merged| cancelDraftMerge
-cancelDraftMerge --> completed
 draft -->|on: cancel| cancelDraft
-cancelDraft["action: effect.cancelActiveTasks"]
 cancelDraft --> cancelled
-draft -->|on: pr.closed| notMergedDraft
-notMergedDraft -->|true| cancelDraftClose
-cancelDraftClose --> cancelled
 
-active -->|on: reconcile| prOpenReconcile
-prOpenReconcile -->|true| reviewDisabledReconcile
-prOpenReconcile -->|false| active
-reviewDisabledReconcile -->|true| implementationCompleteReconcile
-reviewDisabledReconcile -->|false| active
-implementationCompleteReconcile -->|true| autoMergeReconcile
-implementationCompleteReconcile -->|false| active
-autoMergeReconcile -->|true| headAvailableReconcile
-autoMergeReconcile -->|false| active
-headAvailableReconcile -->|true| mergeCapableReconcile
-headAvailableReconcile -->|false| active
-mergeCapableReconcile -->|true| mergeReconcile
-mergeCapableReconcile -->|false| active
-mergeReconcile --> active
-
-active -->|on: review.approved| autoMergeReview
-autoMergeReview -->|true| mergeReview
-mergeReview --> active
-active -->|on: implementation.completed| autoMergeImplementation
-autoMergeImplementation -->|true| mergeImplementation
-mergeImplementation --> active
-active -->|on: effect.mergePullRequest.failed| active
-active -->|on: pr.merged| cancelActiveMerge
-cancelActiveMerge --> completed
+active -->|on: reconcile| active
+active -->|on: review.approved| active
+active -->|on: implementation.completed| active
 active -->|on: cancel| cancelActive
-cancelActive["action: effect.cancelActiveTasks"]
 cancelActive --> cancelled
-active -->|on: pr.closed| notMergedActive
-notMergedActive -->|true| cancelActiveClose
-cancelActiveClose --> cancelled
 
-cancelled -->|on: pr.merged| cancelCancelledMerge
-cancelCancelledMerge --> completed
+active -->|on: local.completed| localCompletionGuard
+localCompletionGuard -->|true| completed
+localCompletionGuard -->|false| active
+
+active -->|on: local.merge.requested| localMergeReadyGuard
+localMergeReadyGuard -->|true| localMergeDelivery
+localMergeDelivery --> active
+localMergeReadyGuard -->|false| active
+active -->|on: effect.deliverLocalMerge.failed| active
+
 cancelled -->|on: effect.cancelActiveTasks.failed| cancelled
-completed -->|on: effect.cancelActiveTasks.failed| completed
-
-%% Cleanup eligibility belongs to the lifecycle graph and is retryable after restart.
-cleanupCompletedWorktree["action: effect.cleanupJobWorktree"]
-completed -->|on: pr.merged| cleanupCompletedWorktree
-cleanupCompletedWorktree --> completed
 completed -->|on: effect.cleanupJobWorktree.failed| completed

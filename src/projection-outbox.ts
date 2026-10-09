@@ -249,7 +249,8 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
   }
 
   resetProcessing(now: string): void {
-    this.db.prepare("UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing'").run(now);
+    const cutoff = new Date(Date.parse(now) - 120_000).toISOString();
+    this.db.prepare("UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing' AND updated_at<=?").run(now, cutoff);
   }
 
   enqueue(request: ProjectionRequest, now: string): boolean {
@@ -303,6 +304,7 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
     const observedAt = now.toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      this.resetProcessing(observedAt); // Reclaim only stale claims; recover on each retry tick, not only on process restart.
       const rows = this.db.prepare(`
         SELECT ${OUTBOX_COLUMNS}
         FROM projection_outbox

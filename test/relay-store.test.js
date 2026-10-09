@@ -52,6 +52,16 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   assert.equal(claimed.idempotencyKey, 'task-1');
   store.close();
 
+  // Opening another client must not steal a live action claim.
+  const second = new SQLiteRelayStore(tmp.path);
+  assert.equal((await second.claimDueProjections()).length, 0);
+  second.close();
+
+  // A crashed writer's old claim eventually becomes recoverable.
+  const ageing = new DatabaseSync(tmp.path);
+  ageing.prepare("UPDATE projection_outbox SET updated_at=? WHERE status='processing'")
+    .run(new Date(Date.now() - 180_000).toISOString());
+  ageing.close();
   store = new SQLiteRelayStore(tmp.path);
   const [recovered] = await store.claimDueProjections();
   assert.equal(recovered.id, claimed.id);
@@ -599,4 +609,105 @@ test('SQLite WAL permits a second store instance to read committed operational s
   assert.equal(await second.markEventProcessed('evt-concurrent'), false);
   second.close();
   await tmp.close(first);
+});
+
+test('expired processing outbox leases are reclaimed on ordinary retry ticks after restart', async () => {
+  const path=join(await mkdtemp(join(tmpdir(),'relay-stale-external-')),'state.db');
+  let store=new SQLiteRelayStore(path);
+  const firstAt=new Date();
+  try {
+    await store.enqueueProjection({idempotencyKey:'recover-remote-merge',operation:'merge_pull_request',
+      payload:{operation:'merge_pull_request',expectedHeadSha:'test-sha'}});
+    const first=await store.claimDueProjections(5,firstAt);
+    assert.equal(first.length,1);
+    store.close();
+    store=new SQLiteRelayStore(path);
+    assert.equal((await store.claimDueProjections(5,new Date(firstAt.getTime()+60_000))).length,0);
+    const recovered=await store.claimDueProjections(5,new Date(firstAt.getTime()+121_000));
+    assert.equal(recovered.length,1);
+    assert.equal(recovered[0].id,first[0].id);
+    await store.completeProjection(recovered[0].id);
+    assert.equal(await store.pendingProjectionCount(),0);
+  } finally {
+    store.close();
+    await rm(join(path,'..'),{recursive:true,force:true});
+  }
+});
+
+test('UNKNOWN is represented by missing evidence and confirmed PR facts advance normally', async () => {
+  const store=new SQLiteRelayStore(':memory:');
+  const t0='2026-10-09T01:00:00.000Z', t1='2026-10-09T01:01:00.000Z', t2='2026-10-09T01:02:00.000Z';
+  await store.savePullRequestFacts({state:'UNKNOWN',head:null,observedAt:t0});
+  assert.equal(await store.loadPullRequestFacts(),null);
+  await store.savePullRequestFacts({state:'OPEN',head:{ref:'feature',sha:'abc'},observedAt:t1});
+  assert.equal((await store.loadPullRequestFacts()).state,'OPEN');
+  await store.savePullRequestFacts({state:'MERGED',head:{ref:'feature',sha:'abc'},observedAt:t2});
+  assert.equal((await store.loadPullRequestFacts()).state,'MERGED');
+  store.close();
+});
+
+test('publication success and failure survive restart and webhook replay remains idempotent', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-publication-'));
+  const path = join(dir, 'store.db');
+  let sqlite = new SQLiteRelayStore(path);
+  try {
+    const published = { package: 'agents-relay', version: '2.0.1', registry: 'https://registry.npmjs.org', sha: 'abc123' };
+    assert.equal(await sqlite.recordPublication('job-a', 'delivery-1', published, null), true);
+    assert.equal(await sqlite.recordPublication('job-a', 'delivery-1', published, null), false);
+    const failed = { runId: '123', attempt: 1, sha: 'abc123', stage: 'npm-publish' };
+    assert.equal(await sqlite.recordPublication('job-a', 'delivery-2', null, failed), true);
+    assert.equal((await sqlite.loadPublication('job-a')).latest.version, '2.0.1');
+    assert.equal((await sqlite.loadPublication('job-a')).failure.stage, 'npm-publish');
+    assert.equal(await sqlite.loadPublication('job-b'), null);
+    sqlite.close();
+    sqlite = new SQLiteRelayStore(path);
+    assert.equal((await sqlite.loadPublication('job-a')).latest.version, '2.0.1');
+    assert.equal((await sqlite.loadPublication('job-a')).failure.runId, '123');
+    await sqlite.recordPublication('job-a', 'delivery-3', { ...published, version: '2.0.2' }, null);
+    assert.equal((await sqlite.loadPublication('job-a')).failure, null);
+    assert.equal((await sqlite.loadPublication('job-a')).latest.version, '2.0.2');
+    const { discoverLocalRelayStoreSnapshots } = await import('../dist/relay-store.js');
+    const snapshots = await discoverLocalRelayStoreSnapshots(dir);
+    assert.equal(snapshots[0].publications['job-a'].latest.version, '2.0.2');
+  } finally { sqlite.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('one GitHub delivery records a publish event for each local Job and stale webhooks cannot regress status', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  try {
+    const one = { package: 'agents-relay', version: '2.1.0', registry: null, sha: 'abcd123' };
+    const old = { package: 'agents-relay', version: '2.0.9', registry: null, sha: 'aaaa123' };
+    const latest = '2026-10-08T21:00:00.000Z';
+    const earlier = '2026-10-08T20:00:00.000Z';
+    assert.equal(await sqlite.recordPublication('job-1', 'delivery-a', one, null, latest), true);
+    assert.equal(await sqlite.recordPublication('job-2', 'delivery-a', one, null, latest), true);
+    assert.equal(await sqlite.recordPublication('job-1', 'delivery-a', one, null, latest), false);
+    await sqlite.recordPublication('job-1', 'delivery-old', old, null, earlier);
+    assert.equal((await sqlite.loadPublication('job-1')).latest.version, '2.1.0');
+    assert.equal((await sqlite.loadPublication('job-2')).latest.version, '2.1.0');
+    const events = await sqlite.listPublicationEvents('job-1');
+    assert.equal(events.length, 2);
+    assert.equal(events[0].type, 'package.published');
+    assert.equal(events[0].payload.version, '2.0.9');
+    assert.equal(events[1].payload.version, '2.1.0');
+  } finally { sqlite.close(); }
+});
+
+test('read-only inventory discovers older SQLite schema without publication tables', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'relay-legacy-schema-inventory-'));
+  const path=join(dir,'old.db');
+  try {
+    const db=new DatabaseSync(path);
+    db.exec('CREATE TABLE job_snapshot (job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
+    db.exec('CREATE TABLE pull_request_facts (id INTEGER PRIMARY KEY,state TEXT,head_ref TEXT,head_sha TEXT,observed_at TEXT)');
+    db.prepare('INSERT INTO job_snapshot VALUES (?,?,?)').run('legacy-active',JSON.stringify({...makeJob(),id:'legacy-active',state:'ACTIVE'}),now());
+    db.close();
+    const snapshots=await discoverLocalRelayStoreSnapshots(dir);
+    assert.equal(snapshots.length,1);
+    assert.equal(snapshots[0].jobs[0].id,'legacy-active');
+    assert.deepEqual(snapshots[0].publications,{});
+    const verify=new DatabaseSync(path,{readOnly:true});
+    assert.equal(verify.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='publication_state'").get().n,0);
+    verify.close();
+  } finally {await rm(dir,{recursive:true,force:true});}
 });

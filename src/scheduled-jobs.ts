@@ -1,34 +1,39 @@
-import { GitHubClient, GitHubStore, type DurableStore } from './store.js';
-import { Job } from './types.js';
+import type { DurableStore } from './store.js';
+import type { Job } from './types.js';
 import { nextScheduleRun, scheduleBucket } from './scheduler.js';
 import { dispatchScheduledRun } from './workflow/scheduled-run-v2.js';
 
-export type ScheduledJobRef = { prNumber: number; jobId: string; bucket: string };
 export type ScheduledRunStatus = 'completed' | 'skipped-idempotent' | 'skipped-active';
 export type ScheduledRunResult = { job: Job; status: ScheduledRunStatus };
 export type SchedulerEngine = { reconcile(jobId: string): Promise<unknown>; idle(): Promise<void> };
 
-async function refresh(client: GitHubClient, repository: string, trustedAuthors: ReadonlySet<string>, ref: ScheduledJobRef, storeFactory?: () => DurableStore): Promise<Job> {
-  const store = storeFactory ? storeFactory() : new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
-  return await store.load(ref.jobId);
-}
-
-export async function runScheduledBucket(
-  client: GitHubClient,
-  repository: string,
-  trustedAuthors: ReadonlySet<string>,
-  ref: ScheduledJobRef,
-  engine?: SchedulerEngine,
-  now: Date = new Date(),
-  storeFactory?: () => DurableStore,
+/** Local-first schedule entrypoint: immutable Job ID selects the SQLite store. */
+export async function runScheduledBucketFromStore(
+  store: DurableStore,
+  ref: { jobId: string; bucket: string },
+  engine: SchedulerEngine,
+  now = new Date(),
 ): Promise<ScheduledRunResult> {
-  let job = await refresh(client, repository, trustedAuthors, ref, storeFactory);
+  // SQLite authority provides an atomic claim. The fallback retains the
+  // existing in-memory test adapter, but cannot be used for production claims.
+  if (store.claimScheduledSlot) {
+    if (!store.finishScheduledSlot) throw new Error('Atomic scheduled completion is required');
+    const claimed = await store.claimScheduledSlot(ref.jobId, ref.bucket, now);
+    if (claimed.status !== 'completed') return claimed;
+    const slot = claimed.job.schedule?.currentRunSlot;
+    if (!slot) throw new Error('Claimed schedule slot missing durable currentRunSlot');
+    await engine.reconcile(ref.jobId);
+    await engine.idle();
+    const job = await store.finishScheduledSlot(ref.jobId, slot, now);
+    return { job, status: 'completed' };
+  }
+  let job = await store.load(ref.jobId);
+  if (!job.schedule) throw new Error('Scheduled job ' + job.id + ' has no schedule metadata');
   const schedule = job.schedule;
-  if (!schedule) throw new Error('Scheduled job ' + job.id + ' has no schedule metadata');
   const slot = new Date(schedule.nextRunAt);
   const active = job.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state));
-  const schedulerStore = storeFactory ? storeFactory() : new GitHubStore(client, repository, ref.prNumber, trustedAuthors);
-  let actionStatus: ScheduledRunStatus | null = null;
+  let claimed = false;
+  let status: ScheduledRunStatus = 'skipped-idempotent';
   const decision = await dispatchScheduledRun({
     slotDue: scheduleBucket(slot) === ref.bucket && slot.getTime() <= now.getTime(),
     slotUnclaimed: !schedule.lastScheduledSlot || new Date(schedule.lastScheduledSlot).getTime() < slot.getTime(),
@@ -37,26 +42,29 @@ export async function runScheduledBucket(
     runMissed: schedule.missedRunPolicy === 'run',
   }, async actionId => {
     if (actionId === 'schedule.skipActiveAdvance') {
-      schedule.lastScheduledSlot = slot.toISOString(); schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
-      job.updatedAt = now.toISOString(); await schedulerStore.saveJob(job); actionStatus = 'skipped-active'; return {};
-    }
-    if (actionId === 'schedule.claimFromSlot' || actionId === 'schedule.claimFromNow') {
-      schedule.lastScheduledSlot = slot.toISOString(); schedule.currentRunSlot = slot.toISOString();
+      schedule.lastScheduledSlot = slot.toISOString();
+      schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
+      status = 'skipped-active';
+    } else if (actionId === 'schedule.claimFromSlot' || actionId === 'schedule.claimFromNow') {
+      schedule.lastScheduledSlot = slot.toISOString();
+      schedule.currentRunSlot = slot.toISOString();
       schedule.nextRunAt = nextScheduleRun(schedule, actionId === 'schedule.claimFromSlot' ? slot : now).toISOString();
-      job.updatedAt = now.toISOString(); await schedulerStore.saveJob(job); job = await schedulerStore.load(job.id); return {};
-    }
-    throw new Error('Unsupported schedule graph action ' + actionId);
+      claimed = true;
+      status = 'completed';
+    } else throw new Error('Unknown local schedule action: ' + actionId);
+    job.updatedAt = now.toISOString();
+    await store.saveJob(job);
+    return {};
   });
-  if (!decision.accepted || decision.target === 'skip_idempotent') return { job, status: 'skipped-idempotent' };
-  if (actionStatus === 'skipped-active' || decision.target === 'skip_active') return { job, status: 'skipped-active' };
-  if (decision.target !== 'claimed') return { job, status: 'skipped-idempotent' };
-  if (!engine) throw new Error('Scheduled jobs require the local relayd scheduler engine');
+  if (!decision.accepted || !claimed) return { job, status };
   await engine.reconcile(job.id);
   await engine.idle();
-  const finished = await schedulerStore.load(job.id);
-  if (!finished.schedule) throw new Error('Scheduled job ' + job.id + ' lost its schedule metadata');
-  finished.schedule.lastRunAt = now.toISOString();
-  finished.updatedAt = now.toISOString();
-  await schedulerStore.saveJob(finished);
-  return { job: finished, status: 'completed' };
+  job = await store.load(job.id);
+  if (!job.schedule) throw new Error('Scheduled job lost schedule metadata');
+  job.schedule.lastRunAt = now.toISOString();
+  // A claim and its completion can share the same wall-clock timestamp.
+  // Advance the snapshot revision to satisfy SQLite's stale-write guard.
+  job.updatedAt = new Date(Math.max(now.getTime(), Date.parse(job.updatedAt) + 1)).toISOString();
+  await store.saveJob(job);
+  return { job, status: 'completed' };
 }

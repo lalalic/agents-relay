@@ -28,8 +28,8 @@ test('graph decision separates deterministic mutations from declarative effects'
 
     const closed = decideJobLifecycle(
       { id: 'j1', state: 'ACTIVE' },
-      'pr.closed',
-      { notMerged: true },
+      'cancel',
+      {},
     );
     assert.equal(closed.target, 'CANCELLED');
     assert.deepEqual(closed.effects, ['effect.cancelActiveTasks']);
@@ -66,20 +66,20 @@ test('effect executor deduplicates by handler idempotency key', async () => {
 
 test('effect failures map back to canonical workflow events', async () => {
   const executor = new WorkflowEffectExecutor([
-    new CallbackWorkflowEffectHandler('effect.mergePullRequest', async () => {
-      throw new Error('merge API unavailable');
+    new CallbackWorkflowEffectHandler('effect.deliverLocalMerge', async () => {
+      throw new Error('local Git merge unavailable');
     }),
   ]);
   const outcomes = await executor.execute(
-    ['effect.mergePullRequest'],
-    { jobId: 'j1', transitionKey: 'review.approved:abc', data: { headSha: 'abc' } },
+    ['effect.deliverLocalMerge'],
+    { jobId: 'j1', transitionKey: 'local.merge.requested:abc', data: { sourceSha: 'abc' } },
   );
   assert.equal(outcomes[0].status, 'failed');
-  assert.equal(workflowEffectFailureEvent(outcomes[0].effect), 'effect.mergePullRequest.failed');
+  assert.equal(workflowEffectFailureEvent(outcomes[0].effect), 'effect.deliverLocalMerge.failed');
 
     const feedback = decideJobLifecycle(
       { id: 'j1', state: 'ACTIVE' },
-      'effect.mergePullRequest.failed',
+      'effect.deliverLocalMerge.failed',
     );
     assert.equal(feedback.accepted, true);
     assert.equal(feedback.target, 'ACTIVE');
@@ -88,5 +88,5 @@ test('effect failures map back to canonical workflow events', async () => {
 test('canonical action classifier rejects undeclared next actions', () => {
   assert.throws(() => classifyWorkflowActions(['effect.notRegistered']), /Unknown canonical workflow action/);
   assert.equal(WORKFLOW_EFFECT_POLICIES['effect.launchTask'].retry, 'workflow');
-  assert.equal(WORKFLOW_EFFECT_POLICIES['effect.mergePullRequest'].idempotency, 'job-head-sha');
+  assert.equal(WORKFLOW_EFFECT_POLICIES['effect.deliverLocalMerge'].idempotency, 'job-local-source-sha');
 });

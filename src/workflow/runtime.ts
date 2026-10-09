@@ -40,8 +40,20 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
 }
 
 
-export function applyTaskGraphTarget(task: Task, target: TaskState, timestamp = new Date().toISOString()): void { task.state = target; task.updatedAt = timestamp; }
-export function applyJobGraphTarget(job: Job, target: JobLifecycleState, timestamp = new Date().toISOString()): void { job.state = target; job.updatedAt = timestamp; }
+export function applyTaskGraphTarget(task: Task, target: TaskState, timestamp = new Date().toISOString()): void {
+  const previous = Date.parse(task.updatedAt), candidate = Date.parse(timestamp);
+  task.state = target;
+  task.updatedAt = Number.isFinite(previous)
+    ? new Date(Math.max(Number.isFinite(candidate) ? candidate : Date.now(), previous + 1)).toISOString()
+    : timestamp;
+}
+export function applyJobGraphTarget(job: Job, target: JobLifecycleState, timestamp = new Date().toISOString()): void {
+  const previous = Date.parse(job.updatedAt), candidate = Date.parse(timestamp);
+  job.state = target;
+  job.updatedAt = Number.isFinite(previous)
+    ? new Date(Math.max(Number.isFinite(candidate) ? candidate : Date.now(), previous + 1)).toISOString()
+    : timestamp;
+}
 
 export function applyTaskWorkflowDecision(
   task: Task,
@@ -51,7 +63,10 @@ export function applyTaskWorkflowDecision(
   if (!decision.accepted || !decision.target) throw new Error(`Cannot apply rejected workflow decision to task ${task.id}`);
   task.state = decision.target;
   for (const mutation of decision.mutations) applyTaskMutation(task, mutation);
-  task.updatedAt = timestamp;
+  const previous = Date.parse(task.updatedAt), candidate = Date.parse(timestamp);
+  task.updatedAt = Number.isFinite(previous)
+    ? new Date(Math.max(Number.isFinite(candidate) ? candidate : Date.now(), previous + 1)).toISOString()
+    : timestamp;
 }
 
 export function applyJobWorkflowDecision(

@@ -19,15 +19,15 @@ export function githubAppConfig(args: readonly string[], env: NodeJS.ProcessEnv 
   return { appId, installationId, privateKeyFile };
 }
 
-export async function githubAuthContext(args: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<GitHubAuthContext> {
+export async function githubAuthContext(args: readonly string[], env: NodeJS.ProcessEnv = process.env, probeLogin = true): Promise<GitHubAuthContext> {
   const config = githubAppConfig(args, env);
   let options: GitHubAppAuthOptions | null = null;
   if (config) options = { appId: config.appId, installationId: config.installationId, privateKey: await readFile(config.privateKeyFile, 'utf8') };
   const client = new GhApiClient(options);
   const trustedAuthors = new Set<string>();
-  trustedAuthors.add(await client.currentLogin());
+  if (probeLogin) trustedAuthors.add(await client.currentLogin());
   for (const author of (value(args, '--trusted-authors') || env.AGENTS_RELAY_TRUSTED_AUTHORS || '').split(',').map(item => item.trim()).filter(Boolean)) trustedAuthors.add(author);
-  if (options) {
+  if (options && probeLogin) {
     const local = await client.localLogin();
     if (local) trustedAuthors.add(local);
   }

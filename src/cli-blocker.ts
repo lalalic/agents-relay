@@ -1,5 +1,4 @@
-import { GitHubStore } from './store.js';
-import { githubAuthContext } from './github-auth.js';
+import { openLocalManagedStore } from './local-managed-store.js';
 import { registerBlockerDependency } from './blockers.js';
 import { arg, publishDependentUnblocked, repository, withEventBus } from './cli-support.js';
 import { usage } from './cli-help.js';
@@ -10,8 +9,7 @@ export async function runBlockerCommand(action: string, args: string[]): Promise
   const id = arg(args, '--id');
   const pr = Number(arg(args, '--pr'));
   if (!id || !Number.isInteger(pr) || pr <= 0) throw new Error('blocker commands require --repo, --pr, and --id for the blocker Job');
-  const auth = await githubAuthContext(args);
-  const blockerStore = new GitHubStore(auth.client, repo, pr, auth.trustedAuthors);
+  const blockerStore = openLocalManagedStore(repo, pr).store;
   if (action === 'show') {
     console.log(JSON.stringify(await blockerStore.load(id), null, 2));
     return;
@@ -34,7 +32,7 @@ export async function runBlockerCommand(action: string, args: string[]): Promise
   const relation = await registerBlockerDependency({
     blockerStore,
     blockerJobId: id,
-    dependentStore: new GitHubStore(auth.client, dependentRepo, dependentPr, auth.trustedAuthors),
+    dependentStore: openLocalManagedStore(dependentRepo, dependentPr).store,
     dependentJobId: dependentJob,
     dependentTaskId: dependentTask,
     resolutionMode: modeValue as 'merge' | 'verified',

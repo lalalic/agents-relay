@@ -18,7 +18,7 @@ test('relayd timer is a pure schedule.tick trigger and does not execute schedule
   assert.match(source, /pool\.scheduleTickSignal\(bus, item\.job, now\)/);
   assert.doesNotMatch(source, /runScheduledBucket\s*\(/);
 });
-test('relayd scheduled heartbeat selects only exact due open autonomous jobs from local view', () => {
+test('relayd scheduled heartbeat selects exact due local ACTIVE jobs regardless of remote PR state', () => {
   const now = new Date('2026-09-29T18:05:00Z');
   const base = { title: 'scheduled', priority: 'P0', autoMerge: false, reviewEnabled: false, continuation: null, createdAt: now.toISOString(), updatedAt: now.toISOString(), tasks: [] };
   const overview = (id, nextRunAt, overrides = {}) => ({ githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: { ...base, id, repository: 'owner/repo', prNumber: 1, state: 'ACTIVE', executionMode: 'autonomous', schedule: { cron: '0 * * * *', timezone: 'UTC', nextRunAt, missedRunPolicy: 'skip', concurrencyPolicy: 'skip', lastScheduledSlot: null, currentRunSlot: null, lastRunAt: null }, ...overrides } });
@@ -26,11 +26,13 @@ test('relayd scheduled heartbeat selects only exact due open autonomous jobs fro
   const future = overview('future', '2026-09-29T19:00:00Z');
   const fixed = overview('fixed', '2026-09-29T18:00:00Z', { executionMode: 'fixed' });
   const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
-  assert.deepEqual(dueScheduledOverviews([future, fixed, closed, due], now).map(item => item.job.id), ['due']);
+  const terminal = overview('terminal', '2026-09-29T18:00:00Z', { state: 'COMPLETED' });
+  assert.deepEqual(dueScheduledOverviews([future, fixed, closed, terminal, due], now).map(item => item.job.id), ['closed','due']);
 });
 test('workspace dashboard/runtime summary refreshes the disposable local view from SQLite operational truth', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /cachedOverviews = await overlayOperationalOverviews\(cachedOverviews/);
+  assert.match(source, /cachedOverviews = await inventoryFromLocal\(\)/);
+  assert.match(source, /discoverLocalRelayStoreSnapshots/);
 });
 
 test('broad GitHub discovery cannot evict RelayStore-known jobs from operational inventory', () => {
@@ -80,7 +82,7 @@ test('repository daemon wires account usage telemetry and the default planner in
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
   assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>\(\{ \.\.\.client\.rateLimitStatus\(\), readPaths:/);
-  assert.match(source, /\(\)=>client\.rateLimitSnapshot\(\),exactJob/);
+  assert.match(source, /noGitHub \? undefined : \(\) => client\.rateLimitSnapshot\(\),exactJob/);
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
   assert.match(source, /cancel: workspaceJobAction\('cancel'\)/);
@@ -303,11 +305,11 @@ test('CLI and daemon help are successful and do not require job storage', () => 
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
     ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|merge|unblock|cancel>'],
-    ['dist/cli.js', ['job', 'create', '--help'], 'Create a durable Job'],
+    ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
-    ['dist/cli.js', ['job', 'merge', '--help'], 'Merge the backing pull request'],
+    ['dist/cli.js', ['job', 'merge', '--help'], 'Request an idempotent external pull-request merge'],
     ['dist/cli.js', ['job', 'unblock', '--help'], 'Authoritatively unblock'],
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|list|retry|unblock|cancel>'],
@@ -468,23 +470,27 @@ test('repository daemon wires ChatGPT runtime load into worker routing', async (
   assert.match(source, /summarizeRuntime\(cachedOverviews\.map/);
 });
 
-test('relayd single-flights concurrent pull-request refreshes', async () => {
+test('relayd lifecycle inventory is SQLite-only, including targeted requests', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /pullRequestRefreshFlights/);
-  assert.match(source, /if \(existing\)/);
+  const pool = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
+  assert.match(source, /const inventoryFromLocal = async/);
+  assert.match(source, /const refreshPullRequestSnapshot = async/);
+  assert.match(source, /const inventory = await refreshAll\(\)/);
+  assert.doesNotMatch(source, /loadManagedGitHubPullRequestSnapshotGraphql/);
+  assert.doesNotMatch(source, /aggregateManagedGitHubJobs/);
+  assert.match(pool, /this\.reconcileDiscovered\(await this\.localInventory\(\)\)/);
 });
 
-test('relayd serves cached PR state and gates worker pool while GitHub cooldown is active', async () => {
-  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /new RepositoryWorkerPool\([\s\S]*\(\) => client\.rateLimitStatus\(\)\.limited/);
-  assert.match(source, /event\.pullRequestFacts && store\.applyPullRequestFacts/);
-  const poolSource = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
-  assert.match(poolSource, /GitHub webhooks are fact-only inputs\. They must never trigger a GitHub reread/);
-  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return \{ overviews: cachedOverviews\.filter/);
-  assert.match(source, /if \(client\.rateLimitStatus\(\)\.limited\) return cachedJob\(\)/);
-  assert.match(source, /return cachedJob\(\);\n    }\n  };/);
+test('GitHub rate limit cannot gate locally authoritative lifecycle operations', async () => {
+  const daemon = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const pool = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
+  assert.match(daemon, /new LocalAuthorityDurableStore/);
+  assert.match(daemon, /const client = noGitHub \? new DisabledGitHubClient\(\) : new GhApiClient\(\)/);
+  assert.match(daemon, /existingInventory = await discoverLocalRelayStoreSnapshots/);
+  assert.match(pool, /async reconcileLocalJob\(jobId/);
+  assert.match(pool, /this\.localTarget\(jobId\)/);
+  assert.doesNotMatch(pool, /if \(this\.isRateLimited\(\)\) return;/);
 });
-
 
 test('recovery scan keeps active repositories and rotates one dormant recovery probe', () => {
   const now = new Date().toISOString();
@@ -496,11 +502,11 @@ test('recovery scan keeps active repositories and rotates one dormant recovery p
   assert.deepEqual(recoveryScanRepositories(repos, cached, 1), ['owner/active','owner/unknown','owner/done-b']);
 });
 
-test('relayd exposes bounded GitHub read-path counters', async () => {
+test('daemon retains GitHub diagnostics without lifecycle polling', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /githubReadPaths: GitHubReadPathDiagnostics/);
-  assert.match(source, /githubReadPaths\.workspaceScans \+= 1/);
-  assert.match(source, /githubReadPaths\.prRefreshes \+= 1/);
+  assert.doesNotMatch(source, /githubReadPaths\.workspaceScans \+= 1/);
+  assert.doesNotMatch(source, /githubReadPaths\.prRefreshes \+= 1/);
   assert.match(source, /readPaths: \{ \.\.\.githubReadPaths \}/);
 });
 
@@ -510,13 +516,13 @@ test('PR refresh coalescing is bounded and explicit refreshes bypass it', () => 
   assert.equal(shouldCoalescePullRequestRefresh(1000, 1001, true), false);
 });
 
-test('relayd preserves stable refresh trigger attribution through coordinator and GraphQL context', async () => {
+test('lifecycle daemon never reads GitHub PR snapshots for coordinator or dashboard refresh', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  const poolSource = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
-  assert.match(source, /prRefreshesByTrigger/);
-  assert.match(source, /dashboard\.task-state/);
+  const pool = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
+  assert.match(source, /inventoryFromLocal/);
   assert.match(source, /dashboard\.selected-job/);
-  assert.match(poolSource, /github\.webhook:/);
-  assert.match(source, /relayd\.pr-refresh:\$\{trigger\}/);
-  assert.match(source, /shouldCoalescePullRequestRefresh/);
+  assert.doesNotMatch(source, /relayd\.pr-refresh:/);
+  assert.match(pool, /async consumeSignals\(jobId/);
+  assert.match(pool, /if \(signal\.event\.type === 'github\.webhook'\) continue;/);
+  assert.match(pool, /this\.reconcileLocalJob\(jobId/);
 });

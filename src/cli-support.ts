@@ -1,6 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
+import { noGitHubMode } from './no-github.js';
+import { basename } from 'node:path';
+import { openLocalManagedStore } from './local-managed-store.js';
+import { createJobIdRegistryResolver } from './local-job-registry.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { EventRecord, Job, Task, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
@@ -44,11 +50,25 @@ export async function textOption(args: string[], inlineFlag: string, fileFlag: s
   return arg(args, inlineFlag);
 }
 export function integerArg(args: string[], name: string, fallback: number): number { if (!hasArg(args, name)) return fallback; const value = Number(arg(args, name)); if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`); return value; }
-export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
+export function repository(args: string[]): string { const value = arg(args, '--repo'); if (!value && noGitHubMode(args)) return 'local/' + basename(process.cwd()); if (!value) throw new Error('--repo is required for GitHub-backed operation'); return value; }
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
-export async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> { const repo = arg(args, '--repo'); const pr = arg(args, '--pr'); if (repo && pr) { const store = await githubStore(args); const jobId = arg(args, '--id'); if (!jobId) throw new Error('--id is required for GitHub-backed operation'); return { store, job: await store.load(jobId), localFile: null }; } const file = arg(args, '--file'); if (!file) throw new Error('Local mode is demo/test only; pass --file explicitly'); const loaded = await localStore(file); return { store: loaded.store, job: loaded.job, localFile: file }; }
+export async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+  const file = arg(args, '--file');
+  if (file) { const loaded = await localStore(file); return { ...loaded, localFile: file }; }
+  const repo = noGitHubMode(args) ? repository(args) : arg(args, '--repo');
+  const jobId = arg(args, '--id');
+  if (!repo || !jobId) throw new Error('Local Job requires --repo and --id (or explicit --file)');
+  const directory = arg(args, '--store-dir') || join(homedir(), '.agents-relay', 'stores');
+  const binding = await createJobIdRegistryResolver(directory, new Map())(jobId);
+  if (!binding || binding.job.repository !== repo)
+    throw new Error('Immutable local Job not found for repository: ' + jobId);
+  const suppliedPr = arg(args, '--pr');
+  if (suppliedPr && binding.job.prNumber !== Number(suppliedPr))
+    throw new Error('Local Job external PR binding mismatch');
+  return { store: binding.store, job: await binding.store.load(jobId), localFile: null };
+}
 export async function saveLocal(file: string | null, job: Job): Promise<void> { if (file) await writeFile(file, JSON.stringify(job, null, 2)); }
 
 export async function relayControlJob(args: string[], jobId: string): Promise<Job> {

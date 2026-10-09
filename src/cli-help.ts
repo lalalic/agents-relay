@@ -1,12 +1,14 @@
 export const usage = 'agents-relay <job|task|review|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
-  root: `Agents Relay coordinates durable asynchronous agent jobs through GitHub pull requests.
+  root: `Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
 Usage:
-  npx agents-relay <command> [options]
+  npx agents-relay <command> [options] [--no-github]
+
+--no-github: SQLite/Graph-only mode. GitHub auth/API, PR creation, merge and fetch are disabled. Local completion is Graph-owned.
 
 Commands:
-  job create|update|show|list|merge|unblock|cancel  Manage durable GitHub-backed jobs
+  job create|update|show|list|merge|unblock|cancel  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
@@ -24,7 +26,7 @@ Commands:
 
 Run 'npx agents-relay <command> --help' for command options and examples.
 Use 'node dist/cli.js' only for explicit local development/demo mode.`,
-  job: `Manage GitHub-backed durable jobs.
+  job: `Manage SQLite-authoritative durable jobs.
 
 Usage:
   npx agents-relay job <create|update|show|list|merge|unblock|cancel> [options]
@@ -34,7 +36,7 @@ Actions:
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
   list    List managed Jobs in a repository
-  merge   Merge the backing PR and complete the Job
+  merge   Queue a retryable external PR merge; Graph completes the Job only after confirmation
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
   cancel  Close the backing PR and cancel the Job
 
@@ -54,10 +56,10 @@ When provided, --thread-id persists a reviewer destination; otherwise the Job re
 
 Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
-  'job create': `Create a durable Job and its trusted marker.
+  'job create': `Create a SQLite-authoritative Job.
 
 Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
-With --head, reuse/create the PR for that head. With --pr, bind an existing unmanaged PR.
+With --head, reuse/create the PR for that head. With --pr, bind an external PR reference locally without a GitHub query.
 Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
 Job creation always enables auto-merge and never creates executable tasks. The orchestrator decides the initial task batch separately. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
@@ -66,8 +68,8 @@ Example:
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, and continuation options. Updating the objective also updates the PR body.
-Unspecified fields are preserved. Marker/binding corruption is never repaired implicitly; update fails with a precise diagnostic instead.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
+Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:
   npx agents-relay job update --repo OWNER/REPO --pr 12 --id job-1 --priority P0 --no-auto-merge`,
@@ -83,7 +85,7 @@ Required: --repo OWNER/REPO.
 
 Example:
   npx agents-relay job list --repo OWNER/REPO`,
-  'job merge': `Merge the backing pull request and complete the durable Job.
+  'job merge': `Request an idempotent external pull-request merge; return QUEUED until confirmed, when the Graph Engine completes the Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
   'job unblock': `Authoritatively unblock the effective BLOCKED work Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Autonomous Jobs transition blocked work to historical UNBLOCKED state and wake Planner with unblock facts as Plan trigger/context; fixed Jobs record UNBLOCKED first and then resume according to fixed-job retry semantics.`,

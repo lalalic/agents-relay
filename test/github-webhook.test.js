@@ -29,7 +29,7 @@ test('GitHub issue-comment webhook extracts package publication marker only from
     action: 'created',
     repository: { full_name: 'lalalic/agents-relay' },
     issue: { number: 83, pull_request: { url: 'https://api.github.com/repos/lalalic/agents-relay/pulls/83' } },
-    comment: { body: comment },
+    comment: { body: comment, user: { login: 'github-actions[bot]' } },
   }));
   assert.deepEqual(parseGitHubWebhook({ 'x-github-delivery': 'delivery-published', 'x-github-event': 'issue_comment' }, body), {
     deliveryId: 'delivery-published',

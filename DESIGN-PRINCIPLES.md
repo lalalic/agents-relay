@@ -32,9 +32,9 @@ inputs, but they must not implement their own workflow policy.
 
 ### 5. Operational truth and collaboration projection are distinct
 
-RelayStore/SQLite owns operational execution truth. GitHub is the durable
-human-readable collaboration and audit projection. Events are lifecycle and
-observability inputs; they are not a second durable database.
+RelayStore/SQLite owns operational execution truth. GitHub is an external collaboration adapter only (PR creation, review, merge,
+commit), never a lifecycle discovery, reconciliation, or recovery authority.
+Events wake the local Graph Engine; they are not a second durable database.
 
 ### 6. Execution flow and semantic ownership are distinct
 

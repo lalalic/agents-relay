@@ -382,7 +382,8 @@ test('dashboard task state override invokes the supplied runtime handler', async
 
 test('dashboard renders job clipboard, publication, merge-review, and commit-link contracts', () => {
   assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(repoName\(job\.repository\)\+'\/pr#'\+job\.prNumber\)/);
-  assert.match(dashboardHtml, /job\.githubState==='MERGED'&&job\.publication\?\.version/);
+  assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
+  assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
   assert.doesNotMatch(dashboardHtml, /PUBLISHED v/);
   assert.match(dashboardHtml, /job\.reviewEnabled!==false&&job\.githubState!=='MERGED'/);

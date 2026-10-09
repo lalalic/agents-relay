@@ -12,6 +12,9 @@ export const WORKFLOW_EVENT_NAMES = [
   'hold',
   'lease.expired',
   'implementation.completed',
+  'local.completed',
+  'local.merge.requested',
+  'effect.deliverLocalMerge.failed',
   'pr.closed',
   'pr.merged',
   'queue',
@@ -49,7 +52,6 @@ export const WORKFLOW_FACT_NAMES = [
   'scheduledRun',
   'hasUnblock',
   'manualPlan',
-  'prOpen',
   'reviewDisabled',
   'implementationComplete',
   'headAvailable',
@@ -70,6 +72,7 @@ export const WORKFLOW_EFFECT_NAMES = [
   'effect.launchTask',
   'effect.cancelActiveTasks',
   'effect.mergePullRequest',
+  'effect.deliverLocalMerge',
   'effect.cleanupJobWorktree',
 ] as const;
 
@@ -83,6 +86,7 @@ export type WorkflowEffectPayloads = {
   'effect.launchTask': { attempt: number };
   'effect.cancelActiveTasks': { reason: string };
   'effect.mergePullRequest': { headSha: string };
+  'effect.deliverLocalMerge': { sourceSha: string };
   'effect.cleanupJobWorktree': { prNumber: number };
 };
 
@@ -102,6 +106,12 @@ export const WORKFLOW_EFFECT_POLICIES = {
   'effect.cleanupJobWorktree': {
     idempotency: 'job-completed',
     failureEvent: 'effect.cleanupJobWorktree.failed',
+    retry: 'workflow',
+    observability: 'workflow.effect',
+  },
+  'effect.deliverLocalMerge': {
+    idempotency: 'job-local-source-sha',
+    failureEvent: 'effect.deliverLocalMerge.failed',
     retry: 'workflow',
     observability: 'workflow.effect',
   },

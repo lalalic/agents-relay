@@ -6,7 +6,7 @@ import { AgentRegistration } from './types.js';
 import { DurableDefinitionConflictError, isTaskForJob, planDefinitionDivergence, samePlanDefinition, sameTaskDefinition, taskDefinitionDivergence } from './store-task-definition.js';
 import { PackagePublication, parsePackagePublicationMarker } from './github-webhook.js';
 export type Comment = { id: number; nodeId?: string; url?: string; body: string; updatedAt: string; authorLogin: string | null };
-export type PullRequestState = 'OPEN' | 'MERGED' | 'CLOSED';
+export type PullRequestState = 'UNKNOWN' | 'OPEN' | 'MERGED' | 'CLOSED';
 function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAuthors: ReadonlySet<string>): PackagePublication | null {
   const allowed = rows.filter(item => {
     const author = item.author as Record<string, unknown> | undefined;
@@ -15,7 +15,7 @@ function publicationFromComments(rows: Array<Record<string, unknown>>, trustedAu
   });
   return allowed.map(item => parsePackagePublicationMarker(String(item.body ?? ''))).filter((item): item is PackagePublication => item !== null).at(-1) ?? null;
 }
-export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null; publication?: PackagePublication | null };
+export type ManagedJobOverview = { job: Job; githubState: PullRequestState; draft: boolean; mergedAt: string | null; closedAt: string | null; publication?: PackagePublication | null; publicationFailure?: import('./github-webhook.js').PackagePublishFailure | null };
 export type GitHubPullRequestSeed = { prNode: Record<string, unknown>; comments: Comment[] | null };
 export type ManagedGitHubPullRequestSnapshot = { overviews: ManagedJobOverview[]; seed: GitHubPullRequestSeed };
 export async function loadManagedGitHubPullRequestSnapshotGraphql(client: GitHubClient, repository: string, prNumber: number, trustedAuthors: ReadonlySet<string>): Promise<ManagedGitHubPullRequestSnapshot> {
@@ -83,6 +83,8 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   return [...unfinished, ...completed];
 }
 export interface DurableStore {
+  claimScheduledSlot?(jobId: string, bucket: string, now: Date): Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }>;
+  finishScheduledSlot?(jobId: string, slot: string, now: Date): Promise<Job>;
   recordExecutionProcess?(record: ExecutionProcessRecord): Promise<void>;
   loadExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
   finishExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<void>;

@@ -118,11 +118,20 @@ export class GitHubStore implements DurableStore {
   async mergePullRequest(expectedHeadSha?: string): Promise<void> {
     const payload: Record<string, unknown> = { merge_method: 'squash' };
     if (expectedHeadSha) payload.sha = expectedHeadSha;
-    const result = await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber + '/merge', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }) as Record<string, unknown>;
-    if (result.merged !== true) throw new Error(typeof result.message === 'string' ? result.message : 'Pull request #' + this.prNumber + ' was not merged');
+    try {
+      const result = await this.client.request('repos/' + this.repository + '/pulls/' + this.prNumber + '/merge', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }) as Record<string, unknown>;
+      if (result.merged !== true) throw new Error(typeof result.message === 'string' ? result.message : 'Pull request #' + this.prNumber + ' was not merged');
+    } catch (error) {
+      // Crash recovery can replay a merge after GitHub committed but before
+      // its local acknowledgement. Treat replay as success ONLY after verifying
+      // the actual external PR is already MERGED; never assume success offline.
+      this.prNodeCache = null;
+      const state = await this.pullRequestState().catch(() => null);
+      if (state !== 'MERGED') throw error;
+    }
     this.prNodeCache = null;
   }
   async closePullRequest(): Promise<void> {

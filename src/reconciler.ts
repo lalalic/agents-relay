@@ -1,3 +1,4 @@
+import { implementationComplete } from './runtime-status.js';
 import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
 import { DurableStore } from './store.js';
@@ -23,6 +24,7 @@ import { managedWorkerInput } from './managed-worker-input.js';
 export { managedWorkerInput } from './managed-worker-input.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
+import { reconcileLocalGitCompletion } from './local-merge-delivery.js';
 import { applyOrchestratorRescue } from './workflow/orchestrator-rescue.js';
 import { launchPlanExecution } from './planner-runtime.js';
 import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
@@ -49,15 +51,6 @@ export class Reconciler extends ReconcilerReviewBase {
       'effect.cleanupJobWorktree',
       async context => cleanupMergedJobWorktree(await this.store.load(context.jobId), this.options.projectPathForJob),
       context => `effect.cleanupJobWorktree:${context.jobId}`,
-    ));
-    this.workflowEffects.register(new CallbackWorkflowEffectHandler(
-      'effect.mergePullRequest',
-      async context => {
-        const headSha = typeof context.data?.headSha === 'string' ? context.data.headSha : null;
-        if (!headSha || !this.store.mergePullRequest) throw new Error('Pull request merge effect requires a head SHA and merge-capable store');
-        await this.store.mergePullRequest(headSha);
-      },
-      context => `effect.mergePullRequest:${context.jobId}:${String(context.data?.headSha ?? 'missing')}`,
     ));
   }
 
@@ -95,26 +88,20 @@ export class Reconciler extends ReconcilerReviewBase {
       const previousState = job.state;
       const lifecycleFingerprint = (value: Job): string => `${value.state}|${value.tasks.map(task => `${task.id}:${task.state}`).join(',')}`;
       const beforeFingerprint = lifecycleFingerprint(job);
-      const prState = await this.store.pullRequestState?.() ?? 'OPEN';
-      const headSha = prState === 'OPEN' ? await this.currentHeadSha(job) : null;
+      // GitHub state is audit-only and never participates in workflow decisions.
+
+      const headSha = await this.currentHeadSha(job);
       if (headSha && job.headSha !== headSha) {
+        if (job.localMerge && job.localMerge.status !== 'succeeded') {
+          job.localMerge = { ...job.localMerge, sourceSha: undefined, status: 'pending',
+            error: undefined, nextAttemptAt: undefined, attempts: 0 };
+        }
         job.headSha = headSha;
         job.updatedAt = new Date().toISOString();
         await this.store.saveJob(job);
       }
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
-      if (prState !== 'OPEN') {
-        await dispatchJobReconcile(job, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
-          const outcomes = await this.workflowEffects.execute(
-            [actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'],
-            { jobId: job.id, transitionKey: `terminal:${prState}`, data: { reason: `Pull request ${prState.toLowerCase()}` } },
-          );
-          await this.applyJobEffectOutcomes(job, outcomes);
-        }, async () => { await this.store.saveJob(job); });
-        if (prState === 'MERGED' && this.store.resolveBlockerDependents) { const resolved = await this.store.resolveBlockerDependents(job.id, 'merge'); for (const target of resolved.unblocked) await this.emit(eventFor(target.jobId, target.taskId, null, 'task.unblocked', 'unblocked', `Blocker Job ${job.id} resolved (merge)`, 'orchestrator', { repository: target.repository, prNumber: target.prNumber, blockerJobId: job.id })); }
-        return this.store.load(jobId);
-      }
       if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       for (const task of (await this.store.load(jobId)).tasks) {
@@ -139,20 +126,23 @@ export class Reconciler extends ReconcilerReviewBase {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
       if (scheduled.state !== previousState || JSON.stringify(scheduled.schedule ?? null) !== scheduleBefore) await this.store.saveJob(scheduled);
-      if (prState === 'OPEN') {
-        await this.ensureFinalReview(scheduled, prState, headSha);
+      {
+        await this.ensureFinalReview(scheduled, headSha);
         scheduled = schedule(await this.store.load(jobId));
       }
-      if (prState === 'OPEN' && scheduled.executionMode === 'autonomous') {
+      if (scheduled.executionMode === 'autonomous') {
         scheduled = schedule(await this.maybeCreatePlanner(scheduled));
       }
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
-      if (prState === 'OPEN') scheduled = await this.dispatchExecutableTasks(jobId);
-      const finalState = schedule(await this.store.load(jobId));
+      scheduled = await this.dispatchExecutableTasks(jobId);
+      let finalState = schedule(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
-      await this.ensureFinalReview(finalState, prState, headSha);
-      if (prState === 'OPEN') await this.dispatchExecutableTasks(jobId);
-      await dispatchJobReconcile(finalState, { prState, headSha, mergeCapable: Boolean(this.store.mergePullRequest) }, async actionId => {
+      await this.ensureFinalReview(finalState, headSha);
+      await this.dispatchExecutableTasks(jobId);
+      finalState = await this.store.load(jobId);
+      if (await reconcileLocalGitCompletion(this.store, finalState, headSha,
+        true, this.options.projectPathForJob)) return this.store.load(jobId);
+      await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
       }, async () => { await this.store.saveJob(finalState); });
@@ -168,7 +158,7 @@ export class Reconciler extends ReconcilerReviewBase {
           : `Reconcile ${settled.repository}#${settled.prNumber} made no lifecycle change`,
         correlation: { repository: settled.repository, prNumber: settled.prNumber, jobId: settled.id },
         transition: { graph: 'job-lifecycle', from: previousState, to: settled.state },
-        data: { prState, tasks: settled.tasks.length },
+        data: { tasks: settled.tasks.length },
       });
       return settled;
     } catch (error) {
@@ -219,7 +209,7 @@ export class Reconciler extends ReconcilerReviewBase {
   async recoverLostExecutions(job: Job, now: number): Promise<void> { await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job)); }
   async recoverStartupOrphans(jobId: string): Promise<Job> {
     const job = await this.store.load(jobId);
-    if (job.state === 'ACTIVE' && (await this.store.pullRequestState?.() ?? 'OPEN') === 'OPEN') {
+    if (job.state === 'ACTIVE') {
       await recoverStartupExecutionOrphans(job, this.executionRecoveryPorts(job));
     }
     return this.store.load(jobId);
@@ -266,11 +256,14 @@ export class Reconciler extends ReconcilerReviewBase {
         job.tasks.push(child);
       }
     }
-    // Legacy read compatibility: migrate historical successful planner Tasks into first-class Plans.
-    const contextTask = job.tasks.find(task => task.kind === 'planner') ?? job.tasks[0];
-    if (!contextTask) return;
-    const executionContext = await this.plannerContext(job, contextTask);
-    for (const planner of job.tasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)) {
+    // Only legacy successful Planner Tasks need execution context. Ordinary
+    // failed work must not fetch a GitHub PR head merely to check for legacy
+    // planner records; offline Troubleshooter recovery must remain runnable.
+    const historicalPlanners = job.tasks.filter(task =>
+      task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult);
+    if (historicalPlanners.length === 0) return;
+    const executionContext = await this.plannerContext(job, historicalPlanners[0]);
+    for (const planner of historicalPlanners) {
       const result = planner.plannerResult!;
       const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', guidance: planner.plannerGuidance, objectiveStatus: result.objective_status, plannerResult: result, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, attempt: planner.attempt, maxAttempts: planner.maxAttempts, leaseOwner: null, leaseExpiresAt: null, executionId: null, timeoutMs: planner.timeoutMs, manualPlanning: planner.manualPlanning, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
       if (!(job.plans ?? []).some(item => item.id === plan.id)) { await this.store.appendPlan(plan); (job.plans ??= []).push(plan); } else continue;
@@ -291,12 +284,6 @@ export class Reconciler extends ReconcilerReviewBase {
   private async plannerContext(job: Job, planning: Plan | Task): Promise<ExecutionContext> {
     const routingCwd = 'routing' in planning ? planning.routing?.cwd : undefined;
     let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : routingCwd ?? process.cwd();
-    if (this.store.pullRequestHead) {
-      const head = await this.store.pullRequestHead();
-      if (!head) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
-      const key = `planner-${planning.id}-${head.sha.slice(0, 12)}`;
-      projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, head, key);
-    }
     return resolveExecutionContext(projectPath, 'planner', {
       ...(this.options.executionContextRoots ?? {}),
       registeredAgents: await this.store.listAgents(),
@@ -324,7 +311,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (!freshTask || freshTask.state !== 'QUEUED' || !dependencyReady(freshTask, new Map(freshJob.tasks.map(item => [item.id, item])))) return;
       if (freshTask.executionId !== null) return;
       if (jobHasActiveExecution(freshJob, { taskId: freshTask.id })) return;
-      if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask);
+      if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
 
       if (!freshTask.routing && freshTask.adapter !== 'orchestrator') {
         freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
@@ -356,17 +343,10 @@ export class Reconciler extends ReconcilerReviewBase {
       return;
     }
     let executionContext: ExecutionContext;
-    let managedHead: { ref: string; sha: string } | null = null;
     try {
       const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
       let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
       const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
-      if (['codex', 'chatgpt'].includes(task.adapter) && this.store.pullRequestHead && task.executionId && !canonicalProjectRun) {
-        managedHead = await this.store.pullRequestHead();
-        if (!managedHead) throw new Error(`PR #${job.prNumber} has no resolvable head ref`);
-        projectPath = await prepareManagedExecutionWorktree(projectPath, job.repository, job.prNumber, managedHead, task.executionId);
-        if (role === 'reviewer') await assertCleanWorktreeAtHead(projectPath, managedHead.sha);
-      }
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
       task.leaseOwner = null;
@@ -384,10 +364,8 @@ export class Reconciler extends ReconcilerReviewBase {
     const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
     const baseWorkerInput = await managedWorkerInput(job, task, executionContext);
     const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
-    const workerInput = managedHead
-      ? `${baseWorkerInput}\n\n[Managed PR checkout]\nExecution cwd: ${executionContext.project.path}\nExpected PR head: ${managedHead.ref} @ ${managedHead.sha}\nThis checkout is isolated from the user's primary checkout. Commit only here. Push durable changes with: git push origin HEAD:${managedHead.ref}\nDo not switch, reset, merge into, or commit on the primary checkout.`
-      : canonicalProjectRun
-        ? `${baseWorkerInput}\n\n[Canonical Neo project run]\nExecution cwd: ${executionContext.project.path}\nThis Task owns or descends from a durable runs/ artifact. Work directly in this canonical project directory so all continuations, reviews, QA, and publication steps share the same runs/ evidence. Do not create or switch to an Agents Relay task worktree for this runtime work. Keep generated/private execution artifacts under runs/ and do not commit them.`
+    const workerInput = canonicalProjectRun
+      ? `${baseWorkerInput}\n\n[Canonical Neo project run]\nExecution cwd: ${executionContext.project.path}\nKeep generated artifacts under runs/.`
       : baseWorkerInput;
     const workerTask = { ...task, input: workerInput, routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;

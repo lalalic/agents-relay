@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { decideReviewLifecycle } from '../dist/workflow/review-v2.js';
 
 test('Review v2 graph owns creation, stale, revision, and merge decisions', () => {
-  const eligible={unscheduled:true,reviewEnabled:true,prOpen:true,jobActive:true,implementationComplete:true,headAvailable:true,completionGateSatisfied:true,noActiveReviewTask:true,noApprovedCurrentReview:true};
+  const eligible={unscheduled:true,reviewEnabled:true,jobActive:true,implementationComplete:true,headAvailable:true,completionGateSatisfied:true,noActiveReviewTask:true,noApprovedCurrentReview:true};
   const create=decideReviewLifecycle(undefined,'reconcile',eligible);
   assert.equal(create.target,'PENDING');
   assert.deepEqual(create.actions.map(action=>action.id),['review.create']);

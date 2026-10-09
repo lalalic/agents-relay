@@ -17,7 +17,7 @@ test('job runtime status is derived independently from lifecycle state',()=>{
   assert.equal(deriveJobRuntimeStatus(job([task('done','SUCCEEDED')],{executionMode:'fixed',autoMerge:false,reviewEnabled:false})),'MERGE_PENDING');
 });
 
-test('schedule, review and PR facts project to runtime status',()=>{
+test('schedule and review project to runtime status independently from GitHub PR facts',()=>{
   const scheduled=job([],{executionMode:'autonomous',schedule:{cron:'0 23 * * *',timezone:'America/Toronto',nextRunAt:'2026-09-24T03:00:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}});
   assert.equal(deriveJobRuntimeStatus(scheduled),'WAITING');
   assert.equal(deriveJobRuntimeStatus({...scheduled,tasks:[task('failed','FAILED'),task('running','RUNNING')]}),'RUNNING');
@@ -30,8 +30,8 @@ test('schedule, review and PR facts project to runtime status',()=>{
   assert.equal(deriveJobRuntimeStatus(activeReview),'QUEUED');
   const approved={...reviewing,review:{taskId:'review',headSha:'abc',outcome:'approved',updatedAt:now()}};
   assert.equal(deriveJobRuntimeStatus(approved),'MERGE_PENDING');
-  assert.equal(deriveJobRuntimeStatus(job([]),'MERGED'),'MERGED');
-  assert.equal(deriveJobRuntimeStatus(job([]),'CLOSED'),'CANCELLED');
+  assert.equal(deriveJobRuntimeStatus(job([]),'MERGED'),'IDLE');
+  assert.equal(deriveJobRuntimeStatus(job([]),'CLOSED'),'IDLE');
 });
 
 

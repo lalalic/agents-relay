@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createVerify } from 'node:crypto';
 import test from './test-runtime.js';
-import { githubAppConfig } from '../dist/github-auth.js';
+import { githubAppConfig, githubAuthContext } from '../dist/github-auth.js';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createGitHubAppJwt, GhApiClient } from '../dist/store.js';
 
 test('GitHub App config is all-or-nothing and CLI overrides environment', () => {
@@ -48,4 +51,22 @@ test('GitHub App identity request uses Bearer JWT over HTTPS instead of GH_TOKEN
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('offline lifecycle creation preserves configured GitHub App client without network login',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'relay-app-offline-auth-'));
+  try{
+    const file=join(directory,'app.pem');
+    await writeFile(file,'local-testing-private-key');
+    const result=await githubAuthContext([
+      '--github-app-id','1234','--github-app-installation-id','5678',
+      '--github-app-private-key-file',file,
+      '--trusted-authors','bot-author',
+    ],{},false);
+    assert.equal(result.appAuth,true);
+    assert.ok(result.client instanceof GhApiClient);
+    assert.equal(result.client.appAuth?.appId,'1234');
+    assert.equal(result.client.appAuth?.installationId,'5678');
+    assert.deepEqual([...result.trustedAuthors],['bot-author']);
+  } finally {await rm(directory,{recursive:true,force:true});}
 });

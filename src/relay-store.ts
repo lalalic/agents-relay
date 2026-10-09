@@ -4,6 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { PullRequestState } from './store.js';
+import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
+import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
 import { observability } from './observability.js';
 import {
@@ -38,18 +40,24 @@ export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
   saveJob(job: Job): Promise<void>;
+  mutateJob?(jobId: string, mutation: (current: Job) => Job): Promise<Job>;
   ingestJobSnapshot(job: Job): Promise<Job>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
   loadAgents(): Promise<AgentRegistration[] | null>;
   saveAgents(agents: readonly AgentRegistration[]): Promise<void>;
+  upsertAgent?(agent: AgentRegistration): Promise<void>;
   saveAgentWithProjection(agent: AgentRegistration, request: ProjectionRequest): Promise<void>;
   loadPullRequestFacts(): Promise<PullRequestFacts | null>;
+  recordPublication?(jobId: string, deliveryId: string, publication: PackagePublication | null, failure: PackagePublishFailure | null, observedAt?: string): Promise<boolean>;
+  loadPublication?(jobId: string): Promise<PublicationState | null>;
+  listPublicationEvents?(jobId: string): Promise<PublicationEvent[]>;
   savePullRequestFacts(facts: PullRequestFacts): Promise<void>;
   markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean>;
   recordExecutionProcess(record: ExecutionProcessRecord): Promise<void>;
   loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
   finishExecutionProcess(jobId: string, taskId: string, executionId: string, at?: string): Promise<void>;
   enqueueProjection(request: ProjectionRequest): Promise<void>;
+  enqueueExternalActionOnce?(request: ProjectionRequest): Promise<boolean>;
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
   completeProjection(id: number): Promise<void>;
   retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void>;
@@ -89,6 +97,12 @@ export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   return base;
 }
 
+function monotonicJobTimestamp(previous: string, candidate = new Date().toISOString()): string {
+  const prior = Date.parse(previous), next = Date.parse(candidate);
+  if (!Number.isFinite(prior)) return candidate;
+  return new Date(Math.max(Number.isFinite(next) ? next : Date.now(), prior + 1)).toISOString();
+}
+
 export class SQLiteRelayStore implements RelayStore {
   private readonly db: DatabaseSync;
   private readonly outbox: ProjectionOutbox;
@@ -120,6 +134,8 @@ export class SQLiteRelayStore implements RelayStore {
         head_sha TEXT,
         observed_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS publication_state (job_id TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS publication_delivery (job_id TEXT NOT NULL, delivery_id TEXT NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL, observed_at TEXT NOT NULL, PRIMARY KEY(job_id,delivery_id));
       CREATE TABLE IF NOT EXISTS agent_snapshot (
         agent_id TEXT PRIMARY KEY,
         json TEXT NOT NULL,
@@ -155,6 +171,18 @@ export class SQLiteRelayStore implements RelayStore {
       .run(String(SCHEMA_VERSION));
   }
 
+  async recordPublication(jobId: string, deliveryId: string, publication: PackagePublication | null, failure: PackagePublishFailure | null, observedAt?: string): Promise<boolean> {
+    return recordPublicationInDatabase(this.db, jobId, deliveryId, publication, failure, observedAt);
+  }
+
+  async loadPublication(jobId: string): Promise<PublicationState | null> {
+    return loadPublicationFromDatabase(this.db, jobId);
+  }
+
+  async listPublicationEvents(jobId: string): Promise<PublicationEvent[]> {
+    return listPublicationEventsFromDatabase(this.db, jobId);
+  }
+
   async loadJob(jobId: string): Promise<Job | null> {
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
     return row?.json ? JSON.parse(row.json) as Job : null;
@@ -167,6 +195,28 @@ export class SQLiteRelayStore implements RelayStore {
 
   async saveJob(job: Job): Promise<void> {
     this.writeJobSnapshot(job, new Date().toISOString());
+  }
+
+  /** Atomic read/modify/write for local authoritative Task and Plan updates. */
+  async mutateJob(jobId: string, mutation: (current: Job) => Job): Promise<Job> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
+      if (!row?.json) throw new Error(`Local authoritative Job ${jobId} not found`);
+      const current = JSON.parse(row.json) as Job;
+      const before = JSON.stringify(current);
+      const next = mutation(current);
+      if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');
+      if (JSON.stringify(next) !== before && next.updatedAt <= JSON.parse(before).updatedAt) {
+        next.updatedAt = monotonicJobTimestamp(JSON.parse(before).updatedAt);
+      }
+      this.writeJobSnapshot(next, new Date().toISOString());
+      this.db.exec('COMMIT');
+      return structuredClone(next);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   async ingestJobSnapshot(job: Job): Promise<Job> {
@@ -235,6 +285,19 @@ export class SQLiteRelayStore implements RelayStore {
     }
   }
 
+  async upsertAgent(agent: AgentRegistration): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.writeAgentSnapshot(agent, now);
+      this.markAgentRegistryObserved(now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   async saveAgentWithProjection(agent: AgentRegistration, request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -270,9 +333,15 @@ export class SQLiteRelayStore implements RelayStore {
   }
 
   async savePullRequestFacts(facts: PullRequestFacts): Promise<void> {
+    // UNKNOWN means absence of confirmed external evidence; never persist it as a fact.
+    if (facts.state === 'UNKNOWN') return;
     this.db.prepare(`
       INSERT INTO pull_request_facts(id,state,head_ref,head_sha,observed_at) VALUES(1,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state,head_ref=excluded.head_ref,head_sha=excluded.head_sha,observed_at=excluded.observed_at
+      WHERE excluded.observed_at >= pull_request_facts.observed_at
+        AND (pull_request_facts.state='OPEN'
+          OR (pull_request_facts.state='CLOSED' AND excluded.state IN ('CLOSED','MERGED'))
+          OR (pull_request_facts.state='MERGED' AND excluded.state='MERGED'))
     `).run(facts.state, facts.head?.ref ?? null, facts.head?.sha ?? null, facts.observedAt);
   }
 
@@ -334,6 +403,33 @@ export class SQLiteRelayStore implements RelayStore {
   }
 
 
+  /**
+   * Idempotent external-effect reservation. Repeated Graph reconciliation
+   * must never reset backoff or queue a second merge while a first one runs.
+   */
+  async enqueueExternalActionOnce(request: ProjectionRequest): Promise<boolean> {
+    if (!['merge_pull_request', 'close_pull_request', 'update_pr_body'].includes(request.operation)) {
+      throw new Error('Lifecycle projection is forbidden in external-only outbox');
+    }
+    const key = logicalOperationKey(request.idempotencyKey);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.db.prepare(
+        'SELECT id FROM projection_outbox WHERE operation_key=? LIMIT 1',
+      ).get(key);
+      if (existing) {
+        this.db.exec('COMMIT');
+        return false;
+      }
+      this.outbox.enqueue(request, new Date().toISOString());
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {
     return this.outbox.claimDue(limit, now);
   }
@@ -364,22 +460,39 @@ export function relayStorePath(directory: string, repository: string, prNumber: 
   return directory + '/' + `${repository.replace('/', '_')}-${prNumber}.db`;
 }
 
-export type LocalRelayStoreSnapshot = { path: string; jobs: Job[]; facts: PullRequestFacts | null };
+export { relayJobStorePath } from './local-job-path.js';
+export type LocalRelayStoreSnapshot = { path: string; jobs: Job[]; facts: PullRequestFacts | null; publications: Record<string, PublicationState> };
 
+/**
+ * SQLite is the only job registry. Inventory queries must be strictly read-only:
+ * opening a writable RelayStore here would reset in-flight projection claims
+ * on every dashboard refresh and could replay external merge side effects.
+ */
 export async function discoverLocalRelayStoreSnapshots(directory: string): Promise<LocalRelayStoreSnapshot[]> {
   let names: string[];
   try { names = await readdir(directory); } catch { return []; }
   const snapshots: LocalRelayStoreSnapshot[] = [];
   for (const name of names.filter(item => item.endsWith('.db')).sort()) {
     const path = directory + '/' + name;
-    let store: SQLiteRelayStore | undefined;
+    let db: DatabaseSync | undefined;
     try {
-      store = new SQLiteRelayStore(path);
-      snapshots.push({ path, jobs: await store.listJobs(), facts: await store.loadPullRequestFacts() });
+      db = new DatabaseSync(path, { readOnly: true });
+      const rows = db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as Array<{ json: string }>;
+      const jobs = rows.map(row => JSON.parse(row.json) as Job);
+      const row = db.prepare('SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts WHERE id=1').get() as {
+        state: PullRequestState; head_ref: string | null; head_sha: string | null; observed_at: string;
+      } | undefined;
+      const facts: PullRequestFacts | null = row ? {
+        state: row.state,
+        head: row.head_ref && row.head_sha ? { ref: row.head_ref, sha: row.head_sha } : null,
+        observedAt: row.observed_at,
+      } : null;
+      const publications = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='publication_state'").get() ? Object.fromEntries((db.prepare('SELECT job_id,json FROM publication_state').all() as Array<{job_id: string; json: string}>).map(item => [item.job_id, JSON.parse(item.json) as PublicationState])) : {};
+      snapshots.push({ path, jobs, facts, publications });
     } catch {
-      // Ignore unrelated/corrupt files so one bad file cannot block daemon startup.
+      // Ignore unrelated/corrupt files without allowing one damaged store to block recovery.
     } finally {
-      store?.close();
+      db?.close();
     }
   }
   return snapshots;

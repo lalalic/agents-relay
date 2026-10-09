@@ -97,11 +97,11 @@ export function serveDashboard(
   const clients = new Set<import('node:http').ServerResponse>();
   const subscribedJobs = new Set<string>();
 
-  let lastKnownJobs: Array<Job & { githubState?: string; runtimeStatus?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean; publication?: import('./github-webhook.js').PackagePublication | null }> | null = null;
+  let lastKnownJobs: Array<Job & { githubState?: string; runtimeStatus?: string; mergedAt?: string | null; closedAt?: string | null; draft?: boolean; publication?: import('./github-webhook.js').PackagePublication | null; publicationFailure?: import('./github-webhook.js').PackagePublishFailure | null }> | null = null;
   const discoveredJobs = async (forceRefresh = false) => {
     try {
       const jobs = overviewProvider
-        ? (await overviewProvider(forceRefresh, forceRefresh ? 'dashboard.jobs-refresh' : 'internal.unknown')).map(item => ({ ...item.job, githubState: item.githubState, runtimeStatus: deriveJobRuntimeStatus(item.job, item.githubState), mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft, publication: item.publication }))
+        ? (await overviewProvider(forceRefresh, forceRefresh ? 'dashboard.jobs-refresh' : 'internal.unknown')).map(item => ({ ...item.job, githubState: item.githubState, runtimeStatus: deriveJobRuntimeStatus(item.job, item.githubState), mergedAt: item.mergedAt, closedAt: item.closedAt, draft: item.draft, publication: item.publication, publicationFailure: item.publicationFailure }))
         : jobId ? [await store.load(jobId)] : [];
       lastKnownJobs = jobs;
       return jobs;
