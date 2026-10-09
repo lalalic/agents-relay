@@ -1110,6 +1110,7 @@ test('failed Codex exit preserves rate limit reason instead of terminal event ti
     {provider:'zai',model:'glm-5.3-flash',reason:'rate_limit_exceeded'},
   ]);
   assert.equal(events.filter(event => event.type === 'task.rerouting').length, 1);
+  assert.equal((await store.load('j')).tasks.filter(item => item.agentName === 'troubleshooter').length, 0, 'provider quota reroute must not spawn Troubleshooter work');
   const failed = events.find(event => event.type === 'task.failed');
   assert.equal(failed.data.reason, 'rate_limit_exceeded');
   assert.equal(failed.data.exitCode, 1);

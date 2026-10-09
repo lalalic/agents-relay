@@ -369,20 +369,10 @@ export abstract class ReconcilerRuntimeBase {
       this.clearExecution(taskId, executionId);
       return;
     }
-    const event = eventFor(
-      jobId,
-      taskId,
-      transition.task.parentTaskId,
-      'task.failed',
-      'failed',
-      transition.task.error ?? failureMessage,
-      'user',
-      { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed', executionId },
-      { agent: 'relay', component: 'agents-relay', watchdog: true },
-    );
-    await this.emit(event);
-    // Provider quota failures are recoverable. Drop the stale selection so the
-    // next launch runs the normal worker/model router with fresh usage data.
+    let reroutedTask: Task | null = null;
+    // Provider quota failures are recoverable. Commit the retry + route exclusion
+    // before publishing task.failed so event-driven reconciliation can never see
+    // an intermediate FAILED state and spawn a Troubleshooter for quota exhaustion.
     if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
       const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
       if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
@@ -401,11 +391,26 @@ export abstract class ReconcilerRuntimeBase {
         current.routing = undefined;
         current.workerSelection = undefined;
         await this.store.saveTask(current);
-        await this.emit(eventFor(jobId, taskId, current.parentTaskId,
-          'task.rerouting', 'queued', 'Provider rate limit reached; retrying with fresh routing and usage data',
-          'orchestrator', { previousFailure: failureReason, attempt: current.attempt, maxAttempts: current.maxAttempts }));
-        await this.eventCoordinator.accept({ jobId, reason: 'rate-limit-reroute' });
+        reroutedTask = current;
       }
+    }
+    const event = eventFor(
+      jobId,
+      taskId,
+      transition.task.parentTaskId,
+      'task.failed',
+      'failed',
+      transition.task.error ?? failureMessage,
+      'user',
+      { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed', executionId },
+      { agent: 'relay', component: 'agents-relay', watchdog: true },
+    );
+    await this.emit(event);
+    if (reroutedTask) {
+      await this.emit(eventFor(jobId, taskId, reroutedTask.parentTaskId,
+        'task.rerouting', 'queued', 'Provider rate limit reached; retrying with fresh routing and usage data',
+        'orchestrator', { previousFailure: failureReason, attempt: reroutedTask.attempt, maxAttempts: reroutedTask.maxAttempts }));
+      await this.eventCoordinator.accept({ jobId, reason: 'rate-limit-reroute' });
     }
   }
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
