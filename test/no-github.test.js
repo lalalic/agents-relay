@@ -4,7 +4,7 @@ import { SQLiteRelayStore } from '../dist/relay-store.js';
 import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { DisabledGitHubClient } from '../dist/no-github.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
-import { GitHubStore } from '../dist/store.js';
+import { GitHubStore, InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -492,4 +492,40 @@ test('crash before lock owner and crash during recovery guard initialize are rec
     assert.equal(executed,1);
     assert.throws(()=>statSync(lock),{code:'ENOENT'});
   } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('local completion queues optional external PR merge only after authoritative COMPLETED is durable', async()=>{
+  const repo=localRepository();
+  const db=new SQLiteRelayStore(':memory:');
+  const remote=new (await import('../dist/store.js')).InMemoryStore();
+  let merges=0;
+  remote.mergePullRequest=async sha=>{merges+=1;assert.equal(sha,repo.head);};
+  const store=new LocalAuthorityDurableStore(db,remote,undefined,false);
+  try {
+    await store.saveJob({...job(),prNumber:0,externalPrNumber:77,headSha:repo.head,localMerge:{...mergeRefs}});
+    await store.applyPullRequestFacts({state:'OPEN',head:{ref:'feature',sha:repo.head},observedAt:timestamp()});
+    const reconciler=managedReconciler(store,{owner:'external-merge-after-local',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
+    const completed=await reconciler.reconcile('local-job');
+    assert.equal(completed.state,'COMPLETED');
+    assert.equal((await store.load('local-job')).state,'COMPLETED');
+    assert.equal(merges,0,'GitHub merge must remain asynchronous projection');
+    assert.equal(await db.pendingProjectionCount(),1);
+    assert.deepEqual(await store.projection.flushOnce(),{projected:1,deferred:0});
+    assert.equal(merges,1);
+    assert.equal(await db.pendingProjectionCount(),0);
+    await reconciler.close();
+  } finally {db.close();repo.close();}
+});
+
+test('external merge enqueue failure cannot roll back authoritative local completion', async()=>{
+  const repo=localRepository();
+  const base=new InMemoryStore({...job(),prNumber:0,externalPrNumber:88,headSha:repo.head,localMerge:{...mergeRefs}});
+  base.mergePullRequest=async()=>{throw new Error('projection transport unavailable');};
+  const reconciler=managedReconciler(base,{owner:'external-merge-isolation',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
+  try {
+    const completed=await reconciler.reconcile('local-job');
+    assert.equal(completed.state,'COMPLETED');
+    assert.equal((await base.load('local-job')).state,'COMPLETED');
+    assert.equal((await base.load('local-job')).localMerge.status,'succeeded');
+  } finally {await reconciler.close();repo.close();}
 });

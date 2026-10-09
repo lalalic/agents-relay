@@ -2,7 +2,29 @@ import type { Job } from './types.js';
 import type { DurableStore } from './store.js';
 import { transitionJobEvent } from './scheduler.js';
 import { deliverLocalMerge, localMergeEligible, requiresLocalGitMerge } from './local-git-merge.js';
-import { errorMessage } from './observability.js';
+import { errorMessage, observability } from './observability.js';
+
+
+async function queueOptionalExternalMerge(store: DurableStore, job: Job, headSha: string | null, noGitHub: boolean): Promise<void> {
+  const externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+  if (noGitHub || job.autoMerge === false || externalPrNumber <= 0 || !headSha || !store.mergePullRequest) return;
+  try {
+    await store.mergePullRequest(headSha);
+    observability().record({
+      stage: 'projection', event: 'github.merge_queued', level: 'info', outcome: 'succeeded',
+      message: `Queued optional GitHub merge for PR #${externalPrNumber} after local completion`,
+      correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
+      data: { expectedHeadSha: headSha },
+    });
+  } catch (error) {
+    observability().record({
+      stage: 'projection', event: 'github.merge_queue_failed', level: 'warn', outcome: 'failed',
+      message: `Optional GitHub merge queue failed after local completion: ${errorMessage(error)}`,
+      correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
+      data: { expectedHeadSha: headSha },
+    });
+  }
+}
 
 /** Graph-selected durable local merge and completion; no checked-out worktree is ever changed. */
 export async function reconcileLocalGitCompletion(
@@ -15,6 +37,7 @@ export async function reconcileLocalGitCompletion(
   if (localMergeEligible(finalState) && !requiresLocalGitMerge(finalState)) {
         await transitionJobEvent(finalState, 'local.completed', { localCompletionAllowed: true });
         await store.saveJob(finalState);
+        await queueOptionalExternalMerge(store, finalState, headSha, noGitHub);
         return true;
       }
   if (localMergeEligible(finalState) &&
@@ -51,6 +74,7 @@ export async function reconcileLocalGitCompletion(
         if (finalState.localMerge?.status === 'succeeded') {
           await transitionJobEvent(finalState, 'local.completed', { localCompletionAllowed: true });
           await store.saveJob(finalState);
+          await queueOptionalExternalMerge(store, finalState, headSha, noGitHub);
           return true;
         }
       }

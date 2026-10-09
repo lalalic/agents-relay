@@ -161,7 +161,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.dispatchExecutableTasks(jobId);
       finalState = await this.store.load(jobId);
       if (await reconcileLocalGitCompletion(this.store, finalState, headSha,
-        true, this.options.projectPathForJob)) return this.store.load(jobId);
+        this.options.noGitHub === true, this.options.projectPathForJob)) return this.store.load(jobId);
       await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
