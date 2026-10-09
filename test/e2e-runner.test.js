@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {reviewHeadSha} from '../e2e/runner/evidence.mjs';
 
 const root=fileURLToPath(new URL('..',import.meta.url));
 const read=async path=>readFile(new URL(path,import.meta.url),'utf8');
@@ -17,6 +18,8 @@ test('scenario 003 preparation installs deterministic worker and review gates', 
   assert.match(source,/e2e-003-check-worker-gate\.mjs/);
   assert.match(source,/e2e-003-clear-worker-gate\.mjs/);
   assert.match(source,/e2e-003-review-gate\.mjs/);
+  assert.match(source,/e2e-003-r\$\{round\}-review-fix-1\.json/);
+  assert.match(source,/e2e-003-r\$\{round\}-review-fix-2\.json/);
   assert.match(source,/review\.changes_required/);
   assert.match(source,/Graph must create the review-fix Tasks/);
 });
@@ -40,4 +43,13 @@ test('external injector stays outside SQLite and supports process, stale-event, 
     const result=spawnSync(process.execPath,['--check',`${root}/e2e/runner/${script}`],{encoding:'utf8'});
     assert.equal(result.status,0,result.stderr);
   }
+});
+
+
+test('review evidence normalizes observed snake_case and camelCase immutable head payloads',()=>{
+  assert.equal(reviewHeadSha({data:{outcome:{head_sha:'sha-stage-2'}}}),'sha-stage-2');
+  assert.equal(reviewHeadSha({data:{head_sha:'sha-stage-1'}}),'sha-stage-1');
+  assert.equal(reviewHeadSha({data:{review:{headSha:'sha-normalized'}}}),'sha-normalized');
+  assert.equal(reviewHeadSha({head_sha:'sha-top-level'}),'sha-top-level');
+  assert.equal(reviewHeadSha({data:{}}),null);
 });

@@ -4,6 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {openSync, closeSync, readSync, statSync, readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import {dirname,resolve,join} from 'node:path';
 import {homedir} from 'node:os';
+import {reviewHeadSha} from './evidence.mjs';
 const root=resolve(import.meta.dirname,'../..');
 const argv=process.argv.slice(2);
 const option=(k,def)=>{const i=argv.indexOf('--'+k);return i>=0?argv[i+1]:def};
@@ -174,7 +175,7 @@ async function tick(){
     if(e.type==='task.completed'&&String(e.task_id||'').startsWith('troubleshoot-'))state.evidence.troubleshooterSucceeded=true;
     if(e.type==='review.changes_required'){
       state.evidence.reviewChangesRequired=Number(state.evidence.reviewChangesRequired||0)+1;
-      const head=e.data?.review?.headSha||e.data?.headSha||e.data?.outcome?.headSha||null;
+      const head=reviewHeadSha(e);
       if(head&&!state.evidence.reviewHeads.includes(head))state.evidence.reviewHeads.push(head);
     }
     if(e.type==='review.approved')state.evidence.reviewApproved=Number(state.evidence.reviewApproved||0)+1;
