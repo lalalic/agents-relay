@@ -262,7 +262,8 @@ async function tick(){
       }
     }
   } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
-  if(j.state==='COMPLETED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.external=external;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external}));process.exit(0)}
+  const externalReady=!github.enabled || external?.githubState==='MERGED';
+  if(j.state==='COMPLETED'&&!issue&&externalReady){state.phase='passed';state.passedAt=new Date().toISOString();state.external=external;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external}));process.exit(0)}
   if(state.phase==='passed')state.phase='monitoring';
   if(!issue && state.phase==='awaiting_repair'){state.phase='monitoring';state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;}
   if(issue){

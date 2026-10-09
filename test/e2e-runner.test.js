@@ -75,3 +75,10 @@ test('completed Job allows bounded GitHub projection convergence before blocking
   assert.match(watch,/GITHUB_PR_NOT_MERGED/);
   assert.match(watch,/projectionPendingSince=null/);
 });
+
+
+test('GitHub-enabled completed Job requires external MERGED before PASS', async()=>{
+  const watch=await read('../e2e/runner/watch.mjs');
+  assert.match(watch,/const externalReady=!github\.enabled \|\| external\?\.githubState==='MERGED'/);
+  assert.match(watch,/j\.state==='COMPLETED'&&!issue&&externalReady/);
+});
