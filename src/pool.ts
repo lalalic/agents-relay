@@ -8,6 +8,7 @@ import { scheduleBucket } from './scheduler.js';
 import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordinator.js';
 import type { EventRecord } from './types.js';
 import { errorMessage, observability, withObservabilityCorrelation } from './observability.js';
+import { jobHasActiveExecution } from './job-execution-slot.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -32,6 +33,7 @@ export class RepositoryWorkerPool {
   private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly coordinator: ReconcileCoordinator;
   private readonly scheduleSignalCoordinator: ReconcileCoordinator;
+  private dispatchTail: Promise<void> = Promise.resolve();
   private watchedBus?: EventBus;
   constructor(
     private readonly concurrency: number,
@@ -57,6 +59,13 @@ export class RepositoryWorkerPool {
     const resolved = await this.localTarget(jobId);
     if (!resolved) throw new Error('Authoritative SQLite Job is not registered: ' + jobId);
     return resolved.store;
+  }
+  private async withDispatchGate(work: () => Promise<void>): Promise<void> {
+    const previous = this.dispatchTail;
+    let release!: () => void;
+    this.dispatchTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { await work(); } finally { release(); }
   }
   private async reconcileExclusive(jobId: string, work: () => Promise<void>): Promise<void> {
     while (this.reconcileLocks.has(jobId)) await this.reconcileLocks.get(jobId);
@@ -94,10 +103,12 @@ export class RepositoryWorkerPool {
   async reconcileLocalJob(jobId: string, reason = 'local.request'): Promise<void> {
     const target = await this.localTarget(jobId);
     if (!target) throw new Error('Local job not found: ' + jobId);
-    const reconciler = this.makeReconciler(target.store, Math.max(1, this.concurrency));
-    await this.reconcileExclusive(jobId, async () => {
-      await withObservabilityCorrelation({ jobId, repository: target.job.repository },
-        () => reconciler.reconcile(jobId));
+    await this.withDispatchGate(async () => {
+      await this.reconcileExclusive(jobId, async () => {
+        await withObservabilityCorrelation({ jobId, repository: target.job.repository },
+          () => this.makeReconciler(target.store, 0).reconcile(jobId));
+      });
+      await this.reconcileDiscovered(await this.localInventory());
     });
     void reason;
   }
@@ -118,7 +129,7 @@ export class RepositoryWorkerPool {
 
   private async reconcileDiscovered(discovered: ManagedJobOverview[]): Promise<void> {
     const jobs = runnableManagedJobs(discovered);
-    let capacity = Math.max(1, this.concurrency);
+    let capacity = Math.max(0, this.concurrency - jobs.filter(job => jobHasActiveExecution(job)).length);
     for (const job of jobs) {
       if (capacity <= 0) break;
       const store = await this.requireLocalStore(job.id);
@@ -154,7 +165,7 @@ export class RepositoryWorkerPool {
     try {
       do {
         this.pending = false;
-        await this.reconcileDiscovered(await this.localInventory());
+        await this.withDispatchGate(async () => this.reconcileDiscovered(await this.localInventory()));
       } while (this.pending);
     } finally { this.running = false; }
   }
@@ -177,7 +188,7 @@ export class RepositoryWorkerPool {
       const lifecycle = ['task.started', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
       // GitHub transport is observational. It must never wake lifecycle execution.
       if (event.type === 'github.webhook') return;
-      const wake = event.type === 'job.wake' || event.type === 'review.created';
+      const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed';
       if (!lifecycle && !wake) return;
       await this.coordinator.acceptTransport({
         jobId: event.job_id,

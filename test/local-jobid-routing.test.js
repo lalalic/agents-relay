@@ -31,7 +31,7 @@ function fixture(job=scheduled) {
 test('no-PR scheduled Job claims SQLite schedule and reconciles by immutable jobId',async()=>{
   const f=fixture();const now=new Date('2026-10-09T10:05:00.000Z');
   await f.pool.scheduleTickSignal(undefined,scheduled,now);
-  assert.deepEqual(f.calls,[['reconcile','local-no-pr',2]]);
+  assert.deepEqual(f.calls,[['reconcile','local-no-pr',0]]);
   const result=await f.store.load(scheduled.id);
   assert.equal(result.schedule.lastScheduledSlot,stamp);
   assert.equal(result.schedule.lastRunAt,now.toISOString());
@@ -59,4 +59,48 @@ test('no-PR targeted worker event resolves Job ID without GitHub PR metadata',as
     assert.equal(f.calls.some(item=>item[0]==='reconcile'),true);
     assert.equal(f.getGithubCalls(),0);
   } finally {await stop();}
+});
+
+test('planner.completed wakes queued work immediately without periodic reconcile',async()=>{
+  const work={jobId:'planner-wake',id:'work',state:'QUEUED',dependencies:[],attempt:0,maxAttempts:3,
+    leaseOwner:null,leaseExpiresAt:null,executionId:null,adapter:'orchestrator',input:'local',output:{kind:'task_pr'},
+    parentTaskId:null,createdAt:stamp,updatedAt:stamp};
+  const root={...scheduled,id:'planner-wake',schedule:undefined,tasks:[work]};
+  const store=new InMemoryStore(root);const calls=[];
+  const pool=new RepositoryWorkerPool(1,
+    (_store,capacity)=>({applyEvent:async()=>({applied:false,reconcile:false}),reconcile:async id=>{calls.push([id,capacity]);}}),
+    async()=>[{job:await store.load(root.id),githubState:'UNKNOWN',draft:false,mergedAt:null,closedAt:null}],
+    async id=>id===root.id?{job:await store.load(id),store}:null);
+  const bus=new MemoryEventBus();const stop=await pool.watch(bus);
+  try{
+    await bus.publish(eventFor(root.id,'plan-1',null,'planner.completed','succeeded','planner done','orchestrator'));
+    for(let i=0;i<100&&calls.length===0;i++)await new Promise(resolve=>setTimeout(resolve,2));
+    assert.deepEqual(calls,[[root.id,0],[root.id,1]]);
+  }finally{await stop();}
+});
+
+test('worker terminal wake releases global capacity to another queued Job without timer',async()=>{
+  const runningTask={jobId:'job-a',id:'a',state:'RUNNING',dependencies:[],attempt:1,maxAttempts:3,
+    leaseOwner:'relay',leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionId:'exec-a',adapter:'orchestrator',input:'a',output:{kind:'task_pr'},
+    parentTaskId:null,createdAt:stamp,updatedAt:stamp};
+  const queuedTask={jobId:'job-b',id:'b',state:'QUEUED',dependencies:[],attempt:0,maxAttempts:3,
+    leaseOwner:null,leaseExpiresAt:null,executionId:null,adapter:'orchestrator',input:'b',output:{kind:'task_pr'},
+    parentTaskId:null,createdAt:stamp,updatedAt:stamp};
+  const a={...scheduled,id:'job-a',schedule:undefined,tasks:[runningTask]};
+  const b={...scheduled,id:'job-b',schedule:undefined,tasks:[queuedTask]};
+  const stores=new Map([['job-a',new InMemoryStore(a)],['job-b',new InMemoryStore(b)]]);const calls=[];
+  const inventory=async()=>Promise.all([...stores].map(async([id,store])=>({job:await store.load(id),githubState:'UNKNOWN',draft:false,mergedAt:null,closedAt:null})));
+  const pool=new RepositoryWorkerPool(1,
+    (store,capacity)=>({
+      applyEvent:async event=>{if(event.type==='task.completed'){const job=await store.load(event.job_id);const task=job.tasks.find(t=>t.id===event.task_id);task.state='SUCCEEDED';task.executionId=null;task.leaseOwner=null;task.leaseExpiresAt=null;await store.saveTask(task);return {applied:true,reconcile:true};}return {applied:false,reconcile:false};},
+      reconcile:async id=>{calls.push([id,capacity]);},
+    }),inventory,async id=>stores.has(id)?{job:await stores.get(id).load(id),store:stores.get(id)}:null);
+  await pool.reconcile();
+  assert.equal(calls.some(([id])=>id==='job-b'),false,'queued Job must not exceed occupied global capacity');
+  const bus=new MemoryEventBus();const stop=await pool.watch(bus);
+  try{
+    await bus.publish(eventFor('job-a','a',null,'task.completed','succeeded','a done','orchestrator'));
+    for(let i=0;i<100&&!calls.some(([id])=>id==='job-b');i++)await new Promise(resolve=>setTimeout(resolve,2));
+    assert.equal(calls.some(([id,capacity])=>id==='job-b'&&capacity===1),true,'freed slot must dispatch queued Job immediately');
+  }finally{await stop();}
 });

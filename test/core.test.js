@@ -688,7 +688,7 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   const stop=await pool.watch(bus);
   await bus.publish(eventFor('job-1','task-1',null,'job.wake','queued','wake','orchestrator',{repository:'owner/repo',prNumber:42}));
   await new Promise(resolve=>setTimeout(resolve,0));
-  assert.deepEqual(calls,[{id:'job-1',maxConcurrent:4}]);
+  assert.deepEqual(calls,[{id:'job-1',maxConcurrent:0}]);
   await stop();
 });
 
@@ -873,10 +873,10 @@ test('repository pool routes correlated task lifecycle events to the target reco
   await bus.publish(eventFor('job-2','task-2',null,'task.completed','succeeded','done','orchestrator'));
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.deepEqual(calls,[
-    {kind:'reconcile',id:'job-2',maxConcurrent:4},
+    {kind:'reconcile',id:'job-2',maxConcurrent:0},
     {kind:'event',type:'task.started',jobId:'job-2',taskId:'task-2',maxConcurrent:4},
     {kind:'event',type:'task.completed',jobId:'job-2',taskId:'task-2',maxConcurrent:4},
-    {kind:'reconcile',id:'job-2',maxConcurrent:4}
+    {kind:'reconcile',id:'job-2',maxConcurrent:0}
   ]);
   await stop();
 });
