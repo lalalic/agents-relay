@@ -100,6 +100,7 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 - Every child Task must include `storySize` (`S`, `M`, or `L`); use `M` when uncertain.
 - Do not create bookkeeping, waiting, status-checking, wrapper, or planning Tasks. Your response itself is the planning round.
 - Relay owns lifecycle delivery for local-first Jobs. Never create a worker Task whose job is to perform the local Git merge, mark the Job `COMPLETED`, merge the projected GitHub PR, or wait/check for those Relay-owned effects. After implementation and required review are satisfied, return no lifecycle-completion Task; let the canonical Review/Local-Merge/Job Graph advance the Job.
+- When all executable implementation work is complete and the only remaining steps are Relay-owned final review, local merge, Job completion, or projected PR convergence, return `objective_status: "satisfied"` with `next_tasks: []`. Do not return `in_progress` with an empty task list before final review; that would leave the Job with no executable progress path.
 - Return no prose outside the JSON result.
 
 ## Output

@@ -278,6 +278,15 @@ export function parsePlannerResult(value: unknown): PlannerResult {
 }
 
 
+export function validatePlannerProgress(job: Job, result: PlannerResult): void {
+  if (result.objective_status !== 'in_progress' || result.next_tasks.length > 0 || result.unblocks.length > 0) return;
+  const previousReviewFinished = job.tasks.some(task => task.agentName === 'reviewer' && task.state === 'SUCCEEDED');
+  if (previousReviewFinished) return;
+  const liveWork = job.tasks.some(task => task.kind !== 'planner' && !['SUCCEEDED','FAILED','CANCELLED'].includes(task.state));
+  if (liveWork) return;
+  throw new Error('Planner returned in_progress with no executable tasks or unblocks while no live work remains; return satisfied when only Relay-owned review/merge/completion effects remain');
+}
+
 export function validatePlannerLifecycleOwnership(job: Job, specs: readonly PlannerTaskSpec[]): void {
   if (job.prNumber !== 0 || !job.localMerge) return;
   for (const spec of specs) {

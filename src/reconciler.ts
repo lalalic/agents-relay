@@ -6,7 +6,7 @@ import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } fr
 import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership } from './planner.js';
+import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
 import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { validateAgentSelection } from './agent-graph.js';

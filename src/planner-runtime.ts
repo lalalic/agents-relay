@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import type { ExecutionContext } from './execution-context.js';
 import { eventFor } from './events.js';
-import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership } from './planner.js';
+import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runtime.js';
 import type { DurableStore } from './store.js';
@@ -57,6 +57,7 @@ async function finishPlanner(
     const executionContext = await ports.plannerContext(job, plan);
     validatePlannerHierarchy(job.tasks, result.next_tasks);
     validatePlannerLifecycleOwnership(job, result.next_tasks);
+    validatePlannerProgress(job, result);
     if (result.unblocks.length > 0 && !ports.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
     for (const unblock of result.unblocks) await ports.store.registerBlockerDependent?.(job.id, unblock);
     const children = result.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));

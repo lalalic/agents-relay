@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -185,6 +185,17 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
   assert.equal(result.job.plans[0].status, 'SUCCEEDED');
 });
 
+
+
+test('planner cannot leave autonomous job idle with in_progress and no executable work before review', () => {
+  const implemented={...task('implementation','SUCCEEDED'),agentName:'implementation'};
+  const root={...job([implemented],'autonomous'),prNumber:0,localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'}};
+  const empty={objective_status:'in_progress',assessment:'only Relay-owned lifecycle remains',next_tasks:[],unblocks:[]};
+  assert.throws(()=>validatePlannerProgress(root,empty),/no executable tasks or unblocks/);
+  assert.doesNotThrow(()=>validatePlannerProgress(root,{...empty,objective_status:'satisfied'}));
+  const reviewed={...root,tasks:[implemented,{...task('review','SUCCEEDED'),agentName:'reviewer'}]};
+  assert.doesNotThrow(()=>validatePlannerProgress(reviewed,empty));
+});
 
 test('local-first planner cannot delegate Relay-owned merge and completion lifecycle to a worker task', () => {
   const root = { ...job([], 'autonomous'), prNumber:0, localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'} };
