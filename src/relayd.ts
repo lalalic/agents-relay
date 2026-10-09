@@ -249,8 +249,23 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   }).trim();
+  const refreshGitHubAuthentication = async (): Promise<void> => {
+    if (noGitHub) return;
+    try {
+      const login = auth?.appAuth ? await client.currentLogin() : await client.localLogin();
+      if (!login) throw new Error('gh authentication did not return a healthy login');
+      trusted.add(login);
+      githubAuthenticated = true;
+      githubAuthError = null;
+    } catch (error) {
+      githubAuthenticated = false;
+      githubAuthError = errorMessage(error);
+    }
+  };
   const syncGitHubBindings = async (): Promise<void> => {
-    if (noGitHub || githubAuthenticated !== true) return;
+    if (noGitHub) return;
+    await refreshGitHubAuthentication();
+    if (githubAuthenticated !== true) return;
     if (client.rateLimitStatus().limited) return;
     const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
     for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
