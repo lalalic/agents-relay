@@ -385,6 +385,7 @@ test('dashboard renders job clipboard, publication, merge-review, and commit-lin
   assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
   assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
+  assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.externalPrNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
   assert.doesNotMatch(dashboardHtml, /PUBLISHED v/);
   assert.match(dashboardHtml, /job\.reviewEnabled!==false&&job\.githubState!=='MERGED'/);
   assert.match(dashboardHtml, /function safeCommitUrl\(repository,sha\)/);
