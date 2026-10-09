@@ -23,7 +23,7 @@ const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
-let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[],recoveryExhausted:0}};
+let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[],recoveryExhausted:0,projectionPendingSince:null}};
 try{const previous=JSON.parse(readFileSync(statePath,'utf8'));if(previous.runKey===runKey)state={...state,...previous}}catch{}
 function events(){
  let size;try{size=statSync(eventsPath).size}catch{return []}
@@ -252,9 +252,16 @@ async function tick(){
     else {
       external=externalJobSnapshot(j);
       if(external?.error)issue={type:'GITHUB_VERIFICATION_UNAVAILABLE',message:external.error,prNumber:boundPr};
-      else if(external?.githubState!=='MERGED')issue={type:'GITHUB_PR_NOT_MERGED',prNumber:boundPr,githubState:external?.githubState||'UNKNOWN'};
+      else if(external?.githubState!=='MERGED'){
+        const now=new Date().toISOString();
+        state.evidence.projectionPendingSince ??= now;
+        const pendingMs=Date.now()-Date.parse(state.evidence.projectionPendingSince);
+        if(pendingMs>=30000)issue={type:'GITHUB_PR_NOT_MERGED',prNumber:boundPr,githubState:external?.githubState||'UNKNOWN',pendingMs};
+      } else {
+        state.evidence.projectionPendingSince=null;
+      }
     }
-  }
+  } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
   if(j.state==='COMPLETED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.external=external;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external}));process.exit(0)}
   if(state.phase==='passed')state.phase='monitoring';
   if(!issue && state.phase==='awaiting_repair'){state.phase='monitoring';state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;}

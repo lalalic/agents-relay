@@ -67,3 +67,11 @@ test('scenario 004 installs deterministic failed-recovery gate and watcher accep
   assert.match(watch,/RECURSIVE_RECOVERY/);
   assert.match(watch,/expectedTerminalFailure:true/);
 });
+
+test('completed Job allows bounded GitHub projection convergence before blocking handoff', async()=>{
+  const watch=await read('../e2e/runner/watch.mjs');
+  assert.match(watch,/projectionPendingSince/);
+  assert.match(watch,/pendingMs>=30000/);
+  assert.match(watch,/GITHUB_PR_NOT_MERGED/);
+  assert.match(watch,/projectionPendingSince=null/);
+});
