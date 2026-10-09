@@ -12,7 +12,7 @@ architecture-sensitive work.
 - V2 SQLite Relay Store is the sole authoritative Job/Plan/Task/Review/Execution/Lease/Recovery state. GitHub only executes external PR/commit/review/merge effects; events are wake-ups/observability, never standalone durable truth.
 - Reconcile desired durable state into ephemeral worker executions.
 - One top-level objective maps to one local Job (which may reference one external PR); child Tasks/Plans/Review state remain in local SQLite.
-- `job create` creates durable job state only. The top-level orchestrator decides whether to start work and, if so, submits the initial task batch separately. A zero-task autonomous job must remain idle; Relay must not invent its first planner/task batch.
+- `job create` without `--initial-plan` is create-only. For a normal executable Job, prefer `job create --initial-plan`; this creates the first durable Planner round and hands subsequent execution to Relay. A zero-task Job created without `--initial-plan` remains idle.
 - Agents may submit child tasks; task lineage is explicit.
 - Any component that creates or manages jobs/tasks must follow `skills/agents-relay/contracts/task-job-contract.md`; task producers choose `storySize`, not raw timeout milliseconds.
 - Workers are replaceable and recoverable. Results and state must survive worker or daemon death.
@@ -43,6 +43,10 @@ code change and classify it afterward.
 - Precedence is project-local > Neo shared > global `~/.agents`; concrete paths are resolved at execution time, not persisted in task records.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
+
+## Production E2E
+
+Before starting, continuing, repairing, or reviewing any Agents Relay E2E run, read `e2e/README.md` and follow it as the canonical E2E operating procedure. Scenario definitions live under `e2e/scenarios/`. The E2E control plane belongs to this repository; workload repositories are disposable inputs and must not be hard-coded into runner behavior.
 
 ## Operational workflows
 
