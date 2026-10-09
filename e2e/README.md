@@ -167,17 +167,19 @@ The watcher must not call GitHub to decide local PASS/FAIL.
 
 When the watcher identifies a real suspect, it writes a handoff payload under the current run directory and sends a new turn to the configured ChatGPT repair thread.
 
-Start it with an explicit stable thread ID:
+The normal operator entry point is one manually triggered npm command:
 
 ```bash
-node e2e/runner/watch.mjs \
+npm run e2e -- \
+  --thread <stable-chatgpt-thread-id> \
+  --scenario 001 \
   --repo OWNER/REPO \
-  --job <job-id> \
-  --branch <agents-relay-e2e-fix-branch> \
-  --thread-id <stable-chatgpt-thread-id> \
-  --state e2e/runs/YYYY-MM-DD/<scenario>/r<N>/watch-state.json \
-  --out e2e/runs/YYYY-MM-DD/<scenario>/r<N>/handoff.json
+  --checkout /absolute/path/to/workload-repo \
+  --round <N> \
+  --objective-file /absolute/path/to/objective.md
 ```
+
+`--scenario 001` resolves to the canonical `001-*` scenario file; the full name such as `001-happy-path` is also accepted. `--thread-id` is retained only as a compatibility alias for `--thread`. The command prepares exactly one fresh round and then starts the watcher. It is never started automatically or on a schedule.
 
 The handoff message must tell the repair thread to:
 

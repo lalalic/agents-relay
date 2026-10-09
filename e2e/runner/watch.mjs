@@ -16,7 +16,7 @@ const runKey=`${repo}/${jobId}`;
 const eventsPath=option('events','/Users/chengli/Library/Application Support/EventsBus/events.jsonl');
 const statePath=option('state',resolve(root,`e2e/runs/current/${jobId}/watch-state.json`));
 const handoffPath=option('out',resolve(root,`e2e/runs/current/${jobId}/handoff.json`));
-const threadId=option('thread-id',process.env.E2E_CHATGPT_THREAD_ID||'');
+const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD_ID||''));
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};

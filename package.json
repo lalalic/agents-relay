@@ -14,7 +14,8 @@
     "dev": "tsx src/cli.ts",
     "test:publish": "npm run build && node --test --test-force-exit test/*.test.js",
     "test:fast": "npm run build && node --test --test-concurrency=2 test/workflow-lifecycle.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-effects.test.js test/relay-store.test.js test/local-authority.test.js test/local-jobid-routing.test.js test/local-sqlite-jobid.test.js test/no-github.test.js test/scheduled-jobs.test.js test/reconcile-coordinator.test.js test/service-publication.test.js test/github-webhook.test.js",
-    "test:full": "npm run build && node --test --test-concurrency=1 test/*.test.js"
+    "test:full": "npm run build && node --test --test-concurrency=1 test/*.test.js",
+    "e2e": "node e2e/runner/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
