@@ -1,0 +1,42 @@
+name: Report verified publication to Agents Relay
+description: Correlate a verified publication to its originating merged PR so Agents Relay can persist publication state in SQLite.
+inputs:
+  token:
+    description: GitHub token with pull-request read and issue-comment write access in the source repository.
+    required: true
+  artifact:
+    description: Published package or artifact identifier.
+    required: true
+  version:
+    description: Exact verified published version.
+    required: true
+  channel:
+    description: Registry, store, release channel, or custom publication target.
+    required: false
+    default: ''
+  sha:
+    description: Source commit SHA associated with the publication.
+    required: false
+    default: ''
+  repository:
+    description: Source repository in owner/name form.
+    required: false
+    default: ''
+  origin-pr:
+    description: Optional originating merged PR number when SHA correlation is unavailable.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Report verified publication
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        ARTIFACT_NAME: ${{ inputs.artifact }}
+        ARTIFACT_VERSION: ${{ inputs.version }}
+        RELEASE_CHANNEL: ${{ inputs.channel }}
+        SOURCE_SHA: ${{ inputs.sha || github.sha }}
+        SOURCE_REPOSITORY: ${{ inputs.repository || github.repository }}
+        ORIGIN_PR: ${{ inputs['origin-pr'] }}
+      run: node "$GITHUB_ACTION_PATH/../../../scripts/report-package-published.mjs"

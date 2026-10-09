@@ -1,0 +1,37 @@
+name: Report publication failure to Agents Relay
+description: Correlate a failed publication to its originating merged PR so Agents Relay can persist failure state in SQLite.
+inputs:
+  token:
+    description: GitHub token with pull-request read and issue-comment write access in the source repository.
+    required: true
+  stage:
+    description: Failed publish or release stage.
+    required: false
+    default: 'publish'
+  details:
+    description: Concise failure details.
+    required: false
+    default: ''
+  sha:
+    description: Source commit SHA associated with the failed publication.
+    required: false
+    default: ''
+  repository:
+    description: Source repository in owner/name form.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Report publication failure
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        SOURCE_REPOSITORY: ${{ inputs.repository || github.repository }}
+        SOURCE_SHA: ${{ inputs.sha || github.sha }}
+        SOURCE_RUN_ID: ${{ github.run_id }}
+        SOURCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+        PUBLISH_STAGE: ${{ inputs.stage }}
+        PUBLISH_DETAILS: ${{ inputs.details }}
+        REPORT_ONLY: '1'
+      run: node "$GITHUB_ACTION_PATH/../../../scripts/report-package-failed.mjs"

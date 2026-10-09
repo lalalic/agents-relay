@@ -305,3 +305,34 @@ For autonomous Jobs, `UNBLOCKED` is historical: Relay does not retry that old Ta
 ### Browser Workspace product boundary
 
 Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `browser-workspace status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. This bootstrap is best-effort: Browser Workspace discovery/helper failures are logged and skipped so they do not prevent `agents-relayd` from starting; ChatGPT browser work may remain unavailable until Browser Workspace recovers. Ordinary ChatGPT worker activity uses the public Browser Workspace one-shot `platform run ... --auto-session` command; orchestrator-owned self-healing flows may still use explicit session commands. Relay does not create or delete workspaces through CLI lifecycle commands.
+
+## Shared publication reporting
+
+Repositories with an existing verified publish/release workflow can report the final result back to Agents Relay with the reusable actions in this repository:
+
+```yaml
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+- name: Report verified publication
+  uses: lalalic/agents-relay/.github/actions/report-publication@publication-v1
+  with:
+    token: ${{ github.token }}
+    artifact: my-package-or-artifact
+    version: ${{ steps.release.outputs.version }}
+    channel: https://registry.npmjs.org
+
+- name: Report release failure
+  if: ${{ failure() }}
+  continue-on-error: true
+  uses: lalalic/agents-relay/.github/actions/report-publication-failure@publication-v1
+  with:
+    token: ${{ github.token }}
+    stage: release workflow
+```
+
+The caller must report only a release it has actually verified. The action correlates the release commit (or optional explicit originating PR) to a merged PR and posts the compatible `agents-relay:package-published:v1` or publish-failure marker. The marker and GitHub webhook are transport/correlation only: Agents Relay resolves the originating Job and persists publication facts through `RelayStore.recordPublication(...)` into the authoritative SQLite `publication_delivery` and `publication_state` tables. Publication success or failure never changes a completed Job's lifecycle state.
+
+`artifact` can identify an npm/PyPI package, Chrome extension, GitHub Release artifact, or a custom published artifact. `channel` identifies the registry/store/release channel and is displayed as publication metadata. Repeated reports of the same artifact/version are idempotent.

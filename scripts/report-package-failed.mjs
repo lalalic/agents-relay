@@ -54,24 +54,29 @@ export async function enqueuePublishRepair(input, originatingPr, github, invoke 
 }
 async function main() {
   const token = process.env.GITHUB_TOKEN;
-  const repository = process.env.GITHUB_REPOSITORY;
-  const sha = process.env.GITHUB_SHA;
-  const runId = process.env.GITHUB_RUN_ID;
-  const attempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+  const repository = process.env.SOURCE_REPOSITORY || process.env.GITHUB_REPOSITORY;
+  const sha = process.env.SOURCE_SHA || process.env.GITHUB_SHA;
+  const runId = process.env.SOURCE_RUN_ID || process.env.GITHUB_RUN_ID;
+  const attempt = process.env.SOURCE_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT || '1';
   if (!token || !repository || !sha || !runId) throw Error('Missing GitHub action environment');
   const github = async (path, init={}) => {
     const response = await fetch('https://api.github.com'+path,{ ...init,headers:{accept:'application/vnd.github+json',authorization:`Bearer ${token}`,'content-type':'application/json','x-github-api-version':'2022-11-28'} });
     if (!response.ok) throw Error(`GitHub API ${response.status}: ${await response.text()}`);
     return response.json();
   };
-  const run = await github(`/repos/${repository}/actions/runs/${runId}/jobs?per_page=100`);
-  const steps = (run.jobs || []).flatMap(job => job.steps || []);
-  const failed = steps.filter(step => step.conclusion === 'failure').map(step => step.name);
-  const stage = failed.join(', ') || 'unknown publish stage';
-  const input = { repository,sha,runId,attempt,stage,runUrl:`https://github.com/${repository}/actions/runs/${runId}`,details:failed.join('\n') };
+  const explicitStage = process.env.PUBLISH_STAGE || '';
+  const explicitDetails = process.env.PUBLISH_DETAILS || '';
+  let failed = [];
+  if (!explicitStage) {
+    const run = await github(`/repos/${repository}/actions/runs/${runId}/jobs?per_page=100`);
+    const steps = (run.jobs || []).flatMap(job => job.steps || []);
+    failed = steps.filter(step => step.conclusion === 'failure').map(step => step.name);
+  }
+  const stage = explicitStage || failed.join(', ') || 'unknown publish stage';
+  const input = { repository,sha,runId,attempt,stage,runUrl:`https://github.com/${repository}/actions/runs/${runId}`,details:explicitDetails || failed.join('\n') };
   const result = await recordFailure(input,github);
   let repair = null;
-  if (result.pr) repair = await enqueuePublishRepair(input,result.pr,github);
+  if (result.pr && process.env.REPORT_ONLY !== '1') repair = await enqueuePublishRepair(input,result.pr,github);
   process.stdout.write(JSON.stringify({ report: result, repair })+'\n');
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(error); process.exitCode=1; });
