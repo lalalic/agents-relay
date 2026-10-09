@@ -1,5 +1,5 @@
 import type { Job, Priority, ExecutionMode } from './types.js';
-import { type GitHubClient, type PullRequest } from './store.js';
+import { resolvePullRequest, type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobEntity } from './workflow/entity-creation.js';
 import { normalizeThreadId } from './reviewer-thread.js';
@@ -25,22 +25,32 @@ export async function ensureManagedGitHubJob(
   },
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id) throw new Error('--id is required for managed local Jobs');
-  const number = options.prNumber ?? 0;
-  if (!Number.isInteger(number) || number < 0) throw new Error('Invalid external PR binding number');
-  const pr: PullRequest = { number, title: options.title ?? options.id,
-    body: options.body ?? options.objective ?? '', state: 'OPEN', head: '', base: options.base ?? '' };
+  const requestedNumber = options.prNumber ?? 0;
+  if (!Number.isInteger(requestedNumber) || requestedNumber < 0) throw new Error('Invalid external PR binding number');
+  const placeholder: PullRequest = { number: requestedNumber, title: options.title ?? options.id,
+    body: options.body ?? options.objective ?? '', state: 'OPEN', head: options.head ?? '', base: options.base ?? '' };
   const directory = options.storeDirectory ?? join(homedir(), '.agents-relay', 'stores');
   const alreadyKnown = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot =>
     snapshot.jobs.filter(job => job.id === options.id).map(job => ({ job, path: snapshot.path })));
   if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + options.id);
   if (alreadyKnown.length === 1) {
     const existing = alreadyKnown[0].job;
-    if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== number))
+    if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber))
       throw new Error('Immutable Job ID is already bound to a different repository or external PR');
-    return { job: existing, pr: { ...pr, number: existing.prNumber } };
+    return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
   }
+  const pr = !options.noGitHub && options.head && options.prNumber === undefined
+    ? await resolvePullRequest(_client, repositoryName, {
+        head: options.head,
+        base: options.base,
+        title: options.title,
+        body: options.body ?? options.objective,
+      })
+    : placeholder;
+  const number = pr.number;
   const local = openLocalManagedStore(repositoryName, number, {
-    directory, jobId: options.id, noGitHub: true,
+    directory, jobId: options.id, noGitHub: options.noGitHub,
+    client: _client, trustedAuthors: _trustedAuthors,
   });
   try {
     const existing = await local.relay.loadJob(options.id);

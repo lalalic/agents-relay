@@ -337,14 +337,15 @@ test('CLI and daemon help are successful and do not require job storage', () => 
   }
 });
 
-test('job create help is create-only and rejects task execution flags', () => {
+test('job create help supports initial planner bootstrap and rejects task execution flags', () => {
   const help = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.doesNotMatch(help.stdout, /--start/);
   assert.doesNotMatch(help.stdout, /--no-auto-merge/);
   assert.match(help.stdout, /always enables auto-merge/);
-  assert.match(help.stdout, /never creates executable tasks/);
-  assert.match(help.stdout, /orchestrator decides the initial task batch/);
+  assert.match(help.stdout, /--initial-plan/);
+  assert.match(help.stdout, /By default it is create-only/);
+  assert.match(help.stdout, /first real Planner round/);
 
   const noAutoMerge = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--id', 'job-cli', '--head', 'feat/demo', '--no-auto-merge'], { encoding: 'utf8' });
   assert.notEqual(noAutoMerge.status, 0);

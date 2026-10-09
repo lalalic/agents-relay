@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from 'node:os'; import { join } from 'node:path'; import { openLocalManagedStore } from './local-managed-store.js';
-import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
+import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
@@ -250,7 +250,9 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'create') {
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
-    const auth = { client: new DisabledGitHubClient(), trustedAuthors: new Set<string>() };
+    const auth = !noGitHubMode(args) && !prValue
+      ? await githubAuthContext(args)
+      : { client: new DisabledGitHubClient(), trustedAuthors: new Set<string>() };
     const result = await ensureManagedGitHubJob(auth.client, repo, auth.trustedAuthors, {
       id, noGitHub: noGitHubMode(args),
       localMergeSource: arg(args, '--local-merge-source') || undefined,
@@ -271,7 +273,24 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       base: arg(args, '--base', 'main'),
       body: arg(args, '--body') || objective || undefined
     });
-    console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state }, null, 2));
+    let initialPlan: Plan | undefined;
+    if (hasArg(args, '--initial-plan')) {
+      const managed = openLocalManagedStore(repo, result.pr.number, {
+        client: auth.client, trustedAuthors: auth.trustedAuthors, jobId: result.job.id, noGitHub: noGitHubMode(args),
+      });
+      try {
+        await withEventBus(args, async bus => {
+          const reconciler = runtime(managed.store, args, bus);
+          try {
+            const planned = await reconciler.planJob(result.job.id);
+            initialPlan = planned.round;
+            await publishWake(bus, planned.job, planned.round.id, 'Initial planning round ' + planned.round.id + ' completed');
+          } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
+        });
+      } finally { managed.relay.close(); }
+    }
+    console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode,
+      state: initialPlan ? 'ACTIVE' : result.job.state, ...(initialPlan ? { initialPlan: initialPlan.id } : {}) }, null, 2));
     return;
   }
   const loaded = await storeFor(args);

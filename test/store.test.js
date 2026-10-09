@@ -263,7 +263,7 @@ class ManagedGitHubClient {
   }
 }
 
-test('managed Job creation is GitHub-independent and idempotent by immutable jobId', async () => {
+test('managed no-GitHub Job creation is GitHub-independent and idempotent by immutable jobId', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
   const directory = await mkdtemp(join(tmpdir(), 'relay-local-job-create-'));
   try {
@@ -272,7 +272,7 @@ test('managed Job creation is GitHub-independent and idempotent by immutable job
       graphql:async()=>{apiCalls++;throw Error('GitHub GraphQL forbidden');}};
     const options={id:'managed',title:'Managed work',head:'feat/managed',base:'main',
       body:'body', reviewerThreadId:'reviewer-thread',creatorThreadId:'creator-thread',
-      storeDirectory:directory};
+      storeDirectory:directory,noGitHub:true};
     const first=await ensureManagedGitHubJob(client,'owner/repo',new Set(),options);
     const second=await ensureManagedGitHubJob(client,'owner/repo',new Set(),options);
     assert.equal(first.pr.number,0);
@@ -291,6 +291,37 @@ test('managed Job creation is GitHub-independent and idempotent by immutable job
     await assert.rejects(ensureManagedGitHubJob(client,'someone/other',new Set(),options),
       /different repository/);
   } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('managed GitHub-enabled Job creation resolves or creates the requested head PR once', async () => {
+  const { ensureManagedGitHubJob } = await import('../dist/cli.js');
+  const directory = await mkdtemp(join(tmpdir(), 'relay-github-job-create-'));
+  try {
+    const client = new ManagedGitHubClient();
+    const options = {
+      id: 'github-managed',
+      title: 'GitHub managed work',
+      objective: 'body',
+      head: 'feat/github-managed',
+      base: 'main',
+      body: 'body',
+      storeDirectory: directory,
+    };
+    const first = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
+    const second = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
+    assert.equal(first.pr.number, 1);
+    assert.equal(first.job.prNumber, 1);
+    assert.equal(first.pr.head, 'feat/github-managed');
+    assert.equal(first.pr.base, 'main');
+    assert.equal(client.pulls.length, 1);
+    assert.equal(second.job.id, first.job.id);
+    assert.equal(second.pr.number, 1);
+    const sqlite = new SQLiteRelayStore(relayStorePath(directory, 'owner/repo', 1));
+    assert.equal((await sqlite.loadJob('github-managed')).prNumber, 1);
+    sqlite.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('dashboard keeps every unfinished job and only the latest ten completed jobs', () => {
@@ -514,7 +545,7 @@ test('managed Job creation never bootstraps a GitHub branch and retains local me
     const result=await ensureManagedGitHubJob(client,'owner/repo',new Set(),{
       id:'empty-job',title:'Local source job',head:'feat/empty',base:'main',
       localMergeSource:'refs/heads/feature',localMergeTarget:'refs/heads/main',
-      body:'body',storeDirectory:directory,
+      body:'body',storeDirectory:directory,noGitHub:true,
     });
     assert.equal(result.pr.number,0);
     assert.equal(apiCalls,0);

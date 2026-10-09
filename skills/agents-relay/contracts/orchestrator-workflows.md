@@ -8,22 +8,19 @@ This contract defines orchestrator-owned exception workflows that sit above norm
 
 ## Normal managed Job start workflow
 
-For a normal managed Job, `job create` or `job adopt` establishes durable Job/PR state only. Unless the user explicitly requested **create-only / no execution**, the orchestrator must immediately start the Job by invoking the first-class Planner command for that exact Job:
+For a normal managed Job, the preferred bootstrap is one command:
 
 ```text
-job create|adopt
-  -> agents-relay plan --repo <owner/repo> --pr <number> --id <job_id>
+job create --initial-plan
   -> durable plan-N
   -> Planner next_tasks
   -> Relay materializes Tasks
   -> normal routing, execution, and reconciliation
 ```
 
-The initial decomposition for a normal managed Job belongs to that durable Planner round. The orchestrator must not hand-author the initial child Task batch as a substitute for `agents-relay plan`, and it must not leave a newly created executable Job with zero Plans and zero Tasks. If the Planner command fails, the Job is blocked at startup and the orchestrator must report the failure rather than silently inventing Tasks.
+Without `--initial-plan`, `job create` remains create-only and establishes durable Job/PR state without execution. `agents-relay plan` remains available for an existing create-only/adopted Job. Unless the user explicitly requested **create-only / no execution**, the orchestrator should use `job create --initial-plan` rather than issuing two separate commands.
 
-This rule applies regardless of whether the Job uses `fixed` or `autonomous` execution mode; execution mode does not replace the required initial Planner invocation. Later replanning continues to follow Relay's normal Planner/reconciliation rules.
-
-The explicit exception is the P0/self-job workflow below: a self job is synchronous orchestrator-owned execution, so it creates orchestrator-owned Tasks directly and terminalizes them in the same turn instead of invoking the normal initial Planner round.
+The initial decomposition belongs to that durable Planner round. The orchestrator must not hand-author the initial child Task batch as a substitute. If initial planning fails, the create command fails visibly after preserving the durable Job/Plan evidence; the orchestrator must not silently invent Tasks. This applies regardless of whether the Job uses `fixed` or `autonomous` execution mode. Later replanning continues to follow Relay's normal Planner/reconciliation rules.
 
 ## P0 / self job workflow
 
