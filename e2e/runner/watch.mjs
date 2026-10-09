@@ -22,7 +22,7 @@ const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
-let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false}};
+let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[]}};
 try{const previous=JSON.parse(readFileSync(statePath,'utf8'));if(previous.runKey===runKey)state={...state,...previous}}catch{}
 function events(){
  let size;try{size=statSync(eventsPath).size}catch{return []}
@@ -93,6 +93,43 @@ function scenario002(j){
  }
  return null;
 }
+function scenario003(j){
+ const tasks=j.tasks||[];
+ const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter'&&!String(x.id).startsWith('review-fix-'));
+ const recoveries=tasks.filter(x=>x.agentName==='troubleshooter');
+ const fixes=tasks.filter(x=>String(x.id).startsWith('review-fix-'));
+ const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
+ const root=ordinary[0];
+ const successfulRecovery=recoveries.find(x=>x.state==='SUCCEEDED');
+ const failedRecovery=recoveries.find(x=>x.state==='FAILED'||x.state==='BLOCKED');
+ if(failedRecovery)return {type:'TROUBLESHOOTER_FAILED',tasks:[{id:failedRecovery.id,state:failedRecovery.state,error:failedRecovery.error,attempt:failedRecovery.attempt}]};
+ if(root && ['FAILED','BLOCKED'].includes(root.state)){
+   const age=root.updatedAt?Date.now()-Date.parse(root.updatedAt):0;
+   const related=recoveries.filter(x=>x.parentTaskId===root.id||x.id.startsWith('troubleshoot-'));
+   if(!related.length&&age>30000)return {type:'TROUBLESHOOTER_NOT_CREATED',task:{id:root.id,state:root.state,error:root.error,attempt:root.attempt}};
+   return null;
+ }
+ if(successfulRecovery&&root&&!['QUEUED','RUNNING','SUCCEEDED'].includes(root.state)){
+   const age=successfulRecovery.updatedAt?Date.now()-Date.parse(successfulRecovery.updatedAt):0;
+   if(age>30000)return {type:'RECOVERY_DID_NOT_REACTIVATE_ORIGINAL',task:{id:root.id,state:root.state,attempt:root.attempt},troubleshooter:successfulRecovery.id};
+ }
+ if(j.state==='COMPLETED'){
+   if(!state.evidence.workerFailedOrBlocked)return {type:'SCENARIO_TRIGGER_MISSING',message:'Scenario 003 completed without the required first implementation failure'};
+   if(!state.evidence.troubleshooterSucceeded&&!successfulRecovery)return {type:'TROUBLESHOOTER_EVIDENCE_MISSING',message:'Scenario 003 completed without successful Troubleshooter recovery'};
+   if(!root||root.state!=='SUCCEEDED'||Number(root.attempt)<2)return {type:'ORIGINAL_TASK_NOT_RECOVERED',task:root?{id:root.id,state:root.state,attempt:root.attempt}:null};
+   if(Number(state.evidence.reviewChangesRequired||0)<2||new Set(state.evidence.reviewHeads||[]).size<2)return {type:'REVIEW_REJECTION_LADDER_MISSING',count:state.evidence.reviewChangesRequired||0,heads:state.evidence.reviewHeads||[]};
+   if(fixes.filter(x=>x.state==='SUCCEEDED').length<2)return {type:'REVIEW_FIX_LADDER_MISSING',fixes:fixes.map(x=>({id:x.id,state:x.state}))};
+   if(Number(state.evidence.reviewApproved||0)<1&&!reviews.some(x=>x.state==='SUCCEEDED'))return {type:'FINAL_REVIEW_APPROVAL_MISSING'};
+   if(j.localMerge&&j.localMerge.status!=='succeeded')return {type:'TERMINAL_INCONSISTENCY',message:'Scenario 003 completed without successful local merge',localMerge:j.localMerge};
+   return null;
+ }
+ // Intentional reviewer changes_required produces SUCCEEDED reviewer tasks plus queued fix work;
+ // do not classify those historical review outcomes as task failures.
+ const unexpected=tasks.filter(x=>['FAILED','BLOCKED'].includes(x.state)&&x.agentName!=='troubleshooter'&&x!==root);
+ if(unexpected.length)return {type:'TASK_FAILED',tasks:unexpected.map(x=>({id:x.id,state:x.state,error:x.error,attempt:x.attempt}))};
+ return null;
+}
+
 function detect(j){
  const tasks=j.tasks||[],plans=j.plans||[];
  const work=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
@@ -100,6 +137,9 @@ function detect(j){
  if(j.state==='CANCELLED')return {type:'UNEXPECTED_CANCELLED',jobState:j.state};
  if(scenario.startsWith('002-')){
   const specific=scenario002(j);
+  if(specific)return specific;
+ } else if(scenario.startsWith('003-')){
+  const specific=scenario003(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
@@ -132,6 +172,12 @@ async function tick(){
     if((e.type==='task.failed'||e.type==='task.blocked')&&!String(e.task_id||'').startsWith('troubleshoot-'))state.evidence.workerFailedOrBlocked=true;
     if(e.type==='troubleshooter.created')state.evidence.troubleshooterCreated=true;
     if(e.type==='task.completed'&&String(e.task_id||'').startsWith('troubleshoot-'))state.evidence.troubleshooterSucceeded=true;
+    if(e.type==='review.changes_required'){
+      state.evidence.reviewChangesRequired=Number(state.evidence.reviewChangesRequired||0)+1;
+      const head=e.data?.review?.headSha||e.data?.headSha||e.data?.outcome?.headSha||null;
+      if(head&&!state.evidence.reviewHeads.includes(head))state.evidence.reviewHeads.push(head);
+    }
+    if(e.type==='review.approved')state.evidence.reviewApproved=Number(state.evidence.reviewApproved||0)+1;
   }
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
