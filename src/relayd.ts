@@ -166,7 +166,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let githubAuthenticated: boolean | null = noGitHub ? false : null;
   let githubAuthError: string | null = null;
   if (!noGitHub) {
-    try { const login = await client.currentLogin(); trusted.add(login); githubAuthenticated = true; }
+    try { const login = auth?.appAuth ? await client.currentLogin() : await client.localLogin(); if (!login) throw new Error('gh authentication did not return a healthy login'); trusted.add(login); githubAuthenticated = true; }
     catch (error) { githubAuthenticated = false; githubAuthError = errorMessage(error); }
   }
   const concurrency = Number(value(argv,'--concurrency','4'));
@@ -254,7 +254,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (client.rateLimitStatus().limited) return;
     const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
     for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
-      if (!repositories.includes(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
+      if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
       const sourceRef = discovered.localMerge.sourceRef;
       const targetRef = discovered.localMerge.targetRef;
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
