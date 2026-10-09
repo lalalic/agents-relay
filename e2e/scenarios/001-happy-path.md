@@ -12,7 +12,7 @@ No fault injection. Start one fresh Job with `job create --initial-plan` against
 
 Planner → implementation worker → authoritative terminal success → independent immutable-head Review → local Git merge → Job `COMPLETED`.
 
-When the production daemon has GitHub integration enabled and the Job has an external PR binding, the external PR must also reach `MERGED`. GitHub is not allowed to override SQLite lifecycle authority, but a production Happy Path is not complete until enabled external integration converges successfully.
+When the production daemon has GitHub integration enabled, the local Job must automatically project to an external GitHub PR, expose that binding in the Dashboard, keep the PR head synchronized with the local source ref, and finally reach `MERGED`. GitHub is not allowed to override SQLite lifecycle authority, but a production Happy Path is not complete until enabled external integration converges successfully.
 
 ## PASS
 
@@ -22,7 +22,10 @@ When the production daemon has GitHub integration enabled and the Job has an ext
 - local merge succeeds with durable receipt
 - Job is `COMPLETED`
 - zero manual plan/retry/reconcile/unblock/review/merge after bootstrap
-- if GitHub integration is enabled for this Job, PR state is `MERGED`
+- if GitHub integration is enabled: an external PR is automatically created/reused and bound to the Job
+- the Dashboard exposes that PR binding
+- the remote PR head converges to the reviewed local source head
+- final PR state is `MERGED`
 
 ## FAIL
 

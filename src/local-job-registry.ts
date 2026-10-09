@@ -1,4 +1,4 @@
-import { InMemoryStore } from './store.js';
+import { GitHubStore, InMemoryStore, type GitHubClient } from './store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 
@@ -6,6 +6,7 @@ import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-stor
 export function createJobIdRegistryResolver(
   directory: string,
   openStores: Map<string, SQLiteRelayStore>,
+  options: { client?: GitHubClient; trustedAuthors?: ReadonlySet<string>; noGitHub?: boolean } = {},
 ) {
   return async (jobId: string) => {
     const snapshots = await discoverLocalRelayStoreSnapshots(directory);
@@ -21,7 +22,13 @@ export function createJobIdRegistryResolver(
       relay = new SQLiteRelayStore(snapshot.path);
       openStores.set(snapshot.path, relay);
     }
-    // The GitHub adapter cannot enter the lifecycle execution store.
-    return { job, relay, store: new LocalAuthorityDurableStore(relay, new InMemoryStore(), undefined, true) };
+    // SQLite remains lifecycle authority. A positive PR binding only enables
+    // the external collaboration adapter for projection/merge side effects.
+    const externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+    const githubEnabled = !options.noGitHub && externalPrNumber > 0 && options.client;
+    const github = githubEnabled
+      ? new GitHubStore(options.client!, job.repository, externalPrNumber, options.trustedAuthors ?? new Set())
+      : new InMemoryStore();
+    return { job, relay, store: new LocalAuthorityDurableStore(relay, github, undefined, !githubEnabled) };
   };
 }

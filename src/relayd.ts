@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { once } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } fro
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool } from './pool.js';
 import { Reconciler } from './reconciler.js';
-import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
+import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
@@ -229,11 +230,61 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const refreshPullRequest = async (repository: string, prNumber: number, trigger: PullRequestRefreshTrigger, options?: { force?: boolean }): Promise<ManagedJobOverview[]> =>
     (await refreshPullRequestSnapshot(repository, prNumber, trigger, options)).overviews;
-  const localJobBinding = createJobIdRegistryResolver(join(homedir(), '.agents-relay', 'stores'), relayStores);
+  const localJobBinding = createJobIdRegistryResolver(join(homedir(), '.agents-relay', 'stores'), relayStores, { client, trustedAuthors: trusted, noGitHub });
   const requireLocalJobBinding = async (jobId: string) => {
     const binding = await localJobBinding(jobId);
     if (!binding) throw new Error('Local Job ' + jobId + ' not found or ambiguous in SQLite registry');
     return binding;
+  };
+
+  const gitText = (cwd: string, args: string[]): string => execFileSync('git', ['-C', cwd, ...args], {
+    encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  }).trim();
+  const syncGitHubBindings = async (): Promise<void> => {
+    if (noGitHub) return;
+    const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+    for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
+      if (!repositories.includes(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
+      const sourceRef = discovered.localMerge.sourceRef;
+      const targetRef = discovered.localMerge.targetRef;
+      if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
+      const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
+      let relay = relayStores.get(snapshot.path);
+      if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
+      const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
+      const sourceSha = gitText(canonical, ['rev-parse', '--verify', sourceRef]);
+      const facts = await relay.loadPullRequestFacts();
+      if (facts?.head?.sha !== sourceSha) {
+        gitText(canonical, ['push', 'origin', `${branch}:${branch}`]);
+      }
+      let job = (await relay.loadJob(discovered.id)) ?? discovered;
+      let externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+      if (externalPrNumber === 0 && ['COMPLETED','CANCELLED'].includes(job.state)) continue;
+      if (externalPrNumber === 0) {
+        const pr = await resolvePullRequest(client, job.repository, { head: branch, base, title: job.title, body: job.objective ?? job.description ?? '' });
+        if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
+        job = await relay.mutateJob(job.id, current => ({ ...current, externalPrNumber: pr.number, updatedAt: new Date().toISOString() }));
+        externalPrNumber = pr.number;
+        observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
+      }
+      if (externalPrNumber <= 0) continue;
+      const latestFacts = await relay.loadPullRequestFacts();
+      if (latestFacts?.state !== 'MERGED' && (latestFacts?.head?.sha !== sourceSha || latestFacts?.head?.ref !== branch)) {
+        await relay.savePullRequestFacts({ state: latestFacts?.state === 'CLOSED' ? 'CLOSED' : 'OPEN', head: { ref: branch, sha: sourceSha }, observedAt: new Date().toISOString() });
+      }
+      const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
+      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
+      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && latestFacts?.state !== 'MERGED') {
+        const projected = new LocalAuthorityDurableStore(relay, github, undefined, false);
+        await projected.mergePullRequest(job.localMerge.sourceSha ?? sourceSha);
+      }
+    }
+    cachedOverviews = await inventoryFromLocal();
+  };
+  const syncGitHubBindingsSafely = async (): Promise<void> => {
+    try { await syncGitHubBindings(); }
+    catch (error) { observability().record({ stage: 'projection', event: 'github.binding_sync_failed', level: 'warn', outcome: 'failed', message: `GitHub Job binding sync failed: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
   };
   const pool = new RepositoryWorkerPool(
     concurrency,
@@ -324,7 +375,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     secret,
     repositories: new Set(repositories),
     wake: async (event: GitHubWebhookWake): Promise<void> => {
-      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && item.job.prNumber === event.pullRequest);
+      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (item.job.externalPrNumber ?? item.job.prNumber) === event.pullRequest);
       if (targets.length === 0) return;
       for (const target of targets) {
         const binding = await requireLocalJobBinding(target.job.id);
@@ -367,7 +418,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     }
   };
   const stopWatch = bus ? await pool.watch(bus) : async()=>{};
-  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>({ ...client.rateLimitStatus(), readPaths: { ...githubReadPaths } }),noGitHub ? undefined : () => client.rateLimitSnapshot(),exactJob, {
+  const server = serveDashboard(dashboardStore,Number(value(argv,'--port',String(SERVICE_DEFAULTS.port))),bus,Number(value(argv,'--refresh-ms',String(SERVICE_DEFAULTS.dashboardRefreshMs))),fallback?.id,usageRegistry,overviews,webhook,()=>({ githubEnabled: !noGitHub, ...client.rateLimitStatus(), readPaths: { ...githubReadPaths } }),noGitHub ? undefined : () => client.rateLimitSnapshot(),exactJob, {
     start: workspaceJobAction('start'),
     reconcile: workspaceJobAction('reconcile'),
     cancel: workspaceJobAction('cancel'),
@@ -474,11 +525,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
   const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  await syncGitHubBindingsSafely();
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();
   await flushProjectionsSafely();
   interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
-  if (!noGitHub) { projectionInterval=setInterval(()=>void flushProjectionsSafely(),Number(value(argv,'--projection-ms',String(SERVICE_DEFAULTS.projectionFlushMs)))); projectionInterval.unref(); }
+  if (!noGitHub) { projectionInterval=setInterval(()=>void syncGitHubBindingsSafely().then(flushProjectionsSafely),Number(value(argv,'--projection-ms',String(SERVICE_DEFAULTS.projectionFlushMs)))); projectionInterval.unref(); }
   scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)

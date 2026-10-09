@@ -65,3 +65,11 @@ test('E2E watcher gives QUEUED tasks their configured timeout plus grace', () =>
   job.tasks[0].updatedAt=new Date(Date.now()-950000).toISOString();
   assert.equal(detect(job,950000).type,'STALLED');
 });
+
+
+test('Scenario 001 requires external PR creation and merge when daemon GitHub is enabled', () => {
+  assert.match(source,/githubEnabled===true/);
+  assert.match(source,/GITHUB_PR_NOT_CREATED/);
+  assert.match(source,/externalPrNumber/);
+  assert.match(source,/GITHUB_PR_NOT_MERGED/);
+});

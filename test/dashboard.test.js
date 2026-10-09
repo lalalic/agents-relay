@@ -149,8 +149,8 @@ test('job detail exposes ChatGPT shortcuts as an empty-first select that resets 
 
 test('dashboard applies lifecycle state patches from relay SSE without refetching jobs', () => {
   assert.match(dashboardHtml, /function applyStatePatch\(patch\)/);
-  assert.match(dashboardHtml, /if\(patch\.jobState\)job\['state'\]=patch\.jobState/);
-  assert.match(dashboardHtml, /task\['state'\]=patch\.taskState/);
+  assert.match(dashboardHtml, /patch\.jobState&&isFreshEnough\(patch\.jobUpdatedAt,job\.updatedAt\)/);
+  assert.match(dashboardHtml, /task&&isFreshEnough\(patch\.taskUpdatedAt,task\.updatedAt\)/);
   assert.match(dashboardHtml, /payload\?\.statePatch\)applyStatePatch\(payload\.statePatch\)/);
   assert.doesNotMatch(dashboardHtml, /payload\?\.statePatch[\s\S]{0,120}refresh\(/);
 });
@@ -305,13 +305,13 @@ test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
 
 test('job row selection uses repository, PR, and durable id as one UI identity', () => {
   assert.match(dashboardHtml, /function jobSelectionKey\(job\)/);
-  assert.match(dashboardHtml, /String\(job\.repository\|\|''\).*String\(job\.prNumber\|\|''\).*String\(job\.id\|\|''\)/);
+  assert.match(dashboardHtml, /String\(job\.repository\|\|''\)\+'\|'\+String\(job\.prNumber\|\|''\)\+'\|'\+String\(job\.id\|\|''\)/);
   assert.match(dashboardHtml, /function jobForSelection\(selection\).*jobSelectionKey\(job\)===selection.*job\.id===selection/);
   assert.match(dashboardHtml, /row\.setAttribute\('aria-current',String\(jobSelectionKey\(job\)===selectedJob\)\)/);
   assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\)\)/);
   assert.match(dashboardHtml, /select\.addEventListener\('click',event=>\{event\.stopPropagation\(\);selectJob\(job\);\}\)/);
   assert.match(dashboardHtml, /new URLSearchParams\(\{job:job\.id,limit:String\(MAX_EVENTS\)\}\)/);
-  assert.match(dashboardHtml, /jobSelectionKey\(job\)===jobSelectionKey\(payload\.job\)/);
+  assert.match(dashboardHtml, /if\(payload\?\.job\)upsertFreshJob\(payload\.job\)/);
 });
 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
@@ -455,7 +455,7 @@ test('credit providers render one balance value per provider row', () => {
 
 test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
-  assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
+  assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.externalPrNumber\|\|job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
@@ -583,7 +583,7 @@ test('dashboard warns when GitHub API is rate limited', () => {
 });
 
 test('dashboard shows the current package version at the top right', () => {
-  assert.match(dashboardHtml, /class="version">v\d+\.\d+\.\d+<\/span>/);
+  assert.match(dashboardHtml, /class="version">v\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?<\/span>/);
   assert.match(dashboardHtml, /\.version \{ margin-left:auto;/);
 });
 

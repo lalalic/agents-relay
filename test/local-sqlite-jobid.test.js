@@ -132,3 +132,18 @@ test('registry resolves unique ACTIVE Job over archived same-ID terminal snapsho
     assert.equal(await createJobIdRegistryResolver(root,new Map())('same-job'),null);
   } finally {for(const db of stores)db.close();await rm(root,{recursive:true,force:true});}
 });
+
+
+test('registry upgrades a local Job to external GitHub merge capability after PR binding', async () => {
+  const { createJobIdRegistryResolver } = await import('../dist/local-job-registry.js');
+  const root=await mkdtemp(join(tmpdir(),'relay-external-binding-'));
+  const relay=new SQLiteRelayStore(join(root,'job.db'));
+  try {
+    const at='2026-10-09T12:00:00.000Z';
+    await relay.saveJob({id:'bound-job',repository:'owner/repo',prNumber:0,externalPrNumber:77,title:'bound',state:'COMPLETED',executionMode:'autonomous',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
+    const resolved=await createJobIdRegistryResolver(root,new Map(),{client:{},noGitHub:false})('bound-job');
+    assert.ok(resolved);
+    await resolved.store.mergePullRequest('abcdef1234567890');
+    assert.equal(await resolved.relay.pendingProjectionCount(),1);
+  } finally {relay.close();await rm(root,{recursive:true,force:true});}
+});

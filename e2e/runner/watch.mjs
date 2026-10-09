@@ -42,14 +42,21 @@ function snapshot(){
  return JSON.parse(p.stdout);
 }
 
+function githubCapability(){
+ const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/status'],{encoding:'utf8',timeout:30000,maxBuffer:1000000});
+ if(p.status!==0)return {enabled:false,error:p.error?.message||p.stderr||'status unavailable'};
+ try{const status=JSON.parse(p.stdout);return {enabled:status.githubEnabled===true,status};}catch(error){return {enabled:false,error:error.message};}
+}
+
 function externalJobSnapshot(j){
- if(Number(j.prNumber||0)<=0)return null;
+ const boundPr=Number(j.externalPrNumber||j.prNumber||0);
+ if(boundPr<=0)return null;
  const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/jobs?refresh=1'],{encoding:'utf8',timeout:30000,maxBuffer:8000000});
  if(p.status!==0)return {error:p.error?.message||p.stderr||'dashboard GitHub verification unavailable'};
  try{
   const jobs=JSON.parse(p.stdout);
-  const match=(Array.isArray(jobs)?jobs:[]).find(x=>x.id===jobId&&x.repository===repo&&Number(x.prNumber)===Number(j.prNumber));
-  return match?{githubState:match.githubState||'UNKNOWN'}:{error:'Job not found in dashboard inventory'};
+  const match=(Array.isArray(jobs)?jobs:[]).find(x=>x.id===jobId&&x.repository===repo&&Number(x.externalPrNumber||x.prNumber)===boundPr);
+  return match?{githubState:match.githubState||'UNKNOWN',prNumber:boundPr}:{error:'Job not found in dashboard inventory'};
  }catch(error){return {error:error.message};}
 }
 
@@ -140,16 +147,25 @@ async function tick(){
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
   const j=snapshot();
+  const github=githubCapability();
   if(j.state==='CANCELLED'&&existsSync(expectedCancelPath)){
     state.phase='superseded';state.supersededAt=new Date().toISOString();state.fingerprint=null;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_superseded',repo,jobId,scenario}));process.exit(0);return;
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=detect(j);
   let external=null;
-  if(j.state==='COMPLETED'&&!issue&&Number(j.prNumber||0)>0){
-    external=externalJobSnapshot(j);
-    if(external?.error)issue={type:'GITHUB_VERIFICATION_UNAVAILABLE',message:external.error,prNumber:j.prNumber};
-    else if(external?.githubState!=='MERGED')issue={type:'GITHUB_PR_NOT_MERGED',prNumber:j.prNumber,githubState:external?.githubState||'UNKNOWN'};
+  const boundPr=Number(j.externalPrNumber||j.prNumber||0);
+  if(!issue&&github.enabled&&boundPr<=0){
+    const age=Date.now()-Date.parse(j.createdAt||new Date().toISOString());
+    if(age>60000)issue={type:'GITHUB_PR_NOT_CREATED',message:'GitHub is enabled but this Job has no external PR binding after 60s'};
+  }
+  if(j.state==='COMPLETED'&&!issue&&github.enabled){
+    if(boundPr<=0)issue={type:'GITHUB_PR_NOT_CREATED',message:'GitHub is enabled but completed Job has no external PR binding'};
+    else {
+      external=externalJobSnapshot(j);
+      if(external?.error)issue={type:'GITHUB_VERIFICATION_UNAVAILABLE',message:external.error,prNumber:boundPr};
+      else if(external?.githubState!=='MERGED')issue={type:'GITHUB_PR_NOT_MERGED',prNumber:boundPr,githubState:external?.githubState||'UNKNOWN'};
+    }
   }
   if(j.state==='COMPLETED'&&!issue){state.phase='passed';state.passedAt=new Date().toISOString();state.external=external;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external}));process.exit(0)}
   if(state.phase==='passed')state.phase='monitoring';
