@@ -17,7 +17,7 @@ import { discoverAgents } from '../dist/registry.js';
 import { compareJobPriority, needsLifecycleReconciliation, runnableManagedJobs, terminalManagedJobs, RepositoryWorkerPool } from '../dist/pool.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState, runtimeReviewer } from '../dist/cli.js';
-import { relayControlJob } from '../dist/cli-support.js';
+import { relayControlJob, relayJobStateCommand } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
 import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
 
@@ -1566,6 +1566,18 @@ test('event bus wakes reconciliation and dashboard serves durable state', async 
 test('dashboard selected-job refresh serves a cold-cache target by repository and PR', async () => { const selected={...job([task('selected','SUCCEEDED')]),id:'selected'}; const refreshed={...selected,tasks:[...selected.tasks,task('new-durable-task','QUEUED')]}; const store=new InMemoryStore(selected); let target; const server=managedDashboard(store,0,undefined,10000,'selected',undefined,async()=>[],undefined,undefined,async(id,value)=>{target=value;return id==='selected'&&value?.repository==='owner/repo'&&value?.prNumber===1?refreshed:null}); await new Promise(resolve=>server.once('listening',resolve)); const address=server.address(); const port=typeof address==='object'&&address ? address.port : 0; const response=await fetch(`http://127.0.0.1:${port}/api/job?id=selected&repo=owner%2Frepo&pr=1`); assert.equal(response.status,200); const body=await response.text(); assert.match(body,/selected/); assert.match(body,/new-durable-task/); assert.deepEqual(target,{repository:'owner/repo',prNumber:1}); const missing=await fetch(`http://127.0.0.1:${port}/api/job?id=missing&repo=owner%2Frepo&pr=1`); assert.equal(missing.status,404); server.close(); });
 
 test('relay control lookup sends managed repository and PR identity', async () => { let requestUrl=''; const server=(await import('node:http')).createServer((req,res)=>{requestUrl=req.url??'';res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(job()));}); server.listen(0,'127.0.0.1'); await once(server,'listening'); const address=server.address(); const port=typeof address==='object'&&address?address.port:0; await relayControlJob(['--host','127.0.0.1','--port',String(port),'--repo','owner/repo','--pr','1'],'j'); assert.equal(requestUrl,'/api/job?id=j&repo=owner%2Frepo&pr=1'); server.close(); });
+
+test('relay job state command routes lifecycle mutation through daemon control API', async () => {
+  let requestUrl=''; let method='';
+  const server=(await import('node:http')).createServer((req,res)=>{requestUrl=req.url??'';method=req.method??'';res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({...job(),state:'CANCELLED'}));});
+  server.listen(0,'127.0.0.1'); await once(server,'listening');
+  const address=server.address(); const port=typeof address==='object'&&address?address.port:0;
+  const result=await relayJobStateCommand(['--host','127.0.0.1','--port',String(port),'--repo','owner/repo','--pr','1'],'j','CANCELLED');
+  assert.equal(method,'POST');
+  assert.equal(requestUrl,'/api/job-state?id=j&state=CANCELLED&repo=owner%2Frepo&pr=1');
+  assert.equal(result.state,'CANCELLED');
+  server.close();
+});
 
 
 test('workspace webhook forwards only self-contained PR facts for configured repositories', async () => {

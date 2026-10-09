@@ -87,6 +87,22 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
+
+export async function relayJobStateCommand(args: string[], jobId: string, state: 'DRAFT'|'ACTIVE'|'COMPLETED'|'CANCELLED'): Promise<Job> {
+  const host = arg(args, '--host', '127.0.0.1');
+  const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
+  const params = new URLSearchParams({ id: jobId, state });
+  const repo = arg(args, '--repo');
+  const pr = Number(arg(args, '--pr'));
+  if (repo) params.set('repo', repo);
+  if (Number.isInteger(pr) && pr > 0) params.set('pr', String(pr));
+  let response: Response;
+  try { response = await fetch(`http://${host}:${port}/api/job-state?${params.toString()}`, { method: 'POST' }); }
+  catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!response.ok) throw new Error(`Agents Relay job state command failed: ${await response.text() || `HTTP ${response.status}`}`);
+  return await response.json() as Job;
+}
 export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'|'update'; summary?: string; task?: Task; expectedUpdatedAt?: string }): Promise<Job> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
