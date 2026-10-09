@@ -442,3 +442,11 @@ test('planner parser rejects malformed Agent Graph before child materialization'
     next_tasks: [{ id: 'bad-graph', input: 'work', output: { kind: 'task_pr' }, agentGraph: 'graph LR\na --> b' }],
   }), /next_tasks\[0\]\.agentGraph is invalid: Agent Graph must start with Mermaid flowchart/);
 });
+
+
+test('planner instruction contract forbids self-cycles in optional agent graphs', async () => {
+  const prompt = await readFile(new URL('../skills/agents-relay/agents/planner.agent.md', import.meta.url), 'utf8');
+  assert.match(prompt, /agentGraph.*optional/i);
+  assert.match(prompt, /do \*\*not\*\* create an edge from an agent\/node to itself/);
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'x', next_tasks: [{ id: 'work', input: 'work', storySize: 'S', output: { kind: 'task_pr' }, agentGraph: 'flowchart LR\n  implementation --> implementation' }] }), /Agent Graph self-cycle at implementation/);
+});

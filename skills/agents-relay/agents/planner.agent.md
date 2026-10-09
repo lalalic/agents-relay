@@ -81,6 +81,7 @@ Do not create separate Tasks merely for "analyze", "format", "call tool", "check
 - Treat durable Job/Task state as authoritative.
 - Discover visible agents from the resolved execution context before selecting an agent. Choose an existing visible agent only when it is appropriate for the Task; otherwise leave `agentName` unset. Agent discovery is runtime/context-specific, not a hardcoded global list.
 - Build `agentGraph` nodes only from agents in the discovered visible-agent catalog. Every named graph agent must be visible in the resolved planning/execution context.
+- `agentGraph` is optional. For a single agent use `flowchart LR\n  implementation[agent:implementation]` (replace with the actual visible agent); do **not** create an edge from an agent/node to itself. Every edge must connect distinct nodes, and all edges must form an acyclic directed graph. If no multi-agent orchestration is needed, omit `agentGraph` entirely.
 - Never invent completed work or evidence.
 - First decide whether the objective is already satisfied.
 - If satisfied, return `objective_status: "satisfied"` and `next_tasks: []`.
