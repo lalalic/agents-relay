@@ -194,7 +194,8 @@ export class GhApiClient implements GitHubClient {
         try {
           const value = JSON.parse(stdout) as Record<string, unknown>; const hosts = value.hosts as Record<string, unknown[]> | undefined;
           const github = hosts?.['github.com']; const active = Array.isArray(github) ? github.find(item => (item as Record<string, unknown>).active === true) as Record<string, unknown> | undefined : undefined;
-          resolve(typeof active?.login === 'string' && active.login.length > 0 ? active.login : null);
+          const healthy = active && active.state !== 'error' && typeof active.error !== 'string';
+          resolve(healthy && typeof active?.login === 'string' && active.login.length > 0 ? active.login : null);
         } catch { resolve(null); }
       });
     });

@@ -76,4 +76,6 @@ test('local GitHub login rejects nonzero gh auth status even when stdout names a
   const source=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../src/github-client.ts',import.meta.url),'utf8'));
   assert.match(source,/child\.on\('close', \(code\) =>/);
   assert.match(source,/if \(code !== 0\) \{ resolve\(null\); return; \}/);
+  assert.match(source,/active\.state !== 'error'/);
+  assert.match(source,/typeof active\.error !== 'string'/);
 });
