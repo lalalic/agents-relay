@@ -3,7 +3,6 @@ import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
-import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -86,6 +85,29 @@ export async function relayControlJob(args: string[], jobId: string): Promise<Jo
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
   if (!response.ok) throw new Error(`Agents Relay job request failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
+}
+
+export async function relayControlCommand<T = unknown>(args: string[], body: Record<string, unknown>): Promise<T> {
+  const host = arg(args, '--host', '127.0.0.1');
+  const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
+  let response: Response;
+  try { response = await fetch(`http://${host}:${port}/api/control`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!response.ok) throw new Error(`Agents Relay control command failed: ${await response.text() || `HTTP ${response.status}`}`);
+  return await response.json() as T;
+}
+
+export async function relayJobList(args: string[]): Promise<Job[]> {
+  const host = arg(args, '--host', '127.0.0.1');
+  const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
+  const repo = arg(args, '--repo');
+  let response: Response;
+  try { response = await fetch(`http://${host}:${port}/api/jobs`); }
+  catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!response.ok) throw new Error(`Agents Relay jobs request failed: ${await response.text() || `HTTP ${response.status}`}`);
+  const jobs = await response.json() as Job[];
+  return repo ? jobs.filter(job => job.repository === repo) : jobs;
 }
 
 export async function relayJobStateCommand(args: string[], jobId: string, state: 'DRAFT'|'ACTIVE'|'COMPLETED'|'CANCELLED'): Promise<Job> {

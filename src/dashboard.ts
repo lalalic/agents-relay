@@ -31,7 +31,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   })));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
-type DashboardActions = { start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
+type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -225,6 +225,21 @@ export function serveDashboard(
         if (!res.writableEnded) res.end(JSON.stringify(jobs));
       } catch (error) {
         if (!res.headersSent) res.writeHead(502);
+        if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/control') {
+      if (req.method !== 'POST' || !resolvedActions?.control) { res.writeHead(404); res.end('Control API unavailable'); return; }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+        const result = await resolvedActions.control(body);
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
+        if (!res.writableEnded) res.end(JSON.stringify(result));
+      } catch (error) {
+        if (!res.headersSent) res.writeHead(409);
         if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
       }
       return;

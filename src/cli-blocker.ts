@@ -1,41 +1,20 @@
-import { openLocalManagedStore } from './local-managed-store.js';
-import { registerBlockerDependency } from './blockers.js';
-import { arg, publishDependentUnblocked, repository, withEventBus } from './cli-support.js';
+import { arg, relayControlCommand, relayControlJob, repository } from './cli-support.js';
 import { usage } from './cli-help.js';
 
 export async function runBlockerCommand(action: string, args: string[]): Promise<void> {
   if (!['add', 'resolve', 'show'].includes(action)) throw new Error(usage);
-  const repo = repository(args);
+  repository(args);
   const id = arg(args, '--id');
-  const pr = Number(arg(args, '--pr'));
-  if (!id || !Number.isInteger(pr) || pr <= 0) throw new Error('blocker commands require --repo, --pr, and --id for the blocker Job');
-  const blockerStore = openLocalManagedStore(repo, pr).store;
-  if (action === 'show') {
-    console.log(JSON.stringify(await blockerStore.load(id), null, 2));
-    return;
-  }
+  if (!id) throw new Error('blocker commands require --repo and --id for the blocker Job');
+  if (action === 'show') { console.log(JSON.stringify(await relayControlJob(args, id), null, 2)); return; }
   if (action === 'resolve') {
-    const summary = await blockerStore.resolveBlockerDependents(id, 'verified');
-    await withEventBus(args, bus => publishDependentUnblocked(bus, summary.unblocked, `Blocker Job ${id} resolved (verified)`));
-    console.log(JSON.stringify({ blocker: id, resolution: 'verified', ...summary }, null, 2));
-    return;
+    const result = await relayControlCommand(args, { command: 'blocker.resolve', jobId: id, resolution: 'verified' });
+    console.log(JSON.stringify({ blocker: id, resolution: 'verified', ...(result as object) }, null, 2)); return;
   }
-  const dependentRepo = arg(args, '--dependent-repo');
-  const dependentPr = Number(arg(args, '--dependent-pr'));
-  const dependentJob = arg(args, '--dependent-job');
-  const dependentTask = arg(args, '--dependent-task');
-  if (!dependentRepo || !Number.isInteger(dependentPr) || dependentPr <= 0 || !dependentJob || !dependentTask) {
-    throw new Error('blocker add requires --dependent-repo, --dependent-pr, --dependent-job, and --dependent-task');
-  }
+  const dependentJobId = arg(args, '--dependent-job');
+  const dependentTaskId = arg(args, '--dependent-task');
+  if (!dependentJobId || !dependentTaskId) throw new Error('blocker add requires --dependent-job and --dependent-task');
   const modeValue = arg(args, '--resolution', 'merge');
   if (!['merge', 'verified'].includes(modeValue)) throw new Error('--resolution must be merge or verified');
-  const relation = await registerBlockerDependency({
-    blockerStore,
-    blockerJobId: id,
-    dependentStore: openLocalManagedStore(dependentRepo, dependentPr).store,
-    dependentJobId: dependentJob,
-    dependentTaskId: dependentTask,
-    resolutionMode: modeValue as 'merge' | 'verified',
-  });
-  console.log(JSON.stringify(relation, null, 2));
+  console.log(JSON.stringify(await relayControlCommand(args, { command: 'blocker.add', jobId: id, dependentJobId, dependentTaskId, resolutionMode: modeValue }), null, 2));
 }

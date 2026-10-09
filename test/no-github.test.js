@@ -229,32 +229,17 @@ test('UNKNOWN GitHub state continues dispatch after a previous local Task succee
   } finally {db.close();}
 });
 
-test('CLI offline integration creates Job, completes Task, merges locally, and remains idempotent',()=>{
+test('durable CLI requires relay service while explicit --file demo remains local',()=>{
   const repo=localRepository();
   const home=mkdtempSync(join(tmpdir(),'relay-cli-home-'));
   const cli=fileURLToPath(new URL('../dist/cli.js',import.meta.url));
-  const run=(...args)=>execFileSync(process.execPath,[cli,'--no-github',...args,'--events','none'],
-    {cwd:repo.path,env:{...process.env,HOME:home},encoding:'utf8',timeout:15000});
+  const env={...process.env,HOME:home};
   try {
-    run('job','create','--id','e2e-cli','--title','Offline Job','--objective','Local merge',
-      '--no-review','--local-merge-source','refs/heads/feature',
-      '--local-merge-target','refs/heads/main');
-    run('task','create','--id','e2e-cli','--task-id','work','--adapter','orchestrator',
-      '--agent','implementation','--input','implement','--output','task-pr');
-    run('task','start','--id','e2e-cli','--task-id','work');
-    run('task','complete','--id','e2e-cli','--task-id','work','--summary','complete');
-    const completed=JSON.parse(run('reconcile','--id','e2e-cli','--project-path',repo.path));
-    assert.equal(completed.state,'COMPLETED');
-    assert.equal(completed.localMerge.status,'succeeded');
-    const firstSha=repo.git('rev-parse','refs/heads/main');
-    assert.equal(completed.localMerge.mergedCommitSha,firstSha);
-    assert.equal(repo.git('rev-list','--parents','-n','1',firstSha).split(' ').length,3);
-    const repeat=JSON.parse(run('reconcile','--id','e2e-cli','--project-path',repo.path));
-    assert.equal(repeat.localMerge.mergedCommitSha,firstSha);
-    assert.equal(repo.git('rev-parse','refs/heads/main'),firstSha);
-  } finally {
-    repo.close();rmSync(home,{recursive:true,force:true});
-  }
+    assert.throws(()=>execFileSync(process.execPath,[cli,'--no-github','job','create','--id','e2e-cli','--title','Offline Job','--objective','Local merge','--host','127.0.0.1','--port','1'],{cwd:repo.path,env,encoding:'utf8',timeout:5000}),/service unavailable|ECONNREFUSED/);
+    const file=join(home,'demo.json');
+    execFileSync(process.execPath,[cli,'--no-github','init','--file',file,'--id','demo','--title','Demo'],{cwd:repo.path,env,encoding:'utf8',timeout:5000});
+    assert.equal(JSON.parse(readFileSync(file,'utf8')).id,'demo');
+  } finally { repo.close();rmSync(home,{recursive:true,force:true}); }
 });
 
 test('UNKNOWN PR never masks local RUNNING, QUEUED, or terminal status on Dashboard',()=>{

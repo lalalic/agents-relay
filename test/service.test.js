@@ -81,7 +81,7 @@ test('repository daemon wires account usage telemetry and the default planner in
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /const usageRegistry = codexAndZaiUsageRegistry\(\)/);
   assert.match(source, /planner:runtimePlanner\(argv\)/);
-  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>\(\{ \.\.\.client\.rateLimitStatus\(\), readPaths:/);
+  assert.match(source, /fallback\?\.id,usageRegistry,overviews,webhook,\(\)=>\(\{ githubEnabled: !noGitHub, githubAuthenticated, githubAuthError, \.\.\.client\.rateLimitStatus\(\), readPaths:/);
   assert.match(source, /noGitHub \? undefined : \(\) => client\.rateLimitSnapshot\(\),exactJob/);
   assert.match(source, /start: workspaceJobAction\('start'\)/);
   assert.match(source, /reconcile: workspaceJobAction\('reconcile'\)/);
@@ -210,17 +210,30 @@ test('orchestrator task completion publishes correlated lifecycle events best-ef
   assert.ok(publish > save);
 });
 
-test('managed CLI task mutations enter relayd control plane before local truth changes', async () => {
+test('all non-demo CLI durable mutations enter the relayd service boundary', async () => {
   const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
-  assert.match(cli, /managed && \['create','start','complete','retry','cancel'\]\.includes\(action\)/);
+  const blocker = await readFile(new URL('../src/cli-blocker.ts', import.meta.url), 'utf8');
+  const review = await readFile(new URL('../src/cli-review.ts', import.meta.url), 'utf8');
+  const projection = await readFile(new URL('../src/cli-projection.ts', import.meta.url), 'utf8');
+  assert.match(cli, /const managed = !arg\(args, '--file'\) && Boolean\(arg\(args, '--repo'\) && arg\(args, '--id'\)\)/);
+  assert.doesNotMatch(cli, /const managed = !noGitHubMode/);
+  assert.match(support, /\/api\/control/);
   assert.match(support, /\/api\/task-command/);
-  assert.match(relayd, /taskCreate: workspaceTaskCreate/);
-  assert.match(relayd, /taskStart: workspaceTaskStart/);
-  assert.match(relayd, /taskComplete: workspaceTaskComplete/);
-  assert.match(relayd, /taskRetry: workspaceTaskAction\('retry'\)/);
-  assert.match(relayd, /taskCancel: workspaceTaskAction\('cancel'\)/);
+  assert.match(support, /\/api\/job-state/);
+  assert.match(relayd, /control: workspaceControl/);
+  assert.match(relayd, /command === 'task\.recover'/);
+  assert.match(relayd, /command === 'job\.unblock'/);
+  assert.match(relayd, /command === 'review\.request'/);
+  assert.match(relayd, /command === 'blocker\.add'/);
+  assert.match(relayd, /command === 'projection\.resolve'/);
+  assert.match(relayd, /command === 'job\.plan'/);
+  assert.match(relayd, /command === 'record'/);
+  assert.match(relayd, /command === 'agent\.register'/);
+  for (const source of [blocker, review, projection]) {
+    assert.doesNotMatch(source, /openLocalManagedStore|SQLiteRelayStore|relayStorePath/);
+  }
 });
 
 test('workspace daemon restores SQLite RelayStore jobs before dashboard and best-effort remote refresh', async () => {
@@ -314,7 +327,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
     ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|list|retry|unblock|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
-    ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --pr NUMBER'],
+    ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --id JOB_ID'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],
     ['dist/cli.js', ['context', 'resolve', '--help'], 'Resolve shared execution context'],
     ['dist/cli.js', ['init', '--help'], 'Initialize a new job'],
@@ -486,7 +499,8 @@ test('GitHub rate limit cannot gate locally authoritative lifecycle operations',
   const daemon = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   const pool = await readFile(new URL('../src/pool.ts', import.meta.url), 'utf8');
   assert.match(daemon, /new LocalAuthorityDurableStore/);
-  assert.match(daemon, /const client = noGitHub \? new DisabledGitHubClient\(\) : new GhApiClient\(\)/);
+  assert.match(daemon, /const auth = noGitHub \? null : await githubAuthContext\(argv, undefined, false\)/);
+  assert.match(daemon, /const client = noGitHub \? new DisabledGitHubClient\(\) : auth!\.client/);
   assert.match(daemon, /existingInventory = await discoverLocalRelayStoreSnapshots/);
   assert.match(pool, /async reconcileLocalJob\(jobId/);
   assert.match(pool, /this\.localTarget\(jobId\)/);

@@ -409,6 +409,23 @@ test('dashboard task actions invoke the supplied runtime handler', async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
+test('dashboard control API dispatches durable commands through the service callback', async () => {
+  const now = new Date().toISOString();
+  const job = { id: 'control-api-job', title: 'Control API', executionMode: 'fixed', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] };
+  let received = null;
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
+    control: async body => { received = body; return { ok: true, command: body.command }; }
+  });
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/control`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command: 'job.reconcile', jobId: job.id }) });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, command: 'job.reconcile' });
+  assert.deepEqual(received, { command: 'job.reconcile', jobId: job.id });
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+});
+
 test('dashboard task controls preserve durable task ids with spaces and brackets', async () => {
   const task = { id: '[2026-09-29 17]', jobId: 'task-control-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
   const job = { id: 'task-control-job', title: 'Task controls', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };

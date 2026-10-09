@@ -219,7 +219,7 @@ Example:
   npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,
   'agent-register': `Register an agent role and its execution endpoint.
 
-Required: --file PATH or managed GitHub options, plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET.
+Required for durable service mode: --repo OWNER/REPO --id JOB_ID plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET. Use --file only for explicit demo mode.
 Common: --capabilities a,b, --runtime shell|codex|chatgpt, --provider NAME, --model NAME.
 
 Example:
@@ -227,8 +227,8 @@ Example:
   projection: `Inspect and explicitly repair deterministic V2 GitHub projection conflicts.
 
 Usage:
-  npx agents-relay projection conflicts --repo OWNER/REPO --pr NUMBER [--store PATH]
-  npx agents-relay projection resolve --repo OWNER/REPO --pr NUMBER --projection-id ID --action requeue|discard-local
+  npx agents-relay projection conflicts --repo OWNER/REPO --id JOB_ID
+  npx agents-relay projection resolve --repo OWNER/REPO --id JOB_ID --projection-id ID --action requeue|discard-local
 
 A deterministic same-id/different-definition append conflict is classified once, stops
 consuming retry budget, and retains structured diagnostic evidence. It is never
@@ -237,7 +237,7 @@ auto-overwritten: an operator resolves it after reconciling the divergent defini
   discard-local  Drop the blocked local mutation so a fresh one can be enqueued`,
   'agent-discover': `Find registered agents using hard filters.
 
-Required: --file PATH or managed GitHub options.
+Required for durable service mode: --repo OWNER/REPO --id JOB_ID. Use --file only for explicit demo mode.
 Common: --capabilities a,b, --runtime NAME, --availability available,busy, --task-kind NAME, --explore.
 
 Example:

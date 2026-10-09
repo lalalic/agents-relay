@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { homedir } from 'node:os'; import { join } from 'node:path'; import { openLocalManagedStore } from './local-managed-store.js';
+import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { defaultWorkspaceRoot, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
-import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
+import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
 async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
@@ -83,10 +83,31 @@ async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'recover', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
-  const managed = !noGitHubMode(args) && Boolean(arg(args, '--repo') && arg(args, '--pr') && !arg(args, '--file'));
-  if (managed && ['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
+  const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
+  if (managed) {
+    const jobId = arg(args, '--id');
+    if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
+    const taskId = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
+    if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
+    if (['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
+    if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task unblock requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'update') {
+      const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); const expectedUpdatedAt = task.updatedAt;
+      if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
+      if (hasArg(args, '--adapter')) { const adapter = arg(args, '--adapter') as AdapterName; if (!['codex','chatgpt','orchestrator'].includes(adapter)) throw new Error('--adapter must be codex, chatgpt, or orchestrator'); task.adapter = adapter; }
+      if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
+      if (hasArg(args, '--story-size')) { task.storySize = storySize(args, task.storySize ?? 'M'); if (!hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize, task.routing?.reasoning); }
+      if (hasArg(args, '--input') || hasArg(args, '--input-file')) task.input = await textOption(args, '--input', '--input-file');
+      if (hasArg(args, '--project')) task.projectName = arg(args, '--project') || undefined; if (hasArg(args, '--agent')) task.agentName = arg(args, '--agent') || undefined;
+      if (hasArg(args, '--parent')) task.parentTaskId = arg(args, '--parent') || null; if (hasArg(args, '--deps')) task.dependencies = arg(args, '--deps').split(',').filter(Boolean); if (hasArg(args, '--capabilities')) task.capabilities = arg(args, '--capabilities').split(',').filter(Boolean);
+      task.timeoutMs = integerArg(args, '--timeout', task.timeoutMs); task.maxAttempts = integerArg(args, '--max-attempts', task.maxAttempts);
+      if (hasArg(args, '--draft') && hasArg(args, '--queue')) throw new Error('--draft and --queue are mutually exclusive'); if (hasArg(args, '--draft') && task.state === 'QUEUED') await applyTaskHoldAction(task); if (hasArg(args, '--queue')) await applyTaskQueueAction(job, task);
+      const updated = await relayTaskCommand(args, { jobId, taskId, action: 'update', task, expectedUpdatedAt }); console.log(JSON.stringify(updated.tasks.find(item => item.id === taskId), null, 2)); return;
+    }
+  }
   const loaded = await storeFor(args); const { store, localFile } = loaded;
-  const job = managed && action === 'update' ? await relayControlJob(args, loaded.job.id) : loaded.job;
+  const job = loaded.job;
   if (action === 'list') { console.log(JSON.stringify(job.tasks, null, 2)); return; }
   const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
   if (!id) throw new Error(`task ${action} requires --task-id`);
@@ -234,16 +255,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     createObjective = await textOption(args, '--objective', '--objective-file');
     if ((!arg(args, '--pr') || noGitHubMode(args)) && !createObjective.trim()) throw new Error('job create with --head requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
   }
-  if (action === 'list') {
-    const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
-    const overviews = snapshots.flatMap(snapshot => snapshot.jobs.filter(job => job.repository === repo)
-      .map(job => ({
-        job, githubState: snapshot.facts?.state ?? 'UNKNOWN' as const,
-        draft: false, mergedAt: null, closedAt: null, publication: snapshot.publications[job.id]?.latest ?? null, publicationFailure: snapshot.publications[job.id]?.failure ?? null,
-      })));
-    console.log(JSON.stringify(dashboardManagedJobs(overviews), null, 2));
-    return;
-  }
+  if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
   if (!id) throw new Error('--id is required for managed local Jobs');
   const prValue = arg(args, '--pr');
@@ -252,50 +264,16 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'create') {
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
-    const auth = { client: new DisabledGitHubClient(), trustedAuthors: new Set<string>() };
-    const result = await ensureManagedGitHubJob(auth.client, repo, auth.trustedAuthors, {
-      id, noGitHub: noGitHubMode(args),
-      localMergeSource: arg(args, '--local-merge-source') || undefined,
-      localMergeTarget: arg(args, '--local-merge-target') || undefined,
-      title: arg(args, '--title') || undefined,
-      objective: objective || undefined,
-      projectPath: arg(args, '--project-path') || undefined,
-      priority: priority(args),
-      executionMode: requestedExecutionMode(args),
-      schedule: scheduleFromArgs(args),
-      tag: jobTagFromArgs(args),
-      reviewEnabled: !hasArg(args, '--no-review'),
-      continuation: continuation(args),
-      ...(hasArg(args, '--reviewer-thread-id') ? { reviewerThreadId: arg(args, '--reviewer-thread-id') } : {}),
-      ...(hasArg(args, '--creator-thread-id') ? { creatorThreadId: arg(args, '--creator-thread-id') } : {}),
-      prNumber,
-      head: arg(args, '--head') || undefined,
-      base: arg(args, '--base', 'main'),
-      body: arg(args, '--body') || objective || undefined
-    });
-    let initialPlan: Plan | undefined;
-    if (hasArg(args, '--initial-plan')) {
-      const managed = openLocalManagedStore(repo, result.pr.number, {
-        client: auth.client, trustedAuthors: auth.trustedAuthors, jobId: result.job.id, noGitHub: noGitHubMode(args),
-      });
-      try {
-        await withEventBus(args, async bus => {
-          const reconciler = runtime(managed.store, args, bus);
-          try {
-            const planned = await reconciler.planJob(result.job.id);
-            initialPlan = planned.round;
-            await publishWake(bus, planned.job, planned.round.id, 'Initial planning round ' + planned.round.id + ' completed');
-          } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }
-        });
-      } finally { managed.relay.close(); }
-    }
-    console.log(JSON.stringify({ repository: repo, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode,
-      state: initialPlan ? 'ACTIVE' : result.job.state, ...(initialPlan ? { initialPlan: initialPlan.id } : {}) }, null, 2));
-    return;
+    const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
+      id, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
+      priority: priority(args), executionMode: requestedExecutionMode(args), schedule: scheduleFromArgs(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
+      reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined,
+      prNumber, head: arg(args, '--head') || undefined, base: arg(args, '--base', 'main'), body: arg(args, '--body') || objective || undefined,
+      localMergeSource: arg(args, '--local-merge-source') || undefined, localMergeTarget: arg(args, '--local-merge-target') || undefined,
+    }}); console.log(JSON.stringify(result, null, 2)); return;
   }
-  const loaded = await storeFor(args);
-  const { store, job } = loaded;
-  if (action === 'unblock') { await runJobUnblockCommand(args, store, job); return; }
+  const job = await relayControlJob(args, id);
+  if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
   const boundPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
   if (job.repository !== repo || (prValue && boundPrNumber !== prNumber)) {
@@ -330,9 +308,9 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     if (!next) throw new Error('--continue-kind and --continue-target must be supplied together');
     job.continuation = next;
   }
-  job.updatedAt = new Date().toISOString();
-  await store.saveJob(job);
-  console.log(JSON.stringify(await store.load(id), null, 2));
+  const patch: Record<string, unknown> = {};
+  for (const key of ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
+  console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
 export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => { const workspaceRoot = arg(args, '--workspace-root') || defaultWorkspaceRoot(); const canonical = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : job.repository, arg(args, '--project-path'), workspaceRoot); return job.prNumber === 0 && job.localMerge?.sourceRef ? prepareLocalJobExecutionWorktree(canonical, job, workspaceRoot) : resolveRepositoryProjectPath(canonical, job.projectPath); } }); }
@@ -439,7 +417,17 @@ async function main(): Promise<void> {
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
   if (command === 'projection') { const [action, ...projectionArgs] = args; await runProjectionCommand(action ?? '', projectionArgs); return; }
   if (command === 'escalation') { await runEscalationCommand(args); return; }
-  if (command === 'init') { const now = new Date().toISOString(); const initialSchedule = scheduleFromArgs(args); const job = createJobEntity({ id: arg(args, '--id', randomUUID()), title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }, { activate: Boolean(initialSchedule) }); let store: DurableStore; let file: string | null = null; if (arg(args, '--repo') && arg(args, '--pr')) store = openLocalManagedStore(repository(args), pullRequest(args)).store; else { file = arg(args, '--file'); if (!file) throw new Error('init requires --repo/--pr or explicit --file demo mode'); store = new InMemoryStore(job); } await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return; }
+  if (command === 'init') {
+    const file = arg(args, '--file');
+    const now = new Date().toISOString(); const initialSchedule = scheduleFromArgs(args); const id = arg(args, '--id', randomUUID());
+    if (!file) {
+      const repo = repository(args);
+      const result = await relayControlCommand(args, { command: 'job.create', repository: repo, options: { id, title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args), prNumber: Number(arg(args, '--pr', '0')) || 0 } });
+      console.log(JSON.stringify(result, null, 2)); return;
+    }
+    const job = createJobEntity({ id, title: arg(args, '--title', 'Agents Relay job'), objective: arg(args, '--objective') || undefined, priority: priority(args), executionMode: executionMode(args), schedule: initialSchedule, autoMerge: !hasArg(args, '--no-auto-merge'), reviewEnabled: !hasArg(args, '--no-review'), prNumber: Number(arg(args, '--pr', '0')), repository: arg(args, '--repo'), continuation: continuation(args), createdAt: now, updatedAt: now, tasks: [] }, { activate: Boolean(initialSchedule) });
+    const store = new InMemoryStore(job); await store.saveJob(job); await saveLocal(file, job); console.log(`Initialized ${job.id}`); return;
+  }
   if (command === 'status') {
     const host = arg(args, '--host', '127.0.0.1');
     const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
@@ -450,6 +438,21 @@ async function main(): Promise<void> {
     if (!response.ok) throw new Error(`Agents Relay status request failed: HTTP ${response.status}`);
     console.log(JSON.stringify(await response.json(), null, 2));
     return;
+  }
+  if (!arg(args, '--file') && ['plan','reconcile','record','agent-register','agent-discover'].includes(command)) {
+    const jobId = arg(args, '--id'); if (!jobId) throw new Error(`${command} requires --repo and --id`);
+    if (command === 'plan') { const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined; console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.plan', jobId, ...(guidance?.trim() ? { guidance: guidance.trim() } : {}) }), null, 2)); return; }
+    if (command === 'reconcile') { console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.reconcile', jobId }), null, 2)); return; }
+    if (command === 'record') {
+      const now = new Date().toISOString(); const id = arg(args, '--task-id', randomUUID()); const summary = arg(args, '--summary'); if (!summary) throw new Error('record requires --summary'); const commit = arg(args, '--commit');
+      const task: Task = { jobId, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
+      const updated = await relayControlCommand<Job>(args, { command: 'record', jobId, task }); console.log(JSON.stringify(updated.tasks.find(item => item.id === id), null, 2)); return;
+    }
+    if (command === 'agent-register') {
+      const now = new Date().toISOString(); const agent: AgentRegistration = { id: arg(args, '--agent-id', randomUUID()), name: arg(args, '--name'), responsibility: arg(args, '--responsibility'), role: arg(args, '--role'), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), boundaries: arg(args, '--boundaries').split('|').filter(Boolean), endpoint: { kind: arg(args, '--endpoint-kind', 'adapter') as 'adapter' | 'command' | 'http', target: arg(args, '--endpoint') }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: arg(args, '--availability', 'available') as AgentRegistration['availability'], routing: { labels: arg(args, '--labels').split(',').filter(Boolean).reduce<Record<string, string>>((out, item) => { const [key, value] = item.split('=', 2); if (key && value) out[key] = value; return out; }, {}), trustDomains: arg(args, '--trust-domains').split(',').filter(Boolean), regions: arg(args, '--regions').split(',').filter(Boolean) }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
+      if (!agent.name || !agent.responsibility || !agent.role || !agent.endpoint.target) throw new Error('--name, --responsibility, --role, and --endpoint are required'); console.log(JSON.stringify(await relayControlCommand(args, { command: 'agent.register', jobId, agent }), null, 2)); return;
+    }
+    if (command === 'agent-discover') { const requirements = { capabilities: arg(args, '--capabilities').split(',').filter(Boolean), runtime: arg(args, '--runtime') || undefined, availability: arg(args, '--availability').split(',').filter(Boolean) as AgentRegistration['availability'][], trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') }; console.log(JSON.stringify(await relayControlCommand(args, { command: 'agent.discover', jobId, requirements }), null, 2)); return; }
   }
   const loaded = await storeFor(args); const { store, job, localFile } = loaded;
   if (command === 'plan') {
