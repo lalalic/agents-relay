@@ -21,7 +21,9 @@ test('E2E npm entry point exposes thread and scenario controls', () => {
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(packageJson.scripts.e2e, 'node e2e/runner/run.mjs');
   const runner = readFileSync(new URL('../e2e/runner/run.mjs', import.meta.url), 'utf8');
-  assert.match(runner, /--thread THREAD_ID/);
+  assert.match(runner, /omit --thread/);
+  assert.match(runner, /browser-workspace/);
+  assert.match(runner, /new-thread/);
   assert.match(runner, /--scenario 001/);
   assert.match(runner, /scenarioArg/);
 });

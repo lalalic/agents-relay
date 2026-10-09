@@ -171,7 +171,6 @@ The normal operator entry point is one manually triggered npm command:
 
 ```bash
 npm run e2e -- \
-  --thread <stable-chatgpt-thread-id> \
   --scenario 001 \
   --repo OWNER/REPO \
   --checkout /absolute/path/to/workload-repo \
@@ -179,7 +178,9 @@ npm run e2e -- \
   --objective-file /absolute/path/to/objective.md
 ```
 
-`--scenario 001` resolves to the canonical `001-*` scenario file; the full name such as `001-happy-path` is also accepted. `--thread-id` is retained only as a compatibility alias for `--thread`. The command prepares exactly one fresh round and then starts the watcher. It is never started automatically or on a schedule.
+If `--thread <stable-chatgpt-thread-id>` is provided, the runner reuses that repair thread. If `--thread` is omitted, the runner uses `npx browser-workspace platform run chatgpt new-thread` to create a dedicated E2E repair thread, captures its durable thread ID, and binds the watcher to it. `--thread-id` is retained only as a compatibility alias.
+
+`--scenario 001` resolves to the canonical `001-*` scenario file; the full name such as `001-happy-path` is also accepted. The command prepares exactly one fresh round and then starts the watcher. It is never started automatically or on a schedule.
 
 The handoff message must tell the repair thread to:
 
