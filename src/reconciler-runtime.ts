@@ -386,7 +386,18 @@ export abstract class ReconcilerRuntimeBase {
     if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
       const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
       if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
+        const failedRoute = current.routing;
         await applyTaskRetryAction(current);
+        if (failedRoute) {
+          const duplicate = current.routingExclusions?.some(item => item.provider === failedRoute.provider && item.model === failedRoute.model && item.profile === failedRoute.profile);
+          if (!duplicate) current.routingExclusions = [...(current.routingExclusions ?? []), {
+            provider: failedRoute.provider,
+            model: failedRoute.model,
+            ...(failedRoute.profile ? { profile: failedRoute.profile } : {}),
+            reason: 'rate_limit_exceeded',
+            at: new Date().toISOString(),
+          }];
+        }
         current.routing = undefined;
         current.workerSelection = undefined;
         await this.store.saveTask(current);

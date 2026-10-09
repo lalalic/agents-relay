@@ -1106,6 +1106,9 @@ test('failed Codex exit preserves rate limit reason instead of terminal event ti
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.state, 'QUEUED');
   assert.notEqual(durable.routing?.provider, 'zai');
+  assert.deepEqual(durable.routingExclusions?.map(item => ({provider:item.provider,model:item.model,reason:item.reason})), [
+    {provider:'zai',model:'glm-5.3-flash',reason:'rate_limit_exceeded'},
+  ]);
   assert.equal(events.filter(event => event.type === 'task.rerouting').length, 1);
   const failed = events.find(event => event.type === 'task.failed');
   assert.equal(failed.data.reason, 'rate_limit_exceeded');

@@ -119,6 +119,7 @@ export type Task = {
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
+  routingExclusions?: Array<{ provider: string; model: string; profile?: string; reason: string; at: string }>;
   chatgptThreadDelivery?: ChatGptThreadDelivery;
   manualStateOverrides?: ManualTaskStateOverride[];
   failureReason?: string;

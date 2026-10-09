@@ -262,9 +262,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       ? job.tasks.find(item => item.id === task.parentTaskId)
       : undefined;
     const parentRouteFailedBeforeStart = Boolean(parent?.routing && /exited before publishing task\.started|worker_exit_before_start|launch failed/i.test(parent.error ?? parent.failureReason ?? ''));
-    const excludedRoutes = parentRouteFailedBeforeStart && parent?.routing
+    const parentExcludedRoutes = parentRouteFailedBeforeStart && parent?.routing
       ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
       : [];
+    const taskExcludedRoutes = (task.routingExclusions ?? []).map(item => ({ provider: item.provider, model: item.model, profile: item.profile }));
+    const excludedRoutes = [...taskExcludedRoutes, ...parentExcludedRoutes];
     const routed = await routeExecution(candidates, requirements, {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
