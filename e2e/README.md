@@ -39,7 +39,7 @@ GitHub may be enabled in the production daemon because that reflects normal prod
 ## Directory layout
 
 - `e2e/scenarios/` — canonical durable scenario contracts.
-- `e2e/runner/prepare-round.mjs` — creates an isolated workload worktree/branch and performs the only bootstrap action: `job create --initial-plan`.
+- `e2e/runner/prepare-round.mjs` — prepares a fresh source ref/scenario fixture and performs the only bootstrap action: `job create --initial-plan`; Relay owns execution worktrees.
 - `e2e/runner/watch.mjs` — read-only monitor over durable Job state and EventBus events.
 - `e2e/runner/handoff.mjs` — sends suspected defects and evidence back to the configured ChatGPT repair thread.
 - `e2e/runs/YYYY-MM-DD/` — execution receipts, watcher state, handoffs, and run logs.
@@ -205,7 +205,7 @@ Scenario 001 passes only when all of the following are true without lifecycle in
 - Job reached durable `COMPLETED`
 - no manual retry/reconcile/review/merge/unblock was used
 
-Optional GitHub projection state is not a completion gate.
+GitHub does not own lifecycle authority. However, when the Job has an external PR binding (`prNumber > 0`), scenario acceptance also requires the read-only dashboard GitHub observation to converge to `MERGED`; otherwise the production integration path is incomplete. The runner never uses GitHub/`gh` to drive that merge.
 
 ## Scenario 001 — Happy path
 
@@ -219,6 +219,10 @@ The objective should ask for a deterministic, minimal repository change such as:
 4. commit the change on the managed source branch
 
 Then observe only. Any stop between Planner → Worker → Review → local merge → COMPLETED is the defect under investigation.
+
+## Scenario 002 — Troubleshooter recovery
+
+Use `e2e/scenarios/002-worker-blocker-troubleshooter-recovery.md`. The scenario must deliberately create one recoverable blocker on the first implementation attempt and then prove the automatic recovery chain: failed/blocked worker → Troubleshooter → original worker retry → Review → merge → `COMPLETED`. A worker failure in this scenario is expected trigger evidence, not an immediate watcher incident.
 
 ## Runner lifecycle
 
