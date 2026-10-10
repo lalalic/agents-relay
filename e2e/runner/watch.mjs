@@ -25,6 +25,7 @@ const expectedCancelPath=option('expected-cancel',resolve(dirname(statePath),'ex
 const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD_ID||''));
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
+const idleGraceMs=Number(option('idle-grace-ms','30000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
 const abnormalStatuses=new Set(['FAILED','BLOCKED']);
 let pendingAbnormalStatus=null;
@@ -193,6 +194,14 @@ function detect(j){
  if(last?.status==='PLANNING' && last.updatedAt && Date.now()-Date.parse(last.updatedAt)>Math.max(staleMs,Number(last.timeoutMs||0)))return {type:'PLANNER_STALLED',plan:{id:last.id,status:last.status,updatedAt:last.updatedAt,timeoutMs:last.timeoutMs}};
  if(last?.status==='FAILED'&&!tasks.some(x=>x.state==='QUEUED'||x.state==='RUNNING'))return {type:'PLANNER_FAILED',plan:{id:last.id,error:last.error}};
  if(j.localMerge?.status==='failed')return {type:'LOCAL_MERGE_FAILED',localMerge:j.localMerge};
+ // Report prolonged DRAFT/IDLE with queued work for orchestrator judgment.
+ // Do not manually advance the job or treat brief planning IDLE as an error.
+ if(j.runtimeStatus==='IDLE' && j.state==='DRAFT' && last?.status==='SUCCEEDED'
+   && tasks.some(x=>x.state==='QUEUED') && state.idleSince
+   && Date.now()-Date.parse(state.idleSince)>=idleGraceMs)
+   return {type:'IDLE_REQUIRES_JUDGMENT',jobState:j.state,runtimeStatus:j.runtimeStatus,
+     idleSince:state.idleSince,queuedTasks:tasks.filter(x=>x.state==='QUEUED').map(x=>x.id),
+     message:'Planner succeeded but work remains queued in DRAFT/IDLE; inspect activation and dispatch without manually advancing this Job.'};
  const active=tasks.filter(x=>x.state==='QUEUED'||x.state==='RUNNING');
  const stale=active.filter(x=>{const recent=[x.updatedAt,x.createdAt,state.lastEventAt].filter(Boolean).map(v=>Date.parse(v)).filter(Number.isFinite);if(!recent.length)return false;const deadline=Math.max(staleMs,Number(x.timeoutMs||0)+30000);return Date.now()-Math.max(...recent)>deadline;});
  if(!active.length && state.lastEventAt && Date.now()-Date.parse(state.lastEventAt)>staleMs)return {type:'NO_PROGRESS',jobState:j.state,taskStates:tasks.map(x=>({id:x.id,state:x.state}))};
@@ -241,6 +250,10 @@ async function tick(){
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
   const j=snapshot();
+  if(j.runtimeStatus==='IDLE' && j.state==='DRAFT' && (j.plans||[]).at(-1)?.status==='SUCCEEDED'
+    && (j.tasks||[]).some(t=>t.state==='QUEUED'))
+    state.idleSince??=new Date().toISOString();
+  else state.idleSince=null;
   if(abnormalStatuses.has(j.runtimeStatus)&&state.lastObservedRuntimeStatus!==j.runtimeStatus&&!pendingAbnormalStatus){
     pendingAbnormalStatus={from:state.lastObservedRuntimeStatus||'UNKNOWN',to:j.runtimeStatus,updatedAt:j.updatedAt};
   }
