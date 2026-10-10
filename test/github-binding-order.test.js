@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { orderGitHubBindingCandidates } from '../dist/github-binding-order.js';
 const at='2026-10-10T00:00:00.000Z';
