@@ -403,9 +403,20 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const store = (await requireLocalJobBinding(jobId)).store;
     const job = await store.load(jobId);
     if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
-    await store.appendTask(task);
-    const refreshed = await store.load(jobId);
-    if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
+    if (store.mutateJob) {
+      await store.mutateJob(jobId, current => {
+        if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot create task on terminal job ${current.id}`);
+        if (current.tasks.some(item => item.id === task.id)) throw new Error(`Task ${task.id} already exists`);
+        current.tasks.push(structuredClone(task));
+        if (current.state === 'DRAFT') applyJobActivateAction(current);
+        current.updatedAt = new Date().toISOString();
+        return current;
+      });
+    } else {
+      await store.appendTask(task);
+      const refreshed = await store.load(jobId);
+      if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
+    }
     await pool.reconcileLocalJob(jobId, 'control.task.create');
     return await store.load(jobId);
   };

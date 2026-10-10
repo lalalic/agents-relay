@@ -82,13 +82,15 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
   const completed = items.filter(isCompletedManagedJob).sort((a, b) => completedAt(b).localeCompare(completedAt(a)) || b.job.prNumber - a.job.prNumber).slice(0, COMPLETED_JOB_HISTORY_LIMIT);
   return [...unfinished, ...completed];
 }
+export type AtomicJobMutation = (job: Job) => Job;
+
 export interface DurableStore {
   claimScheduledSlot?(jobId: string, bucket: string, now: Date): Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }>;
   finishScheduledSlot?(jobId: string, slot: string, now: Date): Promise<Job>;
   recordExecutionProcess?(record: ExecutionProcessRecord): Promise<void>;
   loadExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
   finishExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<void>;
-  load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; appendPlan(plan: Plan): Promise<void>; savePlan(plan: Plan): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; applyPullRequestFacts?(facts: { state: PullRequestState; head: { ref: string; sha: string } | null; observedAt: string }): Promise<void>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
+  load(jobId: string): Promise<Job>; saveJob(job: Job): Promise<void>; mutateJob?(jobId: string, mutation: AtomicJobMutation): Promise<Job>; appendPlan(plan: Plan): Promise<void>; savePlan(plan: Plan): Promise<void>; appendTask(task: Task): Promise<void>; saveTask(task: Task): Promise<void>; listAgents(): Promise<AgentRegistration[]>; saveAgent(agent: AgentRegistration): Promise<void>; comments(): Promise<Comment[]>; pullRequestState?(): Promise<PullRequestState>; pullRequestHead?(): Promise<{ ref: string; sha: string } | null>; applyPullRequestFacts?(facts: { state: PullRequestState; head: { ref: string; sha: string } | null; observedAt: string }): Promise<void>; headSha?(): Promise<string | null>; mergePullRequest?(expectedHeadSha?: string): Promise<void>; closePullRequest?(): Promise<void>; updatePullRequestBody?(body: string): Promise<void>; registerBlockerDependent?(jobId: string, dependent: BlockerDependentTarget): Promise<void>; resolveBlockerDependents?(jobId: string, resolution: 'merge' | 'verified'): Promise<BlockerResolutionSummary>; }
 export class InMemoryStore implements DurableStore {
   private readonly values = new Map<string, string>();
   constructor(job?: Job) {

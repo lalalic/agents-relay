@@ -66,24 +66,59 @@ async function finishPlanner(
       if (existing && !samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
     }
     const now = new Date().toISOString();
-    plan.status = 'SUCCEEDED';
-    plan.objectiveStatus = result.objective_status;
-    plan.plannerResult = result;
-    plan.assessment = result.assessment;
-    plan.generatedTaskIds = result.next_tasks.map(item => item.id);
-    plan.error = undefined;
-    plan.retryFeedback = undefined;
-    plan.leaseOwner = null;
-    plan.leaseExpiresAt = null;
-    plan.executionId = null;
-    plan.updatedAt = now;
-    await ports.store.savePlan(plan);
-    if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId && plan.trigger.source === 'unblock') {
-      job.changeCycle.consumedByPlannerTaskId = plan.id;
-      job.updatedAt = now;
-      await ports.store.saveJob(job);
+    if (ports.store.mutateJob) {
+      let committedPlan = false;
+      const committed = await ports.store.mutateJob(job.id, current => {
+        const durablePlan = (current.plans ?? []).find(item => item.id === plan.id);
+        if (!durablePlan || (executionId !== null && durablePlan.executionId !== executionId)) return current;
+        durablePlan.status = 'SUCCEEDED';
+        durablePlan.objectiveStatus = result.objective_status;
+        durablePlan.plannerResult = result;
+        durablePlan.assessment = result.assessment;
+        durablePlan.generatedTaskIds = result.next_tasks.map(item => item.id);
+        durablePlan.error = undefined;
+        durablePlan.retryFeedback = undefined;
+        durablePlan.leaseOwner = null;
+        durablePlan.leaseExpiresAt = null;
+        durablePlan.executionId = null;
+        durablePlan.updatedAt = now;
+        if (current.changeCycle && !current.changeCycle.consumedByPlannerTaskId && durablePlan.trigger.source === 'unblock') {
+          current.changeCycle.consumedByPlannerTaskId = durablePlan.id;
+        }
+        for (const child of children) {
+          const existing = current.tasks.find(item => item.id === child.id);
+          if (!existing) current.tasks.push(structuredClone(child));
+          else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
+        }
+        current.updatedAt = now;
+        committedPlan = true;
+        return current;
+      });
+      Object.assign(job, structuredClone(committed));
+      if (!committedPlan) {
+        releaseLive();
+        return;
+      }
+    } else {
+      plan.status = 'SUCCEEDED';
+      plan.objectiveStatus = result.objective_status;
+      plan.plannerResult = result;
+      plan.assessment = result.assessment;
+      plan.generatedTaskIds = result.next_tasks.map(item => item.id);
+      plan.error = undefined;
+      plan.retryFeedback = undefined;
+      plan.leaseOwner = null;
+      plan.leaseExpiresAt = null;
+      plan.executionId = null;
+      plan.updatedAt = now;
+      await ports.store.savePlan(plan);
+      if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId && plan.trigger.source === 'unblock') {
+        job.changeCycle.consumedByPlannerTaskId = plan.id;
+        job.updatedAt = now;
+        await ports.store.saveJob(job);
+      }
+      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await ports.store.appendTask(child);
     }
-    for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await ports.store.appendTask(child);
     await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
   } catch (caught) {
     await failOrRetry(caught instanceof Error ? caught.message : String(caught));

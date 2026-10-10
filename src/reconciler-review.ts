@@ -7,6 +7,7 @@ import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
+import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination } from './reviewer-thread.js';
@@ -303,21 +304,23 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     // their first trustworthy review event to PENDING before dispatching it.
     if (!job.review && task.planningDecisionId) {
       job.review = { outcome: 'pending', headSha, taskId: task.id, evidence: null, updatedAt: event.timestamp || new Date().toISOString() };
-      await this.store.saveJob(job);
     }
 
-    const taskDecision = tryTransitionTaskEvent(task, event.type);
+    const taskDecision = this.store.mutateJob
+      ? dispatchTaskLifecycleSync(structuredClone(task) as Task & Record<string, unknown>, event.type)
+      : tryTransitionTaskEvent(task, event.type);
     if (!taskDecision.accepted || !taskDecision.target) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    if (taskDecision.target !== 'RUNNING' && !this.finalizeReviewExecution(job.id, task, event)) {
+    if (!this.store.mutateJob && taskDecision.target !== 'RUNNING' && !this.finalizeReviewExecution(job.id, task, event)) {
       return { applied: false, reconcile: false, reason: event.type + '.stale-execution' };
     }
-    task.error = null;
-    if (taskDecision.target !== 'RUNNING') {
-      task.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
+    if (!this.store.mutateJob) {
+      task.error = null;
+      if (taskDecision.target !== 'RUNNING') task.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
+      await this.store.saveTask(task);
     }
-    await this.store.saveTask(task);
 
     let needsReconcile = false;
+    let pendingFixTask: Task | null = null;
     const reviewDecision = await dispatchReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
       if (actionId === 'review.createFix') {
         needsReconcile = true;
@@ -327,8 +330,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if (!job.tasks.some(item => item.id === id)) {
           const input = 'Address all reviewer findings for PR #' + this.externalReviewPrNumber(job) + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
           const fixTask = createTaskEntity(job, { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
-          await this.store.appendTask(fixTask);
-          await this.emit(eventFor(job.id, id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + id + ' for ' + issues.length + ' reviewer finding(s)', 'orchestrator', { headSha, issues }, { agent: 'relay', component: 'agents-relay' }));
+          pendingFixTask = fixTask;
         }
         return {};
       }
@@ -346,8 +348,36 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const evidence = { summary: event.message || 'Review ' + outcome, data: {
       ...(event.data ?? {}), review: { ...(reviewData ?? {}), headSha }, headSha, outcome, source: event.source,
     } };
-    job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: event.timestamp || new Date().toISOString() };
-    job.updatedAt = job.review.updatedAt; await this.store.saveJob(job);
+    const reviewUpdatedAt = event.timestamp || new Date().toISOString();
+    if (this.store.mutateJob) {
+      let committed = false;
+      const updated = await this.store.mutateJob(job.id, current => {
+        const freshTask = current.tasks.find(item => item.id === task.id);
+        if (!freshTask || freshTask.reviewHeadSha !== headSha) return current;
+        const freshDecision = tryTransitionTaskEvent(freshTask, event.type);
+        if (!freshDecision.accepted || !freshDecision.target) return current;
+        if (freshDecision.target !== 'RUNNING' && !this.finalizeReviewExecution(job.id, freshTask, event)) return current;
+        freshTask.error = null;
+        if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
+        if (pendingFixTask && !current.tasks.some(item => item.id === pendingFixTask!.id)) current.tasks.push(structuredClone(pendingFixTask));
+        current.review = { outcome, headSha, taskId: freshTask.id, evidence, updatedAt: reviewUpdatedAt };
+        current.updatedAt = reviewUpdatedAt;
+        committed = true;
+        return current;
+      });
+      if (!committed) return { applied: false, reconcile: false, reason: event.type + '.stale-execution' };
+      Object.assign(job, structuredClone(updated));
+      const committedFixTask = pendingFixTask as Task | null;
+      if (committedFixTask) await this.emit(eventFor(job.id, committedFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + committedFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
+    } else {
+      const legacyFixTask = pendingFixTask as Task | null;
+      if (legacyFixTask) {
+        await this.store.appendTask(legacyFixTask);
+        await this.emit(eventFor(job.id, legacyFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + legacyFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
+      }
+      job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt };
+      job.updatedAt = reviewUpdatedAt; await this.store.saveTask(task); await this.store.saveJob(job);
+    }
     // Review approval records evidence only. The subsequent Graph reconcile
     // drives durable local Git merge delivery and terminalization.
     if (outcome === 'approved') needsReconcile = true;

@@ -1,7 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockedBaseline, Job, PlanTrigger, Task, TaskUnblockRecord } from './types.js';
-import { transitionTaskEvent } from './scheduler.js';
-import { applyTaskUnblockRetryAction } from './task-actions.js';
+import { applyTaskUnblockRetrySnapshot } from './task-actions.js';
+import { tryTransitionTaskEvent } from './scheduler.js';
 import { dispatchAuthoritativeUnblock } from './workflow/authoritative-unblock-v2.js';
 
 export type UnblockSource = { source: 'cli' | 'blocker_job'; reason: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
@@ -56,14 +56,25 @@ export async function unblockAutonomousTasks(options: { store: DurableStore; job
   const now = options.now ?? new Date().toISOString();
   const currentHeadSha = await store.headSha?.() ?? job.headSha ?? null;
   const facts = unblockFacts(job, tasks, currentHeadSha, trigger.reason);
-  for (const task of tasks) {
-    const baseline = baselineFor(task);
-    task.blockedBaseline = baseline;
-    task.unblock = { at: now, source: trigger.source, reason: trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: trigger.blockerJobId, resolution: trigger.resolution };
-    await transitionTaskEvent(task, 'task.unblocked');
-    task.updatedAt = now;
-    delete task.blockedBy;
-    await store.saveTask(task);
+  const apply = (current: Job): void => {
+    for (const requested of tasks) {
+      const task = current.tasks.find(item => item.id === requested.id);
+      if (!task || !isEffectivelyBlocked(task)) throw new Error(`Task ${requested.id} changed before authoritative unblock`);
+      const baseline = baselineFor(task);
+      if (!tryTransitionTaskEvent(task, 'task.unblocked').accepted) throw new Error(`Task ${task.id} cannot be authoritatively unblocked`);
+      task.blockedBaseline = baseline;
+      task.unblock = { at: now, source: trigger.source, reason: trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: trigger.blockerJobId, resolution: trigger.resolution };
+      task.updatedAt = now;
+      delete task.blockedBy;
+    }
+    current.updatedAt = now;
+  };
+  if (store.mutateJob) {
+    const committed = await store.mutateJob(job.id, current => { apply(current); return current; });
+    Object.assign(job, structuredClone(committed));
+  } else {
+    apply(job);
+    for (const task of tasks) await store.saveTask(task);
   }
   const planTrigger = unconsumedUnblockTrigger(job) ?? {
     source: 'unblock' as const, taskIds: tasks.map(task => task.id), reason: trigger.reason,
@@ -86,8 +97,16 @@ export async function unblockTask(options: { store: DurableStore; job: Job; task
       const baseline = baselineFor(options.task); options.task.blockedBaseline = baseline;
       const facts = unblockFacts(options.job, [options.task], currentHeadSha, options.trigger.reason);
       options.task.unblock = { at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
-      await transitionTaskEvent(options.task, 'task.unblocked'); await options.store.saveTask(options.task);
-      await applyTaskUnblockRetryAction(options.task); options.task.updatedAt = now; await options.store.saveTask(options.task);
+      const apply = (current: Job): void => {
+        const task = current.tasks.find(item => item.id === options.task.id);
+        if (!task || !isEffectivelyBlocked(task)) throw new Error(`Task ${options.task.id} changed before authoritative unblock`);
+        if (!tryTransitionTaskEvent(task, 'task.unblocked').accepted) throw new Error(`Task ${task.id} cannot be authoritatively unblocked`);
+        const baseline = baselineFor(task); task.blockedBaseline = baseline;
+        task.unblock = { at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
+        applyTaskUnblockRetrySnapshot(task); task.updatedAt = now; delete task.blockedBy; current.updatedAt = now;
+      };
+      if (options.store.mutateJob) { const committed = await options.store.mutateJob(options.job.id, current => { apply(current); return current; }); Object.assign(options.job, structuredClone(committed)); }
+      else { apply(options.job); await options.store.saveTask(options.task); }
       result = { replanning: false }; return {};
     }
     throw new Error('Unsupported authoritative unblock action ' + actionId);
