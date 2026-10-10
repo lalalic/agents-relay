@@ -18,8 +18,8 @@ export async function recordFailure(input, github) {
   if (!target) return { recorded: false, reason: 'no-correlated-publication-target' };
   const marker = `<!-- ${PACKAGE_FAILED_MARKER} `;
   const identity = `"runId":"${input.runId}","attempt":${Number(input.attempt)}`;
-  const jobId = target.kind === 'local-merge' ? target.jobId : undefined;
-  const issueNumber = target.kind === 'local-merge'
+  const jobId = target.kind !== 'pr' ? target.jobId : undefined;
+  const issueNumber = target.kind !== 'pr'
     ? (target.displayPrNumber ?? await ensurePublicationIssue(input.repository, github))
     : target.pr.number;
   const body = failureComment({ ...input, jobId });
@@ -27,13 +27,13 @@ export async function recordFailure(input, github) {
     const comments = await github(`/repos/${input.repository}/issues/${issueNumber}/comments?per_page=100&page=${page}`);
     if (!Array.isArray(comments)) throw new Error('Invalid GitHub comments response');
     if (comments.some(row => typeof row.body === 'string' && row.body.includes(marker) && row.body.includes(identity)))
-      return target.kind === 'local-merge'
+      return target.kind !== 'pr'
         ? { recorded: false, reason: 'duplicate', jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
         : { recorded: false, reason: 'duplicate', pr: issueNumber };
     if (comments.length < 100) break;
   }
   await github(`/repos/${input.repository}/issues/${issueNumber}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
-  return target.kind === 'local-merge'
+  return target.kind !== 'pr'
     ? { recorded: true, jobId, issue: issueNumber, displayPrNumber: target.displayPrNumber ?? null }
     : { recorded: true, pr: issueNumber };
 }
@@ -84,7 +84,7 @@ async function main() {
     failed = steps.filter(step => step.conclusion === 'failure').map(step => step.name);
   }
   const stage = explicitStage || failed.join(', ') || 'unknown publish stage';
-  const input = { repository,sha,runId,attempt,stage,runUrl:`https://github.com/${repository}/actions/runs/${runId}`,details:explicitDetails || failed.join('\n') };
+  const input = { repository,sha,runId,attempt,stage,runUrl:`https://github.com/${repository}/actions/runs/${runId}`,details:explicitDetails || failed.join('\n'),allowUnmanagedMain:true };
   const result = await recordFailure(input,github);
   let repair = null;
   const repairPr = result.pr ?? result.displayPrNumber;

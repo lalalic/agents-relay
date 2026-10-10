@@ -47,7 +47,10 @@ export async function findPublicationTarget(input, github) {
   const pulls = await github(`/repos/${input.repository}/commits/${input.sha}/pulls`);
   if (!Array.isArray(pulls)) throw new Error('Invalid GitHub commit-to-PR response');
   const pr = pulls.find(item => item && typeof item === 'object' && item.merged_at && Number.isInteger(item.number));
-  return pr ? { kind: 'pr', pr, correlation: 'merged-pr' } : null;
+  if (pr) return { kind: 'pr', pr, correlation: 'merged-pr' };
+  if (input.allowUnmanagedMain === true && /^[a-f0-9]{40,64}$/i.test(input.sha || ''))
+    return { kind: 'unmanaged-main', sha: input.sha, jobId: `unmanaged-main-${input.sha.slice(0,12).toLowerCase()}`, displayPrNumber: null, correlation: 'unmanaged-main' };
+  return null;
 }
 
 export async function findMergedPullRequest(input, github) {
@@ -79,8 +82,8 @@ export async function recordPublication(input, github) {
   const markerPrefix = `<!-- ${PACKAGE_PUBLISHED_MARKER} `;
   const packageIdentity = `"package":${JSON.stringify(input.packageName)}`;
   const versionIdentity = `"version":${JSON.stringify(input.version)}`;
-  const jobId = target.kind === 'local-merge' ? target.jobId : undefined;
-  const issueNumber = target.kind === 'local-merge'
+  const jobId = target.kind !== 'pr' ? target.jobId : undefined;
+  const issueNumber = target.kind !== 'pr'
     ? (target.displayPrNumber ?? await ensurePublicationIssue(input.repository, github))
     : target.pr.number;
   const body = publicationComment({ ...input, jobId });
@@ -89,7 +92,7 @@ export async function recordPublication(input, github) {
     if (!Array.isArray(comments)) throw new Error('Invalid GitHub comments response');
     if (comments.some(comment => typeof comment?.body === 'string' && comment.body.includes(markerPrefix)
       && comment.body.includes(packageIdentity) && comment.body.includes(versionIdentity))) {
-      return target.kind === 'local-merge'
+      return target.kind !== 'pr'
         ? { recorded: false, reason: 'duplicate', jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
         : { recorded: false, reason: 'duplicate', pr: issueNumber };
     }
@@ -98,7 +101,7 @@ export async function recordPublication(input, github) {
   await github(`/repos/${input.repository}/issues/${issueNumber}/comments`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }),
   });
-  return target.kind === 'local-merge'
+  return target.kind !== 'pr'
     ? { recorded: true, jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
     : { recorded: true, pr: issueNumber };
 }
@@ -127,7 +130,7 @@ async function main() {
   const packageName = await resolvePackageName(process.env.PACKAGE_NAME || process.env.ARTIFACT_NAME || '');
   const prNumber = Number(process.env.ORIGIN_PR || 0) || undefined;
   if (!repository || !sha || !version) throw new Error('SOURCE_REPOSITORY/GITHUB_REPOSITORY, SOURCE_SHA/GITHUB_SHA, and PACKAGE_VERSION/ARTIFACT_VERSION are required');
-  const result = await recordPublication({ repository, sha, packageName, version, registry, prNumber }, github);
+  const result = await recordPublication({ repository, sha, packageName, version, registry, prNumber, allowUnmanagedMain: true }, github);
   if (!result.recorded && result.reason === 'no-correlated-publication-target') {
     process.stdout.write(`No originating Agents Relay Job/display PR or historical merged PR found for ${sha}; publication event was not recorded.\n`);
     process.exitCode = 2;

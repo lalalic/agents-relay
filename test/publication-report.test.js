@@ -95,3 +95,16 @@ test('publication reporter uses display PR directly when local merge metadata in
   });
   assert.deepEqual(await recordPublication({repository:'owner/repo',sha,packageName:'artifact',version:'3',registry:'store'},github),{recorded:true,jobId:'job-local-pr',issue:88,pr:88});
 });
+
+test('verified direct main publication uses unmanaged transport without forging a durable Job',async()=>{
+  const sha='3'.repeat(40);
+  const {github}=fakeGitHub({
+    ['GET /repos/owner/repo/commits/'+sha]:{commit:{message:'manual transition push'}},
+    ['GET /repos/owner/repo/commits/'+sha+'/pulls']:[],
+    'GET /repos/owner/repo/issues?state=open&per_page=100&page=1':[{number:102,title:'[Agents Relay] Publication events'}],
+    'GET /repos/owner/repo/issues/102/comments?per_page=100&page=1':[],
+    'POST /repos/owner/repo/issues/102/comments':{},
+  });
+  assert.deepEqual(await recordPublication({repository:'owner/repo',sha,packageName:'artifact',version:'4',registry:'store',allowUnmanagedMain:true},github),
+    {recorded:true,jobId:'unmanaged-main-333333333333',issue:102});
+});
