@@ -326,6 +326,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
         e2eProjectionFault(job.repository,job.id);
         const projectedMerge = projectAuthoritativeLocalMerge(canonical, job);
+        e2eDuplicateProjection(job.repository,job.id,()=>projectAuthoritativeLocalMerge(canonical,job));
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
         await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });
