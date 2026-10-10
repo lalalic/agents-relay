@@ -5,6 +5,8 @@ import {openSync, closeSync, readSync, statSync, readFileSync, writeFileSync, mk
 import {dirname,resolve,join} from 'node:path';
 import {homedir} from 'node:os';
 import {reviewHeadSha} from './evidence.mjs';
+import {NatsEventBus} from '../../dist/events.js';
+import {resolveEventsBusRuntime} from '../../dist/events-bus-runtime.js';
 import {scenario005Decision,scenario005PassEligible} from './scenario-005.mjs';
 const root=resolve(import.meta.dirname,'../..');
 const argv=process.argv.slice(2);
@@ -323,4 +325,14 @@ async function tick(){
 }
 console.log(JSON.stringify({event:'started',repo,pr:Number(pr)||0,jobId,scenario,branch,deliveryConfigured:!!handoffCommand}));
 await tick();
-if(!argv.includes('--once'))setInterval(tick,Math.max(2000,intervalMs));
+if(!argv.includes('--once')){
+  const runtime=resolveEventsBusRuntime();
+  const statusBus=new NatsEventBus(runtime.natsUrl,runtime.subjectPrefix);
+  await statusBus.subscribe(jobId,async event=>{
+    if(event.type!=='job.runtime_status.changed')return;
+    console.log(JSON.stringify({event:'runtime_status_change',jobId,from:event.data?.from,to:event.data?.to}));
+    await tick();
+  });
+  // Keep a low-frequency safety check for missed ephemeral events and liveness deadlines.
+  setInterval(tick,Math.max(30000,intervalMs));
+}

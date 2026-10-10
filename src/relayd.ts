@@ -35,6 +35,8 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
+import { createRuntimeStatusPublisher } from './runtime-status-events.js';
+import { subscribeLocalCommits } from './local-commit-events.js';
 import { decisionMode, executionDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
@@ -179,6 +181,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const concurrency = Number(value(argv,'--concurrency','4'));
   const eventResolution = await resolveEventBus([...argv]);
   const bus = eventResolution.bus;
+  const stopRuntimeStatusEvents = bus ? subscribeLocalCommits(createRuntimeStatusPublisher(bus)) : () => {};
   process.stderr.write(`${eventBusResolutionMessage(eventResolution)}\n`);
   const workspaceRoot = noGitHub ? (value(argv, '--project-path') || value(argv, '--workspace') || process.cwd())
     : normalized.workspaceRoot ?? defaultWorkspaceRoot();
@@ -718,7 +721,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let interval: NodeJS.Timeout | undefined;
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{stopRuntimeStatusEvents(); if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await syncGitHubBindingsSafely();
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();
