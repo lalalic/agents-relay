@@ -258,20 +258,22 @@ export abstract class ReconcilerRuntimeBase {
   protected isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
     return task.executionId !== null && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId);
   }
-  protected finalizeReviewExecution(jobId: string, task: Task, event: EventRecord): boolean {
+  protected finalizeReviewExecution(jobId: string, task: Task, event: EventRecord, afterCommit = true): boolean {
     if (!task.executionId) return true;
     const sourceId = eventSourceId(event);
     const expected = executionEventSource(jobId, task.id, task.executionId);
     if ((task.adapter === 'codex' || task.adapter === 'chatgpt') && sourceId !== expected) return false;
-    claimTerminalExecution(expected);
+    if (afterCommit) claimTerminalExecution(expected);
     const executionId = task.executionId;
-    this.clearExecution(task.id, executionId);
+    if (afterCommit) this.clearExecution(task.id, executionId);
     task.leaseOwner = null;
     task.leaseExpiresAt = null;
     task.executionId = null;
     task.updatedAt = new Date().toISOString();
-    this.terminalWaiters.get(task.id)?.resolve();
-    this.terminalWaiters.delete(task.id);
+    if (afterCommit) {
+      this.terminalWaiters.get(task.id)?.resolve();
+      this.terminalWaiters.delete(task.id);
+    }
     return true;
   }
 

@@ -32,26 +32,46 @@ async function finishPlanner(
   const releaseLive = () => { if (ports.live.get(planId)?.executionId === executionId) ports.live.delete(planId); };
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
-  if (!plan || (executionId !== null && plan.executionId !== executionId)) { releaseLive(); return; }
+  if (!plan || plan.status !== "PLANNING" || plan.executionId !== executionId) { releaseLive(); return; }
 
   const failOrRetry = async (message: string): Promise<void> => {
-    const attempt = plan.attempt ?? 0;
-    const maxAttempts = plan.maxAttempts ?? (plan.manualPlanning ? 1 : 3);
-    const retry = attempt < maxAttempts;
-    plan.status = retry ? 'PLANNING' : 'FAILED';
-    plan.retryFeedback = message;
-    plan.error = message;
-    plan.assessment = retry ? `Planning retry: ${message}` : `Planning failed: ${message}`;
-    plan.leaseOwner = null;
-    plan.leaseExpiresAt = null;
-    plan.executionId = null;
-    plan.updatedAt = new Date().toISOString();
-    await ports.store.savePlan(plan);
-    await ports.emit(eventFor(job.id, plan.id, null, retry ? 'planner.retry' : 'planner.failed', retry ? 'queued' : 'failed', `Planner ${plan.id}: ${message}`, 'user'));
-    if (retry && !plan.manualPlanning) ports.detach(ports.reconcile(jobId), jobId, plan.id, 'planner retry reconciliation');
+    let retry = false;
+    let applied = false;
+    const update = (fresh: Plan): void => {
+      if (fresh.status !== 'PLANNING' || fresh.executionId !== executionId) return;
+      const attempt = fresh.attempt ?? 0;
+      const maxAttempts = fresh.maxAttempts ?? (fresh.manualPlanning ? 1 : 3);
+      retry = attempt < maxAttempts;
+      fresh.status = retry ? 'PLANNING' : 'FAILED';
+      fresh.retryFeedback = message;
+      fresh.error = message;
+      fresh.assessment = retry ? `Planning retry: ${message}` : `Planning failed: ${message}`;
+      fresh.leaseOwner = null;
+      fresh.leaseExpiresAt = null;
+      fresh.executionId = null;
+      fresh.updatedAt = new Date().toISOString();
+      applied = true;
+    };
+    if (ports.store.mutateJob) {
+      await ports.store.mutateJob(jobId, current => {
+        const fresh = (current.plans ?? []).find(item => item.id === planId);
+        if (fresh) update(fresh);
+        return current;
+      });
+    } else {
+      const fresh = (await ports.store.load(jobId)).plans?.find(item => item.id === planId);
+      if (fresh) {
+        update(fresh);
+        if (applied) await ports.store.savePlan(fresh);
+      }
+    }
+    if (!applied) return;
+    await ports.emit(eventFor(jobId, planId, null, retry ? 'planner.retry' : 'planner.failed', retry ? 'queued' : 'failed', `Planner ${planId}: ${message}`, 'user'));
+    if (retry && !plan.manualPlanning) ports.detach(ports.reconcile(jobId), jobId, planId, 'planner retry reconciliation');
   };
 
   if (error) { await failOrRetry(error.message); releaseLive(); return; }
+  let planCommitted = false;
   try {
     const result = parsePlannerResult(raw);
     const executionContext = await ports.plannerContext(job, plan);
@@ -59,7 +79,6 @@ async function finishPlanner(
     validatePlannerLifecycleOwnership(job, result.next_tasks);
     validatePlannerProgress(job, result);
     if (result.unblocks.length > 0 && !ports.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
-    for (const unblock of result.unblocks) await ports.store.registerBlockerDependent?.(job.id, unblock);
     const children = result.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
     for (const child of children) {
       const existing = job.tasks.find(item => item.id === child.id);
@@ -70,7 +89,7 @@ async function finishPlanner(
       let committedPlan = false;
       const committed = await ports.store.mutateJob(job.id, current => {
         const durablePlan = (current.plans ?? []).find(item => item.id === plan.id);
-        if (!durablePlan || (executionId !== null && durablePlan.executionId !== executionId)) return current;
+        if (!durablePlan || durablePlan.status !== 'PLANNING' || durablePlan.executionId !== executionId) return current;
         durablePlan.status = 'SUCCEEDED';
         durablePlan.objectiveStatus = result.objective_status;
         durablePlan.plannerResult = result;
@@ -119,8 +138,13 @@ async function finishPlanner(
       }
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await ports.store.appendTask(child);
     }
+    planCommitted = true;
+    // Cross-Job registrations cannot join this Job's SQLite transaction.
+    // Never register dependencies for a stale or rolled-back Planner generation.
+    for (const unblock of result.unblocks) await ports.store.registerBlockerDependent?.(job.id, unblock);
     await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
   } catch (caught) {
+    if (planCommitted) { releaseLive(); throw caught; }
     await failOrRetry(caught instanceof Error ? caught.message : String(caught));
     releaseLive();
     return;
@@ -132,9 +156,26 @@ async function finishPlanner(
 export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, plan: Plan): Promise<void> {
   const planner = ports.options.planner;
   if (!planner) {
-    const failed = { ...plan, status: 'FAILED' as const, error: 'Planner unavailable', assessment: 'Planning failed: Planner unavailable', leaseOwner: null, leaseExpiresAt: null, executionId: null, updatedAt: new Date().toISOString() };
-    await ports.store.savePlan(failed);
-    await ports.emit(eventFor(job.id, plan.id, null, 'planner.failed', 'failed', `Planner ${plan.id}: Planner unavailable`, 'user'));
+    let failed = false;
+    if (ports.store.mutateJob) {
+      await ports.store.mutateJob(job.id, current => {
+        const fresh = current.plans?.find(item => item.id === plan.id);
+        if (fresh?.status === 'PLANNING' && fresh.executionId === plan.executionId) {
+          fresh.status = 'FAILED'; fresh.error = 'Planner unavailable';
+          fresh.assessment = 'Planning failed: Planner unavailable';
+          fresh.leaseOwner = null; fresh.leaseExpiresAt = null; fresh.executionId = null;
+          fresh.updatedAt = new Date().toISOString(); failed = true;
+        }
+        return current;
+      });
+    } else {
+      const fresh = (await ports.store.load(job.id)).plans?.find(item => item.id === plan.id);
+      if (fresh?.status === 'PLANNING' && fresh.executionId === plan.executionId) {
+        await ports.store.savePlan({ ...fresh, status: 'FAILED', error: 'Planner unavailable', assessment: 'Planning failed: Planner unavailable', leaseOwner: null, leaseExpiresAt: null, executionId: null, updatedAt: new Date().toISOString() });
+        failed = true;
+      }
+    }
+    if (failed) await ports.emit(eventFor(job.id, plan.id, null, 'planner.failed', 'failed', `Planner ${plan.id}: Planner unavailable`, 'user'));
     return;
   }
   const claimed = await withExecutionBoundary(job.id, '__job_execution_slot__', async () => {

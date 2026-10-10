@@ -351,12 +351,16 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const reviewUpdatedAt = event.timestamp || new Date().toISOString();
     if (this.store.mutateJob) {
       let committed = false;
+      let terminalExecutionId: string | null = null;
       const updated = await this.store.mutateJob(job.id, current => {
         const freshTask = current.tasks.find(item => item.id === task.id);
         if (!freshTask || freshTask.reviewHeadSha !== headSha) return current;
         const freshDecision = tryTransitionTaskEvent(freshTask, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
-        if (freshDecision.target !== 'RUNNING' && !this.finalizeReviewExecution(job.id, freshTask, event)) return current;
+        if (freshDecision.target !== 'RUNNING') {
+          if (!this.finalizeReviewExecution(job.id, freshTask, event, false)) return current;
+          terminalExecutionId = freshTask.executionId;
+        }
         freshTask.error = null;
         if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
         if (pendingFixTask && !current.tasks.some(item => item.id === pendingFixTask!.id)) current.tasks.push(structuredClone(pendingFixTask));
@@ -367,6 +371,10 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       });
       if (!committed) return { applied: false, reconcile: false, reason: event.type + '.stale-execution' };
       Object.assign(job, structuredClone(updated));
+      // Live waiter cleanup/terminal claims are irreversible; run after commit.
+      if (terminalExecutionId) {
+        this.finalizeReviewExecution(job.id, { ...task, executionId: terminalExecutionId }, event);
+      }
       const committedFixTask = pendingFixTask as Task | null;
       if (committedFixTask) await this.emit(eventFor(job.id, committedFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + committedFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
     } else {
