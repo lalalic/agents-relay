@@ -1179,6 +1179,41 @@ test('projection injection survives worker launch for its later checkpoint', asy
   }
 });
 
+test('Browser Workspace transient delivery failure retries the same Task before exposing FAILED', async () => {
+  const t=task('browser-runtime-retry');
+  t.adapter='chatgpt';
+  t.state='QUEUED';
+  t.attempt=1;
+  t.maxAttempts=2;
+  t.executionId='browser-exec-1';
+  t.leaseOwner='relay';
+  t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[{id:'browser-exec-1',attempt:1,startedAt:now()}];
+  t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+  t.workerRequirements={runtime:'chatgpt',capabilities:['model','browser-workspace']};
+  const store=new InMemoryStore(job([t]));
+  const bus=new MemoryEventBus();
+  const events=[];
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  class FailureHarness extends Reconciler {
+    trigger() { return this.failLaunch('j',t.id,t.executionId,'E2E browser-workspace runtime dependency unavailable','delivery'); }
+  }
+  const reconciler=new FailureHarness(store,{owner:'test',adapters:[],eventBus:bus,maxConcurrent:0});
+  await reconciler.trigger();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const durable=await store.load('j');
+  const original=durable.tasks.find(item=>item.id===t.id);
+  assert.equal(original.state,'QUEUED');
+  assert.equal(original.attempt,1);
+  assert.equal(original.executionId,null);
+  assert.equal(original.error,null);
+  assert.equal(original.failureReason,undefined);
+  assert.equal(durable.tasks.some(item=>item.agentName==='troubleshooter'),false);
+  assert.ok(events.some(event=>event.type==='task.failed' && event.data?.reason==='browser_workspace_unavailable'));
+  assert.ok(events.some(event=>event.type==='task.runtime_retry'));
+  await reconciler.close(); await stopEvents();
+});
+
 test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
   class FailedExitAdapter extends FakeAdapter {
     launch(t, signal) {

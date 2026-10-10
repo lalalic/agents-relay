@@ -240,6 +240,10 @@ export abstract class ReconcilerRuntimeBase {
   }
 
   protected async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
+    const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
+      : /BROWSER_WORKSPACE_UNAVAILABLE|browser-workspace runtime dependency unavailable|browser-workspace session start returned no session_id|no close frame received or sent/i.test(message)
+        ? 'browser_workspace_unavailable'
+        : undefined;
     const claim = executionId ?? `${jobId}:${taskId}`;
     if (this.launchFailureClaims.has(claim)) return;
     this.launchFailureClaims.add(claim);
@@ -251,7 +255,7 @@ export abstract class ReconcilerRuntimeBase {
       mutate: (_job, task) => {
         this.clearExecution(task.id, executionId);
         task.error = `Worker ${phase} failed: ${message}`;
-        task.failureReason = phase === 'start-ack' ? 'worker_start_timeout' : undefined;
+        task.failureReason = failureReason;
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
       },
@@ -271,6 +275,17 @@ export abstract class ReconcilerRuntimeBase {
       ));
       return;
     }
+    let runtimeRetry: Task | null = null;
+    if (failureReason === 'browser_workspace_unavailable' && transition.task.attempt < transition.task.maxAttempts) {
+      const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
+      if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
+        await applyTaskRetryAction(current);
+        current.routing = undefined;
+        current.workerSelection = undefined;
+        await this.store.saveTask(current);
+        runtimeRetry = current;
+      }
+    }
     const event = eventFor(
       jobId,
       taskId,
@@ -279,10 +294,18 @@ export abstract class ReconcilerRuntimeBase {
       'failed',
       transition.task.error ?? `Worker ${phase} failed: ${message}`,
       'user',
-      { phase, reason: transition.task.failureReason, workflowEvent },
+      { phase, reason: failureReason, workflowEvent },
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     this.detach(this.emit(event), jobId, taskId, 'worker failure event');
+    if (runtimeRetry) {
+      this.detach(this.emit(eventFor(jobId, taskId, runtimeRetry.parentTaskId,
+        'task.runtime_retry', 'queued', 'Browser Workspace runtime unavailable; retrying the same Task',
+        'orchestrator', { previousFailure: failureReason, attempt: runtimeRetry.attempt, maxAttempts: runtimeRetry.maxAttempts })),
+      jobId, taskId, 'runtime retry event');
+      this.detach(this.eventCoordinator.accept({ jobId, reason: 'browser-workspace-runtime-retry' }), jobId, taskId, 'runtime retry reconcile wake');
+      return;
+    }
     // failLaunch already committed the authoritative FAILED state. The emitted
     // task.failed observation may be ignored as a duplicate, so explicitly wake
     // graph reconciliation from the durable failure fact. This is required for
