@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
@@ -123,6 +123,22 @@ test('local Job gets one stable source-ref worktree and cleanup removes it', asy
   const sourceSha=git(expected,'rev-parse','HEAD');
   job.state='COMPLETED'; job.localMerge={...job.localMerge,status:'succeeded',sourceSha,mergedCommitSha:sourceSha};
   assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'removed'});
+});
+
+test('local Job reuses canonical checkout when it already owns the source branch', async t => {
+  const f = await fixture(t);
+  git(f.repo,'checkout','-b','repair-in-place');
+  await writeFile(join(f.repo,'scratch.txt'),'preserve me\n');
+  const job={
+    id:'repair-in-place-job',state:'ACTIVE',repository:'example/isolated',prNumber:0,
+    tasks:[],plans:[],localMerge:{sourceRef:'refs/heads/repair-in-place',targetRef:'refs/heads/main',status:'pending'}
+  };
+  const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
+  assert.equal(await realpath(checkout),await realpath(f.repo));
+  assert.equal(git(checkout,'symbolic-ref','HEAD'),'refs/heads/repair-in-place');
+  assert.match(git(checkout,'status','--porcelain'),/scratch\.txt/);
+  const managed=managedLocalJobWorktreePath(job.repository,job.id,f.root);
+  await assert.rejects(()=>import('node:fs/promises').then(({stat})=>stat(managed)),/ENOENT/);
 });
 
 

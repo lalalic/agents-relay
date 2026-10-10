@@ -216,6 +216,17 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
   const remoteRepository = remote ? githubRepositoryFromRemote(remote) : null;
   if (remoteRepository && remoteRepository !== job.repository) throw new Error(`Primary checkout ${primary} does not match ${job.repository}`);
   const sourceSha = await git(primary, ['rev-parse', '--verify', sourceRef]);
+  // If the canonical checkout already owns this exact source branch, Git
+  // cannot create a second worktree for it. Reuse the canonical checkout
+  // instead. This is especially important for repair Jobs created from an
+  // existing dirty worktree: the uncommitted evidence must remain available.
+  const primaryBranch = await git(primary, ['symbolic-ref', '-q', 'HEAD']).catch(() => '');
+  if (primaryBranch === sourceRef) {
+    const primaryHead = await git(primary, ['rev-parse', 'HEAD']);
+    if (primaryHead !== sourceSha) throw new Error(`Canonical source branch ${sourceRef} changed while preparing execution checkout`);
+    return projectRelative ? join(primary, projectRelative) : primary;
+  }
+
   const worktree = managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot);
   await mkdir(dirname(worktree), { recursive: true });
   try {
