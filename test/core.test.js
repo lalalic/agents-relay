@@ -1086,7 +1086,11 @@ test('ChatGPT cancelled terminal event closes after-terminal tab and preserves r
     const stop = await reconciler.watch('j'); await reconciler.reconcile('j');
     await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.started', 'running', 'worker began', 'user', undefined, await activeEventSource(store, 'chat-cancelled')));
     await bus.publish(eventFor('j', 'chat-cancelled', null, 'task.cancelled', 'cancelled', 'cancelled by worker', 'user', undefined, await activeEventSource(store, 'chat-cancelled')));
-    await new Promise(resolve => setTimeout(resolve, 10));
+    const terminalDeadline = Date.now() + 2000;
+    while (Date.now() < terminalDeadline) {
+      if (released && (await store.load('j')).tasks[0].state === 'CANCELLED') break;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
     assert.equal(released, true);
     assert.equal((await store.load('j')).tasks[0].state, 'CANCELLED');
     await stop();
