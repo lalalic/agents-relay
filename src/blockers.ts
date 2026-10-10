@@ -52,10 +52,22 @@ export async function registerBlockerDependency(options: {
     return existing;
   }
   if (blocker.blockerResolutionMode && blocker.blockerResolutionMode !== requestedMode) throw new Error(`Blocker ${blocker.id} already uses ${blocker.blockerResolutionMode} resolution`);
-  blocker.blockerResolutionMode = requestedMode;
-  blocker.unblocks = [...(blocker.unblocks ?? []), relation];
-  blocker.updatedAt = now;
-  await options.blockerStore.saveJob(blocker);
+  if (options.blockerStore.mutateJob) {
+    await options.blockerStore.mutateJob(blocker.id, current => {
+      if (current.blockerResolutionMode && current.blockerResolutionMode !== requestedMode)
+        throw new Error(`Blocker ${current.id} already uses ${current.blockerResolutionMode} resolution`);
+      current.blockerResolutionMode = requestedMode;
+      if (!(current.unblocks ?? []).some(item => dependentKey(item) === dependentKey(relation)))
+        current.unblocks = [...(current.unblocks ?? []), relation];
+      current.updatedAt = now;
+      return current;
+    });
+  } else {
+    blocker.blockerResolutionMode = requestedMode;
+    blocker.unblocks = [...(blocker.unblocks ?? []), relation];
+    blocker.updatedAt = now;
+    await options.blockerStore.saveJob(blocker);
+  }
   task.blockedBy = taskBlocker;
   task.updatedAt = now;
   await options.dependentStore.saveTask(task);
