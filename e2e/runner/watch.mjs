@@ -101,10 +101,17 @@ function scenario003(j){
  const fixes=tasks.filter(x=>String(x.id).startsWith('review-fix-'));
  const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
  const root=ordinary[0];
- const successfulRecovery=recoveries.find(x=>x.state==='SUCCEEDED');
+ const rootRecoveries=root?recoveries.filter(x=>x.parentTaskId===root.id):[];
+ const incidentalRecoveries=root?recoveries.filter(x=>x.parentTaskId!==root.id):recoveries;
+ const successfulRecovery=rootRecoveries.find(x=>x.state==='SUCCEEDED');
  const failedRecovery=recoveries.find(x=>x.state==='FAILED'||x.state==='BLOCKED');
- if(recoveries.length>1)return {type:'UNEXPECTED_EXTRA_TROUBLESHOOTER',recoveries:recoveries.map(x=>({id:x.id,state:x.state,attempt:x.attempt,parentTaskId:x.parentTaskId}))};
- if(failedRecovery)return {type:'TROUBLESHOOTER_FAILED',tasks:[{id:failedRecovery.id,state:failedRecovery.state,error:failedRecovery.error,attempt:failedRecovery.attempt}]};
+ if(rootRecoveries.length>1)return {type:'UNEXPECTED_DUPLICATE_ROOT_RECOVERY',recoveries:rootRecoveries.map(x=>({id:x.id,state:x.state,attempt:x.attempt,parentTaskId:x.parentTaskId}))};
+ if(failedRecovery)return {type:'TROUBLESHOOTER_FAILED',tasks:[{id:failedRecovery.id,state:failedRecovery.state,error:failedRecovery.error,attempt:failedRecovery.attempt,parentTaskId:failedRecovery.parentTaskId}]};
+ for(const recovery of incidentalRecoveries){
+   const parent=tasks.find(x=>x.id===recovery.parentTaskId);
+   if(!parent)return {type:'ORPHAN_TROUBLESHOOTER',recovery:{id:recovery.id,state:recovery.state,parentTaskId:recovery.parentTaskId}};
+   if(!['FAILED','BLOCKED','QUEUED','RUNNING','SUCCEEDED'].includes(parent.state))return {type:'INVALID_INCIDENTAL_RECOVERY_PARENT',recovery:{id:recovery.id,state:recovery.state},parent:{id:parent.id,state:parent.state}};
+ }
  if(root && ['FAILED','BLOCKED'].includes(root.state)){
    const age=root.updatedAt?Date.now()-Date.parse(root.updatedAt):0;
    const related=recoveries.filter(x=>x.parentTaskId===root.id||x.id.startsWith('troubleshoot-'));
@@ -117,7 +124,9 @@ function scenario003(j){
  }
  if(j.state==='COMPLETED'){
    if(!state.evidence.workerFailedOrBlocked)return {type:'SCENARIO_TRIGGER_MISSING',message:'Scenario 003 completed without the required first implementation failure'};
-   if(!state.evidence.troubleshooterSucceeded&&!successfulRecovery)return {type:'TROUBLESHOOTER_EVIDENCE_MISSING',message:'Scenario 003 completed without successful Troubleshooter recovery'};
+   if(!state.evidence.troubleshooterSucceeded&&!successfulRecovery)return {type:'TROUBLESHOOTER_EVIDENCE_MISSING',message:'Scenario 003 completed without successful recovery of the intentionally failed implementation Task'};
+   const unresolvedIncidental=incidentalRecoveries.filter(x=>x.state!=='SUCCEEDED');
+   if(unresolvedIncidental.length)return {type:'INCIDENTAL_RECOVERY_UNRESOLVED',recoveries:unresolvedIncidental.map(x=>({id:x.id,state:x.state,parentTaskId:x.parentTaskId,error:x.error}))};
    if(!root||root.state!=='SUCCEEDED'||Number(root.attempt)<2)return {type:'ORIGINAL_TASK_NOT_RECOVERED',task:root?{id:root.id,state:root.state,attempt:root.attempt}:null};
    if(Number(state.evidence.reviewChangesRequired||0)<2||new Set(state.evidence.reviewHeads||[]).size<2)return {type:'REVIEW_REJECTION_LADDER_MISSING',count:state.evidence.reviewChangesRequired||0,heads:state.evidence.reviewHeads||[]};
    if(fixes.filter(x=>x.state==='SUCCEEDED').length<2)return {type:'REVIEW_FIX_LADDER_MISSING',fixes:fixes.map(x=>({id:x.id,state:x.state}))};
@@ -127,7 +136,7 @@ function scenario003(j){
  }
  // Intentional reviewer changes_required produces SUCCEEDED reviewer tasks plus queued fix work;
  // do not classify those historical review outcomes as task failures.
- const unexpected=tasks.filter(x=>['FAILED','BLOCKED'].includes(x.state)&&x.agentName!=='troubleshooter'&&x!==root);
+ const unexpected=tasks.filter(x=>['FAILED','BLOCKED'].includes(x.state)&&x.agentName!=='troubleshooter'&&x!==root&&!recoveries.some(r=>r.parentTaskId===x.id&&['QUEUED','RUNNING','SUCCEEDED'].includes(r.state)));
  if(unexpected.length)return {type:'TASK_FAILED',tasks:unexpected.map(x=>({id:x.id,state:x.state,error:x.error,attempt:x.attempt}))};
  return null;
 }

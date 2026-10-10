@@ -31,7 +31,7 @@ test('scenario 003 watcher requires recovery, two distinct rejected heads, fixes
   assert.match(source,/new Set\(state\.evidence\.reviewHeads/);
   assert.match(source,/REVIEW_FIX_LADDER_MISSING/);
   assert.match(source,/FINAL_REVIEW_APPROVAL_MISSING/);
-  assert.match(source,/UNEXPECTED_EXTRA_TROUBLESHOOTER/);
+  assert.match(source,/UNEXPECTED_DUPLICATE_ROOT_RECOVERY/);
 });
 
 test('external injector stays outside SQLite and supports process, stale-event, and daemon faults', async()=>{
@@ -81,4 +81,12 @@ test('GitHub-enabled completed Job requires external MERGED before PASS', async(
   const watch=await read('../e2e/runner/watch.mjs');
   assert.match(watch,/const externalReady=!github\.enabled \|\| external\?\.githubState==='MERGED'/);
   assert.match(watch,/j\.state==='COMPLETED'&&!issue&&externalReady/);
+});
+
+test('scenario 003 permits independent reviewer/runtime recovery while requiring exactly one root recovery', async()=>{
+  const watch=await read('../e2e/runner/watch.mjs');
+  assert.match(watch,/const rootRecoveries=root\?recoveries\.filter\(x=>x\.parentTaskId===root\.id\):\[\]/);
+  assert.match(watch,/UNEXPECTED_DUPLICATE_ROOT_RECOVERY/);
+  assert.match(watch,/INCIDENTAL_RECOVERY_UNRESOLVED/);
+  assert.doesNotMatch(watch,/UNEXPECTED_EXTRA_TROUBLESHOOTER/);
 });
