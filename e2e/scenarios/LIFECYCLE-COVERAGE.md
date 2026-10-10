@@ -145,7 +145,7 @@ flowchart TD
 | `003-objective-exception-ladder` | Worker fails once → Troubleshooter recovery → original retry → review rejects twice → two fix generations → later approval → COMPLETED + GitHub MERGED (#33, r11) | **PASS** |
 | `004-objective-recovery-exhaustion-escalation` | Troubleshooter fails → bounded same-Task retry/reroute → original recovered → review/merge → COMPLETED + GitHub MERGED (#35, r2) | **PASS** |
 | `005-watchdog-stale-generation` | Kill worker without terminal → watchdog recovery → newer execution → stale old terminal ignored → COMPLETED + GitHub MERGED (#41, r6) | **PASS** |
-| `006-provider-quota-reroute` | Real worker/provider rejection (quota, unavailable model/provider, etc.) → classify → cause-specific recovery → original Task retry | **PLANNED** |
+| `006-provider-quota-reroute` | Controlled Adapter `model_not_found` rejection → normal failure classifier → `task.rerouting` → same Task attempt 2 succeeds → review/local merge/COMPLETED/GitHub MERGED (#44, r4) | **PASS** |
 | `007-projection-isolation-retry` | GitHub projection failure + duplicate delivery while SQLite lifecycle continues | **PLANNED** |
 | `008-async-browser-handoff` | Async browser transport exits before business completion; authoritative terminal remains controlling | **PLANNED** |
 | `009-daemon-restart-orphan` | Restart daemon during live execution; exactly-once live/orphan recovery | **PLANNED** |
