@@ -65,7 +65,7 @@ flowchart TD
     %% Troubleshooter failure / escalation
     D2 -. external/human blocker .-> T1[Canonical escalation graph]
     T1 --> T2[resolved / failed / needs_user]
-    D2 -. Troubleshooter itself fails .-> T3[No automatic recovery-of-recovery policy today]
+    D2 -. Troubleshooter itself fails .-> T3[Bounded same-Task retry/reroute and recovery]
 
     %% Review failures
     F -. changes_required .-> R1[Graph creates one review-fix Task]
@@ -105,24 +105,24 @@ flowchart TD
 
 | Lifecycle stage | Failure point | Expected production solution | Code | Focused / integration tests | Production E2E | Coverage classification |
 | --- | --- | --- | --- | --- | --- | --- |
-| Job / Planner | Happy-path planning | Planner creates executable implementation work from durable objective | Implemented | Covered | `#1 PASS`, `#2 PASS`, `#3 RUNNING` | Covered |
+| Job / Planner | Happy-path planning | Planner creates executable implementation work from durable objective | Implemented | Covered | `#1 PASS`, `#2 PASS`, `#3 PASS` | Covered |
 | Planner | Planner invalid output / transient failure | Automatic planner retry carries prior failure/context; no manual reconcile required | Implemented | `autonomous.test.js`, planner/runtime tests | None dedicated | **E2E GAP** |
 | Planner | Planner unavailable / retry exhausted | Persist failure; do not fabricate implementation work or completion | Implemented | workflow/core tests | None dedicated | **E2E GAP** |
 | Routing | Provider quota / rate limit | Preserve structured failure, refresh usage facts, reroute exact Task | Implemented in routing/recovery path | Router/core tests | `#6 PLANNED` | Planned E2E |
 | Routing | No viable worker/model | Persist Task `FAILED` before any execution claim; Graph then exposes normal recovery path | Implemented | Core routing failure test proves no execution generation is claimed | None | **E2E GAP** |
 | Dispatch | Duplicate/concurrent launch | Per-Job execution slot + pool/global capacity control | Implemented | Core/local-job routing tests | Happy path exercises ordinary dispatch; stronger injection in `#5` | Mostly covered; fault E2E planned |
-| Worker | Ordinary worker `task.failed` / `task.blocked` | Graph creates exactly one relevant Troubleshooter; recover exact original Task | Implemented | Troubleshooter/core/local-authority tests | `#2 PASS`, `#3 RUNNING` | Covered |
-| Recovery | Recoverable blocker | Troubleshooter diagnoses event history, removes blocker, uses dedicated `task recover` | Implemented | Core/troubleshooter tests | `#2 PASS`, `#3 RUNNING` | Covered |
+| Worker | Ordinary worker `task.failed` / `task.blocked` | Graph creates exactly one relevant Troubleshooter; recover exact original Task | Implemented | Troubleshooter/core/local-authority tests | `#2 PASS`, `#3 PASS` | Covered |
+| Recovery | Recoverable blocker | Troubleshooter diagnoses event history, removes blocker, uses dedicated `task recover` | Implemented | Core/troubleshooter tests | `#2 PASS`, `#3 PASS` | Covered |
 | Recovery | Replacement business Task instead of original retry | Reject as invalid recovery; exact original Task must reactivate | Implemented by recovery contract / tests | Core/task-action tests | `#2 PASS` | Covered |
-| Recovery | Troubleshooter itself fails | Retry the same failed Troubleshooter (bounded, rerouted), then recover original Task and complete Job; exhaustion is a failure requiring escalation | Implemented | Troubleshooter reconciliation/idempotence test | `#4 PLANNED` | **E2E GAP** |
-| Recovery | Genuine human/external blocker | Canonical escalation graph owns `resolved / failed / needs_user` outcome | Implemented pathway exists | Escalation/component tests need audit | `#4 PLANNED` | Needs E2E proof |
+| Recovery | Troubleshooter itself fails | Retry the same failed Troubleshooter (bounded, rerouted), then recover original Task and complete Job; exhaustion is a failure requiring escalation | Implemented | Troubleshooter reconciliation/idempotence test | `#4 PASS` | **E2E GAP** |
+| Recovery | Genuine human/external blocker | Canonical escalation graph owns `resolved / failed / needs_user` outcome | Implemented pathway exists | Escalation/component tests need audit | `#4 PASS` | Needs E2E proof |
 | Worker runtime | Process exits without authoritative terminal | Terminal-event watchdog persists failure evidence and wakes recovery | Implemented | Strong core/workflow tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
 | Worker runtime | Late terminal from old execution generation | Compare event source/executionId to current generation and ignore stale terminal | Implemented | Strong core tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
 | Async worker | Browser submission transport exits before business completion | Transport exit is observational; wait for correlated terminal event | Implemented | Core adapter/runtime tests | `#8 PLANNED` | **E2E GAP** |
 | Tool/runtime | Browser Workspace dependency failure | Classify tool/runtime defect; repair/reroute exact original Task | Recovery mechanisms exist | Partial | `#10 PLANNED` | Needs real E2E proof |
 | Review | Happy-path approval | Review exact immutable head; approval is local durable fact | Implemented | Strong core/review tests | `#1 PASS`, `#2 PASS` | Covered |
-| Review | `changes_required` | Create exactly one fix Task for reviewed head; fix creates new head; new independent review | Implemented | Strong core/review tests | `#3 RUNNING`, requires two rejection/fix generations | Running |
-| Review | Stale approval/review after head changes | Invalidate/cancel stale review; only current-head evidence counts | Implemented | Strong core tests | `#3 RUNNING` indirectly covers successive heads | Running / partial |
+| Review | `changes_required` | Create exactly one fix Task for reviewed head; fix creates new head; new independent review | Implemented | Strong core/review tests | `#3 PASS`, requires two rejection/fix generations | Running |
+| Review | Stale approval/review after head changes | Invalidate/cancel stale review; only current-head evidence counts | Implemented | Strong core tests | `#3 PASS` indirectly covers successive heads | Running / partial |
 | Review | Reviewer runtime/provider failure | Recover/reroute the exact reviewer Task while preserving immutable `reviewHeadSha`; later verdict must bind to that same head | Implemented | Dedicated same-Task/same-head recovery test + start-ack tests | No dedicated current scenario | **E2E GAP** |
 | Local merge | Happy-path local merge | Shared merge lock, merge exact approved source head, durable receipt | Implemented | Strong no-GitHub/local merge tests | `#1 PASS`, `#2 PASS` | Covered |
 | Local merge | Merge conflict | Persist failed receipt, leave Job ACTIVE/non-COMPLETED, keep target clean | Implemented | Strong `no-github.test.js` coverage | None | **E2E GAP** |
@@ -142,8 +142,8 @@ flowchart TD
 | --- | --- | --- |
 | `001-happy-path` | Planner → implementation → review → local merge → COMPLETED → GitHub MERGED | **PASS** |
 | `002-worker-blocker-troubleshooter-recovery` | Real worker blocker → automatic Troubleshooter → exact original Task retry → review → merge | **PASS** |
-| `003-objective-exception-ladder` | Worker fails once → Troubleshooter recovery → original retry → review rejects twice → two fix generations → later approval | **RUNNING** |
-| `004-objective-recovery-exhaustion-escalation` | Recovery cannot safely proceed → canonical escalation → no infinite retry / false completion | **PLANNED** |
+| `003-objective-exception-ladder` | Worker fails once → Troubleshooter recovery → original retry → review rejects twice → two fix generations → later approval → COMPLETED + GitHub MERGED (#33, r11) | **PASS** |
+| `004-objective-recovery-exhaustion-escalation` | Troubleshooter fails → bounded same-Task retry/reroute → original recovered → review/merge → COMPLETED + GitHub MERGED (#35, r2) | **PASS** |
 | `005-watchdog-stale-generation` | Kill worker without terminal → watchdog recovery → newer execution → stale old terminal ignored | **PLANNED** |
 | `006-provider-quota-reroute` | Real provider quota/rate-limit failure → refresh routing facts → reroute exact Task | **PLANNED** |
 | `007-projection-isolation-retry` | GitHub projection failure + duplicate delivery while SQLite lifecycle continues | **PLANNED** |
@@ -155,7 +155,7 @@ flowchart TD
 
 Recovery policy revised: a recoverable Troubleshooter failure must retry and the Job must complete. Exhaustion-only termination is not E2E success. The items previously listed here were resolved/audited as follows:
 
-1. **Troubleshooter failure policy** — implemented as bounded non-recursive recovery exhaustion: one durable `recovery.exhausted` fact, no Troubleshooter-for-Troubleshooter recursion, Job lifecycle remains `ACTIVE` with runtime `FAILED`.
+1. **Troubleshooter failure policy** — bounded automatic same-Task recovery/reroute, without recursive Troubleshooter creation; scenario #004 r2 verifies eventual Job COMPLETED.
 2. **No viable route** — already implemented: routing failure durably fails the Task before any execution generation is claimed; normal recovery semantics then apply.
 3. **Reviewer-specific runtime recovery** — audited and covered below E2E: dedicated `task recover` preserves the same reviewer Task and immutable `reviewHeadSha`; a later correlated verdict on the recovered execution drives the normal review graph.
 
