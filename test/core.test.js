@@ -26,6 +26,12 @@ const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskI
 const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'ACTIVE',continuation:null,createdAt:now(),updatedAt:now(),tasks});
 const eventSource = (jobId, taskId, executionId) => ({ id: executionEventSource(jobId, taskId, executionId) });
 const activeEventSource = async (store, taskId, jobId='j') => {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const current = (await store.load(jobId)).tasks.find(item => item.id === taskId);
+    if (current?.executionId) return eventSource(jobId, taskId, current.executionId);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
   const current = (await store.load(jobId)).tasks.find(item => item.id === taskId);
   assert.ok(current?.executionId, `missing executionId for ${jobId}/${taskId}`);
   return eventSource(jobId, taskId, current.executionId);
