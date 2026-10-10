@@ -104,3 +104,5 @@ test('scenario 005 watcher performs event-triggered injection and refuses PASS w
 });
 
 test('scenario 005 enforces local process execution and immediately rejects PID-less launches',async()=>{const prep=await read('../e2e/runner/prepare-round.mjs'); const logic=await read('../e2e/runner/scenario-005.mjs'); assert.match(prep,/workerRequirements.*runtime/); assert.match(logic,/UNINJECTABLE_WORKER/);});
+
+test('scenario 005 deliberately terminated worker failure is watched while graph recovery progresses',async()=>{const source=await read('../e2e/runner/watch.mjs');assert.match(source,/expectedFailure && recovery\.some/);assert.match(source,/receipt\.executionId/);});

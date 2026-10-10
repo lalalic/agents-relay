@@ -254,6 +254,18 @@ async function tick(){
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=state.scenario005Issue||detect(j);
+  // Scenario 005 deliberately kills its first implementation execution.
+  // A failed original Task with a matching termination receipt is expected while
+  // Graph-owned Troubleshooter recovery is active; never manually retry it.
+  if(scenario.startsWith('005-') && issue?.type==='TASK_FAILED' && existsSync(join(dirname(statePath),'terminated.json'))){
+    const receipt=JSON.parse(readFileSync(join(dirname(statePath),'terminated.json'),'utf8'));
+    const original=(j.tasks||[]).find(t=>t.id===receipt.taskId);
+    const recovery=(j.tasks||[]).filter(t=>t.agentName==='troubleshooter'&&t.parentTaskId===receipt.taskId);
+    const expectedFailure=original?.attempt===1 && original?.state==='FAILED' &&
+      original?.executionHistory?.some(e=>e.id===receipt.executionId) &&
+      issue.tasks?.every(t=>t.id===receipt.taskId);
+    if(expectedFailure && recovery.some(t=>['DRAFT','QUEUED','RUNNING','SUCCEEDED'].includes(t.state)))issue=null;
+  }
   let external=null;
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
