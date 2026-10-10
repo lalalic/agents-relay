@@ -264,7 +264,15 @@ async function tick(){
   if(scenario.startsWith('009-') && j.state!=='CANCELLED'){
     const receipt=join(dirname(statePath),'daemon-restarted.json');
     if(!existsSync(receipt)){
-      const launched=newEvents.map(x=>x.event).find(e=>e?.type==='task.process.launched' && Number(e.data?.pid)>1 && e.data?.executionId && (j.tasks||[]).some(t=>t.id===e.task_id && t.agentName==='implementation' && t.state==='RUNNING' && t.executionId===e.data.executionId));
+      // Snapshot-first: launch events can predate a watcher tick. Query durable history
+      // and match the CURRENT RUNNING execution; never restart for a stale PID.
+      const impl=(j.tasks||[]).find(t=>t.agentName==='implementation'&&t.state==='RUNNING'&&t.executionId);
+      let launchEvents=newEvents.map(x=>x.event);
+      if(impl){
+        const lookup=spawnSync('curl',['-fsS',`http://127.0.0.1:8787/api/events?job=${encodeURIComponent(jobId)}&task=${encodeURIComponent(impl.id)}&limit=60`],{encoding:'utf8',timeout:10000});
+        if(lookup.status===0)try{launchEvents=launchEvents.concat(JSON.parse(lookup.stdout))}catch{}
+      }
+      const launched=launchEvents.find(e=>e?.type==='task.process.launched' && Number(e.data?.pid)>1 && e.data?.executionId && impl?.id===e.task_id && impl.executionId===e.data.executionId);
       if(launched){
         const run=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','restart-daemon','--out',receipt],{encoding:'utf8',cwd:root,timeout:120000});
         if(run.status!==0)state.scenario009Issue={type:'DAEMON_RESTART_FAILED',message:run.stderr||run.error?.message||'restart failed'};
