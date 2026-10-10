@@ -72,14 +72,15 @@ test('completed Job allows bounded GitHub projection convergence before blocking
   const watch=await read('../e2e/runner/watch.mjs');
   assert.match(watch,/projectionPendingSince/);
   assert.match(watch,/pendingMs>=30000/);
-  assert.match(watch,/GITHUB_PR_NOT_MERGED/);
+  assert.match(watch,/GITHUB_PR_NOT_ARCHIVED/);
   assert.match(watch,/projectionPendingSince=null/);
 });
 
 
-test('GitHub-enabled completion exposes external MERGED evidence for judgment', async()=>{
+test('GitHub-enabled completion accepts optional archived display PR for judgment', async()=>{
   const watch=await read('../e2e/runner/watch.mjs');
-  assert.match(watch,/const externalReady=!github\.enabled \|\| external\?\.githubState==='MERGED'/);
+  assert.match(watch,/const externalReady=!github\.enabled \|\| boundPr<=0 \|\|/);
+  assert.match(watch,/\['CLOSED','MERGED'\]\.includes/);
   assert.match(watch,/kind:'scenario_completion_judgment'/);
   assert.match(watch,/externalReady,issue:issue\|\|null/);
 });

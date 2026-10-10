@@ -49,7 +49,9 @@ export async function ensureManagedGitHubJob(
     if (existing) return { job: existing, pr };
     const now = new Date().toISOString();
     const localMergeSource = options.localMergeSource ?? (options.head ? `refs/heads/${options.head}` : undefined);
-    const localMergeTarget = options.localMergeTarget ?? (options.head ? `refs/heads/${options.base ?? 'main'}` : undefined);
+    if (options.localMergeTarget && options.localMergeTarget !== 'refs/heads/main') throw new Error('Local merge target must always be main');
+    if (options.base && options.base !== 'main') throw new Error('Job base must always be main');
+    const localMergeTarget = localMergeSource ? 'refs/heads/main' : undefined;
     const job = createJobEntity({
       id: options.id,
       title: options.title || pr.title || 'Agents Relay job',

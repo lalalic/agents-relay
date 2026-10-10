@@ -178,6 +178,32 @@ export function managedLocalJobWorktreePath(repository: string, jobId: string, w
   return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-job-${safeJob}-${digest}`, 'job');
 }
 
+/** Bind an ordinary SQLite Job to one deterministic local work branch.
+ * The target is always main, and branch creation never switches the user's checkout.
+ * This is a Git-local operation and never needs GitHub credentials.
+ */
+export async function ensureLocalJobSourceBranch(projectPath: string, job: Job): Promise<string> {
+  if (job.localMerge?.sourceRef) {
+    if (job.localMerge.targetRef !== 'refs/heads/main') throw new Error('Local Job target must be main');
+    return job.localMerge.sourceRef;
+  }
+  const safe = job.id.replace(/[^A-Za-z0-9_.-]+/g, '-').slice(0, 48);
+  const digest = createHash('sha256').update(job.id).digest('hex').slice(0, 12);
+  const sourceRef = `refs/heads/relay/job-${safe}-${digest}`;
+  const primary = (await git(projectPath, ['rev-parse', '--show-toplevel'])).trim();
+  await git(primary, ['rev-parse', '--verify', 'refs/heads/main']);
+  const exists = await gitOutput(['-C', primary, 'show-ref', '--verify', '--quiet', sourceRef]).then(() => true, () => false);
+  if (!exists) {
+    // A concurrent caller may create the same ref; git update-ref is idempotent
+    // when the target already exists, and must never reset it.
+    const sha = (await git(primary, ['rev-parse', '--verify', 'refs/heads/main'])).trim();
+    await gitOutput(['-C', primary, 'update-ref', sourceRef, sha, '0000000000000000000000000000000000000000']).catch(async error => {
+      if (!(await gitOutput(['-C', primary, 'show-ref', '--verify', sourceRef]).then(() => true, () => false))) throw error;
+    });
+  }
+  return sourceRef;
+}
+
 export async function prepareLocalJobExecutionWorktree(projectPath: string, job: Job, workspaceRoot = defaultWorkspaceRoot()): Promise<string> {
   if (job.prNumber !== 0 || !job.localMerge?.sourceRef) return resolveRepositoryProjectPath(projectPath, job.projectPath);
   const sourceRef = job.localMerge.sourceRef;

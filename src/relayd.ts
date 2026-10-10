@@ -16,6 +16,7 @@ import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
+import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
@@ -33,7 +34,7 @@ import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from '.
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -234,7 +235,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       !['COMPLETED','CANCELLED'].includes(item.job.state) || counts.get(item.job.id) !== 1));
   };
   cachedOverviews = await inventoryFromLocal();
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(argv), projectPathForJob: async job => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); return job.prNumber === 0 && job.localMerge?.sourceRef ? prepareLocalJobExecutionWorktree(canonical, job, workspaceRoot) : resolveRepositoryProjectPath(canonical, job.projectPath); } });
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(argv), projectPathForJob: async job => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (job.prNumber !== 0 || job.schedule) return resolveRepositoryProjectPath(canonical, job.projectPath);
+    const sourceRef = await ensureLocalJobSourceBranch(canonical, job);
+    if (!store.mutateJob) throw new Error('Local Job branch binding requires atomic SQLite mutation');
+    const bound = await store.mutateJob(job.id, current => current.localMerge ? current : ({...current, localMerge: {sourceRef,targetRef:'refs/heads/main',status:'pending' as const},updatedAt:new Date().toISOString()}));
+    return prepareLocalJobExecutionWorktree(canonical, bound, workspaceRoot); } });
   const refreshAll = async (_full = false): Promise<ManagedJobOverview[]> => {
     cachedOverviews = await inventoryFromLocal();
     return cachedOverviews;
@@ -294,10 +299,22 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const sourceRef = discovered.localMerge.sourceRef;
       const targetRef = discovered.localMerge.targetRef;
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
+      if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
       let relay = relayStores.get(snapshot.path);
       if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
+      // A completed local Job may never have had a display PR. Publish main
+      // regardless: GitHub availability cannot determine SQLite completion.
+      if (discovered.state === 'COMPLETED' && discovered.localMerge?.status === 'succeeded'
+          && (discovered.externalPrNumber ?? discovered.prNumber) <= 0) {
+        const published = projectAuthoritativeLocalMerge(canonical, discovered);
+        if (published.status === 'projected') await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivered','succeeded',
+          `GitHub main synchronization ${published.status}`,'orchestrator',
+          {operation:'github.syncMain',deliveryStatus:published.status,mergedCommitSha:published.localMergedCommitSha},
+          {agent:'relay',component:'github-projection'}));
+        continue;
+      }
       const existingExternalPr = discovered.externalPrNumber ?? (discovered.prNumber > 0 ? discovered.prNumber : 0);
       const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
       if (terminal && existingExternalPr <= 0) continue;
@@ -310,6 +327,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       let externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
       if (externalPrNumber === 0 && ['COMPLETED','CANCELLED'].includes(job.state)) continue;
       if (externalPrNumber === 0) {
+        // Do not bootstrap an empty remote-only PR commit: it would diverge from
+        // the real local Job branch before its first Worker commit. Publish the
+        // review-only PR when there is an actual diff against main.
+        const ahead = Number(await gitText(canonical, ['rev-list', '--count', `${targetRef}..${sourceRef}`]));
+        if (!Number.isFinite(ahead) || ahead <= 0) continue;
         const pr = await resolvePullRequest(client, job.repository, { head: branch, base, title: job.title, body: job.objective ?? job.description ?? '' });
         if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
         job = await relay.mutateJob(job.id, current => ({ ...current, externalPrNumber: pr.number, updatedAt: new Date().toISOString() }));
@@ -323,7 +345,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       }
       const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
-      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
+      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
         const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
         const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
         await bus?.publish(eventFor(job.id,'projection',null,'projection.delivered','succeeded',
@@ -331,6 +353,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
           {agent:'relay',component:'github-projection'}));
 
+        // A review-only PR is never merged by GitHub. Close it after local main
+        // has been safely published, retaining the diff, comments and commit link.
+        const remotePr = await github.pullRequestState();
+        await archiveDisplayPullRequest(client,job.repository,externalPrNumber,job.id,projectedMerge.projectedCommitSha,remotePr);
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
         await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });

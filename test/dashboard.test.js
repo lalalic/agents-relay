@@ -387,7 +387,7 @@ test('dashboard renders job clipboard, publication, merge-review, and commit-lin
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
   assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.externalPrNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
   assert.doesNotMatch(dashboardHtml, /PUBLISHED v/);
-  assert.match(dashboardHtml, /job\.reviewEnabled!==false&&job\.githubState!=='MERGED'/);
+  assert.match(dashboardHtml, /job\.state==='ACTIVE'&&job\.reviewEnabled!==false/);
   assert.match(dashboardHtml, /function safeCommitUrl\(repository,sha\)/);
   assert.match(dashboardHtml, /link\.textContent=sha\.slice\(0,7\)/);
   assert.match(dashboardHtml, /commitField\('HEAD commit',job,task\.reviewHeadSha\)/);
@@ -473,7 +473,8 @@ test('credit providers render one balance value per provider row', () => {
 
 test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
-  assert.match(dashboardHtml, /text\(repoName\(job\.repository\)\+'\/PR#'\+value\(job\.externalPrNumber\|\|job\.prNumber\)\+': '\+value\(job\.title\|\|job\.id\)\)/);
+  assert.match(dashboardHtml, /Number\(job\.externalPrNumber\|\|job\.prNumber\|\|0\)>0/);
+  assert.match(dashboardHtml, /'Job '\+value\(job\.id\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);

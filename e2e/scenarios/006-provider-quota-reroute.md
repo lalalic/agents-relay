@@ -26,7 +26,7 @@ The controller must not alter globally shared Router FreeText Rules or other job
 2. Relay processes the failure through its normal Graph/runtime path, preserving the structured rejection reason (not treating a Worker-written `task.failed` as runtime rejection proof).
 3. Relay applies the **appropriate recovery for the observed class**: refresh usage when quota-related, exclude/deprioritize invalid/unavailable route when relevant, select another viable route or an explicitly safe retry according to policy. No hard-coded provider choice.
 4. The **exact same original Task ID** is reactivated and succeeds with a newer attempt/execution generation. No replacement business Task and no manual Task lifecycle actions.
-5. Review, local merge, authoritative Job `COMPLETED`, and optional GitHub PR `MERGED` all succeed.
+5. Review, local merge, authoritative Job `COMPLETED`, and optional GitHub PR `CLOSED` after main sync all succeed.
 6. Watcher records the initial route, rejection receipt/error, retry/reroute or recovery evidence, original Task execution history, and final successful route. ChatGPT evaluates these against the round's chosen rejection class before PASS.
 
 ## Invalid outcomes

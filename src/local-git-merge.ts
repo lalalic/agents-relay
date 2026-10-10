@@ -93,6 +93,7 @@ function mergeCheckedOutTarget(repoPath: string, targetRef: string, sourceSha: s
 /** Deliver to a Git ref without ever updating a checked-out ref behind Git's back. */
 export function deliverLocalMerge(repoPath: string, request: LocalMergeReceipt): { sourceSha: string; mergedCommitSha: string } {
   const sourceRef = ref(request.sourceRef), targetRef = ref(request.targetRef);
+  if (targetRef !== 'refs/heads/main') throw new Error('Local Git merge target must always be refs/heads/main');
   if (sourceRef === targetRef) throw new Error('Local merge source and target must differ');
   const commonDir = resolve(repoPath, git(repoPath, 'rev-parse', '--git-common-dir'));
   return withLocalMergeLock(commonDir, targetRef, () => {

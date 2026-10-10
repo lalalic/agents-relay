@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
+import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -123,4 +123,20 @@ test('local Job gets one stable source-ref worktree and cleanup removes it', asy
   const sourceSha=git(expected,'rev-parse','HEAD');
   job.state='COMPLETED'; job.localMerge={...job.localMerge,status:'succeeded',sourceSha,mergedCommitSha:sourceSha};
   assert.deepEqual(await cleanupCompletedJobWorktree(f.repo,job,f.root),{status:'removed'});
+});
+
+
+test('ordinary SQLite Job creates and reuses isolated source branch without touching main', async t => {
+  const f=await fixture(t);
+  const job={id:'plain-local-job',repository:f.job.repository,prNumber:0,state:'ACTIVE',tasks:[],plans:[]};
+  const main=git(f.repo,'rev-parse','main');
+  const sourceRef=await ensureLocalJobSourceBranch(f.repo,job);
+  assert.match(sourceRef,/^refs\/heads\/relay\/job-/);
+  assert.equal(await ensureLocalJobSourceBranch(f.repo,job),sourceRef);
+  assert.equal(git(f.repo,'rev-parse',sourceRef),main);
+  const bound={...job,localMerge:{sourceRef,targetRef:'refs/heads/main',status:'pending'}};
+  const checkout=await prepareLocalJobExecutionWorktree(f.repo,bound,f.root);
+  assert.equal(git(checkout,'symbolic-ref','HEAD'),sourceRef);
+  assert.equal(git(f.repo,'symbolic-ref','HEAD'),'refs/heads/main');
+  assert.equal(git(f.repo,'rev-parse','main'),main);
 });

@@ -28,7 +28,7 @@ original implementation attempt 1 -> FAILED
   -> Review #2 -> CHANGES_REQUIRED
   -> Graph review-fix #2 -> SUCCEEDED / new head
   -> Review #3 -> APPROVED
-  -> local merge -> Job COMPLETED -> projected PR MERGED
+  -> local merge -> Job COMPLETED -> projected PR CLOSED after main sync
 ```
 
 ## PASS

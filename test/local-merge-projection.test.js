@@ -20,35 +20,45 @@ function fixture(){
 }
 function completedJob(delivered){return {id:'job',title:'job',repository:'owner/repo',prNumber:0,externalPrNumber:27,state:'COMPLETED',executionMode:'fixed',continuation:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',...delivered}};}
 
-test('authoritative projection converges a stale divergent remote without rewriting local history',()=>{
+test('local main is pushed to origin without a second merge and repeated delivery is idempotent',()=>{
  const f=fixture(); try{
   const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
-  const localMain=git(f.repo,'rev-parse','main'); const authoritativeTree=git(f.repo,'rev-parse',`${localMain}^{tree}`);
-
-  // Simulate remote main independently advancing while local authority keeps its own merge history.
-  execFileSync('git',['clone',f.remote,f.other]); git(f.other,'config','user.name','Other'); git(f.other,'config','user.email','other@example.test'); git(f.other,'checkout','main');
-  writeFileSync(join(f.other,'remote-only'),'remote'); git(f.other,'add','.'); git(f.other,'commit','-m','remote drift'); git(f.other,'push','origin','main');
-  const remoteBefore=git(f.other,'rev-parse','HEAD');
-
-  const result=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
-  assert.equal(result.status,'projected'); assert.equal(result.remoteTargetSha,remoteBefore);
-  git(f.repo,'fetch','origin','main'); const remoteAfter=git(f.repo,'rev-parse','origin/main');
-  assert.equal(remoteAfter,result.projectedCommitSha);
-  assert.equal(git(f.repo,'rev-parse',`${remoteAfter}^{tree}`),authoritativeTree,'remote tree must equal authoritative local merged tree');
-  assert.doesNotThrow(()=>git(f.repo,'merge-base','--is-ancestor',f.sourceSha,remoteAfter),'reviewed PR head must become remote target ancestor');
-  assert.equal(git(f.repo,'rev-parse','main'),localMain,'local authority history must remain unchanged');
-  assert.equal(git(f.repo,'rev-parse',`${remoteAfter}^1`),remoteBefore,'projection must fast-forward from current remote target');
-  assert.equal(git(f.repo,'rev-parse',`${remoteAfter}^2`),f.sourceSha,'projection second parent must be reviewed source head');
-
-  const again=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
-  assert.equal(again.status,'already_projected');
+  const main=git(f.repo,'rev-parse','main');
+  const first=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
+  assert.equal(first.status,'projected');
+  git(f.repo,'fetch','origin','main');
+  assert.equal(git(f.repo,'rev-parse','origin/main'),main);
+  assert.equal(first.projectedCommitSha,main);
+  assert.equal(projectAuthoritativeLocalMerge(f.repo,completedJob(delivered)).status,'already_projected');
  } finally {f.close();}
 });
 
-test('authoritative projection refuses moved local target',()=>{
+test('remote divergence is rejected rather than synthesizing a second merge',()=>{
+ const f=fixture(); try{
+  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
+  execFileSync('git',['clone',f.remote,f.other]); git(f.other,'config','user.name','Other'); git(f.other,'config','user.email','other@example.test'); git(f.other,'checkout','main');
+  writeFileSync(join(f.other,'remote-only'),'remote'); git(f.other,'add','.'); git(f.other,'commit','-m','remote drift'); git(f.other,'push','origin','main');
+  const remote=git(f.other,'rev-parse','HEAD');
+  assert.throws(()=>projectAuthoritativeLocalMerge(f.repo,completedJob(delivered)),/diverged/);
+  git(f.repo,'fetch','origin','main');assert.equal(git(f.repo,'rev-parse','origin/main'),remote);
+ } finally {f.close();}
+});
+
+test('projection refuses target branches other than main',()=>{
+ const f=fixture();try{
+  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
+  assert.throws(()=>projectAuthoritativeLocalMerge(f.repo,completedJob({...delivered,targetRef:'refs/heads/develop'})),/must always be/);
+ }finally{f.close();}
+});
+
+test('projection publishes later local main commits without resetting to an old receipt',()=>{
  const f=fixture(); try{
   const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha});
   writeFileSync(join(f.repo,'after'),'after'); git(f.repo,'add','after'); git(f.repo,'commit','-m','move target');
-  assert.throws(()=>projectAuthoritativeLocalMerge(f.repo,completedJob(delivered)),/moved after authoritative delivery/);
+  const newer=git(f.repo,'rev-parse','main');
+  const result=projectAuthoritativeLocalMerge(f.repo,completedJob(delivered));
+  assert.equal(result.projectedCommitSha,newer);
+  git(f.repo,'fetch','origin','main');
+  assert.equal(git(f.repo,'rev-parse','origin/main'),newer);
  } finally {f.close();}
 });
