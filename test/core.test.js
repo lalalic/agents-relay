@@ -1169,6 +1169,35 @@ test('failed Codex exit preserves rate limit reason instead of terminal event ti
   await reconciler.close(); await stop(); await stopEvents();
 });
 
+test('model-not-found reroute preserves the actual rejection reason', async () => {
+  class FailedExitAdapter extends FakeAdapter {
+    launch(t, signal) {
+      const execution = super.launch(t, signal);
+      execution.processExit = { exitCode: 1, signal: null, stderr: 'model_not_found: model is unavailable' };
+      return execution;
+    }
+  }
+  const t = task('missing-model');
+  t.timeoutMs = 1000;
+  t.routing = { provider: 'openai', model: 'gpt-missing' };
+  const store = new InMemoryStore(job([t]));
+  const bus = new MemoryEventBus();
+  const adapter = new FailedExitAdapter();
+  const events = [];
+  const stopEvents = await bus.subscribe('j', async event => events.push(event));
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[adapter], eventBus:bus, postExitTerminalGraceMs:20 });
+  const stop = await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  await bus.publish(eventFor('j', t.id, null, 'task.started', 'running', 'worker began', 'user', undefined, await activeEventSource(store, t.id)));
+  adapter.resolvers[0].reject(new Error('model_not_found: model is unavailable'));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(durable.state, 'QUEUED');
+  assert.equal(durable.routingExclusions?.[0]?.reason, 'model_not_found');
+  assert.equal(events.find(event => event.type === 'task.failed')?.data?.reason, 'model_not_found');
+  await reconciler.close(); await stop(); await stopEvents();
+});
+
 test('async ChatGPT runtime exit keeps the overall terminal timeout active', async () => {
   const t=task('async-runtime-exit'); t.adapter='chatgpt'; t.timeoutMs=40; const store=new InMemoryStore(job([t])); const adapter=new FakeChatGptAdapter(); const bus=new MemoryEventBus();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100});

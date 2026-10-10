@@ -355,7 +355,7 @@ export abstract class ReconcilerRuntimeBase {
             provider: failedRoute.provider,
             model: failedRoute.model,
             ...(failedRoute.profile ? { profile: failedRoute.profile } : {}),
-            reason: 'rate_limit_exceeded',
+            reason: failureReason,
             at: new Date().toISOString(),
           }];
         }
