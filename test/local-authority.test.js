@@ -542,3 +542,19 @@ test('MERGED and CLOSED GitHub facts are audit-only: no local Task mutation or r
   assert.equal(await store.pullRequestState(), 'MERGED');
   sqlite.close();
 });
+test('newer stale DRAFT snapshot cannot roll an activated Job back to DRAFT', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
+  const draft = { ...job(), state: 'DRAFT', updatedAt: '2026-10-09T01:00:00.000Z' };
+  await store.saveJob(draft);
+  const stale = await store.load('local');
+  await store.mutateJob('local', current => {
+    current.state = 'ACTIVE';
+    current.updatedAt = '2026-10-09T01:01:00.000Z';
+    return current;
+  });
+  // Simulate a late-arriving stale snapshot from another lifecycle action.
+  await store.saveJob({ ...stale, updatedAt: '2026-10-09T01:02:00.000Z' });
+  assert.equal((await store.load('local')).state, 'ACTIVE');
+  sqlite.close();
+});

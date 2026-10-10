@@ -140,6 +140,8 @@ export class LocalAuthorityDurableStore implements DurableStore {
       const children = mergeInboundJobSnapshot(current, incoming);
       const preserveTerminal = ['COMPLETED', 'CANCELLED'].includes(current.state)
         && !['COMPLETED', 'CANCELLED'].includes(incoming.state);
+      // A stale snapshot must not undo an already committed Graph activation.
+      const preserveActivation = current.state === 'ACTIVE' && incoming.state === 'DRAFT';
       const review = current.review && incoming.review
         && current.review.updatedAt > incoming.review.updatedAt
         ? current.review : incoming.review;
@@ -149,7 +151,7 @@ export class LocalAuthorityDurableStore implements DurableStore {
       const scalarSource = incoming.updatedAt > current.updatedAt ? incoming : current;
       return {
         ...current, ...scalarSource,
-        state: preserveTerminal ? current.state : scalarSource.state,
+        state: preserveTerminal || preserveActivation ? current.state : scalarSource.state,
         updatedAt: current.updatedAt > incoming.updatedAt ? current.updatedAt : incoming.updatedAt,
         tasks: children.tasks,
         ...(children.plans ? { plans: children.plans } : {}),

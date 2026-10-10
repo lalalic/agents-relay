@@ -50,13 +50,14 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createDashboardActions(deps: any) {
-  const { cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState } = deps;
+  const { getOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState } = deps;
+  const currentOverviews = (): ManagedJobOverview[] => getOverviews();
   const dashboardOverview = (jobId: string, target?: { repository?: string; prNumber?: number }) =>
-    cachedOverviews.find((item: {job: Job}) => item.job.id === jobId
+    currentOverviews().find((item: {job: Job}) => item.job.id === jobId
       && (!target?.repository || item.job.repository === target.repository)
       && (!target?.prNumber || (item.job.externalPrNumber ?? item.job.prNumber) === target.prNumber));
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
-    const overview = cachedOverviews.find((item: {job: Job}) => item.job.id === jobId);
+    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = (await requireLocalJobBinding(jobId)).store;
     if (action === 'reconcile') {
@@ -74,7 +75,7 @@ export function createDashboardActions(deps: any) {
     return result;
   };
   const workspaceTaskCreate = async (jobId: string, task: import('./types.js').Task) => {
-    const overview = cachedOverviews.find((item: {job: Job}) => item.job.id === jobId);
+    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     if (task.jobId !== jobId) throw new Error(`Task ${task.id} belongs to ${task.jobId}, not ${jobId}`);
     const store = (await requireLocalJobBinding(jobId)).store;
@@ -98,7 +99,7 @@ export function createDashboardActions(deps: any) {
     return await store.load(jobId);
   };
   const workspaceTaskStart = async (jobId: string, taskId: string) => {
-    const overview = cachedOverviews.find((item: {job: Job}) => item.job.id === jobId);
+    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = (await requireLocalJobBinding(jobId)).store;
     const job = await store.load(jobId);
@@ -111,7 +112,7 @@ export function createDashboardActions(deps: any) {
     return await store.load(jobId);
   };
   const workspaceTaskComplete = async (jobId: string, taskId: string, summary: string) => {
-    const overview = cachedOverviews.find((item: {job: Job}) => item.job.id === jobId);
+    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = (await requireLocalJobBinding(jobId)).store;
     const job = await store.load(jobId);
@@ -124,7 +125,7 @@ export function createDashboardActions(deps: any) {
     return await store.load(jobId);
   };
   const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {
-    const overview = cachedOverviews.find((item: {job: Job}) => item.job.id === jobId);
+    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     const store = (await requireLocalJobBinding(jobId)).store;
     return await dashboardTaskAction(store, makeReconciler(store, concurrency), action)(jobId, taskId);
