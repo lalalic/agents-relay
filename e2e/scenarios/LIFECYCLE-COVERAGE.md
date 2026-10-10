@@ -148,7 +148,7 @@ flowchart TD
 | `006-provider-quota-reroute` | Controlled Adapter `model_not_found` rejection → normal failure classifier → `task.rerouting` → same Task attempt 2 succeeds → review/local merge/COMPLETED/GitHub MERGED (#44, r4) | **PASS** |
 | `007-projection-isolation-retry` | Task-declared `github.projectLocalMerge` `after + throw` → local COMPLETED before transient projection failure → retry `already_projected` → GitHub MERGED (#47, r3) | **PASS** |
 | `008-async-browser-handoff` | ChatGPT async implementation transport exited before progress and correlated authoritative terminal; single execution, approved review, local merge, COMPLETED, GitHub MERGED (#50, r3) | **PASS** |
-| `009-daemon-restart-orphan` | Restart daemon during live execution; exactly-once live/orphan recovery | **PLANNED** |
+| `009-daemon-restart-orphan` | Active Codex PID 88833 terminated by daemon restart (`parent-shutdown`, SIGTERM); same Task recovered execution 83e99cf8, succeeded, review/local merge/COMPLETED, GitHub MERGED (#54, r4) | **PASS** |
 | `010-browser-workspace-runtime-failure` | Real Browser Workspace/tool dependency failure → repair/reroute original Task | **PLANNED** |
 
 ## Known code gaps / architecture questions
