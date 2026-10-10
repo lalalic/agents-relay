@@ -326,6 +326,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
         const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
         const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
+        await bus?.publish(eventFor(job.id,'projection',null,'projection.delivered','succeeded',
+          `GitHub local merge projection ${projectedMerge.status}`,'orchestrator',
+          {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
+          {agent:'relay',component:'github-projection'}));
 
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
@@ -338,6 +342,10 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         });
       }
       } catch (error) {
+        await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivery_failed','failed',
+          `GitHub projection failed: ${errorMessage(error)}`,'orchestrator',
+          {operation:'github.projectLocalMerge',error:errorMessage(error)},
+          {agent:'relay',component:'github-projection'}))?.catch(()=>{});
         observability().record({
           stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
           message: `GitHub binding/projection failed for ${discovered.id}: ${errorMessage(error)}`,
