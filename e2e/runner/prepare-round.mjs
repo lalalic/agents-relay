@@ -99,6 +99,11 @@ function prepareScenarioFixture(){
   if(scenario.startsWith('002-')) return prepareScenario002();
   if(scenario.startsWith('003-')) return prepareScenario003();
   if(scenario.startsWith('004-')) return prepareScenario004();
+  if(scenario.startsWith('005-')) {
+    const generated=resolve(runDir,'objective.generated.md');
+    writeFileSync(generated,repositoryBoundary(scenario)+`# Mandatory Scenario 005 planner contract\n\nThe initial implementation Task MUST specify workerRequirements: {"runtime":"codex","capabilities":["model","local_repo"]}. This scenario tests killing an actual local worker process; a browser/chatgpt worker has no killable process PID and is INVALID. Preserve the requirement on the Task so the execution router cannot select an asynchronous browser worker. This is part of the test fixture, not a general production routing policy.\n\n---\n\n`+readFileSync(objectiveFile,'utf8'));
+    return generated;
+  }
   const generated=resolve(runDir,'objective.generated.md');
   writeFileSync(generated,repositoryBoundary(scenario)+readFileSync(objectiveFile,'utf8'));
   return generated;

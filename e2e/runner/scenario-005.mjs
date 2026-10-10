@@ -9,6 +9,8 @@ export function scenario005Decision(job,events,receiptPath,stalePath){
   if(!terminated){
     const launch=events.map(x=>x.event||x).find(e=>e.type==='task.process.launched'&&e.task_id===work?.id&&Number(e.data?.pid)>1&&e.data?.executionId);
     if(launch)return {action:'terminate',event:launch};
+    const uninjectable=events.map(x=>x.event||x).find(e=>e.type==='task.process.launched'&&e.task_id===work?.id&&e.data?.executionId&&!Number(e.data?.pid));
+    if(uninjectable)return {issue:{type:'UNINJECTABLE_WORKER',message:'selected worker has no local process PID; scenario 005 requires workerRequirements.runtime=codex'}};
     if(work?.state==='SUCCEEDED')return {issue:{type:'INJECTION_MISSED',message:'implementation succeeded without mandatory worker process termination'}};
     return {action:'observe'};
   }

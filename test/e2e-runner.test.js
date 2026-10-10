@@ -100,3 +100,5 @@ test('scenario 005 watcher performs event-triggered injection and refuses PASS w
   assert.match(source,/STALE_INJECTION_FAILED/);
   assert.match(injector,/task\.executionId!==executionId/);
 });
+
+test('scenario 005 enforces local process execution and immediately rejects PID-less launches',async()=>{const prep=await read('../e2e/runner/prepare-round.mjs'); const logic=await read('../e2e/runner/scenario-005.mjs'); assert.match(prep,/workerRequirements.*runtime/); assert.match(logic,/UNINJECTABLE_WORKER/);});
