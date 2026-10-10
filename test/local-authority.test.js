@@ -558,3 +558,22 @@ test('newer stale DRAFT snapshot cannot roll an activated Job back to DRAFT', as
   assert.equal((await store.load('local')).state, 'ACTIVE');
   sqlite.close();
 });
+
+test('manual planner atomically activates a DRAFT job in SQLite before launching planner', async () => {
+  const { executeManualPlan } = await import('../dist/manual-plan.js');
+  const path = await mkdtemp(join(tmpdir(), 'relay-atomic-manual-plan-'));
+  const sqlite = new SQLiteRelayStore(join(path, 'state.db'));
+  try {
+    const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
+    await store.saveJob({ ...job('manual-atomic'), state: 'DRAFT', plans: [] });
+    const result = await executeManualPlan(store, 'manual-atomic', 'implement', 30000, async (_job, plan) => {
+      assert.equal((await store.load('manual-atomic')).state, 'ACTIVE');
+      await store.savePlan({ ...plan, status: 'SUCCEEDED', updatedAt: new Date().toISOString() });
+    });
+    assert.equal(result.job.state, 'ACTIVE');
+    assert.equal((await store.load('manual-atomic')).state, 'ACTIVE');
+  } finally {
+    sqlite.close();
+    await rm(path, { recursive: true, force: true });
+  }
+});

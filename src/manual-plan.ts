@@ -1,3 +1,4 @@
+import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { createPlanRound, pendingPlan } from './planner.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { DurableStore } from './store.js';
@@ -26,7 +27,10 @@ export async function executeManualPlan(
         round = createPlanRound(current, { guidance, manual: true, timeoutMs });
         current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
       }
-      if (current.state === 'DRAFT') applyJobActivateAction(current);
+      if (current.state === 'DRAFT') {
+        const activation = dispatchJobLifecycleSync(current, 'activate');
+        if (!activation.accepted) throw new Error(`Job ${current.id} activation rejected`);
+      }
       return current;
     });
     job = structuredClone(committed);

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import type { Job } from './types.js';
 import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
@@ -86,7 +87,10 @@ export function createDashboardActions(deps: any) {
         if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot create task on terminal job ${current.id}`);
         if (current.tasks.some((item: import('./types.js').Task) => item.id === task.id)) throw new Error(`Task ${task.id} already exists`);
         current.tasks.push(structuredClone(task));
-        if (current.state === 'DRAFT') applyJobActivateAction(current);
+        if (current.state === 'DRAFT') {
+        const activation = dispatchJobLifecycleSync(current, 'activate');
+        if (!activation.accepted) throw new Error(`Job ${current.id} activation rejected`);
+      }
         current.updatedAt = new Date().toISOString();
         return current;
       });
