@@ -14,11 +14,18 @@ export async function executeManualPlan(
   if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot plan terminal job ${job.id} (${job.state})`);
   const active = pendingPlan(job);
   if (active && active.executionId) throw new Error(`Planning round ${active.id} is already PLANNING`);
-  const round = active ?? createPlanRound(job, { guidance, manual: true, timeoutMs });
-  if (!active && store.mutateJob) {
+  let round = active ?? createPlanRound(job, { guidance, manual: true, timeoutMs });
+  if (store.mutateJob) {
     const committed = await store.mutateJob(jobId, current => {
       if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot plan terminal job ${current.id} (${current.state})`);
-      current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
+      const concurrent = pendingPlan(current);
+      if (concurrent) {
+        if (concurrent.executionId) throw new Error(`Planning round ${concurrent.id} is already PLANNING`);
+        round = structuredClone(concurrent);
+      } else {
+        round = createPlanRound(current, { guidance, manual: true, timeoutMs });
+        current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
+      }
       if (current.state === 'DRAFT') applyJobActivateAction(current);
       return current;
     });

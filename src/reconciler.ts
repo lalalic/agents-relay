@@ -8,6 +8,7 @@ import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
 import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
+import { retryPendingPlannerUnblocks } from './planner-runtime.js';
 import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { validateAgentSelection } from './agent-graph.js';
@@ -111,6 +112,15 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.orchestrator_rescued', 'queued', `Stale orchestrator task ${task.id} converted to ChatGPT execution`, 'orchestrator', { ageMs: rescue.ageMs, adapter: 'chatgpt' }, { agent: 'relay', component: 'agents-relay' }));
       }
       await this.recoverPlannerChildren(job);
+      await retryPendingPlannerUnblocks({
+        store: this.store,
+        options: this.options,
+        live: this.plannerLive,
+        plannerContext: (currentJob, currentPlan) => this.plannerContext(currentJob, currentPlan),
+        emit: event => this.emit(event),
+        detach: (promise, currentJobId, planId, context) => this.detach(promise, currentJobId, planId, context),
+        reconcile: currentJobId => this.reconcile(currentJobId),
+      }, jobId);
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
