@@ -19,6 +19,40 @@ export type PlannerRuntimePorts = {
   reconcile: (jobId: string) => Promise<unknown>;
 };
 
+async function drainPlannerUnblocks(ports: PlannerRuntimePorts, jobId: string, planId: string): Promise<string[]> {
+  const job = await ports.store.load(jobId);
+  const plan = (job.plans ?? []).find(item => item.id === planId);
+  if (!ports.store.registerBlockerDependent) throw new Error("Blocker registration unavailable");
+  const pending = [...(plan?.pendingUnblocks ?? [])];
+  const remaining: typeof pending = [];
+  for (const unblock of pending) {
+    try {
+      await ports.store.registerBlockerDependent?.(jobId, unblock);
+    } catch {
+      remaining.push(unblock);
+    }
+  }
+  if (pending.length !== remaining.length && ports.store.mutateJob) {
+    await ports.store.mutateJob(jobId, current => {
+      const fresh = (current.plans ?? []).find(item => item.id === planId);
+      if (fresh) {
+        if (remaining.length > 0) fresh.pendingUnblocks = remaining;
+        else delete fresh.pendingUnblocks;
+        fresh.updatedAt = new Date().toISOString();
+      }
+      return current;
+    });
+  }
+  return remaining.map(item => `${item.repository}#${item.prNumber}:${item.jobId}:${item.taskId}`);
+}
+
+export async function retryPendingPlannerUnblocks(ports: PlannerRuntimePorts, jobId: string): Promise<void> {
+  const job = await ports.store.load(jobId);
+  for (const plan of (job.plans ?? []).filter(item => item.status === 'SUCCEEDED' && (item.pendingUnblocks?.length ?? 0) > 0)) {
+    await drainPlannerUnblocks(ports, jobId, plan.id);
+  }
+}
+
 async function finishPlanner(
   ports: PlannerRuntimePorts,
   jobId: string,
@@ -95,6 +129,7 @@ async function finishPlanner(
         durablePlan.plannerResult = result;
         durablePlan.assessment = result.assessment;
         durablePlan.generatedTaskIds = result.next_tasks.map(item => item.id);
+        durablePlan.pendingUnblocks = result.unblocks.length > 0 ? structuredClone(result.unblocks) : undefined;
         durablePlan.error = undefined;
         durablePlan.retryFeedback = undefined;
         durablePlan.leaseOwner = null;
@@ -124,6 +159,7 @@ async function finishPlanner(
       plan.plannerResult = result;
       plan.assessment = result.assessment;
       plan.generatedTaskIds = result.next_tasks.map(item => item.id);
+      plan.pendingUnblocks = result.unblocks.length > 0 ? structuredClone(result.unblocks) : undefined;
       plan.error = undefined;
       plan.retryFeedback = undefined;
       plan.leaseOwner = null;
@@ -139,10 +175,11 @@ async function finishPlanner(
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await ports.store.appendTask(child);
     }
     planCommitted = true;
-    // Cross-Job registrations cannot join this Job's SQLite transaction.
-    // Never register dependencies for a stale or rolled-back Planner generation.
-    for (const unblock of result.unblocks) await ports.store.registerBlockerDependent?.(job.id, unblock);
-    await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status }));
+    // Cross-Job registrations cannot join this Job's SQLite transaction. The
+    // committed Plan keeps replay intent until each external registration is
+    // confirmed, so a crash or partial failure is recoverable by reconcile.
+    const pendingUnblocks = await drainPlannerUnblocks(ports, job.id, plan.id);
+    await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status, pendingUnblocks }));
   } catch (caught) {
     if (planCommitted) { releaseLive(); throw caught; }
     await failOrRetry(caught instanceof Error ? caught.message : String(caught));
