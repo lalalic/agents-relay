@@ -15,6 +15,7 @@ import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
+import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
@@ -278,7 +279,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (githubAuthenticated !== true) return;
     if (client.rateLimitStatus().limited) return;
     const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
-    for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
+    const bindingCandidates = orderGitHubBindingCandidates(
+      snapshots.flatMap(snapshot => snapshot.jobs.map(job => ({ snapshotPath: snapshot.path, job }))),
+    );
+    for (const candidate of bindingCandidates) {
+      const snapshot = { path: candidate.snapshotPath };
+      const discovered = candidate.job;
+      try {
       if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
       const sourceRef = discovered.localMerge.sourceRef;
       const targetRef = discovered.localMerge.targetRef;
@@ -322,6 +329,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           message: `Projected authoritative local merge ${projectedMerge.localMergedCommitSha} to ${projectedMerge.targetRef}`,
           correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
           data: { ...projectedMerge, githubState: projectedState },
+        });
+      }
+      } catch (error) {
+        observability().record({
+          stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
+          message: `GitHub binding/projection failed for ${discovered.id}: ${errorMessage(error)}`,
+          correlation: { repository: discovered.repository, prNumber: discovered.externalPrNumber ?? discovered.prNumber, jobId: discovered.id },
+          data: { classification: classifyFailure(error).classification, reason: errorMessage(error) },
         });
       }
     }
