@@ -140,7 +140,7 @@ flowchart TD
 
 | Scenario | Purpose | Status |
 | --- | --- | --- |
-| `001-happy-path` | Planner → implementation → review → local merge → COMPLETED → GitHub MERGED | **PASS** |
+| `001-happy-path` | Planner → implementation → review → local merge → COMPLETED → GitHub MERGED (revalidated 2026-10-10, r26, PR #65, review `ff6cf2eb96b3`, merge `2a3437c8175`) | **PASS** |
 | `002-worker-blocker-troubleshooter-recovery` | Real worker blocker → automatic Troubleshooter → exact original Task retry → review → merge | **PASS** |
 | `003-objective-exception-ladder` | Worker fails once → Troubleshooter recovery → original retry → review rejects twice → two fix generations → later approval → COMPLETED + GitHub MERGED (#33, r11) | **PASS** |
 | `004-objective-recovery-exhaustion-escalation` | Troubleshooter fails → bounded same-Task retry/reroute → original recovered → review/merge → COMPLETED + GitHub MERGED (#35, r2) | **PASS** |
