@@ -152,3 +152,11 @@ test('scenario 006 rejects completed job without structured quota reroute and sa
  assert.match(watch,/e\.data\?\.previousFailure==='rate_limit_exceeded'/);
  assert.match(watch,/Number\(original\.attempt\)>=2/);
 });
+
+test('scenario 006 refuses starting a Job without a scoped provider-failure injector',async()=>{
+ const run=await read('../e2e/runner/run.mjs');const watch=await read('../e2e/runner/watch.mjs');
+ assert.match(run,/E2E_PROVIDER_QUOTA_INJECT_COMMAND/);
+ assert.match(run,/PROVIDER_QUOTA_INJECTOR_NOT_CONFIGURED/);
+ assert.match(watch,/provider-quota-injected\.json/);
+ assert.match(watch,/PROVIDER_QUOTA_INJECTION_FAILED/);
+});
