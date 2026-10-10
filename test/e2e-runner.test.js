@@ -77,10 +77,11 @@ test('completed Job allows bounded GitHub projection convergence before blocking
 });
 
 
-test('GitHub-enabled completed Job requires external MERGED before PASS', async()=>{
+test('GitHub-enabled completion exposes external MERGED evidence for judgment', async()=>{
   const watch=await read('../e2e/runner/watch.mjs');
   assert.match(watch,/const externalReady=!github\.enabled \|\| external\?\.githubState==='MERGED'/);
-  assert.match(watch,/j\.state==='COMPLETED'&&!issue&&externalReady/);
+  assert.match(watch,/kind:'scenario_completion_judgment'/);
+  assert.match(watch,/externalReady,issue:issue\|\|null/);
 });
 
 test('scenario 003 permits independent reviewer/runtime recovery while requiring exactly one root recovery', async()=>{
