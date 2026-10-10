@@ -403,6 +403,27 @@ test('reconciler rescues stale queued orchestrator work into ChatGPT execution',
   assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
 });
 
+test('reconciler immediately rescues P0 troubleshooter orchestrator repair work', async () => {
+  const self = task('urgent-repair');
+  self.adapter = 'orchestrator';
+  self.routing = undefined;
+  self.workerSelection = undefined;
+  self.workerRequirements = undefined;
+  self.timeoutMs = 0;
+  self.priority = 'P0';
+  self.agentName = 'troubleshooter';
+  self.createdAt = now();
+  self.updatedAt = self.createdAt;
+  const store = new InMemoryStore({ ...job([self]), executionMode:'fixed' });
+  const events=[];
+  const reconciler = managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,emit:event=>events.push(event)});
+  await reconciler.reconcile('j');
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.adapter,'chatgpt');
+  assert.deepEqual(durable.workerRequirements,{capabilities:[...self.capabilities],runtime:'chatgpt'});
+  assert.ok(events.some(event=>event.type==='task.orchestrator_rescued'));
+});
+
 test('reconciler does not rescue young, running, or terminal orchestrator tasks', async () => {
   const at = '2026-10-04T06:00:00.000Z';
   const young = task('young'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = '2026-10-04T05:30:00.001Z';

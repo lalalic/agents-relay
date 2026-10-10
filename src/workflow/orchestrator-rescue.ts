@@ -19,7 +19,9 @@ export const orchestratorRescueV2 = new GraphRuntime(source, {
 export function orchestratorRescueFacts(task: Task, now: number): Readonly<Record<string, unknown>> {
   const createdAt = Date.parse(task.createdAt);
   const oldEnough = Number.isFinite(createdAt) && now - createdAt >= STALE_ORCHESTRATOR_TASK_MS;
-  return { rescuable: task.kind !== 'planner' && task.adapter === 'orchestrator' && task.state === 'QUEUED' && task.executionId === null && oldEnough };
+  const urgentRepair = task.priority === 'P0' && task.agentName === 'troubleshooter';
+  return { rescuable: task.kind !== 'planner' && task.adapter === 'orchestrator' && task.state === 'QUEUED'
+    && task.executionId === null && (oldEnough || urgentRepair) };
 }
 
 export function decideOrchestratorRescue(task: Task, now: number): GraphDecision {
