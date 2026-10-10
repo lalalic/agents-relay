@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { injectProjectionFailure } from './e2e-injection.js';
+import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -324,8 +324,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
-        await injectProjectionFailure(relay,job.repository,job.id);
-        const projectedMerge = projectAuthoritativeLocalMerge(canonical, job);
+        const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
+        const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
 
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();

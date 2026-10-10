@@ -1,4 +1,4 @@
-import {allowedE2eInjection} from './e2e-injection.js';
+import {authorizedInjection} from './e2e-injection.js';
 import { implementationComplete } from './runtime-status.js';
 import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
@@ -409,7 +409,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     // Consume E2E injection before execution: a retry will not repeat it.
     // Production repositories ignore the option entirely.
-    const testInjection = task.adapter === 'codex' ? allowedE2eInjection(job.repository,task.testInjection) : undefined;
+    const testInjection = task.adapter === 'codex' ? authorizedInjection(job.repository,task.testInjection)?.method === 'worker.codex.launch' ? authorizedInjection(job.repository,task.testInjection) : undefined : undefined;
     if (testInjection) {
       const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
       if (!durable || durable.executionId!==durableExecutionId) return;

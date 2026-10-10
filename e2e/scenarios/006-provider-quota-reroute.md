@@ -16,7 +16,7 @@ For a controlled E2E injection, the Codex Adapter rejection must traverse the ac
 
 ## E2E Job instruction
 
-The Job Objective MUST tell the Planner to create **one implementation Task** with JSON field `"--test-injection":"quota_exceeded"` (or `model_not_found` / `provider_unavailable`) in `next_tasks`. Also specify `"workerRequirements":{"runtime":"codex","capabilities":["model","local_repo"]}`. Relay's internal injection module checks `E2E_REPO` against the Job repository, atomically consumes the Task option in SQLite **before execution**, and makes the Codex Adapter return a controlled nonzero worker execution result. On the next attempt, the option is absent and normal Codex execution resumes. No external injector, injected receipt, or Watcher knowledge of the option.
+The Job Objective MUST tell the Planner to create **one implementation Task** with JSON field `"--test-injection":{"method":"worker.codex.launch","action":"return","execution":"skip","mock":"worker_quota"}` (or `model_not_found` / `provider_unavailable`) in `next_tasks`. Also specify `"workerRequirements":{"runtime":"codex","capabilities":["model","local_repo"]}`. Relay's internal injection module checks `E2E_REPO` against the Job repository, atomically consumes the Task option in SQLite **before execution**, and makes the Codex Adapter return a controlled nonzero worker execution result. On the next attempt, the option is absent and normal Codex execution resumes. No external injector, injected receipt, or Watcher knowledge of the option.
 
 The controller must not alter globally shared Router FreeText Rules or other jobs. This is a **controlled Worker rejection**, not evidence of an actual provider outage.
 

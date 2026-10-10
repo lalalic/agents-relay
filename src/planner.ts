@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
@@ -22,7 +23,7 @@ export type PlannerTaskSpec = {
   dependencies?: string[];
   capabilities?: string[];
   workerRequirements?: WorkerRequirements;
-  testInjection?: string;
+  testInjection?: Task['testInjection'];
   adapter?: AdapterName;
   output?: TaskOutput;
   routing?: RoutingDecision;
@@ -271,7 +272,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       id, parentTaskId, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
-      testInjection: optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),
+      testInjection: parseTestInjection(task.testInjection ?? task['--test-injection']) ?? optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
     };
