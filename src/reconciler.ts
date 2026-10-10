@@ -116,16 +116,31 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       {
         const recoveryJob = await this.store.load(jobId);
-        for (const exhausted of exhaustedTroubleshooterRecoveries(recoveryJob)) {
+        // A failed recovery worker is itself recoverable: retry the SAME Task
+        // within its budget. No recursive Troubleshooter is generated.
+        for (const recovery of recoveryJob.tasks) {
+          if (recovery.agentName !== 'troubleshooter' || recovery.state !== 'FAILED' || recovery.attempt >= recovery.maxAttempts) continue;
+          const original = recoveryJob.tasks.find(task => task.id === recovery.parentTaskId);
+          if (!original || !['FAILED','BLOCKED'].includes(original.state)) continue;
+          await applyTaskRetryAction(recovery);
+          recovery.routing = undefined;
+          recovery.workerSelection = undefined;
+          await this.store.saveTask(recovery);
+          await this.emit(eventFor(job.id, recovery.id, original.id, 'troubleshooter.retry_queued', 'queued',
+            `Retrying failed Troubleshooter ${recovery.id} (attempt ${recovery.attempt + 1}/${recovery.maxAttempts})`,
+            'orchestrator', { originalTaskId: original.id, attempt: recovery.attempt + 1, maxAttempts: recovery.maxAttempts }));
+        }
+        const exhaustedJob = await this.store.load(jobId);
+        for (const exhausted of exhaustedTroubleshooterRecoveries(exhaustedJob)) {
           const at = new Date().toISOString();
-          recoveryJob.recoveryFailures = [...(recoveryJob.recoveryFailures ?? []), {
+          exhaustedJob.recoveryFailures = [...(exhaustedJob.recoveryFailures ?? []), {
             taskId: exhausted.original.id,
             recoveryTaskId: exhausted.recovery.id,
             reason: exhausted.reason,
             at,
           }];
-          recoveryJob.updatedAt = at;
-          await this.store.saveJob(recoveryJob);
+          exhaustedJob.updatedAt = at;
+          await this.store.saveJob(exhaustedJob);
           await this.emit(eventFor(job.id, exhausted.recovery.id, exhausted.original.id,
             'recovery.exhausted', 'failed',
             `Recovery exhausted for ${exhausted.original.id}: ${exhausted.reason}`,

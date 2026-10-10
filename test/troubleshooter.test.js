@@ -220,7 +220,7 @@ test('failed Troubleshooter records one durable recovery.exhausted fact without 
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
   recovery.state = 'FAILED';
   recovery.error = 'Troubleshooter runtime failed after diagnosis';
-  recovery.attempt = 1;
+  recovery.attempt = recovery.maxAttempts;
   const root = job([failed, recovery]);
   const store = new InMemoryStore(root);
   const events = [];
@@ -240,4 +240,24 @@ test('failed Troubleshooter records one durable recovery.exhausted fact without 
   assert.match(durable.recoveryFailures?.[0].reason ?? '', /runtime failed/);
   assert.equal(events.filter(event => event.type === 'recovery.exhausted').length, 1, 'reconcile must emit exhaustion once');
   assert.deepEqual(pendingTroubleshooterTasks(durable), []);
+});
+
+
+test('failed Troubleshooter within retry budget requeues same recovery Task without exhaustion', async () => {
+  const failed = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.state = 'FAILED'; recovery.attempt = 1; recovery.error = 'transient provider failure';
+  recovery.routing = { provider: 'openai', model: 'test-model', decidedBy: 'test', decidedAt: new Date().toISOString() };
+  const root = job([failed, recovery]);
+  const store = new InMemoryStore(root);
+  const events=[];
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[], eventBus:new MemoryEventBus(), maxConcurrent:0, emit:event=>events.push(event) });
+  await reconciler.reconcile(root.id);
+  const durable=await store.load(root.id);
+  const retried=durable.tasks.find(task=>task.id===recovery.id);
+  assert.equal(retried.state,'QUEUED');
+  assert.equal(retried.routing,undefined);
+  assert.equal(durable.tasks.filter(task=>task.agentName==='troubleshooter').length,1);
+  assert.equal(durable.recoveryFailures?.length??0,0);
+  assert.equal(events.filter(e=>e.type==='troubleshooter.retry_queued').length,1);
 });

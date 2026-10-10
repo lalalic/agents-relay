@@ -114,7 +114,7 @@ flowchart TD
 | Worker | Ordinary worker `task.failed` / `task.blocked` | Graph creates exactly one relevant Troubleshooter; recover exact original Task | Implemented | Troubleshooter/core/local-authority tests | `#2 PASS`, `#3 RUNNING` | Covered |
 | Recovery | Recoverable blocker | Troubleshooter diagnoses event history, removes blocker, uses dedicated `task recover` | Implemented | Core/troubleshooter tests | `#2 PASS`, `#3 RUNNING` | Covered |
 | Recovery | Replacement business Task instead of original retry | Reject as invalid recovery; exact original Task must reactivate | Implemented by recovery contract / tests | Core/task-action tests | `#2 PASS` | Covered |
-| Recovery | Troubleshooter itself fails | Preserve failed recovery, emit one durable `recovery.exhausted` fact, suppress recursive recovery, runtime remains `FAILED` | Implemented | Troubleshooter reconciliation/idempotence test | `#4 PLANNED` | **E2E GAP** |
+| Recovery | Troubleshooter itself fails | Retry the same failed Troubleshooter (bounded, rerouted), then recover original Task and complete Job; exhaustion is a failure requiring escalation | Implemented | Troubleshooter reconciliation/idempotence test | `#4 PLANNED` | **E2E GAP** |
 | Recovery | Genuine human/external blocker | Canonical escalation graph owns `resolved / failed / needs_user` outcome | Implemented pathway exists | Escalation/component tests need audit | `#4 PLANNED` | Needs E2E proof |
 | Worker runtime | Process exits without authoritative terminal | Terminal-event watchdog persists failure evidence and wakes recovery | Implemented | Strong core/workflow tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
 | Worker runtime | Late terminal from old execution generation | Compare event source/executionId to current generation and ignore stale terminal | Implemented | Strong core tests | `#5 PLANNED` | **E2E GAP** until #5 passes |
@@ -153,7 +153,7 @@ flowchart TD
 
 ## Known code gaps / architecture questions
 
-No unresolved lifecycle CODE GAP remains from the current map after the `.29` recovery-exhaustion work. The items previously listed here were resolved/audited as follows:
+Recovery policy revised: a recoverable Troubleshooter failure must retry and the Job must complete. Exhaustion-only termination is not E2E success. The items previously listed here were resolved/audited as follows:
 
 1. **Troubleshooter failure policy** — implemented as bounded non-recursive recovery exhaustion: one durable `recovery.exhausted` fact, no Troubleshooter-for-Troubleshooter recursion, Job lifecycle remains `ACTIVE` with runtime `FAILED`.
 2. **No viable route** — already implemented: routing failure durably fails the Task before any execution generation is claimed; normal recovery semantics then apply.

@@ -143,33 +143,23 @@ function scenario003(j){
 
 function scenario004(j){
  const tasks=j.tasks||[];
- const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
+ const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter'&&!String(x.id).startsWith('review-fix-'));
  const recoveries=tasks.filter(x=>x.agentName==='troubleshooter');
- const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
  const root=ordinary[0];
- if(j.state==='COMPLETED')return {type:'FALSE_COMPLETION',message:'Recovery-exhaustion scenario must not complete'};
- if(recoveries.length>1)return {type:'RECURSIVE_RECOVERY',recoveries:recoveries.map(x=>({id:x.id,state:x.state,parentTaskId:x.parentTaskId}))};
- if(reviews.length)return {type:'UNEXPECTED_REVIEW_AFTER_RECOVERY_EXHAUSTION',reviews:reviews.map(x=>({id:x.id,state:x.state}))};
- if(j.localMerge?.status==='succeeded')return {type:'UNEXPECTED_MERGE_AFTER_RECOVERY_EXHAUSTION',localMerge:j.localMerge};
- const recovery=recoveries[0];
- if(root?.state==='FAILED'&&recovery?.state==='FAILED'){
-   const facts=(j.recoveryFailures||[]).filter(x=>x.taskId===root.id&&x.recoveryTaskId===recovery.id);
-   if(facts.length>1)return {type:'DUPLICATE_RECOVERY_EXHAUSTION_FACT',facts};
-   if(facts.length===0){
-     const age=recovery.updatedAt?Date.now()-Date.parse(recovery.updatedAt):0;
-     if(age>30000)return {type:'RECOVERY_EXHAUSTION_FACT_MISSING',root:root.id,recovery:recovery.id};
-   }
+ const rootRecoveries=root?recoveries.filter(x=>x.parentTaskId===root.id):[];
+ if(rootRecoveries.length!==recoveries.length)return {type:'UNRELATED_RECOVERY',recoveries:recoveries.map(x=>({id:x.id,parentTaskId:x.parentTaskId}))};
+ if(rootRecoveries.length>1)return {type:'RECURSIVE_RECOVERY',recoveries:rootRecoveries.map(x=>({id:x.id,state:x.state}))};
+ if(recoveries.some(x=>x.state==='FAILED'&&x.attempt>=x.maxAttempts))return {type:'RECOVERY_BUDGET_EXHAUSTED',recoveries:recoveries.map(x=>({id:x.id,state:x.state,attempt:x.attempt,maxAttempts:x.maxAttempts}))};
+ if(j.state==='COMPLETED'){
+  if(!root||root.state!=='SUCCEEDED'||Number(root.attempt)<2)return {type:'ORIGINAL_TASK_NOT_RECOVERED',task:root};
+  if(rootRecoveries.length!==1||rootRecoveries[0].state!=='SUCCEEDED'||Number(rootRecoveries[0].attempt)<2)return {type:'TROUBLESHOOTER_RETRY_NOT_PROVEN',recoveries:rootRecoveries};
+  if((j.recoveryFailures||[]).length)return {type:'UNEXPECTED_RECOVERY_EXHAUSTION',failures:j.recoveryFailures};
+  if(j.reviewEnabled!==false&&j.review?.outcome!=='approved')return {type:'FINAL_REVIEW_NOT_APPROVED',review:j.review};
+  if(j.localMerge?.status!=='succeeded')return {type:'LOCAL_MERGE_NOT_SUCCEEDED',localMerge:j.localMerge};
+  return null;
  }
+ if(j.recoveryFailures?.length)return {type:'RECOVERY_EXHAUSTED_BEFORE_JOB_COMPLETION',failures:j.recoveryFailures};
  return null;
-}
-function scenario004Passed(j){
- const tasks=j.tasks||[];
- const ordinary=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
- const recoveries=tasks.filter(x=>x.agentName==='troubleshooter');
- const reviews=tasks.filter(x=>x.agentName==='reviewer'||x.review?.role);
- const root=ordinary[0], recovery=recoveries[0];
- const facts=(j.recoveryFailures||[]).filter(x=>root&&recovery&&x.taskId===root.id&&x.recoveryTaskId===recovery.id);
- return j.state==='ACTIVE'&&j.runtimeStatus==='FAILED'&&root?.state==='FAILED'&&recoveries.length===1&&recovery?.state==='FAILED'&&facts.length===1&&reviews.length===0&&j.localMerge?.status!=='succeeded'&&Number(state.evidence.recoveryExhausted||0)>=1;
 }
 
 function detect(j){
@@ -246,10 +236,6 @@ async function tick(){
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=detect(j);
   let external=null;
-  if(!issue&&scenario.startsWith('004-')&&scenario004Passed(j)){
-    state.phase='passed';state.passedAt=new Date().toISOString();state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);
-    console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,expectedTerminalFailure:true}));process.exit(0);return;
-  }
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
   if(!issue&&github.enabled&&boundPr<=0){
