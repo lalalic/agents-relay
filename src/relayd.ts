@@ -1,5 +1,5 @@
-import { e2eProjectionFault } from './e2e-projection-fault.js';
 #!/usr/bin/env node
+import { e2eProjectionFault } from './e2e-projection-fault.js'
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
