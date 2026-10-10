@@ -1137,6 +1137,27 @@ test('unauthorized E2E injection fails closed before launching real worker', asy
   }
 });
 
+test('projection injection survives worker launch for its later checkpoint', async () => {
+  const original=process.env.E2E_REPO; process.env.E2E_REPO='owner/repo';
+  try {
+    const t=task('projection-injection');
+    t.testInjection={method:'github.projectLocalMerge',action:'throw',execution:'after',error:{code:'SERVICE_UNAVAILABLE',message:'projection unavailable',status:503}};
+    const store=new InMemoryStore(job([t]));
+    const adapter=new FakeAdapter();
+    const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus()});
+    const stop=await reconciler.watch('j');
+    await reconciler.reconcile('j');
+    await new Promise(resolve=>setTimeout(resolve,20));
+    const durable=(await store.load('j')).tasks.find(item=>item.id==='projection-injection');
+    assert.equal(adapter.launches,1);
+    assert.equal(durable.testInjection?.method,'github.projectLocalMerge');
+    adapter.resolvers[0].resolve({summary:'runtime exited'});
+    await reconciler.close(); await stop();
+  } finally {
+    if(original===undefined) delete process.env.E2E_REPO; else process.env.E2E_REPO=original;
+  }
+});
+
 test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
   class FailedExitAdapter extends FakeAdapter {
     launch(t, signal) {

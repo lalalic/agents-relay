@@ -435,12 +435,15 @@ export class Reconciler extends ReconcilerReviewBase {
         `E2E test injection refused for repository ${job.repository}; configure E2E_REPO on relayd`, 'delivery');
       return;
     }
-    const testInjection = declaration && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
-    if (declaration && !testInjection) {
+    const workerCheckpoint = declaration?.method === 'worker.codex.launch' || declaration?.method === 'browserWorkspace.command';
+    const testInjection = workerCheckpoint && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
+    if (workerCheckpoint && !testInjection) {
       await this.failLaunch(job.id, task.id, durableExecutionId,
         `E2E test injection ${declaration.method} is incompatible with adapter ${task.adapter}`, 'delivery');
       return;
     }
+    // Non-worker checkpoints (for example GitHub projection) remain durable on
+    // the Task until their owning subsystem consumes them.
     if (testInjection) {
       const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
       if (!durable || durable.executionId!==durableExecutionId) return;
