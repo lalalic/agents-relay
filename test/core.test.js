@@ -1116,6 +1116,27 @@ test('sync adapter runtime exit without mandatory terminal event fails after bou
   await stop(); await stopEvents();
 });
 
+test('unauthorized E2E injection fails closed before launching real worker', async () => {
+  const original=process.env.E2E_REPO; delete process.env.E2E_REPO;
+  try {
+    const t=task('unauthorized-injection');
+    t.testInjection={method:'worker.codex.launch',action:'return',execution:'skip',mock:'worker_model_not_found'};
+    const store=new InMemoryStore(job([t]));
+    const adapter=new FakeAdapter();
+    const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus()});
+    const stop=await reconciler.watch('j');
+    await reconciler.reconcile('j');
+    await new Promise(resolve=>setTimeout(resolve,50));
+    const durable=(await store.load('j')).tasks.find(item=>item.id==='unauthorized-injection');
+    assert.equal(adapter.launches,0);
+    assert.equal(durable.state,'FAILED');
+    assert.match(durable.error,/E2E test injection refused/);
+    await reconciler.close(); await stop();
+  } finally {
+    if(original===undefined) delete process.env.E2E_REPO; else process.env.E2E_REPO=original;
+  }
+});
+
 test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
   class FailedExitAdapter extends FakeAdapter {
     launch(t, signal) {

@@ -425,9 +425,22 @@ export class Reconciler extends ReconcilerReviewBase {
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     // Consume E2E injection before execution: a retry will not repeat it.
-    // Production repositories ignore the option entirely.
+    // Fail closed when a Task carries an injection declaration but the daemon
+    // is not explicitly authorized for that repository. Silently ignoring the
+    // declaration would run real workload and make an E2E round look healthy
+    // even though its mandatory fault was never exercised.
     const declaration = authorizedInjection(job.repository, task.testInjection);
+    if (task.testInjection && !declaration) {
+      await this.failLaunch(job.id, task.id, durableExecutionId,
+        `E2E test injection refused for repository ${job.repository}; configure E2E_REPO on relayd`, 'delivery');
+      return;
+    }
     const testInjection = declaration && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
+    if (declaration && !testInjection) {
+      await this.failLaunch(job.id, task.id, durableExecutionId,
+        `E2E test injection ${declaration.method} is incompatible with adapter ${task.adapter}`, 'delivery');
+      return;
+    }
     if (testInjection) {
       const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
       if (!durable || durable.executionId!==durableExecutionId) return;
