@@ -2,6 +2,7 @@ import type { DurableStore } from './store.js';
 import type { Job } from './types.js';
 import { transitionJobEvent } from './scheduler.js';
 import { tryApplyTaskCancelAction } from './task-actions.js';
+import { decideJobLifecycle, dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 
 export const JOB_ACTIVATE_ACTION = 'job.activate' as const;
 export const JOB_CANCEL_ACTION = 'job.cancel' as const;
@@ -39,8 +40,34 @@ async function cancelActiveWork(store: DurableStore, job: Job, reason: string): 
   }
 }
 
+function cancelActiveWorkSnapshot(job: Job, reason: string): void {
+  for (const plan of (job.plans ?? []).filter(item => item.status === 'PLANNING')) {
+    plan.status = 'FAILED';
+    plan.error = reason;
+    plan.assessment = `Planning failed: ${reason}`;
+    plan.leaseOwner = null;
+    plan.leaseExpiresAt = null;
+    plan.executionId = null;
+    plan.updatedAt = new Date().toISOString();
+  }
+  for (const task of job.tasks) tryApplyTaskCancelAction(task, reason);
+}
+
 export async function applyJobCancelAction(store: DurableStore, job: Job, reason = 'Job cancelled'): Promise<Job> {
   const from = job.state;
+  if (store.mutateJob) {
+    const updated = await store.mutateJob(job.id, current => {
+      const decision = decideJobLifecycle(current, 'cancel');
+      if (!decision.accepted) throw new Error(`Job ${current.id} is not cancellable (${current.state})`);
+      dispatchJobLifecycleSync(current, 'cancel');
+      if (!decision.actions.includes('effect.cancelActiveTasks')) throw new Error('Unsupported job.cancel effect');
+      cancelActiveWorkSnapshot(current, reason);
+      current.updatedAt = new Date().toISOString();
+      return current;
+    });
+    Object.assign(job, structuredClone(updated));
+    return job;
+  }
   try {
     await transitionJobEvent(
       job,

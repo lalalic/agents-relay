@@ -15,12 +15,18 @@ export async function executeManualPlan(
   const active = pendingPlan(job);
   if (active && active.executionId) throw new Error(`Planning round ${active.id} is already PLANNING`);
   const round = active ?? createPlanRound(job, { guidance, manual: true, timeoutMs });
-  if (!active) await store.appendPlan(round);
-  job = await store.load(jobId);
-  if (job.state === 'DRAFT') {
-    await applyJobActivateAction(job);
-    await store.saveJob(job);
+  if (!active && store.mutateJob) {
+    const committed = await store.mutateJob(jobId, current => {
+      if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot plan terminal job ${current.id} (${current.state})`);
+      current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
+      if (current.state === 'DRAFT') applyJobActivateAction(current);
+      return current;
+    });
+    job = structuredClone(committed);
+  } else {
+    if (!active) await store.appendPlan(round);
     job = await store.load(jobId);
+    if (job.state === 'DRAFT') { await applyJobActivateAction(job); await store.saveJob(job); job = await store.load(jobId); }
   }
   const durableRound = (job.plans ?? []).find(plan => plan.id === round.id);
   if (!durableRound) throw new Error(`Planning round ${round.id} was not persisted`);

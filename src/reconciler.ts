@@ -367,6 +367,28 @@ export class Reconciler extends ReconcilerReviewBase {
         attempt: freshTask.attempt,
         startedAt: new Date(startedAt).toISOString(),
       }].slice(-8);
+      if (this.store.mutateJob) {
+        let claimed: Task | undefined;
+        await this.store.mutateJob(job.id, current => {
+          const durable = current.tasks.find(item => item.id === freshTask!.id);
+          if (!durable || durable.state !== 'QUEUED' || durable.executionId !== null
+            || !dependencyReady(durable, new Map(current.tasks.map(item => [item.id, item])))) return current;
+          // Routing is a pre-claim fact; copy only that fact into the fresh
+          // authoritative snapshot, then claim the generation atomically.
+          if (freshTask!.routing) durable.routing = structuredClone(freshTask!.routing);
+          if (freshTask!.workerSelection) durable.workerSelection = structuredClone(freshTask!.workerSelection);
+          durable.attempt += 1;
+          durable.leaseOwner = this.options.owner;
+          durable.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
+          durable.executionId = randomUUID();
+          durable.executionHistory = [...(durable.executionHistory ?? []), {
+            id: durable.executionId, attempt: durable.attempt, startedAt: new Date(startedAt).toISOString(),
+          }].slice(-8);
+          claimed = structuredClone(durable);
+          return current;
+        });
+        return claimed;
+      }
       await this.store.saveTask(freshTask);
       return freshTask;
     }) ?? null;

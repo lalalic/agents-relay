@@ -1,5 +1,5 @@
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
-import type { DurableStore, Comment, PullRequestState } from './store.js';
+import type { AtomicJobMutation, DurableStore, Comment, PullRequestState } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { registerBlockerDependency, resolveBlockerDependencies, type BlockerDependentTarget, type BlockerResolutionSummary } from './blockers.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
@@ -261,10 +261,20 @@ export class LocalAuthorityDurableStore implements DurableStore {
     });
   }
 
-  private async mutate(jobId: string, mutation: (job: Job) => Job): Promise<void> {
+  /**
+   * Apply all related lifecycle changes to one freshly loaded Job snapshot.
+   * RelayStore owns the SQLite transaction; callers must not call saveJob,
+   * savePlan, or saveTask from inside this callback.
+   */
+  async mutateJob(jobId: string, mutation: AtomicJobMutation): Promise<Job> {
     if (!this.authority.mutateJob) throw new Error('Atomic SQLite mutation is required for local lifecycle authority');
     const changed = await this.authority.mutateJob(jobId, mutation);
     publishLocalCommit(changed);
+    return structuredClone(changed);
+  }
+
+  private async mutate(jobId: string, mutation: AtomicJobMutation): Promise<void> {
+    await this.mutateJob(jobId, mutation);
   }
 
   async listAgents(): Promise<AgentRegistration[]> {

@@ -46,6 +46,22 @@ function clearExecution(task: Task): void {
   task.executionId = null;
 }
 
+function applyTaskRetrySnapshot(task: Task, policy: TaskRetryPolicy = {}): void {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
+  const decision = tryTransitionTaskEvent(task, 'retry');
+  if (!decision.accepted) throw lifecycleRejection(task, 'restartable');
+  if (policy.extendBudget) task.maxAttempts = extendRetryBudget(task);
+  clearExecution(task);
+}
+
+/** Fixed-job authoritative unblock continuation, applied inside one Job snapshot mutation. */
+export function applyTaskUnblockRetrySnapshot(task: Task): void {
+  if (!tryTransitionTaskEvent(task, 'retry').accepted) throw lifecycleRejection(task, 'retryable after unblock');
+  task.maxAttempts = extendRetryBudget(task);
+  clearExecution(task);
+  delete task.blockedBy;
+}
+
 /** Shared task.retry mutation. The canonical lifecycle graph is the sole legality authority. */
 export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy = {}): Promise<Task> {
   if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
@@ -151,6 +167,30 @@ export async function dispatchTaskAction(
   store: DurableStore,
   request: TaskActionRequest,
 ): Promise<TaskActionResult> {
+  if (store.mutateJob && ([TASK_RETRY_ACTION, TASK_RECOVER_ACTION, TASK_CANCEL_ACTION] as readonly TaskActionId[]).includes(request.id)) {
+    let updatedTask: Task | undefined;
+    const updated = await store.mutateJob(request.jobId, current => {
+      const task = current.tasks.find(item => item.id === request.taskId);
+      if (!task) throw new Error(`Task ${request.taskId} not found`);
+      if (request.id === TASK_RECOVER_ACTION) {
+        const recovery = request.recoveryTaskId ? current.tasks.find(item => item.id === request.recoveryTaskId) : undefined;
+        if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED', 'RUNNING'].includes(recovery.state))
+          throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
+      }
+      const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(current, task, request.id);
+      if (request.id === TASK_RETRY_ACTION || request.id === TASK_RECOVER_ACTION) applyTaskRetrySnapshot(task, { extendBudget: true });
+      else if (request.id === TASK_CANCEL_ACTION) cancelTaskSnapshot(task);
+      for (const mutation of relatedMutations) {
+        const related = current.tasks.find(item => item.id === mutation.taskId);
+        if (!related) throw new Error(`Related task ${mutation.taskId} not found`);
+        cancelTaskSnapshot(related, mutation.reason);
+      }
+      updatedTask = structuredClone(task);
+      return current;
+    });
+    if (!updatedTask) throw new Error(`Task ${request.taskId} was not updated`);
+    return { job: updated, task: updatedTask };
+  }
   const job = await store.load(request.jobId);
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
@@ -173,4 +213,8 @@ export async function dispatchTaskAction(
   await store.saveTask(task);
   for (const related of changedRelated) await store.saveTask(related);
   return { job, task };
+}
+
+function cancelTaskSnapshot(task: Task, reason = 'Cancelled by user'): void {
+  if (!tryApplyTaskCancelAction(task, reason)) throw lifecycleRejection(task, 'cancellable');
 }

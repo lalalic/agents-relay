@@ -8,6 +8,7 @@ import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { parseGitHubWebhook } from '../dist/github-webhook.js';
+import { subscribeLocalCommits } from '../dist/local-commit-events.js';
 
 const at = '2026-10-08T20:00:00.000Z';
 function job(id = 'local') {
@@ -103,6 +104,50 @@ test('atomic local task and plan updates preserve concurrent independent childre
   assert.deepEqual((await second.load('local')).plans.map(value => value.id), ['plan-1','plan-2']);
   firstSqlite.close(); secondSqlite.close();
   await rm(dir, { recursive: true, force: true });
+});
+
+test('atomic snapshot mutation rolls back related lifecycle changes together', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
+  await store.saveJob({ ...job(), tasks: [task()] });
+  await assert.rejects(() => store.mutateJob('local', current => {
+    current.state = 'CANCELLED';
+    current.tasks[0].state = 'CANCELLED';
+    throw new Error('simulated notification preparation failure');
+  }), /simulated notification preparation failure/);
+  const unchanged = await store.load('local');
+  assert.equal(unchanged.state, 'ACTIVE');
+  assert.equal(unchanged.tasks[0].state, 'QUEUED');
+  sqlite.close();
+});
+
+test('atomic snapshot mutation serializes competing updates from fresh snapshots', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-atomic-snapshot-'));
+  const path = join(dir, 'relay.db');
+  const firstSqlite = new SQLiteRelayStore(path);
+  const secondSqlite = new SQLiteRelayStore(path);
+  const first = new LocalAuthorityDurableStore(firstSqlite, new InMemoryStore());
+  const second = new LocalAuthorityDurableStore(secondSqlite, new InMemoryStore());
+  await first.saveJob(job());
+  await Promise.all([
+    first.mutateJob('local', current => { current.tasks.push({ ...task(), id: 'first' }); return current; }),
+    second.mutateJob('local', current => { current.tasks.push({ ...task(), id: 'second' }); return current; }),
+  ]);
+  assert.deepEqual((await first.load('local')).tasks.map(item => item.id).sort(), ['first', 'second']);
+  firstSqlite.close();
+  secondSqlite.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('committed lifecycle state survives a listener notification failure', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
+  await store.saveJob(job());
+  const unsubscribe = subscribeLocalCommits(() => { throw new Error('dashboard listener unavailable'); });
+  await assert.rejects(() => store.mutateJob('local', current => { current.state = 'CANCELLED'; return current; }), /dashboard listener unavailable/);
+  unsubscribe();
+  assert.equal((await store.load('local')).state, 'CANCELLED');
+  sqlite.close();
 });
 
 test('read-only local discovery cannot reset an in-flight external action claim', async () => {
