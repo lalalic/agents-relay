@@ -332,6 +332,12 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         // review-only PR when there is an actual diff against main.
         const ahead = Number(await gitText(canonical, ['rev-list', '--count', `${targetRef}..${sourceRef}`]));
         if (!Number.isFinite(ahead) || ahead <= 0) continue;
+        // GitHub compares origin/main, not local main. Do not invoke the legacy
+        // empty-PR bootstrap path when the published base already contains the
+        // source head (for example when main was pushed by another Job).
+        await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/main:refs/remotes/origin/main`]);
+        const remoteAhead = Number(await gitText(canonical, ['rev-list','--count',`refs/remotes/origin/main..${sourceRef}`]));
+        if (!Number.isFinite(remoteAhead) || remoteAhead <= 0) continue;
         const pr = await resolvePullRequest(client, job.repository, { head: branch, base, title: job.title, body: job.objective ?? job.description ?? '' });
         if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
         job = await relay.mutateJob(job.id, current => ({ ...current, externalPrNumber: pr.number, updatedAt: new Date().toISOString() }));
