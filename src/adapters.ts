@@ -401,7 +401,17 @@ export class ChatGptAdapter implements WorkerAdapter {
         controller.signal,
       );
       try {
-        const output = await (run.submitted ?? run.promise);
+        // Start acknowledgement may expire while browser submission is still pending.
+        // Race its rejection with delivery so a hung browser cannot hold a QUEUED
+        // execution until the full lease expires. A successful ack never shortcuts delivery.
+        const submission = run.submitted ?? run.promise;
+        const startAckFailure = context.waitForWorkerStart?.then(
+          () => new Promise<never>(() => {}),
+          error => Promise.reject(error),
+        );
+        const output = await (startAckFailure
+          ? Promise.race([submission, startAckFailure])
+          : submission);
         const response = parseBrowserWorkerResponse(output);
         if (task.chatgptThreadDelivery && (typeof response.thread_id !== 'string' || response.thread_id !== task.chatgptThreadDelivery.threadId)) {
           throw new Error('browser-worker submitted to an unexpected ChatGPT thread');

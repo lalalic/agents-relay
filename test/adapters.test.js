@@ -443,3 +443,23 @@ test('CodexAdapter prefers structured turn.failed provider error over incidental
     await rm(root,{recursive:true,force:true});
   }
 });
+
+
+test('ChatGptAdapter aborts hung browser submission when worker start ack expires',async()=>{
+  const timeout=new Error('worker_start_timeout: no worker task.started start-ack');
+  timeout.name='StartAckTimeout';
+  const {StartAckTimeout}=await import('../dist/adapters.js');
+  let rejectAck;
+  const ack=new Promise((_resolve,reject)=>{rejectAck=reject;});
+  ack.catch(()=>{});
+  let released=false;
+  const adapter=new ChatGptAdapter({agentRunner:()=>({
+    promise:new Promise(()=>{}),submitted:new Promise(()=>{}),release:()=>{released=true;},cancel(){}
+  })});
+  const execution=adapter.launch(task(),new AbortController().signal,{waitForWorkerStart:ack});
+  await new Promise(resolve=>setImmediate(resolve));
+  rejectAck(new StartAckTimeout(timeout.message));
+  await assert.rejects(execution.promise,/worker_start_timeout/);
+  await assert.rejects(execution.launched,/worker_start_timeout/);
+  assert.equal(released,true);
+});
