@@ -44,7 +44,8 @@ async function terminateFromEvent(){
   if(!Number.isSafeInteger(pid)||pid<=1)throw Error('unsafe injected worker PID');
   const current=await get(`/api/job?id=${encodeURIComponent(jobId)}`);
   const task=(current.tasks||[]).find(t=>t.id===taskId);
-  if(!task||task.executionId!==executionId||task.state!=='RUNNING')throw Error(`stale launch event: ${taskId}/${executionId}`);
+  if(!task||task.executionId!==executionId||!['QUEUED','RUNNING'].includes(task.state))throw Error(`stale launch event: ${taskId}/${executionId} (${task?.state??'missing'})`);
+  try{process.kill(pid,0);}catch(error){throw Error(`worker PID ${pid} is no longer alive: ${error.message}`);}
   process.kill(pid,'SIGTERM');
   const receipt={scenario,phase,jobId,taskId,pid,executionId,sourceId:executionEventSource(jobId,taskId,executionId),signal:'SIGTERM',at:new Date().toISOString()};
   save(receipt);console.log(JSON.stringify(receipt));
