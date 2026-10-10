@@ -1,3 +1,4 @@
+import { e2eProjectionFault } from './e2e-projection-fault.js';
 #!/usr/bin/env node
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
@@ -323,6 +324,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
+        e2eProjectionFault(job.repository,job.id);
         const projectedMerge = projectAuthoritativeLocalMerge(canonical, job);
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
