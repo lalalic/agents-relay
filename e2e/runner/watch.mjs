@@ -260,6 +260,16 @@ async function tick(){
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=state.scenario005Issue||detect(j);
+  // Provider quota test may not reach review or PASS without REAL injected 429
+  // and proof of original-task retry. Reject a nominally successful workload.
+  if(scenario.startsWith('006-')){
+    const quotaReceipt=join(dirname(statePath),'provider-quota-injected.json');
+    const impl=(j.tasks||[]).filter(t=>t.agentName==='implementation');
+    const reviewStarted=(j.tasks||[]).some(t=>t.agentName==='reviewer');
+    if(reviewStarted && !existsSync(quotaReceipt)) issue={type:'PROVIDER_QUOTA_INJECTION_MISSING',message:'Reviewer started without external scoped provider quota injection receipt; round is invalid'};
+    if(j.state==='COMPLETED' && (!existsSync(quotaReceipt)||!impl.some(t=>Number(t.attempt)>=2)))issue={type:'PROVIDER_REROUTE_NOT_PROVEN',message:'Job completed without genuine injected quota failure and same-Task recovery'};
+  }
+
   // An abnormal computed status is a decision point even when recovery is expected.
   // Never turn it into a forced repair/cancellation without human/model judgment.
   if(pendingAbnormalStatus){

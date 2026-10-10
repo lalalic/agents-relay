@@ -137,3 +137,10 @@ test('COMPLETED runtime transitions require same-thread scenario judgment rather
  assert.match(handoff,/payload\.kind==='scenario_completion_judgment'/);
  assert.match(handoff,/COMPLETED alone is NOT PASS/);
 });
+
+test('scenario 006 rejects missing provider quota injection and original recovery',async()=>{
+ const watch=await read('../e2e/runner/watch.mjs');
+ assert.match(watch,/PROVIDER_QUOTA_INJECTION_MISSING/);
+ assert.match(watch,/PROVIDER_REROUTE_NOT_PROVEN/);
+ assert.match(watch,/provider-quota-injected\.json/);
+});
