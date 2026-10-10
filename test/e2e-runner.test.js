@@ -164,3 +164,11 @@ test('scenario 007 watcher ignores private injection implementation',async()=>{
  const watcher=await read('../e2e/runner/watch.mjs');
  assert.doesNotMatch(watcher,/e2e\/faults|projection-failure\.json|E2E_PROJECTION_FAULT_DIR/);
 });
+
+test('009 daemon restart triggers only after a real implementation process launch',async()=>{
+ const watch=await read('../e2e/runner/watch.mjs');
+ assert.match(watch,/scenario.startsWith\('009-'\)/);
+ assert.match(watch,/task.process.launched/);
+ assert.match(watch,/daemon-restarted\.json/);
+ assert.match(watch,/restart-daemon/);
+});

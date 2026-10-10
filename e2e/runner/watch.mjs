@@ -261,12 +261,23 @@ async function tick(){
     }
     if(step.issue)state.scenario005Issue=step.issue;
   }
+  if(scenario.startsWith('009-') && j.state!=='CANCELLED'){
+    const receipt=join(dirname(statePath),'daemon-restarted.json');
+    if(!existsSync(receipt)){
+      const launched=newEvents.map(x=>x.event).find(e=>e?.type==='task.process.launched' && Number(e.data?.pid)>1 && e.data?.executionId && (j.tasks||[]).some(t=>t.id===e.task_id && t.agentName==='implementation' && t.state==='RUNNING' && t.executionId===e.data.executionId));
+      if(launched){
+        const run=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','restart-daemon','--out',receipt],{encoding:'utf8',cwd:root,timeout:120000});
+        if(run.status!==0)state.scenario009Issue={type:'DAEMON_RESTART_FAILED',message:run.stderr||run.error?.message||'restart failed'};
+        else console.log(JSON.stringify({event:'scenario_action',action:'restart-daemon',jobId,taskId:launched.task_id,executionId:launched.data.executionId}));
+      }
+    }
+  }
   const github=githubCapability();
   if(j.state==='CANCELLED'&&existsSync(expectedCancelPath)){
     state.phase='superseded';state.supersededAt=new Date().toISOString();state.fingerprint=null;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_superseded',repo,jobId,scenario}));process.exit(0);return;
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
-  let issue=state.scenario005Issue||detect(j);
+  let issue=state.scenario005Issue||state.scenario009Issue||detect(j);
   // An abnormal computed status is a decision point even when recovery is expected.
   // Never turn it into a forced repair/cancellation without human/model judgment.
   if(pendingAbnormalStatus){
