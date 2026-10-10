@@ -224,6 +224,8 @@ async function tick(){
       state.evidence.workerRejections.push({taskId:e.task_id,executionId:e.data.executionId,reason:e.data.reason,message:e.message});
     }
     if(e.type==='task.rerouting')state.evidence.workerRecoveryRouting=true;
+    if(scenario.startsWith('008-') && e.type==='task.process.async_exited')state.evidence.asyncTransportExit={taskId:e.task_id,executionId:e.data?.executionId,at:e.timestamp};
+    if(scenario.startsWith('008-') && e.type==='task.completed' && state.evidence.asyncTransportExit?.taskId===e.task_id)state.evidence.asyncBusinessTerminal={taskId:e.task_id,at:e.timestamp};
   }
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
@@ -330,6 +332,8 @@ async function tick(){
     if(!rejectionEvidence.length||!recovered)
       issue={type:'SCENARIO_006_EVIDENCE_MISSING',rejectionEvidence,recovered,attempt:original?.attempt??null};
   }
+  if(scenario.startsWith('008-') && j.state==='COMPLETED' && (!state.evidence.asyncTransportExit || !state.evidence.asyncBusinessTerminal || (Date.parse(state.evidence.asyncBusinessTerminal.at) <= Date.parse(state.evidence.asyncTransportExit.at))))
+    issue={type:'SCENARIO_008_ASYNC_ORDERING_MISSING',message:'Normal async transport exit strictly before authoritative business terminal is not proven'};
   const externalReady=!github.enabled || external?.githubState==='MERGED';
   // COMPLETED is a judgment boundary, not an automatic scenario PASS.
   // The controller sends all collected evidence for this round to the same
