@@ -29,7 +29,7 @@ When the production daemon has GitHub integration enabled, the local Job must au
 
 ## FAIL
 
-Any manual lifecycle nudge is needed, the Job stalls/fails, Review or local merge does not complete, or enabled GitHub integration fails to converge to PR `MERGED`.
+Any manual lifecycle nudge is needed, the Job stalls/fails, Review or local merge does not complete, or enabled GitHub integration fails to converge to PR `CLOSED` after main sync.
 
 <!-- PLANNER-CONTRACT:START -->
 ## Mandatory Planner contract

@@ -10,3 +10,6 @@ coverage/
 
 # Local runtime router rules
 .agents-relay-execution-router-rules.md
+
+# E2E runtime results and per-run performance receipts
+e2e/runs/

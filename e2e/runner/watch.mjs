@@ -328,25 +328,18 @@ async function tick(){
   let external=null;
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
-  if(!issue&&github.enabled&&boundPr<=0){
-    const age=Date.now()-Date.parse(j.createdAt||new Date().toISOString());
-    if(age>60000)issue={type:'GITHUB_PR_NOT_CREATED',message:'GitHub is enabled but this Job has no external PR binding after 60s'};
-  }
-  if(j.state==='COMPLETED'&&!issue&&github.enabled){
-    if(boundPr<=0)issue={type:'GITHUB_PR_NOT_CREATED',message:'GitHub is enabled but completed Job has no external PR binding'};
-    else {
-      external=externalJobSnapshot(j);
-      if(external?.error)issue={type:'GITHUB_VERIFICATION_UNAVAILABLE',message:external.error,prNumber:boundPr};
-      else if(external?.githubState!=='MERGED'){
-        const now=new Date().toISOString();
-        state.evidence.projectionPendingSince ??= now;
-        const pendingMs=Date.now()-Date.parse(state.evidence.projectionPendingSince);
-        if(pendingMs>=30000)issue={type:'GITHUB_PR_NOT_MERGED',prNumber:boundPr,githubState:external?.githubState||'UNKNOWN',pendingMs};
-      } else {
-        state.evidence.projectionPendingSince=null;
-      }
-    }
-  } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
+  // Local merge is authoritative. A display PR is optional, including when
+  // the Job completes before there is a publishable source-branch diff.
+  if(j.state==='COMPLETED'&&!issue&&github.enabled&&boundPr>0){
+    external=externalJobSnapshot(j);
+    if(external?.error)issue={type:'GITHUB_VERIFICATION_UNAVAILABLE',message:external.error,prNumber:boundPr};
+    else if(!['CLOSED','MERGED'].includes(external?.githubState)){
+      const now=new Date().toISOString();
+      state.evidence.projectionPendingSince ??= now;
+      const pendingMs=Date.now()-Date.parse(state.evidence.projectionPendingSince);
+      if(pendingMs>=30000)issue={type:'GITHUB_PR_NOT_ARCHIVED',prNumber:boundPr,githubState:external?.githubState||'UNKNOWN',pendingMs};
+    }else state.evidence.projectionPendingSince=null;
+  }else if(j.state!=='COMPLETED')state.evidence.projectionPendingSince=null;
   if(!issue&&scenario.startsWith('005-')&&j.state==='COMPLETED'&&!scenario005PassEligible(join(dirname(statePath),'terminated.json'),join(dirname(statePath),'stale-replayed.json'))){
     issue={type:'SCENARIO_005_EVIDENCE_MISSING',message:'Job completed without both real worker termination and stale-generation injection receipts'};
   }
@@ -359,7 +352,7 @@ async function tick(){
   }
   if(scenario.startsWith('008-') && j.state==='COMPLETED' && (!state.evidence.asyncTransportExit || !state.evidence.asyncBusinessTerminal || (Date.parse(state.evidence.asyncBusinessTerminal.at) <= Date.parse(state.evidence.asyncTransportExit.at))))
     issue={type:'SCENARIO_008_ASYNC_ORDERING_MISSING',message:'Normal async transport exit strictly before authoritative business terminal is not proven'};
-  const externalReady=!github.enabled || external?.githubState==='MERGED';
+  const externalReady=!github.enabled || boundPr<=0 || ['CLOSED','MERGED'].includes(external?.githubState);
   // COMPLETED is a judgment boundary, not an automatic scenario PASS.
   // The controller sends all collected evidence for this round to the same
   // ChatGPT thread. Only that turn may decide PASS / fresh round / next scenario.

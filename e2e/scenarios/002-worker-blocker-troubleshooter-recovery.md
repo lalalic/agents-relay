@@ -23,7 +23,7 @@ implementation attempt 1
   -> independent Review approves
   -> local Git merge succeeds
   -> Job COMPLETED
-  -> if GitHub integration is enabled for this Job: PR MERGED
+  -> if GitHub integration is enabled for this Job: PR CLOSED after main sync
 ```
 
 ## PASS
@@ -45,7 +45,7 @@ implementation attempt 1
 - a human manually retries/unblocks/reconciles the Job
 - a replacement implementation Task hides the failed original Task instead of recovering it
 - the Job fails to reach `COMPLETED`
-- enabled GitHub integration fails to converge to PR `MERGED`
+- enabled GitHub integration fails to converge to PR `CLOSED` after main sync
 
 <!-- PLANNER-CONTRACT:START -->
 ## Mandatory Planner contract
