@@ -258,7 +258,23 @@ async function tick(){
     }
   } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
   const externalReady=!github.enabled || external?.githubState==='MERGED';
-  if(j.state==='COMPLETED'&&!issue&&externalReady){state.phase='passed';state.passedAt=new Date().toISOString();state.external=external;state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external}));process.exit(0)}
+  if(j.state==='COMPLETED'&&!issue&&externalReady){
+    state.phase='passed';state.passedAt ??= new Date().toISOString();state.external=external;state.fingerprint=null;
+    save(statePath,state);
+    if(handoffCommand && !state.passHandoffDelivered){
+      const passPayload={kind:'scenario_pass',observedAt:new Date().toISOString(),repo,jobId,scenario,branch,prNumber:boundPr,jobState:j.state,githubState:external?.githubState,evidence:state.evidence};
+      save(handoffPath,passPayload);
+      const delivery=spawnSync(handoffCommand,[handoffPath],{encoding:'utf8',cwd:root,timeout:120000,env:{...process.env,...(threadId?{E2E_CHATGPT_THREAD_ID:threadId}:{})}});
+      if(delivery.status===0){
+        try{const receipt=JSON.parse(delivery.stdout.trim().split('\n').at(-1));state.passHandoffDelivered=receipt.status==='submitted'||receipt.status==='scheduled';}
+        catch(error){console.error('invalid PASS handoff receipt:',error.message)}
+      }else console.error('PASS handoff failed:',delivery.stderr||delivery.error?.message||delivery.status);
+      save(statePath,state);
+      if(!state.passHandoffDelivered)return;
+    }
+    console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external,handoffDelivered:!!state.passHandoffDelivered}));
+    process.exit(0);return;
+  }
   if(state.phase==='passed')state.phase='monitoring';
   if(!issue && state.phase==='awaiting_repair'){state.phase='monitoring';state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;}
   if(issue){
@@ -272,8 +288,9 @@ async function tick(){
       if(result.status===0){
         try{
           const receipt=JSON.parse(result.stdout.trim().split('\n').at(-1));
-          if(receipt.status!=='scheduled'||!receipt.transfer_id)throw Error('missing transfer receipt');
-          state.pendingTransferId=receipt.transfer_id;
+          if(receipt.status==='scheduled'&&receipt.transfer_id)state.pendingTransferId=receipt.transfer_id;
+          else if(receipt.status==='submitted')state.delivered=true;
+          else throw Error('missing successful transfer receipt');
         }catch(error){console.error('invalid handoff receipt:',error.message)}
       }else console.error('handoff failed',result.stderr||result.error?.message||result.status);
     }

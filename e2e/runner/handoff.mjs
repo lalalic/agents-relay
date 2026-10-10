@@ -9,7 +9,13 @@ if(!payloadPath){console.error('handoff payload path is required');process.exit(
 const threadId=process.env.E2E_CHATGPT_THREAD_ID?.trim();
 if(!threadId){console.error('E2E_CHATGPT_THREAD_ID is required');process.exit(64)}
 const payload=JSON.parse(readFileSync(payloadPath,'utf8'));
-const message=[
+const message=payload.kind==='scenario_pass' ? [
+ 'The E2E controller VERIFIED PASS for '+payload.scenario+' in this ChatGPT thread.',
+ 'Finished Job: '+payload.jobId+'; external PR: '+payload.prNumber+'; checked terminal state: '+payload.jobState+'; GitHub state: '+(payload.githubState||'not enabled')+'.',
+ 'Evidence: '+JSON.stringify(payload.evidence||{}),
+ 'NOW continue the production E2E campaign in this same thread. Update the lifecycle coverage map and start the NEXT unpassed scenario through npm run e2e. Do not stop at this PASS; do not run overlapping scenarios.',
+ 'Every non-human-blocker scenario must finish with Job COMPLETED and GitHub MERGED if enabled. Continue until scenarios 001–010 all pass.'
+].join('\n') : [
  'E2E runner detected a blocking defect; continue repairing NOW in this ChatGPT thread.',
  'The E2E runner is the controller; Agents Relay is the system under test.',
  'Do not manually retry/reconcile/review/unblock/merge the failed Job.',
