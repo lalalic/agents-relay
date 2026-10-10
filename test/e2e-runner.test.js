@@ -159,3 +159,8 @@ test('scenario 006 uses planner declaration rather than external injector',async
  const plan=await read('../src/planner.ts');
  assert.match(plan,/task\['--test-injection'\]/);
 });
+
+test('scenario 007 cannot pass without real projection fault evidence',async()=>{
+ const watch=await read('../e2e/runner/watch.mjs');
+ assert.match(watch,/SCENARIO_007_PROJECTION_INJECTION_MISSING/);
+});
