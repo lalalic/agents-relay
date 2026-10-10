@@ -126,3 +126,13 @@ test('watcher escalates every abnormal computed runtime status transition for mo
   assert.match(handoff,/payload\.kind==='runtime_status_judgment'/);
   assert.match(handoff,/Determine if this is expected scenario fault injection/);
 });
+
+test('COMPLETED runtime transitions require same-thread scenario judgment rather than automatic PASS',async()=>{
+ const watcher=await read('../e2e/runner/watch.mjs');const handoff=await read('../e2e/runner/handoff.mjs');
+ assert.match(watcher,/kind:'scenario_completion_judgment'/);
+ assert.match(watcher,/completion_judgment_submitted/);
+ assert.match(watcher,/awaiting_completion_judgment/);
+ assert.doesNotMatch(watcher,/state\.phase='passed';/);
+ assert.match(handoff,/payload\.kind==='scenario_completion_judgment'/);
+ assert.match(handoff,/COMPLETED alone is NOT PASS/);
+});

@@ -9,7 +9,13 @@ if(!payloadPath){console.error('handoff payload path is required');process.exit(
 const threadId=process.env.E2E_CHATGPT_THREAD_ID?.trim();
 if(!threadId){console.error('E2E_CHATGPT_THREAD_ID is required');process.exit(64)}
 const payload=JSON.parse(readFileSync(payloadPath,'utf8'));
-const message=payload.kind==='runtime_status_judgment' ? [
+const message=payload.kind==='scenario_completion_judgment' ? [
+ 'E2E Job computed runtime status reached COMPLETED. Make the final scenario judgment NOW in this same ChatGPT thread.',
+ 'Job '+payload.jobId+'; scenario '+payload.scenario+'; PR #'+payload.prNumber+'; GitHub '+payload.githubState+'.',
+ 'Candidate evidence: '+JSON.stringify({issue:payload.issue,evidence:payload.evidence,injections:payload.injections,plans:payload.plans,tasks:payload.tasks}),
+ 'Read the scenario objective and independently confirm ALL mandatory injected faults, recovery generations, final review, local merge and GitHub MERGED. COMPLETED alone is NOT PASS.',
+ 'If the full objective passes, update the lifecycle coverage map and start the NEXT unpassed scenario using npm run e2e. If missing/invalid evidence, record round INVALID and start a fresh round of the SAME scenario (do not change the completed Job). If a production defect remains, fix/test/deploy first. Do not run overlapping scenarios. The external E2E controller is the authority; never manually retry/reconcile/review/unblock/merge the SUT Job.'
+].join('\n') : payload.kind==='runtime_status_judgment' ? [
  'E2E computed Job runtime status entered an abnormal state. Make a judgment NOW in this same ChatGPT thread.',
  'Status transition: '+JSON.stringify(payload.transition)+'. Job: '+payload.jobId+'; scenario: '+payload.scenario+'.',
  'Current durable snapshot: '+JSON.stringify({runtimeStatus:payload.computedStatus,jobState:payload.jobState,plans:payload.plans,tasks:payload.tasks}),

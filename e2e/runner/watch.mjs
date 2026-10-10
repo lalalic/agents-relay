@@ -319,22 +319,33 @@ async function tick(){
     issue={type:'SCENARIO_005_EVIDENCE_MISSING',message:'Job completed without both real worker termination and stale-generation injection receipts'};
   }
   const externalReady=!github.enabled || external?.githubState==='MERGED';
-  if(j.state==='COMPLETED'&&!issue&&externalReady){
-    state.phase='passed';state.passedAt ??= new Date().toISOString();state.external=external;state.fingerprint=null;
-    save(statePath,state);
-    if(handoffCommand && !state.passHandoffDelivered){
-      const passPayload={kind:'scenario_pass',observedAt:new Date().toISOString(),repo,jobId,scenario,branch,prNumber:boundPr,jobState:j.state,githubState:external?.githubState,evidence:state.evidence};
-      save(handoffPath,passPayload);
-      const delivery=spawnSync(handoffCommand,[handoffPath],{encoding:'utf8',cwd:root,timeout:120000,env:{...process.env,...(threadId?{E2E_CHATGPT_THREAD_ID:threadId}:{})}});
-      if(delivery.status===0){
-        try{const receipt=JSON.parse(delivery.stdout.trim().split('\n').at(-1));state.passHandoffDelivered=receipt.status==='submitted'||receipt.status==='scheduled';}
-        catch(error){console.error('invalid PASS handoff receipt:',error.message)}
-      }else console.error('PASS handoff failed:',delivery.stderr||delivery.error?.message||delivery.status);
-      save(statePath,state);
-      if(!state.passHandoffDelivered)return;
+  // COMPLETED is a judgment boundary, not an automatic scenario PASS.
+  // The controller sends all collected evidence for this round to the same
+  // ChatGPT thread. Only that turn may decide PASS / fresh round / next scenario.
+  if(j.state==='COMPLETED'){
+    const completionPath=join(dirname(statePath),'completion-judgment.json');
+    const evidenceFiles=['terminated.json','stale-replayed.json','controller-invalid.json'];
+    const injections=Object.fromEntries(evidenceFiles.filter(name=>existsSync(join(dirname(statePath),name))).map(name=>[name,JSON.parse(readFileSync(join(dirname(statePath),name),'utf8'))]));
+    const completionKey=JSON.stringify({jobUpdatedAt:j.updatedAt,githubState:external?.githubState||null,issue:issue?.type||null});
+    if(completionKey!==state.lastCompletionJudgmentKey){
+      const payload={kind:'scenario_completion_judgment',observedAt:new Date().toISOString(),repo,jobId,scenario,branch,
+        jobState:j.state,runtimeStatus:j.runtimeStatus,prNumber:boundPr,githubState:external?.githubState||'UNKNOWN',
+        externalReady,issue:issue||null,evidence:state.evidence,injections,
+        plans:(j.plans||[]).map(p=>({id:p.id,status:p.status,error:p.error})),
+        tasks:(j.tasks||[]).map(t=>({id:t.id,state:t.state,attempt:t.attempt,agent:t.agentName,parentTaskId:t.parentTaskId,error:t.error}))};
+      save(completionPath,payload);
+      if(handoffCommand){
+        const delivery=spawnSync(handoffCommand,[completionPath],{encoding:'utf8',cwd:root,timeout:120000,env:{...process.env,...(threadId?{E2E_CHATGPT_THREAD_ID:threadId}:{})}});
+        if(delivery.status===0){
+          state.lastCompletionJudgmentKey=completionKey;
+          state.phase='awaiting_completion_judgment';
+          console.log(JSON.stringify({event:'completion_judgment_submitted',jobId,scenario,issue:issue?.type||null,githubState:external?.githubState||'UNKNOWN'}));
+        }else console.error('completion judgment handoff failed:',delivery.stderr||delivery.error?.message||delivery.status);
+      }
     }
-    console.log(JSON.stringify({event:'e2e_pass',repo,jobId,scenario,evidence:state.evidence,external,handoffDelivered:!!state.passHandoffDelivered}));
-    process.exit(0);return;
+    save(statePath,state);
+    // Remain alive to report GitHub projection convergence and delivery failures.
+    return;
   }
   if(state.phase==='passed')state.phase='monitoring';
   if(!issue && state.phase==='awaiting_repair'){state.phase='monitoring';state.fingerprint=null;state.delivered=false;state.pendingTransferId=null;}
