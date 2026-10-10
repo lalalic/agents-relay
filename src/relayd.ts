@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -14,6 +15,8 @@ import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
+import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
+import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
@@ -33,6 +36,8 @@ import { codexAndZaiUsageRegistry } from './usage.js';
 import { defaultWorkspaceRoot, discoverWorkspaceRepositories, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
+import { createRuntimeStatusPublisher } from './runtime-status-events.js';
+import { subscribeLocalCommits } from './local-commit-events.js';
 import { decisionMode, executionDecisionEngine } from './decision.js';
 import { JsonlDecisionAuditStore } from './decision-audit.js';
 import { summarizeRuntime } from './runtime-summary.js';
@@ -177,6 +182,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const concurrency = Number(value(argv,'--concurrency','4'));
   const eventResolution = await resolveEventBus([...argv]);
   const bus = eventResolution.bus;
+  const stopRuntimeStatusEvents = bus ? subscribeLocalCommits(createRuntimeStatusPublisher(bus)) : () => {};
   process.stderr.write(`${eventBusResolutionMessage(eventResolution)}\n`);
   const workspaceRoot = noGitHub ? (value(argv, '--project-path') || value(argv, '--workspace') || process.cwd())
     : normalized.workspaceRoot ?? defaultWorkspaceRoot();
@@ -277,7 +283,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (githubAuthenticated !== true) return;
     if (client.rateLimitStatus().limited) return;
     const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
-    for (const snapshot of snapshots) for (const discovered of snapshot.jobs) {
+    const bindingCandidates = orderGitHubBindingCandidates(
+      snapshots.flatMap(snapshot => snapshot.jobs.map(job => ({ snapshotPath: snapshot.path, job }))),
+    );
+    for (const candidate of bindingCandidates) {
+      const snapshot = { path: candidate.snapshotPath };
+      const discovered = candidate.job;
+      try {
       if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
       const sourceRef = discovered.localMerge.sourceRef;
       const targetRef = discovered.localMerge.targetRef;
@@ -311,9 +323,35 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       }
       const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
-      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && latestFacts?.state !== 'MERGED') {
-        const projected = new LocalAuthorityDurableStore(relay, github, undefined, false);
-        await projected.mergePullRequest(job.localMerge.sourceSha ?? sourceSha);
+      if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push' && latestFacts?.state !== 'MERGED') {
+        const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
+        const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
+        await bus?.publish(eventFor(job.id,'projection',null,'projection.delivered','succeeded',
+          `GitHub local merge projection ${projectedMerge.status}`,'orchestrator',
+          {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
+          {agent:'relay',component:'github-projection'}));
+
+        const projectedState = await github.pullRequestState();
+        const projectedHead = await github.pullRequestHead();
+        await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });
+        observability().record({
+          stage: 'projection', event: 'github.local_merge_projected', outcome: 'succeeded',
+          message: `Projected authoritative local merge ${projectedMerge.localMergedCommitSha} to ${projectedMerge.targetRef}`,
+          correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
+          data: { ...projectedMerge, githubState: projectedState },
+        });
+      }
+      } catch (error) {
+        await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivery_failed','failed',
+          `GitHub projection failed: ${errorMessage(error)}`,'orchestrator',
+          {operation:'github.projectLocalMerge',error:errorMessage(error)},
+          {agent:'relay',component:'github-projection'}))?.catch(()=>{});
+        observability().record({
+          stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
+          message: `GitHub binding/projection failed for ${discovered.id}: ${errorMessage(error)}`,
+          correlation: { repository: discovered.repository, prNumber: discovered.externalPrNumber ?? discovered.prNumber, jobId: discovered.id },
+          data: { classification: classifyFailure(error).classification, reason: errorMessage(error) },
+        });
       }
     }
     cachedOverviews = await inventoryFromLocal();
@@ -694,7 +732,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   let interval: NodeJS.Timeout | undefined;
   let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{stopRuntimeStatusEvents(); if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await syncGitHubBindingsSafely();
   await pool.reconcileKnown(cachedOverviews);
   await scheduleHeartbeatSafely();

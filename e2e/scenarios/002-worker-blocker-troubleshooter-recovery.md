@@ -46,3 +46,11 @@ implementation attempt 1
 - a replacement implementation Task hides the failed original Task instead of recovering it
 - the Job fails to reach `COMPLETED`
 - enabled GitHub integration fails to converge to PR `MERGED`
+
+<!-- PLANNER-CONTRACT:START -->
+## Mandatory Planner contract
+
+Create the original implementation Task with the blocker check as its first action. Do not set `--test-injection`: the checked-in blocker fixture and automatic Troubleshooter protocol define this scenario.
+
+The Planner must encode this in the **structured `next_tasks` response**. The worker must not create its own replacement Task or manufacture failure events. The E2E controller judges only runtime evidence.
+<!-- PLANNER-CONTRACT:END -->

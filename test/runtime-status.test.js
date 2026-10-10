@@ -49,3 +49,10 @@ test('REVIEWING requires a running reviewer even when review metadata says start
   assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','DRAFT','reviewer')],base)),'WAITING');
   assert.equal(deriveJobRuntimeStatus(job([task('implement','SUCCEEDED','implementation'),task('review','RUNNING','reviewer')],base)),'REVIEWING');
 });
+
+test('planner failure without tasks is FAILED, planning is RUNNING rather than IDLE',()=>{
+  const plan={id:'plan-1',status:'FAILED'};
+  assert.equal(deriveJobRuntimeStatus(job([],{plans:[plan]})),'FAILED');
+  assert.equal(deriveJobRuntimeStatus(job([],{plans:[{...plan,status:'PLANNING'}]})),'RUNNING');
+  assert.equal(deriveJobRuntimeStatus(job([task('worker','RUNNING')],{plans:[plan]})),'RUNNING');
+});

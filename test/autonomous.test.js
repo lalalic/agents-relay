@@ -202,6 +202,7 @@ test('local-first planner cannot delegate Relay-owned merge and completion lifec
   const release = { id:'release', agentName:'release', input:'Perform the required local merge, verify Job COMPLETED, and merge the projected GitHub PR.', output:{kind:'task_pr'}, storySize:'S' };
   assert.throws(() => validatePlannerLifecycleOwnership(root, [release]), /Relay-owned effects/);
   assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'verify',input:'Verify the implementation tests and report findings without changing lifecycle state.'}]));
+  assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'implementation',input:'Create a fixture and run npm test. Relay must handle review, local merge, Job COMPLETED and GitHub PR MERGED. Do not perform manual lifecycle actions.'}]));
 });
 
 test('planner input exposes semantic ownership separately from plan provenance', () => {

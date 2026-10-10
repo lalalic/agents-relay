@@ -929,6 +929,25 @@ test('Relay publishes process launched and accepts only a worker-owned post-laun
   await stop(); await stopEvents();
 });
 
+test('async transport exit is observable after an authoritative terminal event', async () => {
+  const t=task('async-terminal-first');t.adapter='chatgpt';
+  const store=new InMemoryStore(job([t]));const bus=new MemoryEventBus();const events=[];
+  let finish;
+  const transport=new Promise(resolve=>{finish=resolve});
+  const adapter={name:'chatgpt',id:'delayed-async',capabilities:['model','chatgpt'],launch(){return {id:'transport',launched:Promise.resolve(),promise:transport,cancel(){}}}};
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stopEvents=await bus.subscribe('j',async e=>events.push(e));const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  const source=await activeEventSource(store,'async-terminal-first');
+  await bus.publish(eventFor('j','async-terminal-first',null,'task.started','running','started','user',undefined,source));
+  await bus.publish(eventFor('j','async-terminal-first',null,'task.completed','succeeded','finished','user',undefined,source));
+  finish({summary:'transport settled'});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  assert.equal(events.filter(e=>e.type==='task.process.async_exited').length,1);
+  await stop();await stopEvents();
+});
+
 test('after-start ChatGPT policy does not install a terminal close barrier', async () => {
   const t=task('chat-after-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let terminalBarrier;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){terminalBarrier=context.waitForTerminal; return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
@@ -957,9 +976,21 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,reviewer,executionContextRoots:{globalRoot:contextRoot,neoRoot:null}});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,40));
   const created=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.equal(created?.state,'QUEUED');
-  await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,await activeEventSource(store,created.id)));
-  await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','review done','user',undefined,await activeEventSource(store,created.id)));
-  await new Promise(resolve=>setTimeout(resolve,10)); await stop(); await rm(contextRoot,{recursive:true,force:true});
+  const source=await activeEventSource(store,created.id);
+  await bus.publish(eventFor('j',created.id,null,'task.started','running','review began','user',undefined,source));
+  await bus.publish(eventFor('j',created.id,null,'task.completed','succeeded','generic review process completion','user',undefined,source));
+  await new Promise(resolve=>setTimeout(resolve,5));
+  let durable=await store.load('j');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'RUNNING','generic task.completed must not consume reviewer execution before review outcome');
+  assert.equal(durable.review?.outcome,'pending');
+  await bus.publish(eventFor('j',created.id,null,'review.changes_required','failed','review changes required','user',{outcome:{head_sha:'sha-review-timeout',blocking_findings:[{summary:'fix reviewer ordering regression'}]}},source));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  durable=await store.load('j');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'SUCCEEDED');
+  assert.equal(durable.tasks.find(item=>item.id===created.id)?.executionId,null);
+  assert.equal(durable.review?.outcome,'changes_required');
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  await stop(); await rm(contextRoot,{recursive:true,force:true});
 });
 
 
@@ -1094,7 +1125,11 @@ test('failed Codex exit preserves rate limit reason instead of terminal event ti
   const durable = (await store.load('j')).tasks[0];
   assert.equal(durable.state, 'QUEUED');
   assert.notEqual(durable.routing?.provider, 'zai');
+  assert.deepEqual(durable.routingExclusions?.map(item => ({provider:item.provider,model:item.model,reason:item.reason})), [
+    {provider:'zai',model:'glm-5.3-flash',reason:'rate_limit_exceeded'},
+  ]);
   assert.equal(events.filter(event => event.type === 'task.rerouting').length, 1);
+  assert.equal((await store.load('j')).tasks.filter(item => item.agentName === 'troubleshooter').length, 0, 'provider quota reroute must not spawn Troubleshooter work');
   const failed = events.find(event => event.type === 'task.failed');
   assert.equal(failed.data.reason, 'rate_limit_exceeded');
   assert.equal(failed.data.exitCode, 1);
@@ -2456,4 +2491,35 @@ test('publication Webhook replay retains the same EventBus event identity per Jo
   const publications = emitted.filter(event => event.type === 'package.published');
   assert.equal(publications.length, 2);
   assert.equal(publications[0].event_id, publications[1].event_id);
+});
+
+test('reviewer runtime recovery preserves exact immutable head and accepts verdict on recovered execution', async () => {
+  const implementation=task('implementation','SUCCEEDED');
+  const reviewer={...task('review-runtime-failed','FAILED',['implementation']),agentName:'reviewer',reviewHeadSha:'sha-review-recovered',error:'worker_start_timeout',failureReason:'worker_start_timeout',attempt:1,maxAttempts:3,routing:{provider:'openai',model:'gpt-5.6-luna',decidedBy:'test',decidedAt:now()},workerSelection:{workerId:'codex',adapter:'codex',capabilities:['model','codex'],selectedBy:'test',selectedAt:now()}};
+  const recovery={...task('troubleshoot-review-runtime-failed-a1','RUNNING'),agentName:'troubleshooter',parentTaskId:reviewer.id,executionId:'recovery-exec',leaseOwner:'relay',error:null};
+  const root={...job([implementation,reviewer,recovery]),headSha:'sha-review-recovered',review:{outcome:'pending',headSha:'sha-review-recovered',taskId:reviewer.id,evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(root); store.headSha=async()=> 'sha-review-recovered';
+  await dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:reviewer.id,recoveryTaskId:recovery.id});
+  let durable=await store.load('j');
+  let recovered=durable.tasks.find(item=>item.id===reviewer.id);
+  assert.equal(recovered.state,'QUEUED');
+  assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
+  assert.equal(recovered.id,reviewer.id);
+  recovery.state='SUCCEEDED'; recovery.executionId=null; recovery.leaseOwner=null; recovery.leaseExpiresAt=null;
+  await store.saveTask(recovery);
+
+  const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,maxConcurrent:1});
+  const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  const source=await activeEventSource(store,reviewer.id);
+  await bus.publish(eventFor('j',reviewer.id,null,'review.changes_required','failed','same-head review requires change','user',{outcome:{head_sha:'sha-review-recovered',blocking_findings:[{summary:'fix recovered review'}]}},source));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  durable=await store.load('j'); recovered=durable.tasks.find(item=>item.id===reviewer.id);
+  assert.equal(recovered.state,'SUCCEEDED');
+  assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
+  assert.equal(durable.review?.headSha,'sha-review-recovered');
+  assert.equal(durable.review?.outcome,'changes_required');
+  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  await stop(); await reconciler.close();
 });

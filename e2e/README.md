@@ -1,3 +1,5 @@
+> Event-driven campaign architecture: [EVENT-DRIVEN-LOOP-DESIGN.md](EVENT-DRIVEN-LOOP-DESIGN.md).
+
 # Agents Relay Production E2E Runbook
 
 This file is the canonical operating procedure for Agents Relay production-path E2E validation. Any orchestrator starting, continuing, repairing, or reviewing E2E work must read this file first.

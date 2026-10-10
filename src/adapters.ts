@@ -2,6 +2,8 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { withTestInjection, type InjectionConfig } from './e2e-injection.js';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
@@ -17,7 +19,7 @@ export type Execution = {
   pid?: number;
   deliveryReceipt?: Record<string, unknown>;
 };
-export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
+export type LaunchContext = { testInjection?: InjectionConfig; waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
   readonly name: AdapterName;
   readonly id: string;
@@ -48,6 +50,19 @@ function parseThreadStarted(line: string): string | undefined {
     return undefined;
   }
 }
+function parseCodexFailure(line: string): { message: string; priority: number } | undefined {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    if (value.type === 'turn.failed' && value.error && typeof value.error === 'object' && !Array.isArray(value.error)) {
+      const message = (value.error as Record<string, unknown>).message;
+      if (typeof message === 'string' && message.trim()) return { message: message.trim(), priority: 2 };
+    }
+    if (value.type === 'error' && typeof value.message === 'string' && value.message.trim()) {
+      return { message: value.message.trim(), priority: 1 };
+    }
+  } catch { /* non-JSON output is not structured Codex failure evidence */ }
+  return undefined;
+}
 function appendTail(current: string, chunk: string, maxBytes = 16384): string {
   const combined = current + chunk;
   return Buffer.byteLength(combined) <= maxBytes
@@ -62,6 +77,8 @@ export class CodexAdapter implements WorkerAdapter {
   constructor(private readonly command = 'codex') {}
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
+    if (context.testInjection?.method==='worker.codex.launch')
+      return withTestInjection('worker.codex.launch',context.testInjection,()=>this.launch(task,signal,{...context,testInjection:undefined})) as Execution;
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
     const child = spawnOwnedProcess(this.command, buildCodexArgs(task.routing, task.input), {
       invocation: `worker.codex:${task.id}`,
@@ -71,6 +88,7 @@ export class CodexAdapter implements WorkerAdapter {
     });
     let stdoutBuffer = '';
     let stderrTail = '';
+    let structuredFailure: { message: string; priority: number } | undefined;
     let bufferedThreadId: string | undefined;
     let launchedResolve!: () => void;
     let launchedReject!: (error: Error) => void;
@@ -78,6 +96,8 @@ export class CodexAdapter implements WorkerAdapter {
     launched.catch(() => {});
     let execution: Execution;
     const consumeLine = (line: string): void => {
+      const failure = parseCodexFailure(line);
+      if (failure && (!structuredFailure || failure.priority >= structuredFailure.priority)) structuredFailure = failure;
       const threadId = parseThreadStarted(line);
       if (!threadId) return;
       bufferedThreadId = threadId;
@@ -104,7 +124,7 @@ export class CodexAdapter implements WorkerAdapter {
         if (code === 0) {
           resolve({ summary: 'Codex runtime exited after task execution; terminal task state is event-owned' });
         } else {
-          reject(new Error(stderrTail.trim() || `Codex exited ${code}`));
+          reject(new Error(structuredFailure?.message || stderrTail.trim() || `Codex exited ${code}`));
         }
       });
     });
@@ -178,7 +198,11 @@ type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
   return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['browser-workspace'] };
 }
+const browserWorkspaceInjection = new AsyncLocalStorage<InjectionConfig>();
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
+  return Promise.resolve(withTestInjection('browserWorkspace.command', browserWorkspaceInjection.getStore(), () => rawBrowserWorkspaceCommand(cli,args,stdin,signal)));
+}
+function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnOwnedProcess(cli.command, [...cli.prefix, ...args], {
       invocation: 'browser-workspace.command',
@@ -370,7 +394,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const definition = await readFile(new URL('../agents/chatgpt-worker.agent.md', import.meta.url), 'utf8');
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? browserWorkerRunner())(
+      const submit = () => (this.runner ?? browserWorkerRunner())(
         definition,
         {
           prompt: task.input,
@@ -381,8 +405,20 @@ export class ChatGptAdapter implements WorkerAdapter {
         route,
         controller.signal,
       );
+      const run = context.testInjection?.method === 'browserWorkspace.command'
+        ? browserWorkspaceInjection.run(context.testInjection, submit) : submit();
       try {
-        const output = await (run.submitted ?? run.promise);
+        // Start acknowledgement may expire while browser submission is still pending.
+        // Race its rejection with delivery so a hung browser cannot hold a QUEUED
+        // execution until the full lease expires. A successful ack never shortcuts delivery.
+        const submission = run.submitted ?? run.promise;
+        const startAckFailure = context.waitForWorkerStart?.then(
+          () => new Promise<never>(() => {}),
+          error => Promise.reject(error),
+        );
+        const output = await (startAckFailure
+          ? Promise.race([submission, startAckFailure])
+          : submission);
         const response = parseBrowserWorkerResponse(output);
         if (task.chatgptThreadDelivery && (typeof response.thread_id !== 'string' || response.thread_id !== task.chatgptThreadDelivery.threadId)) {
           throw new Error('browser-worker submitted to an unexpected ChatGPT thread');

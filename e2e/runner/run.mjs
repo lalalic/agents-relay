@@ -33,6 +33,8 @@ const title=opt('title',`${scenario} round ${round}`);
 const date=new Date().toISOString().slice(0,10);
 const runDir=resolve(opt('run-dir',`e2e/runs/${date}/${scenario}/r${round}`));
 function e2ePreflight(){
+  // Task injection is declared by the E2E objective and consumed by Relay.
+  // The controller does not inject or require any external injection command.
   if(!scenario.startsWith('001-')) return;
   const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/status'],{encoding:'utf8',timeout:10000,maxBuffer:1000000});
   if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||'Agents Relay status preflight unavailable');
@@ -69,10 +71,26 @@ if(!threadId){
   } finally { rmSync(dir,{recursive:true,force:true}); }
 }
 const prep=[resolve(root,'e2e/runner/prepare-round.mjs'),'--repo',repo,'--checkout',checkout,'--scenario',scenario,'--round',round,'--objective-file',objectiveFile,'--base',base,'--job',job,'--branch',branch,'--title',title,'--run-dir',runDir];
+const preparationStartedAt=Date.now();
 const p=spawnSync(process.execPath,prep,{cwd:root,encoding:'utf8',timeout:240000,maxBuffer:8e6});
-if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||p.stdout||`prepare-round exited ${p.status}`);
-const receipt=JSON.parse(p.stdout);
-console.log(JSON.stringify({event:'round-prepared',scenario,round:Number(round),jobId:receipt.jobId,branch:receipt.branch,sourceRef:receipt.sourceRef},null,2));
+let receipt;
+if(p.status===0&&!p.error){
+  receipt=JSON.parse(p.stdout);
+  console.log(JSON.stringify({event:'round-prepared',scenario,round:Number(round),jobId:receipt.jobId,branch:receipt.branch,sourceRef:receipt.sourceRef}));
+}else{
+  // Initial planning runs synchronously inside job create. It can fail AFTER
+  // committing the local Job. Start the watcher for that Job regardless.
+  const detail=p.error?.message||p.stderr||p.stdout||`prepare-round exited ${p.status}`;
+  const lookup=spawnSync(process.execPath,[resolve(root,'dist/cli.js'),'job','show','--repo',repo,'--id',job],{cwd:root,encoding:'utf8',timeout:30000,maxBuffer:8e6});
+  if(lookup.status!==0)throw Error(`Round preparation failed before Job creation: ${detail}`);
+  const created=JSON.parse(lookup.stdout);
+  if(created.repository!==repo||created.id!==job||Date.parse(created.createdAt)<preparationStartedAt-5000)
+    throw Error(`Round preparation failed without a newly created matching Job: ${detail}`);
+  receipt={jobId:job,branch,sourceRef:`refs/heads/${branch}`};
+  mkdirSync(runDir,{recursive:true});
+  writeFileSync(resolve(runDir,'round.json'),JSON.stringify({...receipt,repo,scenario,round:Number(round),preparationFailure:detail,createdAt:created.createdAt},null,2)+'\n');
+  console.error(JSON.stringify({event:'round-preparation-partially-failed',jobId:job,message:detail,watcherWillStart:true}));
+}
 const watchArgs=[resolve(root,'e2e/runner/watch.mjs'),'--repo',repo,'--job',receipt.jobId,'--scenario',scenario,'--branch',process.env.E2E_RELAY_BRANCH||'test/v2-local-first-e2e-20261009','--thread',threadId,'--state',resolve(runDir,'watch-state.json'),'--out',resolve(runDir,'handoff.json'),'--expected-cancel',resolve(runDir,'expected-cancel.json')];
 const child=spawn(process.execPath,watchArgs,{cwd:root,stdio:'inherit',env:{...process.env,E2E_CHATGPT_THREAD_ID:threadId}});
 child.on('exit',(code,signal)=>{if(signal)console.error(`E2E watcher exited via ${signal}`);process.exitCode=code??1});

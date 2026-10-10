@@ -115,10 +115,13 @@ export type ChatGptThreadDelivery = {
 export type Task = {
   jobId?: string; id: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
+  /** Internal E2E-only planner option, consumed before execution. */
+  testInjection?: string | import('./e2e-injection.js').InjectionConfig;
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
+  routingExclusions?: Array<{ provider: string; model: string; profile?: string; reason: string; at: string }>;
   chatgptThreadDelivery?: ChatGptThreadDelivery;
   manualStateOverrides?: ManualTaskStateOverride[];
   failureReason?: string;
@@ -127,7 +130,8 @@ export type Task = {
   unblock?: TaskUnblockRecord;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
-export type Job = { localMerge?: import('./local-git-merge.js').LocalMergeReceipt; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; externalPrNumber?: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; createdAt: string; updatedAt: string; tasks: Task[] };
+export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
+export type Job = { localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; externalPrNumber?: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

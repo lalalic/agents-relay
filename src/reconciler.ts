@@ -1,3 +1,4 @@
+import {authorizedInjection} from './e2e-injection.js';
 import { implementationComplete } from './runtime-status.js';
 import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
 import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js';
@@ -16,7 +17,7 @@ import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
-import { pendingTroubleshooterTasks } from './troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks } from './troubleshooter.js';
 import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
@@ -114,6 +115,41 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.store.appendTask(recovery);
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
       }
+      {
+        const recoveryJob = await this.store.load(jobId);
+        // A failed recovery worker is itself recoverable: retry the SAME Task
+        // within its budget. No recursive Troubleshooter is generated.
+        for (const recovery of recoveryJob.tasks) {
+          if (recovery.agentName !== 'troubleshooter' || recovery.state !== 'FAILED' || recovery.attempt >= recovery.maxAttempts) continue;
+          const original = recoveryJob.tasks.find(task => task.id === recovery.parentTaskId);
+          if (!original || !['FAILED','BLOCKED'].includes(original.state)) continue;
+          await applyTaskRetryAction(recovery);
+          recovery.routing = undefined;
+          recovery.workerSelection = undefined;
+          await this.store.saveTask(recovery);
+          await this.emit(eventFor(job.id, recovery.id, original.id, 'troubleshooter.retry_queued', 'queued',
+            `Retrying failed Troubleshooter ${recovery.id} (attempt ${recovery.attempt + 1}/${recovery.maxAttempts})`,
+            'orchestrator', { originalTaskId: original.id, attempt: recovery.attempt + 1, maxAttempts: recovery.maxAttempts }));
+        }
+        const exhaustedJob = await this.store.load(jobId);
+        for (const exhausted of exhaustedTroubleshooterRecoveries(exhaustedJob)) {
+          const at = new Date().toISOString();
+          exhaustedJob.recoveryFailures = [...(exhaustedJob.recoveryFailures ?? []), {
+            taskId: exhausted.original.id,
+            recoveryTaskId: exhausted.recovery.id,
+            reason: exhausted.reason,
+            at,
+          }];
+          exhaustedJob.updatedAt = at;
+          await this.store.saveJob(exhaustedJob);
+          await this.emit(eventFor(job.id, exhausted.recovery.id, exhausted.original.id,
+            'recovery.exhausted', 'failed',
+            `Recovery exhausted for ${exhausted.original.id}: ${exhausted.reason}`,
+            'user',
+            { originalTaskId: exhausted.original.id, recoveryTaskId: exhausted.recovery.id, reason: exhausted.reason },
+            { agent: 'relay', component: 'agents-relay' }));
+        }
+      }
       for (const task of job.tasks) if (task.state === 'CANCELLED') {
         this.cancelExecutionGeneration(job.id, task.id, task.executionId ?? task.executionHistory?.at(-1)?.id);
         this.plannerLive.get(task.id)?.controller.abort();
@@ -141,7 +177,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.dispatchExecutableTasks(jobId);
       finalState = await this.store.load(jobId);
       if (await reconcileLocalGitCompletion(this.store, finalState, headSha,
-        true, this.options.projectPathForJob)) return this.store.load(jobId);
+        this.options.noGitHub === true, this.options.projectPathForJob)) return this.store.load(jobId);
       await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);
@@ -371,7 +407,23 @@ export class Reconciler extends ReconcilerReviewBase {
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
+    // Consume E2E injection before execution: a retry will not repeat it.
+    // Production repositories ignore the option entirely.
+    const declaration = authorizedInjection(job.repository, task.testInjection);
+    const testInjection = declaration && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
+    if (testInjection) {
+      const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
+      if (!durable || durable.executionId!==durableExecutionId) return;
+      delete durable.testInjection;
+      durable.updatedAt = new Date(Math.max(Date.now(), Date.parse(durable.updatedAt) + 1)).toISOString();
+      await this.store.saveTask(durable);
+      const consumed = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
+      if (!consumed || consumed.executionId!==durableExecutionId || consumed.testInjection)
+        throw new Error(`E2E injection consumption was not durably committed for ${task.id}`);
+      delete task.testInjection;
+    }
     const launchContext: LaunchContext = {
+      ...(testInjection ? {testInjection} : {}),
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
       executionContext,

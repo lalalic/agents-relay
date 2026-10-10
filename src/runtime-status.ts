@@ -25,12 +25,20 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (job.state === 'COMPLETED') return 'COMPLETED';
   if (job.state === 'DRAFT') return 'IDLE';
 
+  const currentPlan = job.plans?.at(-1);
+  // An unresolved planner failure is a Job failure, not an idle Job.
+  // Active task execution still takes precedence below.
+  const plannerFailed = currentPlan?.status === 'FAILED' && !job.tasks.some(task => ['QUEUED','RUNNING'].includes(task.state));
+  const plannerRunning = currentPlan?.status === 'PLANNING';
+
   if (job.schedule) {
     if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
     if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
     if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
     if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
     if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
+    if (plannerFailed) return 'FAILED';
+    if (plannerRunning) return 'RUNNING';
     return 'WAITING';
   }
 
@@ -48,6 +56,8 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
   if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
   if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
+  if (plannerFailed) return 'FAILED';
+  if (plannerRunning) return 'RUNNING';
 
   if (job.executionMode === 'autonomous' && job.autoMerge === false && job.reviewEnabled === false && implementationComplete(job) ) return 'WAITING';
   if (job.reviewEnabled === false && implementationComplete(job) ) return 'MERGE_PENDING';

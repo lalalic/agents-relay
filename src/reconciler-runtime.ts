@@ -1,3 +1,4 @@
+import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
@@ -257,6 +258,22 @@ export abstract class ReconcilerRuntimeBase {
   protected isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
     return task.executionId !== null && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId);
   }
+  protected finalizeReviewExecution(jobId: string, task: Task, event: EventRecord): boolean {
+    if (!task.executionId) return true;
+    const sourceId = eventSourceId(event);
+    const expected = executionEventSource(jobId, task.id, task.executionId);
+    if ((task.adapter === 'codex' || task.adapter === 'chatgpt') && sourceId !== expected) return false;
+    claimTerminalExecution(expected);
+    const executionId = task.executionId;
+    this.clearExecution(task.id, executionId);
+    task.leaseOwner = null;
+    task.leaseExpiresAt = null;
+    task.executionId = null;
+    task.updatedAt = new Date().toISOString();
+    this.terminalWaiters.get(task.id)?.resolve();
+    this.terminalWaiters.delete(task.id);
+    return true;
+  }
 
   protected async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
     const claim = executionId ?? `${jobId}:${taskId}`;
@@ -314,7 +331,13 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (terminalExecutionClaimed(jobId, taskId, executionId) || !task || task.executionId !== executionId) return;
+    // Async transport settlement is an independent, non-authoritative observation.
+    // A worker terminal event may already have claimed the Task; do not suppress
+    // transport-exit evidence merely because business completion won the race.
+    if (!task) return;
+    const correlated = task.executionId === executionId || task.executionHistory?.some(item => item.id === executionId);
+    if (!correlated) return;
+    if (task.adapter !== 'chatgpt' && (task.executionId !== executionId || terminalExecutionClaimed(jobId, taskId, executionId))) return;
     if (task.adapter !== 'chatgpt' && task.executionId === executionId && live?.executionId === executionId)
       rearmTerminalEventDeadline(this.terminalTimers, taskId, task.timeoutMs - (Date.now() - live.launchBarrier),
         this.options.postExitTerminalGraceMs ?? 15_000, () => this.detach(this.timeoutTask(jobId, taskId, executionId), jobId, taskId, 'post-exit terminal event timeout'));
@@ -337,7 +360,7 @@ export abstract class ReconcilerRuntimeBase {
     const exit = live?.executionId === executionId && live.processSettled ? live.execution.processExit : undefined;
     const rawError = live?.executionId === executionId && live.processSettled ? (live.processError || exit?.stderr || '').trim() : '';
     const failedExit = Boolean(exit && (exit.exitCode !== 0 || exit.signal));
-    const failureReason = failedExit ? (/rate.limit.exceeded|usage limit reached/i.test(rawError) ? 'rate_limit_exceeded' : 'worker_process_failed') : 'terminal_event_timeout';
+    const failureReason = failedExit ? classifyWorkerRejection(rawError) : 'terminal_event_timeout';
     const failureMessage = failedExit ? (rawError || `Worker exited with code ${exit?.exitCode ?? 'null'}${exit?.signal ? `, signal ${exit.signal}` : ''}`) : `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
     const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
       eligible: (_job, task) => task.executionId === executionId,
@@ -353,6 +376,31 @@ export abstract class ReconcilerRuntimeBase {
       this.clearExecution(taskId, executionId);
       return;
     }
+    let reroutedTask: Task | null = null;
+    // Provider quota failures are recoverable. Commit the retry + route exclusion
+    // before publishing task.failed so event-driven reconciliation can never see
+    // an intermediate FAILED state and spawn a Troubleshooter for quota exhaustion.
+    if (reroutableWorkerRejections.has(failureReason) && transition.task.attempt < transition.task.maxAttempts) {
+      const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
+      if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
+        const failedRoute = current.routing;
+        await applyTaskRetryAction(current);
+        if (failedRoute) {
+          const duplicate = current.routingExclusions?.some(item => item.provider === failedRoute.provider && item.model === failedRoute.model && item.profile === failedRoute.profile);
+          if (!duplicate) current.routingExclusions = [...(current.routingExclusions ?? []), {
+            provider: failedRoute.provider,
+            model: failedRoute.model,
+            ...(failedRoute.profile ? { profile: failedRoute.profile } : {}),
+            reason: 'rate_limit_exceeded',
+            at: new Date().toISOString(),
+          }];
+        }
+        current.routing = undefined;
+        current.workerSelection = undefined;
+        await this.store.saveTask(current);
+        reroutedTask = current;
+      }
+    }
     const event = eventFor(
       jobId,
       taskId,
@@ -365,20 +413,11 @@ export abstract class ReconcilerRuntimeBase {
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     await this.emit(event);
-    // Provider quota failures are recoverable. Drop the stale selection so the
-    // next launch runs the normal worker/model router with fresh usage data.
-    if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
-      const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
-      if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
-        await applyTaskRetryAction(current);
-        current.routing = undefined;
-        current.workerSelection = undefined;
-        await this.store.saveTask(current);
-        await this.emit(eventFor(jobId, taskId, current.parentTaskId,
-          'task.rerouting', 'queued', 'Provider rate limit reached; retrying with fresh routing and usage data',
-          'orchestrator', { previousFailure: failureReason, attempt: current.attempt, maxAttempts: current.maxAttempts }));
-        await this.eventCoordinator.accept({ jobId, reason: 'rate-limit-reroute' });
-      }
+    if (reroutedTask) {
+      await this.emit(eventFor(jobId, taskId, reroutedTask.parentTaskId,
+        'task.rerouting', 'queued', `Worker rejection ${failureReason}; retrying with fresh routing and usage data`,
+        'orchestrator', { previousFailure: failureReason, attempt: reroutedTask.attempt, maxAttempts: reroutedTask.maxAttempts }));
+      await this.eventCoordinator.accept({ jobId, reason: 'worker-rejection-reroute' });
     }
   }
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
@@ -386,6 +425,9 @@ export abstract class ReconcilerRuntimeBase {
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
+        // Reviewer business terminal state is owned by review.approved / review.changes_required / review.blocked.
+        // A generic task.completed may arrive before the review decision and must not consume the execution generation.
+        if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
         if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
