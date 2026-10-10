@@ -11,6 +11,7 @@ import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination } from './reviewer-thread.js';
+import { reviewGenerationMatches } from './review-generation-fence.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -354,7 +355,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       let terminalExecutionId: string | null = null;
       const updated = await this.store.mutateJob(job.id, current => {
         const freshTask = current.tasks.find(item => item.id === task.id);
-        if (!freshTask || freshTask.reviewHeadSha !== headSha) return current;
+        if (!freshTask || !reviewGenerationMatches(current, job, task, headSha)) return current;
         const freshDecision = tryTransitionTaskEvent(freshTask, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
         if (freshDecision.target !== 'RUNNING') {

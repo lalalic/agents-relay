@@ -19,30 +19,36 @@ export type PlannerRuntimePorts = {
   reconcile: (jobId: string) => Promise<unknown>;
 };
 
-async function drainPlannerUnblocks(ports: PlannerRuntimePorts, jobId: string, planId: string): Promise<string[]> {
+export async function drainPlannerUnblocks(ports: PlannerRuntimePorts, jobId: string, planId: string): Promise<string[]> {
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
   if (!ports.store.registerBlockerDependent) throw new Error("Blocker registration unavailable");
   const pending = [...(plan?.pendingUnblocks ?? [])];
-  const remaining: typeof pending = [];
+  // Persist only acknowledgments observed by this invocation. Subtract from
+  // the latest transactional snapshot, never replace another drain's intents.
+  const acknowledged = new Set<string>();
+  const key = (item: (typeof pending)[number]) => JSON.stringify(item);
   for (const unblock of pending) {
     try {
-      await ports.store.registerBlockerDependent?.(jobId, unblock);
-    } catch {
-      remaining.push(unblock);
-    }
+      await ports.store.registerBlockerDependent(jobId, unblock);
+      acknowledged.add(key(unblock));
+    } catch { /* Pending intent is retained for the next reconcile. */ }
   }
-  if (pending.length !== remaining.length && ports.store.mutateJob) {
+  if (acknowledged.size > 0) {
+    if (!ports.store.mutateJob) throw new Error('Atomic SQLite mutation is required to acknowledge planner unblocks');
     await ports.store.mutateJob(jobId, current => {
       const fresh = (current.plans ?? []).find(item => item.id === planId);
-      if (fresh) {
-        if (remaining.length > 0) fresh.pendingUnblocks = remaining;
+      if (fresh?.pendingUnblocks?.length) {
+        const outstanding = fresh.pendingUnblocks.filter(item => !acknowledged.has(key(item)));
+        if (outstanding.length) fresh.pendingUnblocks = outstanding;
         else delete fresh.pendingUnblocks;
         fresh.updatedAt = new Date().toISOString();
       }
       return current;
     });
   }
+  const refreshed = await ports.store.load(jobId);
+  const remaining = (refreshed.plans ?? []).find(item => item.id === planId)?.pendingUnblocks ?? [];
   return remaining.map(item => `${item.repository}#${item.prNumber}:${item.jobId}:${item.taskId}`);
 }
 
