@@ -4,9 +4,18 @@ import type { ExecutionContext } from './execution-context.js';
 import { eventFor } from './events.js';
 import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
 import { samePlannerChildDefinition } from './planner-child.js';
+import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runtime.js';
 import type { DurableStore } from './store.js';
 import { storySizeTimeoutMs, type EventRecord, type Job, type Plan } from './types.js';
+
+/** Activate queued planner work inside the same authoritative SQLite mutation. */
+export function activateCommittedPlannerWork(job: Job): boolean {
+  if (job.state !== 'DRAFT' || !job.tasks.some(item => item.state === 'QUEUED')) return false;
+  const activation = dispatchJobLifecycleSync(job, 'activate');
+  if (!activation.accepted) throw new Error(`Job ${job.id} activation rejected after planning`);
+  return true;
+}
 
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
 export type PlannerRuntimePorts = {
@@ -150,6 +159,9 @@ async function finishPlanner(
           if (!existing) current.tasks.push(structuredClone(child));
           else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
         }
+        // Planner children are committed atomically with Job activation.
+        // Otherwise the DRAFT Job is invisible to the ACTIVE-only dispatcher.
+        activateCommittedPlannerWork(current);
         current.updatedAt = now;
         committedPlan = true;
         return current;

@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import {drainPlannerUnblocks} from '../dist/planner-runtime.js';
+import {drainPlannerUnblocks, activateCommittedPlannerWork} from '../dist/planner-runtime.js';
 
 const intent=(id)=>({repository:'owner/repo',prNumber:0,jobId:id,taskId:'task',resolutionMode:'merge'});
 function harness(start){
@@ -62,4 +62,14 @@ test('competing newer review generation rejects older result in SQLite mutation'
  assert.equal(reviewGenerationMatches(staleExecution,original,task,sha),false);
  const advancedVerdict={...original,review:{...original.review,outcome:'approved'}};
  assert.equal(reviewGenerationMatches(advancedVerdict,original,task,sha),false);
+});
+
+test('planner child commit activates DRAFT Job atomically for worker dispatch', async()=>{
+ const job={id:'job-001',state:'DRAFT',tasks:[{id:'implementation',state:'QUEUED'}]};
+ assert.equal(activateCommittedPlannerWork(job),true);
+ assert.equal(job.state,'ACTIVE');
+ assert.equal(activateCommittedPlannerWork(job),false);
+ const planning={id:'job-002',state:'DRAFT',tasks:[]};
+ assert.equal(activateCommittedPlannerWork(planning),false);
+ assert.equal(planning.state,'DRAFT');
 });
