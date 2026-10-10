@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { withTestInjection, type InjectionConfig } from './e2e-injection.js';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
@@ -197,7 +198,11 @@ type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
   return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['browser-workspace'] };
 }
+const browserWorkspaceInjection = new AsyncLocalStorage<InjectionConfig>();
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
+  return Promise.resolve(withTestInjection('browserWorkspace.command', browserWorkspaceInjection.getStore(), () => rawBrowserWorkspaceCommand(cli,args,stdin,signal)));
+}
+function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnOwnedProcess(cli.command, [...cli.prefix, ...args], {
       invocation: 'browser-workspace.command',
@@ -389,7 +394,7 @@ export class ChatGptAdapter implements WorkerAdapter {
       const definition = await readFile(new URL('../agents/chatgpt-worker.agent.md', import.meta.url), 'utf8');
       if (controller.signal.aborted) throw new Error('browser-worker execution aborted');
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
-      const run = (this.runner ?? browserWorkerRunner())(
+      const submit = () => (this.runner ?? browserWorkerRunner())(
         definition,
         {
           prompt: task.input,
@@ -400,6 +405,8 @@ export class ChatGptAdapter implements WorkerAdapter {
         route,
         controller.signal,
       );
+      const run = context.testInjection?.method === 'browserWorkspace.command'
+        ? browserWorkspaceInjection.run(context.testInjection, submit) : submit();
       try {
         // Start acknowledgement may expire while browser submission is still pending.
         // Race its rejection with delivery so a hung browser cannot hold a QUEUED

@@ -409,7 +409,8 @@ export class Reconciler extends ReconcilerReviewBase {
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     // Consume E2E injection before execution: a retry will not repeat it.
     // Production repositories ignore the option entirely.
-    const testInjection = task.adapter === 'codex' ? authorizedInjection(job.repository,task.testInjection)?.method === 'worker.codex.launch' ? authorizedInjection(job.repository,task.testInjection) : undefined : undefined;
+    const declaration = authorizedInjection(job.repository, task.testInjection);
+    const testInjection = declaration && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
     if (testInjection) {
       const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
       if (!durable || durable.executionId!==durableExecutionId) return;

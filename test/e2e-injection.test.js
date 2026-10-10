@@ -48,3 +48,14 @@ test('projection injection is atomically consumed once for authorized repository
   assert.equal(await consumeMethodInjection(relay,repo,'job','github.projectLocalMerge'),undefined);
  }finally{if(original===undefined)delete process.env.E2E_REPO;else process.env.E2E_REPO=original;}
 });
+
+test('browser workspace command injection is registered, and runner contract requests it',async()=>{
+ const c=parseTestInjection({method:'browserWorkspace.command',action:'throw',execution:'skip',error:{code:'BROWSER_WORKSPACE_UNAVAILABLE',message:'E2E unavailable',status:503}});
+ assert.equal(c.method,'browserWorkspace.command');
+ let calls=0;
+ assert.throws(()=>withTestInjection('browserWorkspace.command',c,()=>{calls++;return 'ok'}),/E2E unavailable/);
+ assert.equal(calls,0);
+ const source=(await import('node:fs/promises')).readFile;
+ const contract=await source(new URL('../e2e/scenarios/010-browser-workspace-runtime-failure.md',import.meta.url),'utf8');
+ assert.match(contract,/"method":"browserWorkspace.command"/);
+});

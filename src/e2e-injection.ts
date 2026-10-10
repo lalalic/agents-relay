@@ -2,7 +2,7 @@
 import type { Execution } from './adapters.js';
 import type { RelayStore } from './relay-store.js';
 
-export type InjectionMethod = 'worker.codex.launch' | 'github.projectLocalMerge';
+export type InjectionMethod = 'worker.codex.launch' | 'github.projectLocalMerge' | 'browserWorkspace.command';
 export type InjectionConfig = {
   method: InjectionMethod;
   action: 'throw' | 'return' | 'pass';
@@ -20,7 +20,7 @@ export function parseTestInjection(value: unknown): InjectionConfig | undefined 
   if (typeof value === 'string') return legacy[value];
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const v=value as Record<string,unknown>;
-  if (v.method!=='worker.codex.launch' && v.method!=='github.projectLocalMerge') return undefined;
+  if (v.method!=='worker.codex.launch' && v.method!=='github.projectLocalMerge' && v.method!=='browserWorkspace.command') return undefined;
   if (v.action!=='throw' && v.action!=='return' && v.action!=='pass') return undefined;
   if (v.execution!=='skip' && v.execution!=='after' && v.execution!=='run') return undefined;
   const error=v.error;
