@@ -36,3 +36,11 @@ The controller must not alter globally shared Router FreeText Rules or other job
 - Only Router expected choice is checked, without actual worker rejection.
 - A rejection is observed but the original Task never recovers and the Job does not complete.
 - Reviewer blocks due to missing recovery proof; this is evidence of an invalid round, not a PASS.
+
+<!-- PLANNER-CONTRACT:START -->
+## Mandatory Planner contract
+
+On exactly one original implementation Task in `next_tasks`, set the following **Task JSON field**, sibling of `id`, `input`, and `output`, not a string inside `input`: `"--test-injection":{"method":"worker.codex.launch","action":"return","execution":"skip","mock":"worker_model_not_found"}`. Also set `"workerRequirements":{"runtime":"codex","capabilities":["model","local_repo"]}` and `maxAttempts` of at least 2. No review/recovery Task may carry the injection. Retry must reuse the exact Task ID.
+
+The Planner must encode this in the **structured `next_tasks` response**. The worker must not create its own replacement Task or manufacture failure events. The E2E controller judges only runtime evidence.
+<!-- PLANNER-CONTRACT:END -->

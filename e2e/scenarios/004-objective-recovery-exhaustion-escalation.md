@@ -21,3 +21,11 @@ An intentional implementation failure creates the first Troubleshooter. Its firs
 - original Task is replaced rather than recovered
 - Job stays `ACTIVE/FAILED` or completes without review/local merge
 - GitHub projection remains unmerged past bounded convergence window
+
+<!-- PLANNER-CONTRACT:START -->
+## Mandatory Planner contract
+
+Create the original implementation Task with the first-failure guard. Allow the normal Troubleshooter and retry path. Do not set `--test-injection`: the scripted original/Troubleshooter failure protocol defines this scenario.
+
+The Planner must encode this in the **structured `next_tasks` response**. The worker must not create its own replacement Task or manufacture failure events. The E2E controller judges only runtime evidence.
+<!-- PLANNER-CONTRACT:END -->

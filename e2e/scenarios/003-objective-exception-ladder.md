@@ -52,3 +52,11 @@ original implementation attempt 1 -> FAILED
 - reviewer approves before the stage-3 gate
 - any intentional test failure is mistaken for a Relay defect by the controller
 - Job stalls, falsely completes, or requires manual lifecycle intervention
+
+<!-- PLANNER-CONTRACT:START -->
+## Mandatory Planner contract
+
+Create the original implementation Task with the worker gate as its first action. Keep the staged review gate protocol on review tasks. Do not set `--test-injection`: this scenario uses the scripted failure/review ladder.
+
+The Planner must encode this in the **structured `next_tasks` response**. The worker must not create its own replacement Task or manufacture failure events. The E2E controller judges only runtime evidence.
+<!-- PLANNER-CONTRACT:END -->

@@ -30,3 +30,11 @@ When the production daemon has GitHub integration enabled, the local Job must au
 ## FAIL
 
 Any manual lifecycle nudge is needed, the Job stalls/fails, Review or local merge does not complete, or enabled GitHub integration fails to converge to PR `MERGED`.
+
+<!-- PLANNER-CONTRACT:START -->
+## Mandatory Planner contract
+
+Create one implementation Task for the deterministic workload, then let the normal independent reviewer run. Do not set `--test-injection`: this is the baseline.
+
+The Planner must encode this in the **structured `next_tasks` response**. The worker must not create its own replacement Task or manufacture failure events. The E2E controller judges only runtime evidence.
+<!-- PLANNER-CONTRACT:END -->

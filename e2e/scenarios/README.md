@@ -31,3 +31,11 @@ Recommended order: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, then 
 - Scenario 005: `--phase terminate-current`, then after recovery creates a newer execution use `--phase replay-stale-terminal --receipt <terminate receipt>`.
 - Scenario 009: `--phase restart-daemon` restarts the existing PM2 `agents-relayd` exactly once.
 - Scenarios 006/007/010: `--phase inject --command '<scoped command containing {job}>'`. The controller refuses commands that are not explicitly scoped to the Job and writes an injection receipt. The scenario-specific environment/fault mechanism is supplied when that scenario is run; it is not hard-coded into production Relay.
+
+## Planner instructions are executable E2E documentation
+
+Each `NNN-*.md` scenario must include exactly one section delimited by `<!-- PLANNER-CONTRACT:START -->` and `<!-- PLANNER-CONTRACT:END -->`. `e2e/runner/prepare-round.mjs` reads this section **from the canonical scenario document** and prefixes it to the generated Job Objective for every round. Therefore the actual Planner sees the exact contract; the individual round objective only specifies its workload and expected observations. Missing scenario document/contract fails before Job creation.
+
+For method-level fault injection, the contract must instruct the Planner to set the structured `"--test-injection"` property **on the implementation Task JSON object in `next_tasks`**, not in `input`. It must specify `method`, `action`, `execution`, and a supported `mock` or structured `error`. Only registered injection methods operate, and only when the Job's repository equals `E2E_REPO`. The injection is consumed durably before its execution checkpoint. Watchers never inspect the injected option: they judge normal lifecycle and external-operation evidence.
+
+Scenario contracts without an implemented checkpoint must **not** ask the Planner to emit an injection option. Keep their existing fault/protocol path explicit until a supported method-level checkpoint is available. Any newly added scenario must document its Planner contract and add a coverage test.
