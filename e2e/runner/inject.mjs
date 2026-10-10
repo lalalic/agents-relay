@@ -39,6 +39,17 @@ async function terminateCurrent(){
   save(receipt); console.log(JSON.stringify(receipt,null,2));
 }
 
+async function terminateFromEvent(){
+  const pid=Number(required('pid')),taskId=required('task'),executionId=required('execution');
+  if(!Number.isSafeInteger(pid)||pid<=1)throw Error('unsafe injected worker PID');
+  const current=await get(`/api/job?id=${encodeURIComponent(jobId)}`);
+  const task=(current.tasks||[]).find(t=>t.id===taskId);
+  if(!task||task.executionId!==executionId||task.state!=='RUNNING')throw Error(`stale launch event: ${taskId}/${executionId}`);
+  process.kill(pid,'SIGTERM');
+  const receipt={scenario,phase,jobId,taskId,pid,executionId,sourceId:executionEventSource(jobId,taskId,executionId),signal:'SIGTERM',at:new Date().toISOString()};
+  save(receipt);console.log(JSON.stringify(receipt));
+}
+
 async function replayStaleTerminal(){
   const receiptPath=resolve(required('receipt'));
   if(!existsSync(receiptPath))throw Error(`receipt not found: ${receiptPath}`);
@@ -72,6 +83,7 @@ function scopedExternalCommand(){
 }
 
 if(scenario.startsWith('005-')&&phase==='terminate-current')await terminateCurrent();
+else if(scenario.startsWith('005-')&&phase==='terminate-from-event')await terminateFromEvent();
 else if(scenario.startsWith('005-')&&phase==='replay-stale-terminal')await replayStaleTerminal();
 else if(scenario.startsWith('009-')&&phase==='restart-daemon')restartDaemon();
 else if(['006','007','010'].some(prefix=>scenario.startsWith(prefix+'-'))&&phase==='inject')scopedExternalCommand();

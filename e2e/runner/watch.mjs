@@ -5,6 +5,7 @@ import {openSync, closeSync, readSync, statSync, readFileSync, writeFileSync, mk
 import {dirname,resolve,join} from 'node:path';
 import {homedir} from 'node:os';
 import {reviewHeadSha} from './evidence.mjs';
+import {scenario005Decision,scenario005PassEligible} from './scenario-005.mjs';
 const root=resolve(import.meta.dirname,'../..');
 const argv=process.argv.slice(2);
 const option=(k,def)=>{const i=argv.indexOf('--'+k);return i>=0?argv[i+1]:def};
@@ -229,12 +230,28 @@ async function tick(){
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
   const j=snapshot();
+  if(scenario.startsWith('005-') && j.state!=='CANCELLED'){
+    const terminationPath=join(dirname(statePath),'terminated.json');
+    const stalePath=join(dirname(statePath),'stale-replayed.json');
+    const step=scenario005Decision(j,newEvents,terminationPath,stalePath);
+    if(step.action==='terminate'){
+      const e=step.event;
+      const run=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','terminate-from-event','--task',e.task_id,'--execution',e.data.executionId,'--pid',String(e.data.pid),'--out',terminationPath],{encoding:'utf8',cwd:root,timeout:15000});
+      if(run.status!==0)state.scenario005Issue={type:'INJECTION_FAILED',message:run.stderr||run.error?.message||'worker termination failed'};
+      else console.log(JSON.stringify({event:'scenario_action',action:'terminate-worker',jobId,taskId:e.task_id}));
+    }else if(step.action==='replay'){
+      const run=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','replay-stale-terminal','--receipt',terminationPath,'--out',stalePath],{encoding:'utf8',cwd:root,timeout:20000});
+      if(run.status!==0)state.scenario005Issue={type:'STALE_INJECTION_FAILED',message:run.stderr||run.error?.message||'stale replay failed'};
+      else console.log(JSON.stringify({event:'scenario_action',action:'replay-stale-terminal',jobId}));
+    }
+    if(step.issue)state.scenario005Issue=step.issue;
+  }
   const github=githubCapability();
   if(j.state==='CANCELLED'&&existsSync(expectedCancelPath)){
     state.phase='superseded';state.supersededAt=new Date().toISOString();state.fingerprint=null;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_superseded',repo,jobId,scenario}));process.exit(0);return;
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
-  let issue=detect(j);
+  let issue=state.scenario005Issue||detect(j);
   let external=null;
   const boundPr=Number(j.externalPrNumber||j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
@@ -257,6 +274,9 @@ async function tick(){
       }
     }
   } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
+  if(!issue&&scenario.startsWith('005-')&&j.state==='COMPLETED'&&!scenario005PassEligible(join(dirname(statePath),'terminated.json'),join(dirname(statePath),'stale-replayed.json'))){
+    issue={type:'SCENARIO_005_EVIDENCE_MISSING',message:'Job completed without both real worker termination and stale-generation injection receipts'};
+  }
   const externalReady=!github.enabled || external?.githubState==='MERGED';
   if(j.state==='COMPLETED'&&!issue&&externalReady){
     state.phase='passed';state.passedAt ??= new Date().toISOString();state.external=external;state.fingerprint=null;

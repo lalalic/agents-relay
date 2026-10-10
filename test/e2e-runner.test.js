@@ -90,3 +90,13 @@ test('scenario 003 permits independent reviewer/runtime recovery while requiring
   assert.match(watch,/INCIDENTAL_RECOVERY_UNRESOLVED/);
   assert.doesNotMatch(watch,/UNEXPECTED_EXTRA_TROUBLESHOOTER/);
 });
+
+test('scenario 005 watcher performs event-triggered injection and refuses PASS without both receipts',async()=>{
+  const source=await read('../e2e/runner/watch.mjs');
+  const injector=await read('../e2e/runner/inject.mjs');
+  assert.match(source,/scenario005Decision\(j,newEvents/);
+  assert.match(source,/terminate-from-event/);
+  assert.match(source,/SCENARIO_005_EVIDENCE_MISSING/);
+  assert.match(source,/STALE_INJECTION_FAILED/);
+  assert.match(injector,/task\.executionId!==executionId/);
+});
