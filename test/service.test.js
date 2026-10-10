@@ -204,8 +204,9 @@ test('orchestrator task completion publishes correlated lifecycle events best-ef
   assert.equal(attempts, 1);
 
   const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  const save = relayd.indexOf('await store.saveTask(task);', relayd.indexOf('const workspaceTaskComplete'));
-  const publish = relayd.indexOf('await publishOrchestratorTaskCompletion(bus, job, task, summary);', save);
+  const dashboardActions = await readFile(new URL('../src/relayd-dashboard-actions.ts', import.meta.url), 'utf8');
+  const save = dashboardActions.indexOf('await store.saveTask(task);', dashboardActions.indexOf('const workspaceTaskComplete'));
+  const publish = dashboardActions.indexOf('await publishOrchestratorTaskCompletion(bus, job, task, summary);', save);
   assert.ok(save >= 0);
   assert.ok(publish > save);
 });
@@ -213,6 +214,7 @@ test('orchestrator task completion publishes correlated lifecycle events best-ef
 test('all non-demo CLI durable mutations enter the relayd service boundary', async () => {
   const cli = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8');
   const relayd = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  const relaydControl = await readFile(new URL('../src/relayd-control.ts', import.meta.url), 'utf8');
   const support = await readFile(new URL('../src/cli-support.ts', import.meta.url), 'utf8');
   const blocker = await readFile(new URL('../src/cli-blocker.ts', import.meta.url), 'utf8');
   const review = await readFile(new URL('../src/cli-review.ts', import.meta.url), 'utf8');
@@ -223,14 +225,14 @@ test('all non-demo CLI durable mutations enter the relayd service boundary', asy
   assert.match(support, /\/api\/task-command/);
   assert.match(support, /\/api\/job-state/);
   assert.match(relayd, /control: workspaceControl/);
-  assert.match(relayd, /command === 'task\.recover'/);
-  assert.match(relayd, /command === 'job\.unblock'/);
-  assert.match(relayd, /command === 'review\.request'/);
-  assert.match(relayd, /command === 'blocker\.add'/);
-  assert.match(relayd, /command === 'projection\.resolve'/);
-  assert.match(relayd, /command === 'job\.plan'/);
-  assert.match(relayd, /command === 'record'/);
-  assert.match(relayd, /command === 'agent\.register'/);
+  assert.match(relaydControl, /command === 'task\.recover'/);
+  assert.match(relaydControl, /command === 'job\.unblock'/);
+  assert.match(relaydControl, /command === 'review\.request'/);
+  assert.match(relaydControl, /command === 'blocker\.add'/);
+  assert.match(relaydControl, /command === 'projection\.resolve'/);
+  assert.match(relaydControl, /command === 'job\.plan'/);
+  assert.match(relaydControl, /command === 'record'/);
+  assert.match(relaydControl, /command === 'agent\.register'/);
   for (const source of [blocker, review, projection]) {
     assert.doesNotMatch(source, /openLocalManagedStore|SQLiteRelayStore|relayStorePath/);
   }

@@ -1,3 +1,4 @@
+import { cancelActiveTasks } from './reconciler-cancellation.js';
 import {authorizedInjection} from './e2e-injection.js';
 import { implementationComplete } from './runtime-status.js';
 import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto';
@@ -221,25 +222,9 @@ export class Reconciler extends ReconcilerReviewBase {
     } finally { this.reconciling = false; }
   }
   private async cancelActiveTasks(jobId: string, reason: string): Promise<void> {
-    const job = await this.store.load(jobId);
-    for (const plan of (job.plans ?? []).filter(item => item.status === 'PLANNING')) {
-      const live = this.plannerLive.get(plan.id);
-      if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(plan.id); }
-      plan.status = 'FAILED';
-      plan.error = reason;
-      plan.assessment = `Planning failed: ${reason}`;
-      plan.leaseOwner = null;
-      plan.leaseExpiresAt = null;
-      plan.executionId = null;
-      plan.updatedAt = new Date().toISOString();
-      await this.store.savePlan(plan);
-    }
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && !['SUCCEEDED', 'FAILED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) {
-      this.cancelExecutionGeneration(job.id, task.id, task.executionId ?? task.executionHistory?.at(-1)?.id);
-      this.plannerLive.get(task.id)?.controller.abort();
-      await applyTaskCancelAction(task, reason);
-      await this.store.saveTask(task);
-    }
+    return cancelActiveTasks(this.store, jobId, reason,
+      taskId => { const live = this.plannerLive.get(taskId); if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(taskId); } },
+      (job, taskId, executionId) => { this.cancelExecutionGeneration(job, taskId, executionId); });
   }
 
   private executionRecoveryPorts(job: Job): ExecutionRecoveryPorts {
@@ -511,5 +496,4 @@ export class Reconciler extends ReconcilerReviewBase {
       reconcile: jobId => this.reconcile(jobId),
     }, job, plan);
   }
-
 }

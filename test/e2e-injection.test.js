@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {authorizedInjection,parseTestInjection,withTestInjection,consumeMethodInjection} from '../dist/e2e-injection.js';
 import {classifyWorkerRejection} from '../dist/worker-rejection.js';

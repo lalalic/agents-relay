@@ -1,3 +1,4 @@
+import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
 import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
@@ -82,49 +83,10 @@ export abstract class ReconcilerRuntimeBase {
   abstract reconcile(jobId: string): Promise<Job>;
   protected abstract applyReviewEvent(event: EventRecord): Promise<EventHandlingResult>;
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
-    for (const outcome of outcomes.filter(item => item.status === 'failed')) {
-      const eventName = workflowEffectFailureEvent(outcome.effect);
-      try {
-        await transitionJobEvent(job, eventName);
-        await this.store.saveJob(job);
-      } catch {
-        // Some effects are observational for a given state; failure is still emitted below.
-      }
-      await this.emit(eventFor(
-        job.id,
-        'job',
-        null,
-        'workflow.effect.failed',
-        'failed',
-        `${outcome.effect} failed: ${outcome.error ?? 'unknown error'}`,
-        'orchestrator',
-        { effect: outcome.effect, idempotencyKey: outcome.key, workflowEvent: eventName },
-        { agent: 'relay', component: 'agents-relay' },
-      ));
-    }
+    await applyJobEffectOutcomes(this.store, event => this.emit(event), job, outcomes);
   }
   protected async applyTaskEffectOutcomes(job: Job, task: Task, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
-    for (const outcome of outcomes.filter(item => item.status === 'failed')) {
-      const eventName = workflowEffectFailureEvent(outcome.effect);
-      try {
-        await transitionTaskEvent(task, eventName);
-        task.error = outcome.error ?? `${outcome.effect} failed`;
-        await this.store.saveTask(task);
-      } catch {
-        // The effect failure remains observable even if this state has no feedback transition.
-      }
-      await this.emit(eventFor(
-        job.id,
-        task.id,
-        task.parentTaskId,
-        'workflow.effect.failed',
-        'failed',
-        `${outcome.effect} failed: ${outcome.error ?? 'unknown error'}`,
-        'orchestrator',
-        { effect: outcome.effect, idempotencyKey: outcome.key, workflowEvent: eventName },
-        { agent: 'relay', component: 'agents-relay' },
-      ));
-    }
+    await applyTaskEffectOutcomes(this.store, event => this.emit(event), job, task, outcomes);
   }
   async applyEvent(event: EventRecord): Promise<EventHandlingResult> {
     const sourceId = eventSourceId(event);

@@ -110,7 +110,7 @@ export async function relayJobList(args: string[]): Promise<Job[]> {
   return repo ? jobs.filter(job => job.repository === repo) : jobs;
 }
 
-export async function relayJobStateCommand(args: string[], jobId: string, state: 'DRAFT'|'ACTIVE'|'COMPLETED'|'CANCELLED'): Promise<Job> {
+export async function relayJobStateCommand(args: string[], jobId: string, state: Job['state']): Promise<Job> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');

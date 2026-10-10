@@ -1,8 +1,5 @@
 import { createRequire } from 'node:module';
-
-const packageVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
-export const dashboardVersion = packageVersion;
-
+export const dashboardVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
 export const dashboardHtml = `<!doctype html>
 <html lang="en" data-dashboard-contract="safe-dom,named-relay-events,snapshot-events,bounded-event-history">
 <head>
@@ -182,7 +179,6 @@ export const dashboardHtml = `<!doctype html>
       .tagline { display:none; }
     }
     @media (prefers-reduced-motion:reduce) { .skeleton { animation:none; } .usage-fill { transition:none; } }
-
   .router-rules-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;min-width:0}.router-rules-pane{min-width:0;max-width:100%;overflow:hidden}.rules-editor .rules-textarea{min-height:420px}.audit-log{display:flex;flex-direction:column;gap:8px;max-height:500px;overflow:auto;min-width:0}.audit-entry{border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface)}.audit-entry-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.audit-entry pre{white-space:pre-wrap;word-break:break-word;margin:8px 0 0;font-size:11px}.router-test-panel{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}.router-test-results{margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:480px;overflow:auto;min-width:0}.router-test-results pre{white-space:pre;overflow:auto;max-width:100%;font-size:11px;line-height:1.45;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}.router-test-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}@media(max-width:900px){.router-rules-workspace{grid-template-columns:1fr}.router-rules-pane{max-height:none}.router-test-results{max-height:420px}}@media(max-width:650px){#rules-view .panel-head .subtle{display:none}#rules-view .panel-body{max-height:none;overflow:visible;padding:.6rem}#rules-view .router-rules-workspace{gap:.9rem}#rules-view .rules-help{font-size:.74rem;line-height:1.4}#rules-view .rules-textarea{min-height:52vh;padding:.65rem;font-size:12px}#rules-view .rules-footer{align-items:stretch}#rules-view .rules-footer>.subtle{width:100%}#rules-view .rules-footer>div{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:.5rem}#rules-view .rules-save{min-height:44px;width:100%;padding:.55rem .7rem}#rules-view .router-rules-pane>.panel-head{padding:.55rem 0}#rules-view .audit-log{max-height:none}#rules-view .audit-entry-head{align-items:flex-start}#rules-view .audit-entry-head .subtle{display:block;flex:0 0 auto}#rules-view .router-test-panel{min-width:0;max-width:100%;overflow:hidden}#rules-view .router-test-results{max-height:none;width:100%;max-width:100%;overflow-x:hidden}#rules-view .router-test-results>*{min-width:0;max-width:100%}#rules-view .router-test-results pre{width:100%;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-size:11px;padding:.65rem}#rules-view .router-test-row{grid-template-columns:1fr}}
 </style>
 </head>
@@ -269,7 +265,6 @@ export const dashboardHtml = `<!doctype html>
 // link.textContent = 'PR #' + job.prNumber;
 // while (eventFeed.children.length > MAX_EVENTS)
 // function usageBar(label, window)
-
 const MAX_EVENTS=60;
 const DASHBOARD_VERSION=${JSON.stringify(dashboardVersion)};
 const jobsTab=document.querySelector('#jobs-tab');
@@ -331,7 +326,6 @@ let eventTaskId=selectedTaskId;
 const collapsedTasks=new Set();
 const expandedTasks=new Set();
 const displayedEventIds=new Set();
-
 function value(input){return input===null||input===undefined||input===''?'—':String(input);}
 function text(input){return document.createTextNode(value(input));}
 function element(name,className,child){const node=document.createElement(name);if(className)node.className=className;if(child)node.append(child);return node;}

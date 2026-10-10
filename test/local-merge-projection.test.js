@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
