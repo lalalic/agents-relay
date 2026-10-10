@@ -9,7 +9,13 @@ if(!payloadPath){console.error('handoff payload path is required');process.exit(
 const threadId=process.env.E2E_CHATGPT_THREAD_ID?.trim();
 if(!threadId){console.error('E2E_CHATGPT_THREAD_ID is required');process.exit(64)}
 const payload=JSON.parse(readFileSync(payloadPath,'utf8'));
-const message=payload.kind==='scenario_pass' ? [
+const message=payload.kind==='runtime_status_judgment' ? [
+ 'E2E computed Job runtime status entered an abnormal state. Make a judgment NOW in this same ChatGPT thread.',
+ 'Status transition: '+JSON.stringify(payload.transition)+'. Job: '+payload.jobId+'; scenario: '+payload.scenario+'.',
+ 'Current durable snapshot: '+JSON.stringify({runtimeStatus:payload.computedStatus,jobState:payload.jobState,plans:payload.plans,tasks:payload.tasks}),
+ 'Potential issue: '+JSON.stringify(payload.issue)+'; recent events: '+JSON.stringify(payload.events||[]),
+ 'Determine if this is expected scenario fault injection, an automatically recoverable transient failure, or a genuine defect. If expected, let Relay recover naturally and continue watcher observation. If unexpected, diagnose/fix production, test/deploy, cancel invalid round via controller and launch fresh npm run e2e. Do not manually retry/reconcile/review/unblock/merge Job; do not record PASS without objective evidence.'
+].join('\n') : payload.kind==='scenario_pass' ? [
  'The E2E controller VERIFIED PASS for '+payload.scenario+' in this ChatGPT thread.',
  'Finished Job: '+payload.jobId+'; external PR: '+payload.prNumber+'; checked terminal state: '+payload.jobState+'; GitHub state: '+(payload.githubState||'not enabled')+'.',
  'Evidence: '+JSON.stringify(payload.evidence||{}),

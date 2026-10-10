@@ -115,3 +115,14 @@ test('runner watches a durable Job even when synchronous initial planning fails'
  assert.match(source,/watcherWillStart:true/);
  assert.match(source,/const child=spawn\(process\.execPath,watchArgs/);
 });
+
+test('watcher escalates every abnormal computed runtime status transition for model judgment', async()=>{
+  const watcher=await read('../e2e/runner/watch.mjs');
+  const handoff=await read('../e2e/runner/handoff.mjs');
+  assert.match(watcher,/new Set\(\['FAILED','BLOCKED'\]\)/);
+  assert.match(watcher,/kind:'runtime_status_judgment'/);
+  assert.match(watcher,/pendingAbnormalStatus=/);
+  assert.match(watcher,/lastAbnormalStatusKey/);
+  assert.match(handoff,/payload\.kind==='runtime_status_judgment'/);
+  assert.match(handoff,/Determine if this is expected scenario fault injection/);
+});

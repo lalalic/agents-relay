@@ -26,6 +26,8 @@ const threadId=option('thread',option('thread-id',process.env.E2E_CHATGPT_THREAD
 const handoffCommand=option('handoff-command',process.env.E2E_HANDOFF_COMMAND||(threadId?resolve(root,'e2e/runner/handoff.mjs'):''));
 const intervalMs=Number(option('interval-ms','5000')),staleMs=Number(option('stale-ms','240000'));
 const save=(p,v)=>{mkdirSync(dirname(p),{recursive:true});writeFileSync(p,JSON.stringify(v,null,2)+'\n')};
+const abnormalStatuses=new Set(['FAILED','BLOCKED']);
+let pendingAbnormalStatus=null;
 let state={runKey,scenario,offset:0,lastEventAt:null,fingerprint:null,delivered:false,pendingTransferId:null,phase:'monitoring',evidence:{workerFailedOrBlocked:false,troubleshooterCreated:false,troubleshooterSucceeded:false,originalRetried:false,reviewChangesRequired:0,reviewApproved:0,reviewHeads:[],recoveryExhausted:0,projectionPendingSince:null}};
 try{const previous=JSON.parse(readFileSync(statePath,'utf8'));if(previous.runKey===runKey)state={...state,...previous}}catch{}
 function events(){
@@ -232,6 +234,10 @@ async function tick(){
    }catch(error){console.error('handoff status unavailable:',error.message)}
   }
   const j=snapshot();
+  if(abnormalStatuses.has(j.runtimeStatus)&&state.lastObservedRuntimeStatus!==j.runtimeStatus&&!pendingAbnormalStatus){
+    pendingAbnormalStatus={from:state.lastObservedRuntimeStatus||'UNKNOWN',to:j.runtimeStatus,updatedAt:j.updatedAt};
+  }
+  state.lastObservedRuntimeStatus=j.runtimeStatus;
   if(scenario.startsWith('005-') && j.state!=='CANCELLED'){
     const terminationPath=join(dirname(statePath),'terminated.json');
     const stalePath=join(dirname(statePath),'stale-replayed.json');
@@ -254,6 +260,27 @@ async function tick(){
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
   let issue=state.scenario005Issue||detect(j);
+  // An abnormal computed status is a decision point even when recovery is expected.
+  // Never turn it into a forced repair/cancellation without human/model judgment.
+  if(pendingAbnormalStatus){
+    const transition=pendingAbnormalStatus;pendingAbnormalStatus=null;
+    const statusKey=`${transition.from}->${transition.to}@${transition.updatedAt||''}`;
+    if(state.lastAbnormalStatusKey!==statusKey){
+      const payload={kind:'runtime_status_judgment',observedAt:new Date().toISOString(),repo,jobId,scenario,branch,
+        transition,computedStatus:j.runtimeStatus,jobState:j.state,issue:issue||null,
+        plans:(j.plans||[]).map(p=>({id:p.id,status:p.status,error:p.error})),
+        tasks:(j.tasks||[]).map(t=>({id:t.id,state:t.state,attempt:t.attempt,agent:t.agentName,parentTaskId:t.parentTaskId,error:t.error})),
+        events:newEvents.slice(-15).map(x=>({type:x.event?.type,taskId:x.event?.task_id,message:x.event?.message}))};
+      const transitionPath=join(dirname(statePath),'abnormal-status-handoff.json');save(transitionPath,payload);
+      if(handoffCommand){
+        const delivery=spawnSync(handoffCommand,[transitionPath],{encoding:'utf8',cwd:root,timeout:30000,env:{...process.env,...(threadId?{E2E_CHATGPT_THREAD_ID:threadId}:{})}});
+        if(delivery.status===0){
+          state.lastAbnormalStatusKey=statusKey;
+          console.log(JSON.stringify({event:'abnormal_runtime_status_handoff',jobId,transition,delivery:'submitted'}));
+        }else console.error('abnormal status handoff failed:',delivery.stderr||delivery.error?.message||delivery.status);
+      }
+    }
+  }
   // Scenario 005 deliberately kills its first implementation execution.
   // A failed original Task with a matching termination receipt is expected while
   // Graph-owned Troubleshooter recovery is active; never manually retry it.
@@ -342,6 +369,7 @@ if(!argv.includes('--once')){
   const statusBus=new NatsEventBus(runtime.natsUrl,runtime.subjectPrefix);
   await statusBus.subscribe(jobId,async event=>{
     if(event.type!=='job.runtime_status.changed')return;
+    if(abnormalStatuses.has(event.data?.to))pendingAbnormalStatus={from:event.data?.from,to:event.data?.to,updatedAt:event.data?.updatedAt};
     console.log(JSON.stringify({event:'runtime_status_change',jobId,from:event.data?.from,to:event.data?.to}));
     await tick();
   });
