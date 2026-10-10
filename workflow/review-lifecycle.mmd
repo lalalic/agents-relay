@@ -39,6 +39,7 @@ cancelChanges["action: review.cancelStale"]
 cancelBlocked["action: review.cancelStale"]
 fixPending["action: review.createFix"]
 fixStarted["action: review.createFix"]
+fixChanges["action: review.createFix"]
 mergePending["action: review.requestMerge"]
 mergeStarted["action: review.requestMerge"]
 
@@ -105,6 +106,8 @@ autoMergeStarted -->|false| approved
 started -->|on: review.changes_required| fixStarted
 fixStarted --> changes
 started -->|on: review.blocked| blocked
+changes -->|on: review.changes_required| fixChanges
+fixChanges --> changes
 
 pending -->|on: head.changed| cancelPending
 cancelPending --> stale
