@@ -219,6 +219,8 @@ async function tick(){
     }
     if(e.type==='review.approved')state.evidence.reviewApproved=Number(state.evidence.reviewApproved||0)+1;
     if(e.type==='recovery.exhausted')state.evidence.recoveryExhausted=Number(state.evidence.recoveryExhausted||0)+1;
+    if(e.type==='task.failed'&&e.data?.reason==='rate_limit_exceeded')state.evidence.providerQuotaFailure=true;
+    if(e.type==='task.rerouting'&&e.data?.previousFailure==='rate_limit_exceeded')state.evidence.providerRerouted=true;
   }
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
@@ -327,6 +329,14 @@ async function tick(){
   } else if(j.state!=='COMPLETED') state.evidence.projectionPendingSince=null;
   if(!issue&&scenario.startsWith('005-')&&j.state==='COMPLETED'&&!scenario005PassEligible(join(dirname(statePath),'terminated.json'),join(dirname(statePath),'stale-replayed.json'))){
     issue={type:'SCENARIO_005_EVIDENCE_MISSING',message:'Job completed without both real worker termination and stale-generation injection receipts'};
+  }
+  if(!issue&&scenario.startsWith('006-')&&j.state==='COMPLETED'){
+    const original=(j.tasks||[]).find(t=>t.agentName==='implementation');
+    const quotaEvent=state.evidence.providerQuotaFailure===true;
+    const rerouteEvent=state.evidence.providerRerouted===true;
+    const recovered=original?.state==='SUCCEEDED'&&Number(original.attempt)>=2;
+    if(!quotaEvent||!rerouteEvent||!recovered)
+      issue={type:'SCENARIO_006_EVIDENCE_MISSING',quotaEvent,rerouteEvent,recovered,attempt:original?.attempt??null};
   }
   const externalReady=!github.enabled || external?.githubState==='MERGED';
   // COMPLETED is a judgment boundary, not an automatic scenario PASS.

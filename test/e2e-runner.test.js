@@ -144,3 +144,11 @@ test('scenario 006 rejects missing provider quota injection and original recover
  assert.match(watch,/PROVIDER_REROUTE_NOT_PROVEN/);
  assert.match(watch,/provider-quota-injected\.json/);
 });
+
+test('scenario 006 rejects completed job without structured quota reroute and same-task retry',async()=>{
+ const watch=await read('../e2e/runner/watch.mjs');
+ assert.match(watch,/SCENARIO_006_EVIDENCE_MISSING/);
+ assert.match(watch,/e\.data\?\.reason==='rate_limit_exceeded'/);
+ assert.match(watch,/e\.data\?\.previousFailure==='rate_limit_exceeded'/);
+ assert.match(watch,/Number\(original\.attempt\)>=2/);
+});
