@@ -219,8 +219,11 @@ async function tick(){
     }
     if(e.type==='review.approved')state.evidence.reviewApproved=Number(state.evidence.reviewApproved||0)+1;
     if(e.type==='recovery.exhausted')state.evidence.recoveryExhausted=Number(state.evidence.recoveryExhausted||0)+1;
-    if(e.type==='task.failed'&&e.data?.reason==='rate_limit_exceeded')state.evidence.providerQuotaFailure=true;
-    if(e.type==='task.rerouting'&&e.data?.previousFailure==='rate_limit_exceeded')state.evidence.providerRerouted=true;
+    if(e.type==='task.failed'&&e.data?.reason){
+      state.evidence.workerRejections??=[];
+      state.evidence.workerRejections.push({taskId:e.task_id,executionId:e.data.executionId,reason:e.data.reason,message:e.message});
+    }
+    if(e.type==='task.rerouting')state.evidence.workerRecoveryRouting=true;
   }
   if(state.pendingTransferId){
    const statusPath=join(process.env.NEOY_DATA_DIR||join(homedir(),'Library/Application Support/NeoY'),'xchat-lifecycle',state.pendingTransferId+'.status.json');
@@ -257,15 +260,15 @@ async function tick(){
     if(step.issue)state.scenario005Issue=step.issue;
   }
   if(scenario.startsWith('006-') && j.state!=='CANCELLED'){
-    const quotaReceipt=join(dirname(statePath),'provider-quota-injected.json');
+    const quotaReceipt=join(dirname(statePath),'worker-rejection-injected.json');
     const impl=(j.tasks||[]).find(t=>t.agentName==='implementation');
     if(!existsSync(quotaReceipt) && impl?.state==='RUNNING' && impl.executionId){
-      const command=process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
-      if(!command)state.scenario006Issue={type:'PROVIDER_QUOTA_INJECTOR_NOT_CONFIGURED'};
+      const command=process.env.E2E_WORKER_REJECTION_INJECT_COMMAND||process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
+      if(!command)state.scenario006Issue={type:'WORKER_REJECTION_INJECTOR_NOT_CONFIGURED'};
       else{
         const launch=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','inject','--command',command,'--out',quotaReceipt],{encoding:'utf8',cwd:root,timeout:120000});
-        if(launch.status!==0)state.scenario006Issue={type:'PROVIDER_QUOTA_INJECTION_FAILED',error:launch.stderr||launch.error?.message||'inject failed'};
-        else console.log(JSON.stringify({event:'provider_quota_injection_attempted',jobId,taskId:impl.id,executionId:impl.executionId}));
+        if(launch.status!==0)state.scenario006Issue={type:'WORKER_REJECTION_INJECTION_FAILED',error:launch.stderr||launch.error?.message||'inject failed'};
+        else console.log(JSON.stringify({event:'worker_rejection_injection_attempted',jobId,taskId:impl.id,executionId:impl.executionId}));
       }
     }
   }
@@ -278,11 +281,11 @@ async function tick(){
   // Provider quota test may not reach review or PASS without REAL injected 429
   // and proof of original-task retry. Reject a nominally successful workload.
   if(scenario.startsWith('006-')){
-    const quotaReceipt=join(dirname(statePath),'provider-quota-injected.json');
+    const quotaReceipt=join(dirname(statePath),'worker-rejection-injected.json');
     const impl=(j.tasks||[]).filter(t=>t.agentName==='implementation');
     const reviewStarted=(j.tasks||[]).some(t=>t.agentName==='reviewer');
-    if(reviewStarted && !existsSync(quotaReceipt)) issue={type:'PROVIDER_QUOTA_INJECTION_MISSING',message:'Reviewer started without external scoped provider quota injection receipt; round is invalid'};
-    if(j.state==='COMPLETED' && (!existsSync(quotaReceipt)||!impl.some(t=>Number(t.attempt)>=2)))issue={type:'PROVIDER_REROUTE_NOT_PROVEN',message:'Job completed without genuine injected quota failure and same-Task recovery'};
+    if(reviewStarted && !existsSync(quotaReceipt)) issue={type:'WORKER_REJECTION_INJECTION_MISSING',message:'Reviewer started without external scoped worker rejection injection receipt; round is invalid'};
+    if(j.state==='COMPLETED' && (!existsSync(quotaReceipt)||!impl.some(t=>Number(t.attempt)>=2)))issue={type:'WORKER_REJECTION_RECOVERY_NOT_PROVEN',message:'Job completed without real worker rejection and same-Task recovery'};
   }
 
   // An abnormal computed status is a decision point even when recovery is expected.
@@ -345,11 +348,10 @@ async function tick(){
   }
   if(!issue&&scenario.startsWith('006-')&&j.state==='COMPLETED'){
     const original=(j.tasks||[]).find(t=>t.agentName==='implementation');
-    const quotaEvent=state.evidence.providerQuotaFailure===true;
-    const rerouteEvent=state.evidence.providerRerouted===true;
+    const rejectionEvidence=(state.evidence.workerRejections||[]).filter(e=>e.taskId===original?.id);
     const recovered=original?.state==='SUCCEEDED'&&Number(original.attempt)>=2;
-    if(!quotaEvent||!rerouteEvent||!recovered)
-      issue={type:'SCENARIO_006_EVIDENCE_MISSING',quotaEvent,rerouteEvent,recovered,attempt:original?.attempt??null};
+    if(!rejectionEvidence.length||!recovered)
+      issue={type:'SCENARIO_006_EVIDENCE_MISSING',rejectionEvidence,recovered,attempt:original?.attempt??null};
   }
   const externalReady=!github.enabled || external?.githubState==='MERGED';
   // COMPLETED is a judgment boundary, not an automatic scenario PASS.

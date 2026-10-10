@@ -33,13 +33,13 @@ const title=opt('title',`${scenario} round ${round}`);
 const date=new Date().toISOString().slice(0,10);
 const runDir=resolve(opt('run-dir',`e2e/runs/${date}/${scenario}/r${round}`));
 function e2ePreflight(){
-  // A quota scenario without a real, scoped injection mechanism is invalid
+  // A worker rejection scenario without a real, scoped injection mechanism is invalid
   // before its first worker starts. Never spend a Job/PR on a no-op round.
   if(scenario.startsWith('006-')){
-    const command=process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
+    const command=process.env.E2E_WORKER_REJECTION_INJECT_COMMAND||process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
     if(!command.trim()||(!command.includes('{job}')&&!command.includes(job))){
-      const failure={event:'preflight-failed',scenario,round:Number(round),type:'PROVIDER_QUOTA_INJECTOR_NOT_CONFIGURED',
-        message:'Provide E2E_PROVIDER_QUOTA_INJECT_COMMAND scoped to {job}. It must provoke a real provider quota rejection at the selected worker boundary; no synthetic receipt counts as proof.'};
+      const failure={event:'preflight-failed',scenario,round:Number(round),type:'WORKER_REJECTION_INJECTOR_NOT_CONFIGURED',
+        message:'Provide E2E_WORKER_REJECTION_INJECT_COMMAND scoped to {job}. It must provoke a real worker/model/provider execution rejection at the selected boundary; no synthetic receipt counts as proof.'};
       mkdirSync(runDir,{recursive:true});writeFileSync(resolve(runDir,'preflight.json'),JSON.stringify(failure,null,2)+'\n');
       console.error(JSON.stringify(failure));process.exit(2);
     }

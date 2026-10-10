@@ -12,7 +12,7 @@ Every attempt uses one fresh workload branch + one fresh durable Job. Never muta
 3. `003-objective-exception-ladder` — workload-only choreography: worker fails once -> Troubleshooter recovery -> exact original retry -> reviewer rejects twice -> two Graph-created fixes -> third review approves -> merge.
 4. `004-objective-recovery-exhaustion-escalation` — workload-only terminal path: recovery cannot safely proceed and Troubleshooter invokes canonical escalation; must not falsely complete.
 5. `005-watchdog-stale-generation` — runtime injection: missing terminal/process exit -> watchdog/recovery -> newer execution -> delayed stale old terminal ignored.
-6. `006-provider-quota-reroute` — runtime/provider injection: structured quota failure -> usage refresh -> reroute -> original Task completion.
+6. `006-provider-quota-reroute` (legacy scenario ID) — genuine worker execution rejection (quota, model, provider, or equivalent) -> classified failure -> appropriate automatic recovery of original Task.
 7. `007-projection-isolation-retry` — external transport injection: projection failure + duplicate delivery while SQLite lifecycle remains authoritative.
 8. `008-async-browser-handoff` — async browser submission transport exits before authoritative terminal event; no duplicate launch.
 9. `009-daemon-restart-orphan` — shared-runtime injection: restart daemon during active execution; exactly-once orphan/live recovery.

@@ -108,7 +108,7 @@ flowchart TD
 | Job / Planner | Happy-path planning | Planner creates executable implementation work from durable objective | Implemented | Covered | `#1 PASS`, `#2 PASS`, `#3 PASS` | Covered |
 | Planner | Planner invalid output / transient failure | Automatic planner retry carries prior failure/context; no manual reconcile required | Implemented | `autonomous.test.js`, planner/runtime tests | None dedicated | **E2E GAP** |
 | Planner | Planner unavailable / retry exhausted | Persist failure; do not fabricate implementation work or completion | Implemented | workflow/core tests | None dedicated | **E2E GAP** |
-| Routing | Provider quota / rate limit | Preserve structured failure, refresh usage facts, reroute exact Task | Implemented in routing/recovery path | Router/core tests | `#6 PLANNED` | Planned E2E |
+| Routing | Worker execution rejection (quota/model/provider/etc.) | Preserve structured failure, apply cause-specific recovery, retry exact Task | Implemented in routing/recovery path | Router/core tests | `#6 PLANNED` | Planned E2E |
 | Routing | No viable worker/model | Persist Task `FAILED` before any execution claim; Graph then exposes normal recovery path | Implemented | Core routing failure test proves no execution generation is claimed | None | **E2E GAP** |
 | Dispatch | Duplicate/concurrent launch | Per-Job execution slot + pool/global capacity control | Implemented | Core/local-job routing tests | Happy path exercises ordinary dispatch; stronger injection in `#5` | Mostly covered; fault E2E planned |
 | Worker | Ordinary worker `task.failed` / `task.blocked` | Graph creates exactly one relevant Troubleshooter; recover exact original Task | Implemented | Troubleshooter/core/local-authority tests | `#2 PASS`, `#3 PASS` | Covered |
@@ -145,7 +145,7 @@ flowchart TD
 | `003-objective-exception-ladder` | Worker fails once → Troubleshooter recovery → original retry → review rejects twice → two fix generations → later approval → COMPLETED + GitHub MERGED (#33, r11) | **PASS** |
 | `004-objective-recovery-exhaustion-escalation` | Troubleshooter fails → bounded same-Task retry/reroute → original recovered → review/merge → COMPLETED + GitHub MERGED (#35, r2) | **PASS** |
 | `005-watchdog-stale-generation` | Kill worker without terminal → watchdog recovery → newer execution → stale old terminal ignored → COMPLETED + GitHub MERGED (#41, r6) | **PASS** |
-| `006-provider-quota-reroute` | Real provider quota/rate-limit failure → refresh routing facts → reroute exact Task | **PLANNED** |
+| `006-provider-quota-reroute` | Real worker/provider rejection (quota, unavailable model/provider, etc.) → classify → cause-specific recovery → original Task retry | **PLANNED** |
 | `007-projection-isolation-retry` | GitHub projection failure + duplicate delivery while SQLite lifecycle continues | **PLANNED** |
 | `008-async-browser-handoff` | Async browser transport exits before business completion; authoritative terminal remains controlling | **PLANNED** |
 | `009-daemon-restart-orphan` | Restart daemon during live execution; exactly-once live/orphan recovery | **PLANNED** |
