@@ -3,9 +3,7 @@ import { type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobEntity } from './workflow/entity-creation.js';
 import { normalizeThreadId } from './reviewer-thread.js';
-import { discoverLocalRelayStoreSnapshots } from './relay-store.js';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
 
 /**
  * Job lifecycle bootstrap: SQLite is authoritative. No GitHub request is
@@ -29,7 +27,7 @@ export async function ensureManagedGitHubJob(
   if (!Number.isInteger(requestedNumber) || requestedNumber < 0) throw new Error('Invalid external PR binding number');
   const placeholder: PullRequest = { number: requestedNumber, title: options.title ?? options.id,
     body: options.body ?? options.objective ?? '', state: 'OPEN', head: options.head ?? '', base: options.base ?? '' };
-  const directory = options.storeDirectory ?? join(homedir(), '.agents-relay', 'stores');
+  const directory = options.storeDirectory ?? relayStoreDirectory();
   const alreadyKnown = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot =>
     snapshot.jobs.filter(job => job.id === options.id).map(job => ({ job, path: snapshot.path })));
   if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + options.id);
