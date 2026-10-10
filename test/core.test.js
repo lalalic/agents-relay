@@ -419,8 +419,8 @@ test('reconciler immediately rescues P0 troubleshooter orchestrator repair work'
   const reconciler = managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.adapter,'chatgpt');
-  assert.deepEqual(durable.workerRequirements,{capabilities:[...self.capabilities],runtime:'chatgpt'});
+  assert.equal(durable.adapter,'codex');
+  assert.deepEqual(durable.workerRequirements,{capabilities:[...self.capabilities,'local_repo'],runtime:'codex'});
   assert.ok(events.some(event=>event.type==='task.orchestrator_rescued'));
 });
 

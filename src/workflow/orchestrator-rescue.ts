@@ -38,8 +38,10 @@ export function applyOrchestratorRescue(task: Task, now: number): { rescued: boo
   const rescued = decision.accepted && decision.actions.some(action => action.id === 'task.rescueOrchestrator');
   const ageMs = now - Date.parse(task.createdAt);
   if (!rescued) return { rescued: false, ageMs };
-  task.adapter = 'chatgpt';
-  task.workerRequirements = { capabilities: [...task.capabilities], runtime: 'chatgpt' };
+  const urgentRepair = task.priority === 'P0' && task.agentName === 'troubleshooter';
+  task.adapter = urgentRepair ? 'codex' : 'chatgpt';
+  task.workerRequirements = { capabilities: [...task.capabilities, ...(urgentRepair ? ['local_repo'] : [])],
+    runtime: urgentRepair ? 'codex' : 'chatgpt' };
   task.workerSelection = undefined;
   task.routing = undefined;
   task.timeoutMs = 0;
