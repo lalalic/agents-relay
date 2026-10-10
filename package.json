@@ -1,6 +1,6 @@
 {
   "name": "agents-relay",
-  "version": "2.0.1-e2e.20261010.42",
+  "version": "2.0.1-e2e.20261010.43",
   "description": "Durable async agent jobs coordinated through GitHub pull requests",
   "type": "module",
   "bin": {
