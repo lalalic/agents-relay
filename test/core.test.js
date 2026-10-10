@@ -2361,6 +2361,34 @@ test('blocked review transitions reviewer task to BLOCKED', async () => {
   assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'BLOCKED');
 });
 
+test('projected PR stale head delays final review until projection catches up', async () => {
+  const implementation=task('implementation','SUCCEEDED');
+  const root={...job([implementation]),headSha:'sha-current',externalPrNumber:99};
+  const store=new InMemoryStore(root);
+  let projected='sha-bootstrap';
+  store.pullRequestHead=async()=>({ref:'e2e/test',sha:projected});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.reconcile('j');
+  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='reviewer'),false);
+  projected='sha-current';
+  await reconciler.reconcile('j');
+  const durable=await store.load('j');
+  const reviewer=durable.tasks.find(item=>item.agentName==='reviewer');
+  assert.ok(reviewer);
+  assert.equal(reviewer.reviewHeadSha,'sha-current');
+  await reconciler.close();
+});
+
+test('bootstrap-only remote branch uses force-with-lease for authoritative projection', async () => {
+  const { authoritativeBranchPushArgs } = await import('../dist/github-branch-projection.js');
+  assert.deepEqual(authoritativeBranchPushArgs({sourceRef:'refs/heads/e2e/job',branch:'e2e/job',remoteHeadSha:'bootstrap-sha',remoteTreeMatchesBase:true}),[
+    'push','origin','--force-with-lease=refs/heads/e2e/job:bootstrap-sha','refs/heads/e2e/job:refs/heads/e2e/job'
+  ]);
+  assert.deepEqual(authoritativeBranchPushArgs({sourceRef:'refs/heads/e2e/job',branch:'e2e/job',remoteHeadSha:'real-work',remoteTreeMatchesBase:false}),[
+    'push','origin','refs/heads/e2e/job:refs/heads/e2e/job'
+  ]);
+});
+
 test('approved reviewer remains SUCCEEDED while external MERGED PR cannot terminate Job', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-merged-review',autoMerge:false};
   const store=new InMemoryStore(reviewJob); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-merged-review';

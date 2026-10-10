@@ -167,7 +167,21 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     return id;
   }
 
+  private async projectedReviewHeadReady(job: Job, headSha: string): Promise<boolean> {
+    // Local-first Jobs may expose a review-only GitHub PR. Once such a PR is
+    // bound, its projected head must match the authoritative local head before
+    // a reviewer is asked to review that immutable PR identity.
+    if (!job.externalPrNumber || job.externalPrNumber <= 0 || !this.store.pullRequestHead) return true;
+    try {
+      const projected = await this.store.pullRequestHead();
+      return projected?.sha === headSha;
+    } catch {
+      return false;
+    }
+  }
+
   protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
+    if (headSha && !(await this.projectedReviewHeadReady(job, headSha))) return;
     let reviewTaskId: string | null = null;
     const decision = await dispatchReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, headSha), async actionId => {
       if (actionId !== 'review.create') throw new Error('Unsupported review reconcile action ' + actionId);

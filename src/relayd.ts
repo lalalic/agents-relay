@@ -18,6 +18,7 @@ import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
+import { authoritativeBranchPushArgs } from './github-branch-projection.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
@@ -218,7 +219,21 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]);
       const facts = await relay.loadPullRequestFacts();
       if (facts?.head?.sha !== sourceSha) {
-        await gitText(canonical, ['push', 'origin', `${branch}:${branch}`]);
+        await gitText(canonical, ['fetch', '--no-tags', 'origin',
+          '+refs/heads/main:refs/remotes/origin/main']);
+        await gitText(canonical, ['fetch', '--no-tags', 'origin',
+          `+refs/heads/${branch}:refs/remotes/origin/${branch}`]).catch(() => '');
+        const remoteRef = `refs/remotes/origin/${branch}`;
+        const remoteHeadSha = await gitText(canonical, ['rev-parse', '--verify', remoteRef]).catch(() => '');
+        const remoteTreeMatchesBase = remoteHeadSha
+          ? await gitText(canonical, ['diff', '--quiet', 'refs/remotes/origin/main', remoteRef]).then(() => true, () => false)
+          : false;
+        await gitText(canonical, authoritativeBranchPushArgs({
+          sourceRef,
+          branch,
+          remoteHeadSha: remoteHeadSha || null,
+          remoteTreeMatchesBase,
+        }));
       }
       let job = (await relay.loadJob(discovered.id)) ?? discovered;
       let externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
