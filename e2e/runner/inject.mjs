@@ -73,19 +73,8 @@ function restartDaemon(){
   const receipt={scenario,phase,jobId,action:'pm2 restart agents-relayd',at:new Date().toISOString()};save(receipt);console.log(JSON.stringify(receipt,null,2));
 }
 
-function scopedExternalCommand(){
-  const command=required('command');
-  if(!command.includes('{job}')&&!command.includes(jobId))throw Error('scoped injection command must contain {job} or the exact Job ID');
-  const expanded=command.replaceAll('{job}',jobId);
-  const p=spawnSync('/bin/zsh',['-lc',expanded],{encoding:'utf8',timeout:Number(opt('timeout-ms','120000')),maxBuffer:8e6});
-  const receipt={scenario,phase,jobId,command:expanded,status:p.status,stdout:p.stdout,stderr:p.stderr,at:new Date().toISOString()};save(receipt);
-  if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||p.stdout||`injection command exited ${p.status}`);
-  console.log(JSON.stringify(receipt,null,2));
-}
-
 if(scenario.startsWith('005-')&&phase==='terminate-current')await terminateCurrent();
 else if(scenario.startsWith('005-')&&phase==='terminate-from-event')await terminateFromEvent();
 else if(scenario.startsWith('005-')&&phase==='replay-stale-terminal')await replayStaleTerminal();
 else if(scenario.startsWith('009-')&&phase==='restart-daemon')restartDaemon();
-else if(['006','007','010'].some(prefix=>scenario.startsWith(prefix+'-'))&&phase==='inject')scopedExternalCommand();
 else throw Error(`unsupported injection ${scenario}/${phase}`);

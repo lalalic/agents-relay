@@ -160,7 +160,7 @@ test('scenario 006 uses planner declaration rather than external injector',async
  assert.match(plan,/task\['--test-injection'\]/);
 });
 
-test('scenario 007 cannot pass without real projection fault evidence',async()=>{
- const watch=await read('../e2e/runner/watch.mjs');
- assert.match(watch,/SCENARIO_007_PROJECTION_INJECTION_MISSING/);
+test('scenario 007 watcher ignores private injection implementation',async()=>{
+ const watcher=await read('../e2e/runner/watch.mjs');
+ assert.doesNotMatch(watcher,/e2e\/faults|projection-failure\.json|E2E_PROJECTION_FAULT_DIR/);
 });

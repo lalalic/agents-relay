@@ -30,3 +30,16 @@ test('Planner preserves hidden --test-injection option in its Task spec',async()
  assert.equal(plan.next_tasks[0].testInjection,'model_not_found');
  assert.equal(plan.next_tasks[0].workerRequirements.runtime,'codex');
 });
+
+test('projection injection consumes Planner declaration once, only in authorized repo',async()=>{
+ const {consumeProjectionInjection,injectProjectionFailure}=await import('../dist/e2e-injection.js');
+ let task={id:'impl',testInjection:'github_projection_failure',updatedAt:new Date(0).toISOString()};
+ let current={repository:'lalalic/agents-relay-e2e',tasks:[task]};
+ let changes=0;
+ const relay={mutateJob:async(_job,fn)=>{current=fn(structuredClone(current));changes++;return current;},loadJob:async()=>structuredClone(current)};
+ assert.equal(await consumeProjectionInjection(relay,'lalalic/other','job',{E2E_REPO:'lalalic/agents-relay-e2e'}),false);
+ assert.equal(changes,0);
+ assert.equal(await consumeProjectionInjection(relay,'lalalic/agents-relay-e2e','job',{E2E_REPO:'lalalic/agents-relay-e2e'}),true);
+ assert.equal(current.tasks[0].testInjection,undefined);
+ assert.equal(await consumeProjectionInjection(relay,'lalalic/agents-relay-e2e','job',{E2E_REPO:'lalalic/agents-relay-e2e'}),false);
+});
