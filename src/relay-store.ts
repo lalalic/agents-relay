@@ -460,7 +460,7 @@ export function relayStorePath(directory: string, repository: string, prNumber: 
   return directory + '/' + `${repository.replace('/', '_')}-${prNumber}.db`;
 }
 
-export { relayJobStorePath } from './local-job-path.js';
+export { relayJobStorePath, relayStoreDirectory } from './local-job-path.js';
 export type LocalRelayStoreSnapshot = { path: string; jobs: Job[]; facts: PullRequestFacts | null; publications: Record<string, PublicationState> };
 
 /**

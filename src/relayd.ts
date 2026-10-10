@@ -13,7 +13,7 @@ import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, relayStoreDirectory, relayStorePath, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
@@ -100,7 +100,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const key = `${repository}#${prNumber}`;
     let relay = relayStores.get(key);
     if (!relay) {
-      relay = new SQLiteRelayStore(relayStorePath(join(homedir(), '.agents-relay', 'stores'), repository, prNumber));
+      relay = new SQLiteRelayStore(relayStorePath(relayStoreDirectory(), repository, prNumber));
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
@@ -110,13 +110,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     return projected;
   };
   // SQLite inventory, not GitHub discovery, defines which repositories exist.
-  const existingInventory = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+  const existingInventory = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
   for (const snapshot of existingInventory) for (const job of snapshot.jobs) {
     if (!repositories.includes(job.repository)) repositories.push(job.repository);
   }
   if (repositories.length === 0) repositories.push('local/' + basename(workspaceRoot));
   const inventoryFromLocal = async (): Promise<ManagedJobOverview[]> => {
-    const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+    const snapshots = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
     const known = new Set(repositories);
     const entries = snapshots.flatMap(snapshot =>
       snapshot.jobs.filter(job => known.has(job.repository)).map(job => ({
@@ -151,7 +151,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const refreshPullRequest = async (repository: string, prNumber: number, trigger: PullRequestRefreshTrigger, options?: { force?: boolean }): Promise<ManagedJobOverview[]> =>
     (await refreshPullRequestSnapshot(repository, prNumber, trigger, options)).overviews;
-  const localJobBinding = createJobIdRegistryResolver(join(homedir(), '.agents-relay', 'stores'), relayStores, { client, trustedAuthors: trusted, noGitHub });
+  const localJobBinding = createJobIdRegistryResolver(relayStoreDirectory(), relayStores, { client, trustedAuthors: trusted, noGitHub });
   const requireLocalJobBinding = async (jobId: string) => {
     const binding = await localJobBinding(jobId);
     if (!binding) throw new Error('Local Job ' + jobId + ' not found or ambiguous in SQLite registry');
@@ -184,7 +184,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     await refreshGitHubAuthentication();
     if (githubAuthenticated !== true) return;
     if (client.rateLimitStatus().limited) return;
-    const snapshots = await discoverLocalRelayStoreSnapshots(join(homedir(), '.agents-relay', 'stores'));
+    const snapshots = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
     const bindingCandidates = orderGitHubBindingCandidates(
       snapshots.flatMap(snapshot => snapshot.jobs.map(job => ({ snapshotPath: snapshot.path, job }))),
     );

@@ -4,8 +4,7 @@ import { githubAuthContext } from './github-auth.js';
 import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { relayStoreDirectory } from './relay-store.js';
 import { EventRecord, Job, Task, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobSchedule } from './scheduler.js';
@@ -59,7 +58,7 @@ export async function storeFor(args: string[]): Promise<{ store: DurableStore; j
   const repo = noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
   if (!repo || !jobId) throw new Error('Local Job requires --repo and --id (or explicit --file)');
-  const directory = arg(args, '--store-dir') || join(homedir(), '.agents-relay', 'stores');
+  const directory = arg(args, '--store-dir') || relayStoreDirectory();
   const binding = await createJobIdRegistryResolver(directory, new Map())(jobId);
   if (!binding || binding.job.repository !== repo)
     throw new Error('Immutable local Job not found for repository: ' + jobId);

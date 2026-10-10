@@ -770,3 +770,28 @@ test('job tag contract and task tag round-trip through trusted markers', async (
   child.tag = 'pass';
   assert.equal(parseTask(renderTaskComment(child))?.tag, 'pass');
 });
+
+
+test('default managed store honors AGENTS_RELAY_STORE_DIR isolation', async () => {
+  const stores = await mkdtemp(join(tmpdir(), 'relay-store-isolation-'));
+  const previous = process.env.AGENTS_RELAY_STORE_DIR;
+  process.env.AGENTS_RELAY_STORE_DIR = stores;
+  const client = {
+    request: async () => { throw new Error('GitHub REST forbidden'); },
+    graphql: async () => { throw new Error('GitHub GraphQL forbidden'); },
+  };
+  try {
+    const { ensureManagedGitHubJob } = await import('../dist/cli.js');
+    const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
+      id: 'fixture-isolation-regression', title: 'fixture isolation regression',
+      objective: 'fixture isolation regression', head: 'feat/fixture-isolation', noGitHub: true,
+    });
+    assert.equal(result.job.repository, 'owner/repo');
+    const { readdir } = await import('node:fs/promises');
+    assert.ok((await readdir(stores)).some(name => name.endsWith('.db')));
+  } finally {
+    if (previous === undefined) delete process.env.AGENTS_RELAY_STORE_DIR;
+    else process.env.AGENTS_RELAY_STORE_DIR = previous;
+    await rm(stores, { recursive: true, force: true });
+  }
+});

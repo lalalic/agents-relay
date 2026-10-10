@@ -1,17 +1,15 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { Job } from './types.js';
 import type { GitHubWebhookWake } from './github-webhook.js';
 import type { EventBus } from './events.js';
 import { eventFor } from './events.js';
-import { SQLiteRelayStore, relayStorePath } from './relay-store.js';
+import { SQLiteRelayStore, relayStoreDirectory, relayStorePath } from './relay-store.js';
 
 /** Single-Job service uses the same durable publish facts as the repository daemon. */
 export async function handleServicePublication(
   job: Job,
   wake: GitHubWebhookWake,
   bus?: EventBus,
-  directory = join(homedir(), '.agents-relay', 'stores'),
+  directory = relayStoreDirectory(),
 ): Promise<void> {
   if (!wake.publication && !wake.publishFailure) return;
   const sqlite = new SQLiteRelayStore(relayStorePath(directory, job.repository, job.prNumber));
