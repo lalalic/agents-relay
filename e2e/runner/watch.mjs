@@ -280,6 +280,12 @@ async function tick(){
       }
     }
   }
+  if(scenario.startsWith('009-')) {
+    const impl=(j.tasks||[]).find(t=>t.agentName==='implementation');
+    const receipt=join(dirname(statePath),'daemon-restarted.json');
+    if(impl?.state==='SUCCEEDED'&&!existsSync(receipt))
+      state.scenario009Issue={type:'DAEMON_RESTART_MISSING',message:'Implementation completed without a controller-confirmed restart during real local worker execution'};
+  }
   const github=githubCapability();
   if(j.state==='CANCELLED'&&existsSync(expectedCancelPath)){
     state.phase='superseded';state.supersededAt=new Date().toISOString();state.fingerprint=null;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_superseded',repo,jobId,scenario}));process.exit(0);return;
