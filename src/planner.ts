@@ -290,13 +290,18 @@ export function validatePlannerProgress(job: Job, result: PlannerResult): void {
 export function validatePlannerLifecycleOwnership(job: Job, specs: readonly PlannerTaskSpec[]): void {
   if (job.prNumber !== 0 || !job.localMerge) return;
   for (const spec of specs) {
-    const text = `${spec.id} ${spec.agentName ?? ''} ${spec.input}`.toLowerCase();
-    const localMerge = /\blocal[ -]merge\b|\blocal merge\b/.test(text);
-    const jobCompletion = /\bjob\b.{0,80}\bcompleted\b|\bcompleted\b.{0,80}\bjob\b/.test(text);
-    const externalMerge = /\b(?:external|github|projected)\b.{0,80}\bpr\b.{0,80}\bmerged\b|\bpr\b.{0,80}\bmerged\b/.test(text);
-    const ownsLifecycle = /\b(perform|execute|complete|trigger|drive|merge|transition|finish|finalize)\b/.test(text);
-    if (ownsLifecycle && [localMerge, jobCompletion, externalMerge].filter(Boolean).length >= 2) {
-      throw new Error(`Planner next task ${spec.id} attempts to own Graph lifecycle delivery; local merge, Job COMPLETED, and projected PR merge are Relay-owned effects and must not be worker Tasks`);
+    // Restrict ownership detection to an individual imperative clause. A long
+    // implementation brief may describe Relay-owned completion as context.
+    const clauses = spec.input.toLowerCase().split(/[.!?\n]+/);
+    for (const clause of clauses) {
+      if (/\b(?:relay|graph|orchestrator)\s+(?:must|will|should|owns?)\b/.test(clause)) continue;
+      const localMerge = /\blocal[ -]merge\b|\blocal merge\b/.test(clause);
+      const jobCompletion = /\bjob\b.{0,80}\bcompleted\b|\bcompleted\b.{0,80}\bjob\b/.test(clause);
+      const externalMerge = /\b(?:external|github|projected)\b.{0,80}\bpr\b.{0,80}\bmerged\b|\bpr\b.{0,80}\bmerged\b/.test(clause);
+      const ownsLifecycle = /^\s*(?:perform|execute|complete|trigger|drive|merge|transition|finish|finalize)\b/.test(clause);
+      if (ownsLifecycle && [localMerge, jobCompletion, externalMerge].filter(Boolean).length >= 2) {
+        throw new Error(`Planner next task ${spec.id} attempts to own Graph lifecycle delivery; local merge, Job COMPLETED, and projected PR merge are Relay-owned effects and must not be worker Tasks`);
+      }
     }
   }
 }
