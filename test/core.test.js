@@ -2239,6 +2239,23 @@ test('approved review never calls GitHub merge regardless of autoMerge policy', 
   }
 });
 
+test('SHA-bound reviewer accepts correlated approval without head SHA in event data', async () => {
+  const reviewer=task('final-review-sha-bound','RUNNING');
+  reviewer.agentName='reviewer';
+  reviewer.adapter='chatgpt';
+  reviewer.reviewHeadSha='sha-bound';
+  reviewer.executionId='exec-review';
+  reviewer.executionHistory=[{id:'exec-review',attempt:1,startedAt:now()}];
+  const reviewJob={...job([reviewer]),headSha:'sha-bound',review:{outcome:'pending',headSha:'sha-bound',taskId:reviewer.id,evidence:null,updatedAt:now()}};
+  const store=new InMemoryStore(reviewJob);
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeChatGptAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.approved','succeeded','approved','user',{},eventSource('j',reviewer.id,'exec-review')));
+  const durable=await store.load('j');
+  assert.equal(durable.tasks.find(item=>item.id===reviewer.id)?.state,'SUCCEEDED');
+  assert.equal(durable.review?.outcome,'approved');
+  assert.equal(durable.review?.headSha,'sha-bound');
+});
+
 test('review outcomes persist durably and old SHA evidence is ignored after head changes', async () => {
   const reviewJob = { ...job([task('work', 'SUCCEEDED')]), headSha: 'sha-review-1' };
   const store = new InMemoryStore(reviewJob);

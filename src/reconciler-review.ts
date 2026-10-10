@@ -76,7 +76,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
-    const headSha = ReconcilerReviewBase.reviewHeadSha(event);
+    const explicitHeadSha = ReconcilerReviewBase.reviewHeadSha(event);
+    const headSha = explicitHeadSha ?? (event.type === 'review.approved' ? task.reviewHeadSha : undefined);
     if (!headSha) return null;
     return { headSha, issues: ReconcilerReviewBase.reviewIssues(event) };
   }
