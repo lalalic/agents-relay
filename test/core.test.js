@@ -2514,11 +2514,15 @@ test('reviewer runtime recovery preserves exact immutable head and accepts verdi
   recovery.state='SUCCEEDED'; recovery.executionId=null; recovery.leaseOwner=null; recovery.leaseExpiresAt=null;
   await store.saveTask(recovery);
 
-  const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,maxConcurrent:1});
+  durable=await store.load('j'); recovered=durable.tasks.find(item=>item.id===reviewer.id);
+  recovered.state='RUNNING'; recovered.executionId='review-recovered-exec'; recovered.leaseOwner='test';
+  recovered.leaseExpiresAt=new Date(Date.now()+60000).toISOString(); recovered.attempt+=1;
+  await store.saveTask(recovered);
+
+  const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:1});
   const stop=await reconciler.watch('j');
-  await reconciler.reconcile('j');
-  const source=await activeEventSource(store,reviewer.id);
+  const source=eventSource('j',reviewer.id,'review-recovered-exec');
   await bus.publish(eventFor('j',reviewer.id,null,'review.changes_required','failed','same-head review requires change','user',{outcome:{head_sha:'sha-review-recovered',blocking_findings:[{summary:'fix recovered review'}]}},source));
   await new Promise(resolve=>setTimeout(resolve,10));
   durable=await store.load('j'); recovered=durable.tasks.find(item=>item.id===reviewer.id);
