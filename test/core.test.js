@@ -929,6 +929,25 @@ test('Relay publishes process launched and accepts only a worker-owned post-laun
   await stop(); await stopEvents();
 });
 
+test('async transport exit is observable after an authoritative terminal event', async () => {
+  const t=task('async-terminal-first');t.adapter='chatgpt';
+  const store=new InMemoryStore(job([t]));const bus=new MemoryEventBus();const events=[];
+  let finish;
+  const transport=new Promise(resolve=>{finish=resolve});
+  const adapter={name:'chatgpt',id:'delayed-async',capabilities:['model','chatgpt'],launch(){return {id:'transport',launched:Promise.resolve(),promise:transport,cancel(){}}}};
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stopEvents=await bus.subscribe('j',async e=>events.push(e));const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j');
+  const source=await activeEventSource(store,'async-terminal-first');
+  await bus.publish(eventFor('j','async-terminal-first',null,'task.started','running','started','user',undefined,source));
+  await bus.publish(eventFor('j','async-terminal-first',null,'task.completed','succeeded','finished','user',undefined,source));
+  finish({summary:'transport settled'});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal((await store.load('j')).tasks[0].state,'SUCCEEDED');
+  assert.equal(events.filter(e=>e.type==='task.process.async_exited').length,1);
+  await stop();await stopEvents();
+});
+
 test('after-start ChatGPT policy does not install a terminal close barrier', async () => {
   const t=task('chat-after-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let terminalBarrier;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){terminalBarrier=context.waitForTerminal; return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};

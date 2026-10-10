@@ -331,7 +331,13 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    if (terminalExecutionClaimed(jobId, taskId, executionId) || !task || task.executionId !== executionId) return;
+    // Async transport settlement is an independent, non-authoritative observation.
+    // A worker terminal event may already have claimed the Task; do not suppress
+    // transport-exit evidence merely because business completion won the race.
+    if (!task) return;
+    const correlated = task.executionId === executionId || task.executionHistory?.some(item => item.id === executionId);
+    if (!correlated) return;
+    if (task.adapter !== 'chatgpt' && (task.executionId !== executionId || terminalExecutionClaimed(jobId, taskId, executionId))) return;
     if (task.adapter !== 'chatgpt' && task.executionId === executionId && live?.executionId === executionId)
       rearmTerminalEventDeadline(this.terminalTimers, taskId, task.timeoutMs - (Date.now() - live.launchBarrier),
         this.options.postExitTerminalGraceMs ?? 15_000, () => this.detach(this.timeoutTask(jobId, taskId, executionId), jobId, taskId, 'post-exit terminal event timeout'));
