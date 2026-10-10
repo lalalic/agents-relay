@@ -1,3 +1,5 @@
+import { mkdirSync, openSync, closeSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { Job } from './types.js';
 
@@ -33,6 +35,20 @@ export function projectAuthoritativeLocalMerge(repoPath: string, job: Job): {
   projectedCommitSha: string;
   status: 'already_projected' | 'projected';
 } {
+  // E2E-only, exact-repository + exact-Job scoped one-shot transport fault.
+  // The marker is exclusively created before throwing; ordinary projection sync retries.
+  if (process.env.E2E_REPO && job.repository === process.env.E2E_REPO &&
+      process.env.E2E_PROJECTION_FAIL_JOB === job.id && process.env.E2E_PROJECTION_FAIL_MARKER) {
+    const marker = process.env.E2E_PROJECTION_FAIL_MARKER;
+    mkdirSync(dirname(marker), {recursive:true});
+    try {
+      const fd = openSync(marker, 'wx', 0o600);
+      closeSync(fd);
+      throw new Error(`E2E_SCOPED_GITHUB_PROJECTION_UNAVAILABLE: ${job.id}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
   const receipt=job.localMerge;
   if (job.state!=='COMPLETED' || receipt?.status!=='succeeded')
     throw new Error('Authoritative local merge projection requires COMPLETED Job with succeeded merge receipt');
