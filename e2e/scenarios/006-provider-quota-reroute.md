@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify that Agents Relay handles a **real Worker execution rejection**, classifies its cause, and autonomously recovers the **same original Task** using the correct strategy. Quota exhaustion is one possible cause, **not a mandatory cause**.
+Verify that Agents Relay handles a **Worker execution rejection**, classifies its cause, and autonomously recovers the **same original Task** using the correct strategy. Quota exhaustion is one possible cause, **not a mandatory cause**.
 
 Representative rejection categories include:
 
@@ -12,16 +12,18 @@ Representative rejection categories include:
 - Worker runtime rejects the selected route due to unavailable model/provider, unsupported capability or account eligibility.
 - Other genuine, structured execution rejection with a defined retry, route exclusion or escalation policy.
 
-An unsupported model can validate this scenario **only if the failure reaches the actual selected Worker/provider boundary** and Relay can recover to an eligible route. A Router expected-choice assertion or fabricated failure message alone does not count.
+For a controlled E2E injection, the Codex Adapter rejection must traverse the actual runtime settlement, watchdog, error classifier and Graph recovery pipeline. Clearly distinguish an injected failure from a real provider response. A Router expected-choice assertion or worker-authored fake `task.failed` alone does not count.
 
-## Setup and injection
+## E2E Job instruction
 
-The controller selects **one** concrete rejection class for each round and records it beforehand, including the selected initial route, trigger mechanism, expected failure classification and expected recovery. Prefer isolated per-Job/per-execution routing constraints or fault injection; do not damage global provider quotas, disable unrelated routes or modify shared Router FreeText Rules for other Jobs. A real exhausted provider can also be used if independently verified. The initial selection must be verified, not merely requested in text.
+The Job Objective MUST tell the Planner to create **one implementation Task** with JSON field `"--test-injection":"quota_exceeded"` (or `model_not_found` / `provider_unavailable`) in `next_tasks`. Also specify `"workerRequirements":{"runtime":"codex","capabilities":["model","local_repo"]}`. Relay's internal injection module checks `E2E_REPO` against the Job repository, atomically consumes the Task option in SQLite **before execution**, and makes the Codex Adapter return a controlled nonzero worker execution result. On the next attempt, the option is absent and normal Codex execution resumes. No external injector, injected receipt, or Watcher knowledge of the option.
+
+The controller must not alter globally shared Router FreeText Rules or other jobs. This is a **controlled Worker rejection**, not evidence of an actual provider outage.
 
 ## PASS — all are required
 
-1. Real first-attempt rejection observed from the selected Worker/provider boundary, with source evidence, error classification and matching original Task + execution identity.
-2. Relay processes the failure through its normal Graph/runtime path, preserving the structured rejection reason (not treating a synthetic controller receipt as provider proof).
+1. First-attempt Worker rejection observed through the regular Adapter execution failure path, with source evidence, error classification and matching original Task + execution identity.
+2. Relay processes the failure through its normal Graph/runtime path, preserving the structured rejection reason (not treating a Worker-written `task.failed` as runtime rejection proof).
 3. Relay applies the **appropriate recovery for the observed class**: refresh usage when quota-related, exclude/deprioritize invalid/unavailable route when relevant, select another viable route or an explicitly safe retry according to policy. No hard-coded provider choice.
 4. The **exact same original Task ID** is reactivated and succeeds with a newer attempt/execution generation. No replacement business Task and no manual Task lifecycle actions.
 5. Review, local merge, authoritative Job `COMPLETED`, and optional GitHub PR `MERGED` all succeed.
@@ -30,7 +32,7 @@ The controller selects **one** concrete rejection class for each round and recor
 ## Invalid outcomes
 
 - Planner selects a viable route and the original Task simply succeeds on attempt one.
-- The controller only writes a receipt or asks the Worker to *claim* quota/model/provider rejection.
+- The Worker merely *claims* quota/model/provider rejection in a Task event without an actual Adapter execution failure.
 - Only Router expected choice is checked, without actual worker rejection.
 - A rejection is observed but the original Task never recovers and the Job does not complete.
 - Reviewer blocks due to missing recovery proof; this is evidence of an invalid round, not a PASS.

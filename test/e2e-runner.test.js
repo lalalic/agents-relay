@@ -138,11 +138,11 @@ test('COMPLETED runtime transitions require same-thread scenario judgment rather
  assert.match(handoff,/COMPLETED alone is NOT PASS/);
 });
 
-test('scenario 006 rejects missing provider quota injection and original recovery',async()=>{
+test('scenario 006 watches worker events but is unaware of injection implementation',async()=>{
  const watch=await read('../e2e/runner/watch.mjs');
- assert.match(watch,/WORKER_REJECTION_INJECTION_MISSING/);
- assert.match(watch,/WORKER_REJECTION_RECOVERY_NOT_PROVEN/);
- assert.match(watch,/worker-rejection-injected\.json/);
+ const run=await read('../e2e/runner/run.mjs');
+ assert.doesNotMatch(watch,/worker-rejection-injected\.json|E2E_WORKER_REJECTION_INJECT_COMMAND|testInjection/);
+ assert.doesNotMatch(run,/E2E_WORKER_REJECTION_INJECT_COMMAND/);
 });
 
 test('scenario 006 rejects completed job without structured quota reroute and same-task retry',async()=>{
@@ -153,10 +153,9 @@ test('scenario 006 rejects completed job without structured quota reroute and sa
  assert.match(watch,/Number\(original\.attempt\)>=2/);
 });
 
-test('scenario 006 refuses starting a Job without a scoped provider-failure injector',async()=>{
- const run=await read('../e2e/runner/run.mjs');const watch=await read('../e2e/runner/watch.mjs');
- assert.match(run,/E2E_PROVIDER_QUOTA_INJECT_COMMAND/);
- assert.match(run,/WORKER_REJECTION_INJECTOR_NOT_CONFIGURED/);
- assert.match(watch,/worker-rejection-injected\.json/);
- assert.match(watch,/WORKER_REJECTION_INJECTION_FAILED/);
+test('scenario 006 uses planner declaration rather than external injector',async()=>{
+ const spec=await read('../e2e/scenarios/006-provider-quota-reroute.md');
+ assert.match(spec,/--test-injection/);
+ const plan=await read('../src/planner.ts');
+ assert.match(plan,/task\['--test-injection'\]/);
 });

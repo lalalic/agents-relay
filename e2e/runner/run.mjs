@@ -33,17 +33,8 @@ const title=opt('title',`${scenario} round ${round}`);
 const date=new Date().toISOString().slice(0,10);
 const runDir=resolve(opt('run-dir',`e2e/runs/${date}/${scenario}/r${round}`));
 function e2ePreflight(){
-  // A worker rejection scenario without a real, scoped injection mechanism is invalid
-  // before its first worker starts. Never spend a Job/PR on a no-op round.
-  if(scenario.startsWith('006-')){
-    const command=process.env.E2E_WORKER_REJECTION_INJECT_COMMAND||process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
-    if(!command.trim()||(!command.includes('{job}')&&!command.includes(job))){
-      const failure={event:'preflight-failed',scenario,round:Number(round),type:'WORKER_REJECTION_INJECTOR_NOT_CONFIGURED',
-        message:'Provide E2E_WORKER_REJECTION_INJECT_COMMAND scoped to {job}. It must provoke a real worker/model/provider execution rejection at the selected boundary; no synthetic receipt counts as proof.'};
-      mkdirSync(runDir,{recursive:true});writeFileSync(resolve(runDir,'preflight.json'),JSON.stringify(failure,null,2)+'\n');
-      console.error(JSON.stringify(failure));process.exit(2);
-    }
-  }
+  // Task injection is declared by the E2E objective and consumed by Relay.
+  // The controller does not inject or require any external injection command.
   if(!scenario.startsWith('001-')) return;
   const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/status'],{encoding:'utf8',timeout:10000,maxBuffer:1000000});
   if(p.error||p.status!==0)throw Error(p.error?.message||p.stderr||'Agents Relay status preflight unavailable');

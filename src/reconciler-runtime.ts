@@ -1,3 +1,4 @@
+import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
@@ -353,7 +354,7 @@ export abstract class ReconcilerRuntimeBase {
     const exit = live?.executionId === executionId && live.processSettled ? live.execution.processExit : undefined;
     const rawError = live?.executionId === executionId && live.processSettled ? (live.processError || exit?.stderr || '').trim() : '';
     const failedExit = Boolean(exit && (exit.exitCode !== 0 || exit.signal));
-    const failureReason = failedExit ? (/rate.limit.exceeded|usage limit reached/i.test(rawError) ? 'rate_limit_exceeded' : 'worker_process_failed') : 'terminal_event_timeout';
+    const failureReason = failedExit ? classifyWorkerRejection(rawError) : 'terminal_event_timeout';
     const failureMessage = failedExit ? (rawError || `Worker exited with code ${exit?.exitCode ?? 'null'}${exit?.signal ? `, signal ${exit.signal}` : ''}`) : `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
     const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
       eligible: (_job, task) => task.executionId === executionId,
@@ -373,7 +374,7 @@ export abstract class ReconcilerRuntimeBase {
     // Provider quota failures are recoverable. Commit the retry + route exclusion
     // before publishing task.failed so event-driven reconciliation can never see
     // an intermediate FAILED state and spawn a Troubleshooter for quota exhaustion.
-    if (failureReason === 'rate_limit_exceeded' && transition.task.attempt < transition.task.maxAttempts) {
+    if (reroutableWorkerRejections.has(failureReason) && transition.task.attempt < transition.task.maxAttempts) {
       const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
       if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
         const failedRoute = current.routing;
@@ -408,9 +409,9 @@ export abstract class ReconcilerRuntimeBase {
     await this.emit(event);
     if (reroutedTask) {
       await this.emit(eventFor(jobId, taskId, reroutedTask.parentTaskId,
-        'task.rerouting', 'queued', 'Provider rate limit reached; retrying with fresh routing and usage data',
+        'task.rerouting', 'queued', `Worker rejection ${failureReason}; retrying with fresh routing and usage data`,
         'orchestrator', { previousFailure: failureReason, attempt: reroutedTask.attempt, maxAttempts: reroutedTask.maxAttempts }));
-      await this.eventCoordinator.accept({ jobId, reason: 'rate-limit-reroute' });
+      await this.eventCoordinator.accept({ jobId, reason: 'worker-rejection-reroute' });
     }
   }
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {

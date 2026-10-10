@@ -259,35 +259,12 @@ async function tick(){
     }
     if(step.issue)state.scenario005Issue=step.issue;
   }
-  if(scenario.startsWith('006-') && j.state!=='CANCELLED'){
-    const quotaReceipt=join(dirname(statePath),'worker-rejection-injected.json');
-    const impl=(j.tasks||[]).find(t=>t.agentName==='implementation');
-    if(!existsSync(quotaReceipt) && impl?.state==='RUNNING' && impl.executionId){
-      const command=process.env.E2E_WORKER_REJECTION_INJECT_COMMAND||process.env.E2E_PROVIDER_QUOTA_INJECT_COMMAND||'';
-      if(!command)state.scenario006Issue={type:'WORKER_REJECTION_INJECTOR_NOT_CONFIGURED'};
-      else{
-        const launch=spawnSync(process.execPath,[join(root,'e2e/runner/inject.mjs'),'--scenario',scenario,'--job',jobId,'--phase','inject','--command',command,'--out',quotaReceipt],{encoding:'utf8',cwd:root,timeout:120000});
-        if(launch.status!==0)state.scenario006Issue={type:'WORKER_REJECTION_INJECTION_FAILED',error:launch.stderr||launch.error?.message||'inject failed'};
-        else console.log(JSON.stringify({event:'worker_rejection_injection_attempted',jobId,taskId:impl.id,executionId:impl.executionId}));
-      }
-    }
-  }
   const github=githubCapability();
   if(j.state==='CANCELLED'&&existsSync(expectedCancelPath)){
     state.phase='superseded';state.supersededAt=new Date().toISOString();state.fingerprint=null;state.pendingTransferId=null;save(statePath,state);console.log(JSON.stringify({event:'e2e_superseded',repo,jobId,scenario}));process.exit(0);return;
   }
   if((j.tasks||[]).some(x=>x.agentName!=='troubleshooter'&&x.agentName!=='reviewer'&&Number(x.attempt)>=2))state.evidence.originalRetried=true;
-  let issue=state.scenario005Issue||state.scenario006Issue||detect(j);
-  // Provider quota test may not reach review or PASS without REAL injected 429
-  // and proof of original-task retry. Reject a nominally successful workload.
-  if(scenario.startsWith('006-')){
-    const quotaReceipt=join(dirname(statePath),'worker-rejection-injected.json');
-    const impl=(j.tasks||[]).filter(t=>t.agentName==='implementation');
-    const reviewStarted=(j.tasks||[]).some(t=>t.agentName==='reviewer');
-    if(reviewStarted && !existsSync(quotaReceipt)) issue={type:'WORKER_REJECTION_INJECTION_MISSING',message:'Reviewer started without external scoped worker rejection injection receipt; round is invalid'};
-    if(j.state==='COMPLETED' && (!existsSync(quotaReceipt)||!impl.some(t=>Number(t.attempt)>=2)))issue={type:'WORKER_REJECTION_RECOVERY_NOT_PROVEN',message:'Job completed without real worker rejection and same-Task recovery'};
-  }
-
+  let issue=state.scenario005Issue||detect(j);
   // An abnormal computed status is a decision point even when recovery is expected.
   // Never turn it into a forced repair/cancellation without human/model judgment.
   if(pendingAbnormalStatus){

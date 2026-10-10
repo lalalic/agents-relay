@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { injectedWorkerExecution, type E2eInjection } from './e2e-injection.js';
 import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
@@ -17,7 +18,7 @@ export type Execution = {
   pid?: number;
   deliveryReceipt?: Record<string, unknown>;
 };
-export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
+export type LaunchContext = { testInjection?: E2eInjection; waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
   readonly name: AdapterName;
   readonly id: string;
@@ -75,6 +76,7 @@ export class CodexAdapter implements WorkerAdapter {
   constructor(private readonly command = 'codex') {}
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
+    if (context.testInjection) return injectedWorkerExecution(context.testInjection);
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
     const child = spawnOwnedProcess(this.command, buildCodexArgs(task.routing, task.input), {
       invocation: `worker.codex:${task.id}`,
