@@ -299,6 +299,7 @@ export async function createService(args: string[]): Promise<Service> {
     secret: webhookSecret,
     repositories: new Set([repo]),
     pullRequest: loaded.job.externalPrNumber ?? loaded.job.prNumber,
+    jobId: loaded.job.id,
     wake: async (event: import('./github-webhook.js').GitHubWebhookWake): Promise<void> => {
       if (event.pullRequestFacts && loaded.store.applyPullRequestFacts) {
         await loaded.store.applyPullRequestFacts({

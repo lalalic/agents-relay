@@ -1,5 +1,5 @@
 name: Report verified publication to Agents Relay
-description: Correlate a verified publication to its originating merged PR so Agents Relay can persist publication state in SQLite.
+description: Correlate a verified publication to its originating Agents Relay Job or historical merged PR so Agents Relay can persist publication state in SQLite.
 inputs:
   token:
     description: GitHub token with pull-request read and issue-comment write access in the source repository.
@@ -23,7 +23,7 @@ inputs:
     required: false
     default: ''
   origin-pr:
-    description: Optional originating merged PR number when SHA correlation is unavailable.
+    description: Optional originating Agents Relay Job or historical merged PR number when SHA correlation is unavailable.
     required: false
     default: ''
 runs:

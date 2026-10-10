@@ -10,6 +10,7 @@ export type LocalMergeReceipt = {
   sourceRef: string; targetRef: string; status: 'pending' | 'failed' | 'succeeded';
   sourceSha?: string; mergedCommitSha?: string; projectionStrategy?: 'target_ref_push'; attempts?: number;
   error?: string; nextAttemptAt?: string; updatedAt?: string;
+  correlationJobId?: string; displayPrNumber?: number;
 };
 
 function git(cwd: string, ...args: string[]): string {
@@ -38,6 +39,15 @@ export function localMergeEligible(job: Job): boolean {
     (job.reviewEnabled === false || job.review?.outcome === 'approved');
 }
 
+
+export function localMergeCommitMessage(request: Pick<LocalMergeReceipt, 'correlationJobId'|'displayPrNumber'>, sourceSha: string): string {
+  const lines = ['Agents Relay local merge', '', `Agents-Relay-Source-SHA: ${sourceSha}`];
+  if (request.correlationJobId) lines.push(`Agents-Relay-Job: ${request.correlationJobId}`);
+  if (Number.isInteger(request.displayPrNumber) && Number(request.displayPrNumber) > 0)
+    lines.push(`Agents-Relay-Display-PR: ${request.displayPrNumber}`);
+  return lines.join('\n');
+}
+
 function checkedOutTarget(repoPath: string, targetRef: string): string | null {
   const records = git(repoPath, 'worktree', 'list', '--porcelain').split(/\n\n/);
   const paths = records.filter(record => record.split('\n').includes('branch ' + targetRef))
@@ -48,7 +58,7 @@ function checkedOutTarget(repoPath: string, targetRef: string): string | null {
 }
 
 /** Merge a checked-out branch using Git porcelain so its worktree and index stay coherent. */
-function mergeCheckedOutTarget(repoPath: string, targetRef: string, sourceSha: string, targetSha: string): string {
+function mergeCheckedOutTarget(repoPath: string, targetRef: string, sourceSha: string, targetSha: string, message: string): string {
   const worktree = checkedOutTarget(repoPath, targetRef);
   if (!worktree) throw new Error('Target worktree disappeared before local merge');
   if (git(worktree, 'symbolic-ref', 'HEAD') !== targetRef
@@ -64,7 +74,7 @@ function mergeCheckedOutTarget(repoPath: string, targetRef: string, sourceSha: s
   // No checkout, reset or force update. Git controls index and working tree,
   // reports conflicts and leaves a recoverable merge state when interrupted.
   try {
-    git(worktree, 'merge', '--no-ff', '--no-edit', '-m', 'Agents Relay local merge', sourceSha);
+    git(worktree, 'merge', '--no-ff', '--no-edit', '-m', message, sourceSha);
   } catch (error) {
     // Only a MERGE_HEAD matching our exact source SHA can be attributed to
     // this delivery. Never abort a concurrent user's unrelated merge.
@@ -104,13 +114,14 @@ export function deliverLocalMerge(repoPath: string, request: LocalMergeReceipt):
     git(repoPath, 'merge-base', '--is-ancestor', sourceSha, targetSha);
     return { sourceSha, mergedCommitSha: targetSha }; // Idempotent after acknowledged or crashed delivery.
   } catch { /* merge required */ }
+  const message = localMergeCommitMessage(request, sourceSha);
   if (checkedOutTarget(repoPath, targetRef)) {
-    return { sourceSha, mergedCommitSha: mergeCheckedOutTarget(repoPath, targetRef, sourceSha, targetSha) };
+    return { sourceSha, mergedCommitSha: mergeCheckedOutTarget(repoPath, targetRef, sourceSha, targetSha, message) };
   }
   // Unchecked-out refs can be updated atomically without touching any worktree.
   const tree = git(repoPath, 'merge-tree', '--write-tree', targetSha, sourceSha).split('\n')[0];
   if (!/^[0-9a-f]{40,64}$/.test(tree)) throw new Error('Local merge-tree returned no valid tree');
-  const mergedCommitSha = git(repoPath, 'commit-tree', tree, '-p', targetSha, '-p', sourceSha, '-m', 'Agents Relay local merge');
+  const mergedCommitSha = git(repoPath, 'commit-tree', tree, '-p', targetSha, '-p', sourceSha, '-m', message);
   git(repoPath, 'update-ref', targetRef, mergedCommitSha, targetSha);
   return { sourceSha, mergedCommitSha };
   });

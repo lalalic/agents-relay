@@ -20,7 +20,7 @@ test('publish failure recorder deduplicates run attempt', async () => {
   assert.deepEqual(await recordFailure(input,gh),{recorded:false,reason:'duplicate',pr:263});
 });
 test('publish failure recorder ignores missing PR correlation', async () => {
-  assert.deepEqual(await recordFailure(input,async()=>[]),{recorded:false,reason:'no-correlated-merged-pr'});
+  assert.deepEqual(await recordFailure(input,async()=>[]),{recorded:false,reason:'no-correlated-publication-target'});
 });
 
 
@@ -50,4 +50,23 @@ test('failed publish creates one deterministic Relay repair Job and Task', async
   assert.equal(calls.length,2);
   assert.ok(calls[0].includes('job-auto-publish-repair-aaaaaaaaaaaa'));
   assert.ok(calls[1].includes('repair-publish'));
+});
+
+
+test('publish failure uses local merge Job correlation without PR merge', async () => {
+  const sha='b'.repeat(40), source='c'.repeat(40);
+  const message=`Agents Relay local merge\n\nAgents-Relay-Source-SHA: ${source}\nAgents-Relay-Job: job-failed-publish`;
+  const calls=[];
+  const gh=async(path,init={})=>{
+    calls.push({path,init});
+    if(path===`/repos/lalalic/agents-relay/commits/${sha}`) return {commit:{message}};
+    if(path==='/repos/lalalic/agents-relay/issues?state=open&per_page=100&page=1') return [{number:100,title:'[Agents Relay] Publication events'}];
+    if(path==='/repos/lalalic/agents-relay/issues/100/comments?per_page=100&page=1') return [];
+    if(path==='/repos/lalalic/agents-relay/issues/100/comments'&&init.method==='POST') return {};
+    throw Error(path);
+  };
+  const value={...input,sha};
+  assert.deepEqual(await recordFailure(value,gh),{recorded:true,jobId:'job-failed-publish',issue:100,displayPrNumber:null});
+  const posted=JSON.parse(calls.find(call=>call.init.method==='POST').init.body).body;
+  assert.match(posted,/"jobId":"job-failed-publish"/);
 });

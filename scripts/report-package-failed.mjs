@@ -3,30 +3,41 @@ import { resolve, join } from 'node:path';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { findPublicationTarget, ensurePublicationIssue } from './report-package-published.mjs';
 
 export const PACKAGE_FAILED_MARKER = 'agents-relay:package-publish-failed:v1';
 export function failureComment(input) {
-  const marker = { runId: String(input.runId), attempt: Number(input.attempt), sha: input.sha, stage: input.stage };
+  const marker = { runId: String(input.runId), attempt: Number(input.attempt), sha: input.sha, stage: input.stage, ...(input.jobId ? { jobId: input.jobId } : {}) };
   return `<!-- ${PACKAGE_FAILED_MARKER} ${JSON.stringify(marker)} -->\n` +
     `Publish failed at **${input.stage}** for commit \`${input.sha}\`.\n` +
     `Workflow: ${input.runUrl}\n\n` +
     `Failure details:\n\`\`\`text\n${String(input.details || 'See workflow run for logs').slice(0, 3000).replaceAll('```','~~~')}\n\`\`\``;
 }
 export async function recordFailure(input, github) {
-  const pulls = await github(`/repos/${input.repository}/commits/${input.sha}/pulls`);
-  const pr = Array.isArray(pulls) ? pulls.find(row => row?.merged_at && Number.isInteger(row.number)) : null;
-  if (!pr) return { recorded: false, reason: 'no-correlated-merged-pr' };
+  const target = await findPublicationTarget(input, github);
+  if (!target) return { recorded: false, reason: 'no-correlated-publication-target' };
   const marker = `<!-- ${PACKAGE_FAILED_MARKER} `;
   const identity = `"runId":"${input.runId}","attempt":${Number(input.attempt)}`;
+  const jobId = target.kind === 'local-merge' ? target.jobId : undefined;
+  const issueNumber = target.kind === 'local-merge'
+    ? (target.displayPrNumber ?? await ensurePublicationIssue(input.repository, github))
+    : target.pr.number;
+  const body = failureComment({ ...input, jobId });
   for (let page = 1; ; page++) {
-    const comments = await github(`/repos/${input.repository}/issues/${pr.number}/comments?per_page=100&page=${page}`);
+    const comments = await github(`/repos/${input.repository}/issues/${issueNumber}/comments?per_page=100&page=${page}`);
     if (!Array.isArray(comments)) throw new Error('Invalid GitHub comments response');
-    if (comments.some(row => typeof row.body === 'string' && row.body.includes(marker) && row.body.includes(identity))) return { recorded: false, reason: 'duplicate', pr: pr.number };
+    if (comments.some(row => typeof row.body === 'string' && row.body.includes(marker) && row.body.includes(identity)))
+      return target.kind === 'local-merge'
+        ? { recorded: false, reason: 'duplicate', jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
+        : { recorded: false, reason: 'duplicate', pr: issueNumber };
     if (comments.length < 100) break;
   }
-  await github(`/repos/${input.repository}/issues/${pr.number}/comments`, { method: 'POST', body: JSON.stringify({ body: failureComment(input) }) });
-  return { recorded: true, pr: pr.number };
+  await github(`/repos/${input.repository}/issues/${issueNumber}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+  return target.kind === 'local-merge'
+    ? { recorded: true, jobId, issue: issueNumber, displayPrNumber: target.displayPrNumber ?? null }
+    : { recorded: true, pr: issueNumber };
 }
+
 export function publishRepairIdentity(sha, originBranch = '') {
   if (!/^[a-f0-9]{40}$/i.test(sha)) throw new Error('Invalid published commit SHA');
   if (originBranch.startsWith('fix/auto-publish-')) return null; // Do not cascade repair PRs infinitely.
@@ -76,7 +87,8 @@ async function main() {
   const input = { repository,sha,runId,attempt,stage,runUrl:`https://github.com/${repository}/actions/runs/${runId}`,details:explicitDetails || failed.join('\n') };
   const result = await recordFailure(input,github);
   let repair = null;
-  if (result.pr && process.env.REPORT_ONLY !== '1') repair = await enqueuePublishRepair(input,result.pr,github);
+  const repairPr = result.pr ?? result.displayPrNumber;
+  if (repairPr && process.env.REPORT_ONLY !== '1') repair = await enqueuePublishRepair(input,repairPr,github);
   process.stdout.write(JSON.stringify({ report: result, repair })+'\n');
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(error); process.exitCode=1; });

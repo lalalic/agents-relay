@@ -1,5 +1,5 @@
 name: Report publication failure to Agents Relay
-description: Correlate a failed publication to its originating merged PR so Agents Relay can persist failure state in SQLite.
+description: Correlate a failed publication to its originating Agents Relay Job or historical merged PR so Agents Relay can persist failure state in SQLite.
 inputs:
   token:
     description: GitHub token with pull-request read and issue-comment write access in the source repository.

@@ -1,15 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { IncomingHttpHeaders } from 'node:http';
 
-export type PackagePublishFailure = { runId: string; attempt: number; sha: string; stage: string };
-export type PackagePublication = { package: string; version: string; registry: string | null; sha: string | null };
+export type PackagePublishFailure = { runId: string; attempt: number; sha: string; stage: string; jobId?: string };
+export type PackagePublication = { package: string; version: string; registry: string | null; sha: string | null; jobId?: string };
 export type GitHubPullRequestFacts = { state: 'OPEN' | 'MERGED' | 'CLOSED'; head: { ref: string; sha: string } | null; observedAt?: string };
 export type GitHubWebhookWake = {
   deliveryId: string;
-  event: 'pull_request' | 'issue_comment';
+  event: 'pull_request' | 'issue_comment' | 'commit_comment';
   action: string | null;
   repository: string;
-  pullRequest: number;
+  pullRequest: number | null;
+  jobId?: string | null;
   publication: PackagePublication | null;
   publicationObservedAt?: string;
   publishFailure?: PackagePublishFailure | null;
@@ -26,7 +27,7 @@ export function parsePackagePublishFailureMarker(body: unknown): PackagePublishF
   try {
     const data = JSON.parse(body.slice(start + prefix.length, end)) as Record<string, unknown>;
     if (typeof data.runId !== 'string' || !/^\d+$/.test(data.runId) || !Number.isInteger(data.attempt) || Number(data.attempt) < 1 || typeof data.sha !== 'string' || !/^[a-f0-9]{7,40}$/i.test(data.sha) || typeof data.stage !== 'string' || !data.stage) return null;
-    return { runId: data.runId, attempt: Number(data.attempt), sha: data.sha, stage: data.stage };
+    return { runId: data.runId, attempt: Number(data.attempt), sha: data.sha, stage: data.stage, ...(typeof data.jobId === 'string' && data.jobId ? { jobId: data.jobId } : {}) };
   } catch { return null; }
 }
 export const PACKAGE_PUBLISHED_MARKER = 'agents-relay:package-published:v1';
@@ -46,6 +47,7 @@ export function parsePackagePublicationMarker(body: unknown): PackagePublication
     version: value.version,
     registry: typeof value.registry === 'string' ? value.registry : null,
     sha: typeof value.sha === 'string' ? value.sha : null,
+    ...(typeof value.jobId === 'string' && value.jobId ? { jobId: value.jobId } : {}),
   };
 }
 
@@ -73,32 +75,53 @@ function pullRequestFacts(payload: Record<string, unknown>, action: string | nul
 export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): GitHubWebhookWake | null {
   const deliveryId = String(headers['x-github-delivery'] ?? '');
   const event = String(headers['x-github-event'] ?? '');
-  if (!deliveryId || (event !== 'pull_request' && event !== 'issue_comment')) return null;
+  if (!deliveryId || (event !== 'pull_request' && event !== 'issue_comment' && event !== 'commit_comment')) return null;
   let payload: Record<string, unknown>;
   try { payload = JSON.parse(body.toString('utf8')) as Record<string, unknown>; } catch { return null; }
   const repository = payload.repository as Record<string, unknown> | undefined;
   const repositoryName = typeof repository?.full_name === 'string' ? repository.full_name : null;
   const action = typeof payload.action === 'string' ? payload.action : null;
+  if (!repositoryName) return null;
+  if (event === 'commit_comment') {
+    const comment = payload.comment as Record<string, unknown> | undefined;
+    const trustedPublisher = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]';
+    const publication = trustedPublisher ? parsePackagePublicationMarker(comment?.body) : null;
+    const publishFailure = trustedPublisher ? parsePackagePublishFailureMarker(comment?.body) : null;
+    const jobId = publication?.jobId ?? publishFailure?.jobId;
+    if ((!publication && !publishFailure) || !jobId) return null;
+    const commentTime = comment?.created_at;
+    const publicationObservedAt = typeof commentTime === 'string' && Number.isFinite(Date.parse(commentTime))
+      ? new Date(commentTime).toISOString() : undefined;
+    return { deliveryId, event, action, repository: repositoryName, pullRequest: null, jobId, publication,
+      ...(publicationObservedAt ? { publicationObservedAt } : {}),
+      ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
+  }
+
   const pr = payload.pull_request as Record<string, unknown> | undefined;
   const issue = payload.issue as Record<string, unknown> | undefined;
-  const number = Number(pr?.number ?? (issue?.pull_request ? issue.number : 0));
-  if (!repositoryName || !Number.isInteger(number) || number <= 0) return null;
 
   if (event === 'issue_comment') {
+    const issueNumber = Number(issue?.number ?? 0);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) return null;
     const comment = payload.comment as Record<string, unknown> | undefined;
     const trustedPublisher = (comment?.user as Record<string, unknown> | undefined)?.login === 'github-actions[bot]';
     const publication = trustedPublisher ? parsePackagePublicationMarker(comment?.body) : null;
     const publishFailure = trustedPublisher
       ? parsePackagePublishFailureMarker(comment?.body) : null;
+    const jobId = publication?.jobId ?? publishFailure?.jobId;
     if (!publication && !publishFailure) return null;
+    if (!issue?.pull_request && !jobId) return null;
     const commentTime = (comment as Record<string, unknown> | undefined)?.created_at;
     const publicationObservedAt = typeof commentTime === 'string' && Number.isFinite(Date.parse(commentTime))
       ? new Date(commentTime).toISOString() : undefined;
-    return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication,
+    return { deliveryId, event, action, repository: repositoryName,
+      pullRequest: issue?.pull_request ? issueNumber : null, ...(jobId ? { jobId } : {}), publication,
       ...(publicationObservedAt ? { publicationObservedAt } : {}),
       ...(publishFailure ? { publishFailure } : {}), pullRequestFacts: null };
   }
 
+  const number = Number(pr?.number ?? 0);
+  if (!Number.isInteger(number) || number <= 0) return null;
   const facts = pullRequestFacts(payload, action);
   if (!facts) return null;
   return { deliveryId, event, action, repository: repositoryName, pullRequest: number, publication: null, pullRequestFacts: facts };

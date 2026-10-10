@@ -10,6 +10,7 @@ export function publicationComment(input) {
     version: input.version,
     registry: input.registry ?? null,
     sha: input.sha ?? null,
+    ...(input.jobId ? { jobId: input.jobId } : {}),
   });
   const channel = input.registry ? ` to ${input.registry}` : '';
   return `<!-- ${PACKAGE_PUBLISHED_MARKER} ${payload} -->\nPublished \`${input.packageName}@${input.version}\`${channel}.`;
@@ -22,37 +23,84 @@ export async function resolvePackageName(explicitName, packageFile = resolve('pa
   return pkg.name;
 }
 
-export async function findMergedPullRequest(input, github) {
+export function parseLocalMergeCorrelation(message) {
+  if (typeof message !== 'string' || !message.startsWith('Agents Relay local merge')) return null;
+  const field = name => message.split(/\r?\n/).find(line => line.startsWith(name + ': '))?.slice(name.length + 2).trim() || null;
+  const jobId = field('Agents-Relay-Job');
+  const sourceSha = field('Agents-Relay-Source-SHA');
+  const pr = Number(field('Agents-Relay-Display-PR') || 0);
+  if (!jobId || !/^[a-f0-9]{40,64}$/i.test(sourceSha || '')) return null;
+  return { jobId, sourceSha, prNumber: Number.isInteger(pr) && pr > 0 ? pr : null };
+}
+
+export async function findPublicationTarget(input, github) {
   if (Number.isInteger(input.prNumber) && input.prNumber > 0) {
     const pr = await github(`/repos/${input.repository}/pulls/${input.prNumber}`);
-    return pr?.merged_at ? pr : null;
+    return pr && Number.isInteger(pr.number) ? { kind: 'pr', pr, correlation: 'explicit-pr' } : null;
+  }
+  if (/^[a-f0-9]{40,64}$/i.test(input.sha || '')) {
+    const commit = await github(`/repos/${input.repository}/commits/${input.sha}`);
+    const correlation = parseLocalMergeCorrelation(commit?.commit?.message);
+    if (correlation) return { kind: 'local-merge', sha: input.sha, jobId: correlation.jobId, sourceSha: correlation.sourceSha,
+      displayPrNumber: correlation.prNumber, correlation: 'local-merge' };
   }
   const pulls = await github(`/repos/${input.repository}/commits/${input.sha}/pulls`);
   if (!Array.isArray(pulls)) throw new Error('Invalid GitHub commit-to-PR response');
-  return pulls.find(item => item && typeof item === 'object' && item.merged_at && Number.isInteger(item.number)) ?? null;
+  const pr = pulls.find(item => item && typeof item === 'object' && item.merged_at && Number.isInteger(item.number));
+  return pr ? { kind: 'pr', pr, correlation: 'merged-pr' } : null;
+}
+
+export async function findMergedPullRequest(input, github) {
+  const target = await findPublicationTarget(input, github);
+  return target?.kind === 'pr' ? target.pr : null;
+}
+
+export const PUBLICATION_ISSUE_TITLE = '[Agents Relay] Publication events';
+
+export async function ensurePublicationIssue(repository, github) {
+  for (let page = 1; ; page += 1) {
+    const issues = await github(`/repos/${repository}/issues?state=open&per_page=100&page=${page}`);
+    if (!Array.isArray(issues)) throw new Error('Invalid GitHub issues response');
+    const existing = issues.find(issue => issue && !issue.pull_request && issue.title === PUBLICATION_ISSUE_TITLE && Number.isInteger(issue.number));
+    if (existing) return existing.number;
+    if (issues.length < 100) break;
+  }
+  const created = await github(`/repos/${repository}/issues`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: PUBLICATION_ISSUE_TITLE, body: 'Durable transport for Agents Relay package publication markers. Do not delete while publication tracking is enabled.' }),
+  });
+  if (!Number.isInteger(created?.number)) throw new Error('GitHub did not return publication issue number');
+  return created.number;
 }
 
 export async function recordPublication(input, github) {
-  const pr = await findMergedPullRequest(input, github);
-  if (!pr) return { recorded: false, reason: 'no-correlated-merged-pr' };
+  const target = await findPublicationTarget(input, github);
+  if (!target) return { recorded: false, reason: 'no-correlated-publication-target' };
   const markerPrefix = `<!-- ${PACKAGE_PUBLISHED_MARKER} `;
   const packageIdentity = `"package":${JSON.stringify(input.packageName)}`;
   const versionIdentity = `"version":${JSON.stringify(input.version)}`;
+  const jobId = target.kind === 'local-merge' ? target.jobId : undefined;
+  const issueNumber = target.kind === 'local-merge'
+    ? (target.displayPrNumber ?? await ensurePublicationIssue(input.repository, github))
+    : target.pr.number;
+  const body = publicationComment({ ...input, jobId });
   for (let page = 1; ; page += 1) {
-    const comments = await github(`/repos/${input.repository}/issues/${pr.number}/comments?per_page=100&page=${page}`);
+    const comments = await github(`/repos/${input.repository}/issues/${issueNumber}/comments?per_page=100&page=${page}`);
     if (!Array.isArray(comments)) throw new Error('Invalid GitHub comments response');
     if (comments.some(comment => typeof comment?.body === 'string' && comment.body.includes(markerPrefix)
       && comment.body.includes(packageIdentity) && comment.body.includes(versionIdentity))) {
-      return { recorded: false, reason: 'duplicate', pr: pr.number };
+      return target.kind === 'local-merge'
+        ? { recorded: false, reason: 'duplicate', jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
+        : { recorded: false, reason: 'duplicate', pr: issueNumber };
     }
     if (comments.length < 100) break;
   }
-  await github(`/repos/${input.repository}/issues/${pr.number}/comments`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ body: publicationComment(input) }),
+  await github(`/repos/${input.repository}/issues/${issueNumber}/comments`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }),
   });
-  return { recorded: true, pr: pr.number };
+  return target.kind === 'local-merge'
+    ? { recorded: true, jobId, issue: issueNumber, ...(target.displayPrNumber ? { pr: target.displayPrNumber } : {}) }
+    : { recorded: true, pr: issueNumber };
 }
 
 async function github(path, init = {}) {
@@ -80,14 +128,15 @@ async function main() {
   const prNumber = Number(process.env.ORIGIN_PR || 0) || undefined;
   if (!repository || !sha || !version) throw new Error('SOURCE_REPOSITORY/GITHUB_REPOSITORY, SOURCE_SHA/GITHUB_SHA, and PACKAGE_VERSION/ARTIFACT_VERSION are required');
   const result = await recordPublication({ repository, sha, packageName, version, registry, prNumber }, github);
-  if (!result.recorded && result.reason === 'no-correlated-merged-pr') {
-    process.stdout.write(`No merged pull request found for ${sha}; publication event was not recorded.\n`);
+  if (!result.recorded && result.reason === 'no-correlated-publication-target') {
+    process.stdout.write(`No originating Agents Relay Job/display PR or historical merged PR found for ${sha}; publication event was not recorded.\n`);
     process.exitCode = 2;
     return;
   }
+  const target = result.pr ? `PR #${result.pr}` : `publication issue #${result.issue} for Job ${result.jobId}`;
   process.stdout.write(result.recorded
-    ? `Recorded ${packageName}@${version} publication on PR #${result.pr}.\n`
-    : `Publication marker already exists on PR #${result.pr}.\n`);
+    ? `Recorded ${packageName}@${version} publication on ${target}.\n`
+    : `Publication marker already exists on ${target}.\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

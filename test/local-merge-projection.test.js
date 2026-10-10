@@ -62,3 +62,14 @@ test('projection publishes later local main commits without resetting to an old 
   assert.equal(git(f.repo,'rev-parse','origin/main'),newer);
  } finally {f.close();}
 });
+
+test('local merge commit embeds durable Job publication correlation metadata',()=>{
+ const f=fixture(); try{
+  const delivered=deliverLocalMerge(f.repo,{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',sourceSha:f.sourceSha,correlationJobId:'job-publish-1',displayPrNumber:88});
+  const message=git(f.repo,'show','-s','--format=%B',delivered.mergedCommitSha);
+  assert.match(message,/^Agents Relay local merge/);
+  assert.match(message,new RegExp(`Agents-Relay-Source-SHA: ${f.sourceSha}`));
+  assert.match(message,/Agents-Relay-Job: job-publish-1/);
+  assert.match(message,/Agents-Relay-Display-PR: 88/);
+ } finally {f.close();}
+});

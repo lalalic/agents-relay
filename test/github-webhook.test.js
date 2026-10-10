@@ -70,3 +70,27 @@ test('untrusted PR comment cannot fabricate package publish failure', () => {
   const body=Buffer.from(JSON.stringify({action:'created',repository:{full_name:'lalalic/agents-relay'},issue:{number:263,pull_request:{}},comment:{body:marker,user:{login:'random-user'}}}));
   assert.equal(parseGitHubWebhook({'x-github-delivery':'fake','x-github-event':'issue_comment'},body),null);
 });
+
+test('GitHub commit_comment publication carries durable Job identity without a PR', () => {
+  const sha='f'.repeat(40);
+  const body=Buffer.from(JSON.stringify({
+    action:'created', repository:{full_name:'lalalic/agents-relay'},
+    comment:{commit_id:sha,created_at:'2026-10-10T12:00:00Z',user:{login:'github-actions[bot]'},body:publicationComment({packageName:'agents-relay',version:'2.1.0',registry:'npm',sha,jobId:'job-local-1'})},
+  }));
+  assert.deepEqual(parseGitHubWebhook({'x-github-delivery':'commit-published','x-github-event':'commit_comment'},body),{
+    deliveryId:'commit-published',event:'commit_comment',action:'created',repository:'lalalic/agents-relay',pullRequest:null,jobId:'job-local-1',
+    publication:{package:'agents-relay',version:'2.1.0',registry:'npm',sha,jobId:'job-local-1'},publicationObservedAt:'2026-10-10T12:00:00.000Z',pullRequestFacts:null,
+  });
+});
+
+test('ordinary publication issue comment resolves by durable Job id without PR identity', () => {
+  const sha='9'.repeat(40);
+  const body=Buffer.from(JSON.stringify({
+    action:'created', repository:{full_name:'lalalic/agents-relay'}, issue:{number:101},
+    comment:{created_at:'2026-10-10T12:05:00Z',user:{login:'github-actions[bot]'},body:publicationComment({packageName:'agents-relay',version:'2.2.0',registry:'npm',sha,jobId:'job-no-pr'})},
+  }));
+  assert.deepEqual(parseGitHubWebhook({'x-github-delivery':'issue-published','x-github-event':'issue_comment'},body),{
+    deliveryId:'issue-published',event:'issue_comment',action:'created',repository:'lalalic/agents-relay',pullRequest:null,jobId:'job-no-pr',
+    publication:{package:'agents-relay',version:'2.2.0',registry:'npm',sha,jobId:'job-no-pr'},publicationObservedAt:'2026-10-10T12:05:00.000Z',pullRequestFacts:null,
+  });
+});

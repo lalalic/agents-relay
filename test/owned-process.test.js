@@ -51,7 +51,8 @@ test('owned process timeout kills descendants without touching a competing group
   const survivor = spawnOwnedProcess(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { invocation: 'test.competitor', graceMs: 75, spawn: { stdio: 'ignore' } });
   const timed = spawnOwnedProcess(process.execPath, ['-e', descendantScript], {
     invocation: 'test.timeout',
-    timeoutMs: 80,
+    // Allow a loaded full-suite runner enough time to start Node and publish the nested PID.
+    timeoutMs: 500,
     graceMs: 75,
     spawn: { stdio: ['ignore', 'pipe', 'ignore'] },
   });

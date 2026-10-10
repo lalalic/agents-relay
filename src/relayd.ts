@@ -311,7 +311,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     secret,
     repositories: new Set(repositories),
     wake: async (event: GitHubWebhookWake): Promise<void> => {
-      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (item.job.externalPrNumber ?? item.job.prNumber) === event.pullRequest);
+      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (event.jobId ? item.job.id === event.jobId : (item.job.externalPrNumber ?? item.job.prNumber) === event.pullRequest));
       if (targets.length === 0) return;
       for (const target of targets) {
         const binding = await requireLocalJobBinding(target.job.id);
