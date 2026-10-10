@@ -147,7 +147,7 @@ flowchart TD
 | `005-watchdog-stale-generation` | Kill worker without terminal → watchdog recovery → newer execution → stale old terminal ignored → COMPLETED + GitHub MERGED (#41, r6) | **PASS** |
 | `006-provider-quota-reroute` | Controlled Adapter `model_not_found` rejection → normal failure classifier → `task.rerouting` → same Task attempt 2 succeeds → review/local merge/COMPLETED/GitHub MERGED (#44, r4) | **PASS** |
 | `007-projection-isolation-retry` | Task-declared `github.projectLocalMerge` `after + throw` → local COMPLETED before transient projection failure → retry `already_projected` → GitHub MERGED (#47, r3) | **PASS** |
-| `008-async-browser-handoff` | Async browser transport exits before business completion; authoritative terminal remains controlling | **PLANNED** |
+| `008-async-browser-handoff` | ChatGPT async implementation transport exited before progress and correlated authoritative terminal; single execution, approved review, local merge, COMPLETED, GitHub MERGED (#50, r3) | **PASS** |
 | `009-daemon-restart-orphan` | Restart daemon during live execution; exactly-once live/orphan recovery | **PLANNED** |
 | `010-browser-workspace-runtime-failure` | Real Browser Workspace/tool dependency failure → repair/reroute original Task | **PLANNED** |
 
