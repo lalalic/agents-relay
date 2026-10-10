@@ -312,6 +312,8 @@ test('release version selection honors an explicit newer major baseline then inc
   assert.equal(nextPublishVersion('', '2.0.0'), '2.0.0');
   assert.equal(nextPublishVersion('1.0.177', '2.0.0'), '2.0.0');
   assert.equal(nextPublishVersion('2.0.0', '2.0.0'), '2.0.1');
+  assert.equal(nextPublishVersion('2.0.68', '2.0.1-e2e.20261010.43'), '2.0.69');
+  assert.equal(nextPublishVersion('1.9.9', '2.0.1-e2e.20261010.43'), '2.0.1');
   assert.equal(nextPatchVersion('2.7.9'), '2.7.10');
   assert.throws(() => nextPublishVersion('latest', '2.0.0'), /Unsupported npm version/);
 });
