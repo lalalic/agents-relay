@@ -86,3 +86,26 @@ test('draft dependent is durably registered and released from blocker-side autho
   assert.equal(released.state,'QUEUED');
   assert.equal(released.attempt,0);
 });
+
+test('concurrent atomic blocker registrations retain both dependent relations',async()=>{
+ const blockerStore=new InMemoryStore(job('blocker','org/platform',10));
+ let tail=Promise.resolve();
+ blockerStore.mutateJob=(id,mutation)=>{
+   const pending=tail.then(async()=>{
+     const fresh=await blockerStore.load(id);
+     const changed=mutation(fresh);
+     await blockerStore.saveJob(changed);
+     return changed;
+   });
+   tail=pending.then(()=>{},()=>{});
+   return pending;
+ };
+ const a=new InMemoryStore(job('dependent-a','org/a',21,[{...task('a'),jobId:'dependent-a'}]));
+ const b=new InMemoryStore(job('dependent-b','org/b',22,[{...task('b'),jobId:'dependent-b'}]));
+ await Promise.all([
+   registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore:a,dependentJobId:'dependent-a',dependentTaskId:'a',now}),
+   registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore:b,dependentJobId:'dependent-b',dependentTaskId:'b',now}),
+ ]);
+ const blocker=await blockerStore.load('blocker');
+ assert.deepEqual(new Set(blocker.unblocks.map(x=>x.taskId)),new Set(['a','b']));
+});
