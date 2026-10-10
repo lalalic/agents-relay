@@ -148,6 +148,9 @@ export function createWorkspaceControl(deps: any) {
       const dependentTaskId = typeof body.dependentTaskId === 'string' ? body.dependentTaskId : '';
       const dependent = await requireLocalJobBinding(dependentJobId);
       const relation = await registerBlockerDependency({ blockerStore: store, blockerJobId: jobId, dependentStore: dependent.store, dependentJobId, dependentTaskId, resolutionMode: body.resolutionMode === 'verified' ? 'verified' : 'merge' });
+      // Registering a blocker is itself runnable-work creation. Wake the blocker
+      // Job immediately instead of waiting for inventory polling/stale rescue.
+      await pool.reconcileLocalJob(jobId, 'control.blocker.add');
       await refreshAll(); return relation;
     }
     if (command === 'blocker.resolve') {
