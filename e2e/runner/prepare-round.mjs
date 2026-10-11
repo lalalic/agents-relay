@@ -17,6 +17,8 @@ const branch=opt('branch',`e2e/${scenario}-r${round}`);
 const jobId=opt('job',`${scenario}-r${round}`);
 const title=opt('title',`${scenario} round ${round}`);
 const objectiveFile=resolve(required('objective-file'));
+const implementationThreadId=opt('implementation-thread-id','').trim();
+const reviewerThreadId=opt('reviewer-thread-id','').trim();
 const date=new Date().toISOString().slice(0,10);
 const runDir=resolve(opt('run-dir',`e2e/runs/${date}/${scenario}/r${round}`));
 if(!Number.isInteger(round)||round<1)throw Error('--round must be a positive integer');
@@ -119,6 +121,12 @@ function prepareScenarioFixture(){
 
 const effectiveObjectiveFile=prepareScenarioFixture();
 const cmd=[process.execPath,resolve(relayRoot,'dist/cli.js'),'job','create','--repo',repo,'--head',branch,'--base',base,'--id',jobId,'--title',title,'--objective-file',effectiveObjectiveFile,'--mode','autonomous','--initial-plan'];
+if(implementationThreadId)cmd.push('--implementation-thread-id',implementationThreadId);
+if(reviewerThreadId)cmd.push('--reviewer-thread-id',reviewerThreadId);
+if(scenario.startsWith('011-')){
+  if(!implementationThreadId||!reviewerThreadId)throw Error('Scenario 011 requires --implementation-thread-id and --reviewer-thread-id');
+  if(implementationThreadId===reviewerThreadId)throw Error('Scenario 011 requires distinct implementation and reviewer thread IDs');
+}
 const created=run(relayRoot,cmd,180000);
 const receipt={scenario,round,repo,repositoryCheckout,base,branch,sourceRef:`refs/heads/${branch}`,jobId,objectiveFile:effectiveObjectiveFile,createdAt:new Date().toISOString(),createResult:JSON.parse(created)};
 writeFileSync(resolve(runDir,'round.json'),JSON.stringify(receipt,null,2)+'\n');

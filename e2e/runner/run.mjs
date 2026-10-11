@@ -26,6 +26,7 @@ const scenarioFile=resolve(scenarioDir,scenario+'.md');
 if(!existsSync(scenarioFile))throw Error(`unknown scenario: ${scenarioArg}`);
 const round=required('round'),objectiveFile=resolve(required('objective-file'));
 let threadId=opt('thread',opt('thread-id',''));
+const reviewerThreadId=opt('reviewer-thread-id','');
 const base=opt('base','main');
 const job=opt('job',`${scenario}-r${round}`);
 const branch=opt('branch',`e2e/${scenario}-r${round}`);
@@ -71,6 +72,10 @@ if(!threadId){
   } finally { rmSync(dir,{recursive:true,force:true}); }
 }
 const prep=[resolve(root,'e2e/runner/prepare-round.mjs'),'--repo',repo,'--checkout',checkout,'--scenario',scenario,'--round',round,'--objective-file',objectiveFile,'--base',base,'--job',job,'--branch',branch,'--title',title,'--run-dir',runDir];
+if(scenario.startsWith('011-')){
+  if(!threadId||!reviewerThreadId)throw Error('Scenario 011 requires --thread and --reviewer-thread-id');
+  prep.push('--implementation-thread-id',threadId,'--reviewer-thread-id',reviewerThreadId);
+}
 const preparationStartedAt=Date.now();
 const p=spawnSync(process.execPath,prep,{cwd:root,encoding:'utf8',timeout:240000,maxBuffer:8e6});
 let receipt;
