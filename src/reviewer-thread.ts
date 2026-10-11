@@ -10,6 +10,12 @@ export function resolveImplementationThreadDestination(job: Pick<Job, 'implement
   return job.implementationThreadId ? normalizeThreadId(job.implementationThreadId, 'Job implementation thread ID') ?? null : null;
 }
 
+export function resolveImplementationTaskThreadDestination(
+  job: Pick<Job, 'implementationThreadId'>, task: Pick<Task, 'agentName'>,
+): string | null {
+  return task.agentName === 'implementation' ? resolveImplementationThreadDestination(job) : null;
+}
+
 export function normalizeThreadId(value: unknown, label = 'thread ID'): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new Error(`${label} must be a string`);

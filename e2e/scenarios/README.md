@@ -17,7 +17,7 @@ Every attempt uses one fresh workload branch + one fresh durable Job. Never muta
 8. `008-async-browser-handoff` — async browser submission transport exits before authoritative terminal event; no duplicate launch.
 9. `009-daemon-restart-orphan` — shared-runtime injection: restart daemon during active execution; exactly-once orphan/live recovery.
 10. `010-browser-workspace-runtime-failure` — shared-runtime dependency injection; repair/reroute exact original Task.
-11. `011-implementation-thread-ownership` — one normal Job configured with an implementation thread; two distinct implementation Task executions are delivered as separate new turns in that same thread, while review uses an independent reviewer thread.
+12. `012-implementation-thread-ownership` — one normal Job configured with an implementation thread; two distinct implementation Task executions are delivered as separate new turns in that same thread, while review uses an independent reviewer thread.
 
 ## Why scenarios are compressed this way
 

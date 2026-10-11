@@ -123,9 +123,9 @@ const effectiveObjectiveFile=prepareScenarioFixture();
 const cmd=[process.execPath,resolve(relayRoot,'dist/cli.js'),'job','create','--repo',repo,'--head',branch,'--base',base,'--id',jobId,'--title',title,'--objective-file',effectiveObjectiveFile,'--mode','autonomous','--initial-plan'];
 if(implementationThreadId)cmd.push('--implementation-thread-id',implementationThreadId);
 if(reviewerThreadId)cmd.push('--reviewer-thread-id',reviewerThreadId);
-if(scenario.startsWith('011-')){
-  if(!implementationThreadId||!reviewerThreadId)throw Error('Scenario 011 requires --implementation-thread-id and --reviewer-thread-id');
-  if(implementationThreadId===reviewerThreadId)throw Error('Scenario 011 requires distinct implementation and reviewer thread IDs');
+if(scenario.startsWith('012-')){
+  if(!implementationThreadId||!reviewerThreadId)throw Error('Scenario 012 requires --implementation-thread-id and --reviewer-thread-id');
+  if(implementationThreadId===reviewerThreadId)throw Error('Scenario 012 requires distinct implementation and reviewer thread IDs');
 }
 const created=run(relayRoot,cmd,180000);
 const receipt={scenario,round,repo,repositoryCheckout,base,branch,sourceRef:`refs/heads/${branch}`,jobId,objectiveFile:effectiveObjectiveFile,createdAt:new Date().toISOString(),createResult:JSON.parse(created)};

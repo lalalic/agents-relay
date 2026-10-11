@@ -206,14 +206,14 @@ function detect(j){
  } else if(scenario.startsWith('004-')){
   const specific=scenario004(j);
   if(specific)return specific;
- } else if(scenario.startsWith('011-')){
+ } else if(scenario.startsWith('012-')){
   const specific=scenario011(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
   if(failed.length)return {type:'TASK_FAILED',tasks:failed.map(x=>({id:x.id,state:x.state,error:x.error,executionId:x.executionId,attempt:x.attempt}))};
  }
- if(scenario.startsWith('011-') && j.state==='COMPLETED'){
+ if(scenario.startsWith('012-') && j.state==='COMPLETED'){
   const planned=reviews.filter(x=>x.planningDecisionId);
   if(planned.length!==1 || planned[0].state!=='SUCCEEDED'
      || planned[0].executionId || planned[0].leaseOwner || planned[0].leaseExpiresAt
@@ -268,14 +268,14 @@ async function tick(){
       state.evidence.workerRejections.push({taskId:e.task_id,executionId:e.data.executionId,reason:e.data.reason,message:e.message});
     }
     if(e.type==='task.rerouting')state.evidence.workerRecoveryRouting=true;
-    if(scenario.startsWith('011-') && e.task_id && e.type==='task.started'){
+    if(scenario.startsWith('012-') && e.task_id && e.type==='task.started'){
       state.evidence.implementationExecutions??={};
       const id=String(e.task_id);
       state.evidence.implementationExecutions[id]??={};
       state.evidence.implementationExecutions[id].started=true;
       state.evidence.implementationExecutions[id].executionId=e.data?.executionId||e.source?.id||null;
     }
-    if(scenario.startsWith('011-') && e.task_id && ['task.completed','task.failed','task.blocked','task.cancelled'].includes(e.type)){
+    if(scenario.startsWith('012-') && e.task_id && ['task.completed','task.failed','task.blocked','task.cancelled'].includes(e.type)){
       state.evidence.implementationExecutions??={};
       const id=String(e.task_id);
       state.evidence.implementationExecutions[id]??={};

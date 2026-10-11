@@ -72,8 +72,8 @@ if(!threadId){
   } finally { rmSync(dir,{recursive:true,force:true}); }
 }
 const prep=[resolve(root,'e2e/runner/prepare-round.mjs'),'--repo',repo,'--checkout',checkout,'--scenario',scenario,'--round',round,'--objective-file',objectiveFile,'--base',base,'--job',job,'--branch',branch,'--title',title,'--run-dir',runDir];
-if(scenario.startsWith('011-')){
-  if(!threadId||!reviewerThreadId)throw Error('Scenario 011 requires --thread and --reviewer-thread-id');
+if(scenario.startsWith('012-')){
+  if(!threadId||!reviewerThreadId)throw Error('Scenario 012 requires --thread and --reviewer-thread-id');
   prep.push('--implementation-thread-id',threadId,'--reviewer-thread-id',reviewerThreadId);
 }
 const preparationStartedAt=Date.now();

@@ -10,7 +10,7 @@ import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js'
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
-import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
+import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
 
 
@@ -242,7 +242,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     };
   }
   protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
-    const implementationThread = task.kind !== 'planner' && task.agentName !== 'reviewer' ? resolveImplementationThreadDestination(job) : null;
+    const implementationThread = resolveImplementationTaskThreadDestination(job, task);
     const reviewerThread = task.agentName === 'reviewer' ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
     if (task.routing && !((implementationThread || reviewerThread) && task.adapter !== 'chatgpt')) return { task, routed: false };
     if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };

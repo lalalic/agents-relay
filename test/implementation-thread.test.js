@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { marker, parseJob, renderJobBody } from '../dist/markers.js';
-import { recordThreadDelivery, resolveImplementationThreadDestination, resolveReviewerThreadDestination } from '../dist/reviewer-thread.js';
+import { recordThreadDelivery, resolveImplementationThreadDestination, resolveImplementationTaskThreadDestination, resolveReviewerThreadDestination } from '../dist/reviewer-thread.js';
 
 const now = () => new Date().toISOString();
 const baseJob = () => ({ id: 'job', title: 'job', prNumber: 0, repository: 'local/job', state: 'ACTIVE', executionMode: 'fixed', continuation: null, createdAt: now(), updatedAt: now(), tasks: [] });
@@ -27,4 +27,13 @@ test('thread delivery receipt accepts one generation once and a retry generation
   await recordThreadDelivery(store, 'job', 'work', 'exec-2', task);
   assert.ok(task.chatgptThreadDelivery.deliveredAt);
   assert.notEqual(task.chatgptThreadDelivery.requestId, 'job:work:exec-1');
+});
+
+
+test('implementation thread ownership does not capture troubleshooter or reviewer routing', () => {
+  const job = { ...baseJob(), implementationThreadId: 'implementation-owner' };
+  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'implementation' }), 'implementation-owner');
+  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'troubleshooter' }), null);
+  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'reviewer' }), null);
+  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: undefined }), null);
 });

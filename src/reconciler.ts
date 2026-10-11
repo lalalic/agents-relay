@@ -14,7 +14,7 @@ import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workf
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
-import { recordThreadDelivery, resolveImplementationThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js';
+import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
@@ -344,9 +344,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (jobHasActiveExecution(freshJob, { taskId: freshTask.id })) return;
       if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
 
-      const implementationThread = freshTask.kind !== 'planner' && freshTask.agentName !== 'reviewer'
-        ? resolveImplementationThreadDestination(freshJob)
-        : null;
+      const implementationThread = resolveImplementationTaskThreadDestination(freshJob, freshTask);
       if ((!freshTask.routing || ((implementationThread || (freshTask.agentName === 'reviewer' && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
         freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
       }
@@ -391,9 +389,7 @@ export class Reconciler extends ReconcilerReviewBase {
           durable.executionHistory = [...(durable.executionHistory ?? []), {
             id: durable.executionId, attempt: durable.attempt, startedAt: new Date(startedAt).toISOString(),
           }].slice(-8);
-          const implementationThread = durable.kind !== 'planner' && durable.agentName !== 'reviewer'
-            ? resolveImplementationThreadDestination(current)
-            : null;
+          const implementationThread = resolveImplementationTaskThreadDestination(current, durable);
           if (durable.agentName === 'reviewer') durable.chatgptThreadDelivery = prepareReviewerThreadDelivery(current, { ...durable, routing: freshTask!.routing }, this.options.reviewer?.threadId);
           if (implementationThread && durable.adapter === 'chatgpt') {
             durable.chatgptThreadDelivery = {
