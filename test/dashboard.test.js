@@ -381,7 +381,7 @@ test('dashboard task state override invokes the supplied runtime handler', async
 });
 
 test('dashboard renders job clipboard, publication, merge-review, and commit-link contracts', () => {
-  assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(repoName\(job\.repository\)\+'\/pr#'\+job\.prNumber\)/);
+  assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(jobChatRef\(job\)\)/);
   assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
   assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
@@ -814,4 +814,13 @@ test('dashboard highlights failed/error events red and blocked/warn events amber
   assert.match(dashboardHtml, /event-error/);
   assert.match(dashboardHtml, /event-warn/);
   assert.match(dashboardHtml, /\.event-item\.event-error/);
+});
+
+test('selection clipboard and ChatGPT shortcuts use the complete Job title without pr#0', () => {
+  assert.match(dashboardHtml, /clipboard\.writeText\(jobChatRef\(job\)\)/);
+  assert.match(dashboardHtml, /function jobChatRef\(job\)\{return repoName/);
+  assert.match(dashboardHtml, /Number\(job\?\.externalPrNumber\|\|job\?\.prNumber\|\|0\)>0/);
+  assert.match(dashboardHtml, /'job:'\+value\(job\?\.id\)/);
+  assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
+  assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
 });
