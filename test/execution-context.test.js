@@ -40,6 +40,8 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     const browserWorker = await skill(neo, 'chatgpt-browser-worker');
     await skill(neo, 'neo-only');
     await agent(globalRoot, 'duplicate', 'global');
+    await agent(globalRoot, 'global-private', 'global');
+    await agent(neo, 'neo-private', 'neo');
     await agent(neo, 'duplicate', 'neo');
     const projectAgent = await agent(project, 'duplicate', 'project,review');
     const reviewer = await agent(project, 'reviewer', 'review');
@@ -63,6 +65,8 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     assert.deepEqual(byAgent.get('duplicate').trustDomains, ['local']);
     assert.deepEqual(byAgent.get('duplicate').delegation, []);
     assert.equal(byAgent.get('reviewer').path, await realpath(reviewer));
+    assert.equal(byAgent.has('neo-private'), false);
+    assert.equal(byAgent.has('global-private'), false);
     assert.deepEqual(context.instructions.map(item => item.source), ['global', 'project', 'project']);
     const neoAgents = await realpath(join(neo, 'AGENTS.md'));
     assert.equal(context.instructions.some(item => item.path === neoAgents), false);

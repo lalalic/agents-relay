@@ -300,7 +300,7 @@ ${instructions}
 Visible skills (already de-duplicated with project-local > Neo shared > global precedence):
 ${skills}
 
-Visible agents:
+Visible agents (Relay built-in + Job context only; registered agents may supplement):
 ${agents}
 
 Runtime capabilities:
