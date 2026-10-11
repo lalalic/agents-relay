@@ -211,6 +211,9 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
     throw new Error('Local Job execution requires a valid refs/heads sourceRef');
   const primary = await git(projectPath, ['rev-parse', '--show-toplevel']);
   const projectRelative = (await git(projectPath, ['rev-parse', '--show-prefix'])).replace(/\/$/, '');
+  const effectiveProject = (checkoutRoot: string): string => job.projectPath
+    ? resolveRepositoryProjectPath(checkoutRoot, job.projectPath)
+    : (projectRelative ? join(checkoutRoot, projectRelative) : checkoutRoot);
   let remote = '';
   try { remote = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
   const remoteRepository = remote ? githubRepositoryFromRemote(remote) : null;
@@ -224,7 +227,7 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
   if (primaryBranch === sourceRef) {
     const primaryHead = await git(primary, ['rev-parse', 'HEAD']);
     if (primaryHead !== sourceSha) throw new Error(`Canonical source branch ${sourceRef} changed while preparing execution checkout`);
-    return projectRelative ? join(primary, projectRelative) : primary;
+    return effectiveProject(primary);
   }
 
   const worktree = managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot);
@@ -241,11 +244,11 @@ export async function prepareLocalJobExecutionWorktree(projectPath: string, job:
       if (!ancestor) throw new Error(`Local Job worktree has non-fast-forward history; preserve commits: ${worktree}`);
       await git(worktree, ['merge', '--ff-only', sourceSha]);
     }
-    return projectRelative ? join(worktree, projectRelative) : worktree;
+    return effectiveProject(worktree);
   } catch (error) {
     try { await stat(worktree); } catch {
       await git(primary, ['worktree', 'add', worktree, sourceRef.slice('refs/heads/'.length)]);
-      return projectRelative ? join(worktree, projectRelative) : worktree;
+      return effectiveProject(worktree);
     }
     throw error;
   }
