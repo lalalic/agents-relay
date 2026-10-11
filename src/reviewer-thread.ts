@@ -1,4 +1,4 @@
-import type { Job, Task, WorkerRequirements } from './types.js';
+import type { ChatGptThreadDelivery, Job, Task, WorkerRequirements } from './types.js';
 import { arg, hasArg } from './cli-support.js';
 
 export type ReviewThreadDestination = {
@@ -29,6 +29,28 @@ export function resolveReviewerThreadDestination(
   if (reviewerThreadId) return { threadId: reviewerThreadId, source: 'reviewer' };
   const creatorThreadId = job.creatorThreadId ? normalizeThreadId(job.creatorThreadId, 'Job creator thread ID') : undefined;
   return creatorThreadId ? { threadId: creatorThreadId, source: 'creator' } : null;
+}
+
+export function prepareReviewerThreadDelivery(
+  job: Job, task: Pick<Task, 'id' | 'agentName' | 'reviewHeadSha' | 'routing' | 'chatgptThreadDelivery'>,
+  override?: string,
+): ChatGptThreadDelivery | undefined {
+  if (task.agentName !== 'reviewer') return undefined;
+  const destination = resolveReviewerThreadDestination(job, override);
+  if (!destination) return undefined;
+  const existing = task.chatgptThreadDelivery;
+  if (existing?.deliveredAt) {
+    if (existing.threadId !== destination.threadId) throw new Error('Cannot redirect an already delivered reviewer task');
+    return existing;
+  }
+  return {
+    kind: 'new-turn', threadId: destination.threadId, threadSource: destination.source,
+    requestId: existing?.requestId ?? `${job.id}:${task.id}:${task.reviewHeadSha ?? job.headSha ?? 'review'}`,
+    jobId: job.id, prNumber: job.externalPrNumber && job.externalPrNumber > 0 ? job.externalPrNumber : job.prNumber,
+    ...(task.reviewHeadSha ? { reviewHeadSha: task.reviewHeadSha } : {}),
+    projectId: task.routing?.projectId ?? null,
+    ...(existing?.executionId ? { executionId: existing.executionId } : {}),
+  };
 }
 
 export function chatgptThreadRequirements(configured: WorkerRequirements | undefined): WorkerRequirements {

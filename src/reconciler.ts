@@ -14,7 +14,7 @@ import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workf
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
 import { validateAgentSelection } from './agent-graph.js';
 import { ReconcilerReviewBase } from './reconciler-review.js';
-import { recordThreadDelivery, resolveImplementationThreadDestination } from './reviewer-thread.js';
+import { recordThreadDelivery, resolveImplementationThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
@@ -347,7 +347,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const implementationThread = freshTask.kind !== 'planner' && freshTask.agentName !== 'reviewer'
         ? resolveImplementationThreadDestination(freshJob)
         : null;
-      if ((!freshTask.routing || (implementationThread && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
+      if ((!freshTask.routing || ((implementationThread || (freshTask.agentName === 'reviewer' && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
         freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
       }
       if (['codex', 'chatgpt'].includes(freshTask.adapter) && !freshTask.routing) {
@@ -365,6 +365,7 @@ export class Reconciler extends ReconcilerReviewBase {
         attempt: freshTask.attempt,
         startedAt: new Date(startedAt).toISOString(),
       }].slice(-8);
+      if (freshTask.agentName === 'reviewer') freshTask.chatgptThreadDelivery = prepareReviewerThreadDelivery(freshJob, freshTask, this.options.reviewer?.threadId);
       if (implementationThread && freshTask.adapter === 'chatgpt') {
         freshTask.chatgptThreadDelivery = {
           kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',
@@ -393,6 +394,7 @@ export class Reconciler extends ReconcilerReviewBase {
           const implementationThread = durable.kind !== 'planner' && durable.agentName !== 'reviewer'
             ? resolveImplementationThreadDestination(current)
             : null;
+          if (durable.agentName === 'reviewer') durable.chatgptThreadDelivery = prepareReviewerThreadDelivery(current, { ...durable, routing: freshTask!.routing }, this.options.reviewer?.threadId);
           if (implementationThread && durable.adapter === 'chatgpt') {
             durable.chatgptThreadDelivery = {
               kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',

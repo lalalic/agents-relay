@@ -10,7 +10,7 @@ import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js'
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
-import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationThreadDestination } from './reviewer-thread.js';
+import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
 
 
@@ -131,16 +131,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reviewGateTasks,
       reviewThread ? chatgptThreadRequirements(this.options.reviewer?.requirements) : undefined,
     );
-    const chatgptThreadDelivery: ChatGptThreadDelivery | undefined = reviewThread ? {
-      kind: 'new-turn',
-      threadId: reviewThread.threadId,
-      threadSource: reviewThread.source,
-      requestId: `${job.id}:${id}:${headSha}`,
-      jobId: job.id,
-      prNumber: reviewPrNumber,
-      reviewHeadSha: headSha,
-      projectId: reviewerRouting.candidate.routing.projectId ?? null,
-    } : undefined;
+    const chatgptThreadDelivery = prepareReviewerThreadDelivery(job, {
+      id, agentName: 'reviewer', reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
+    }, this.options.reviewer?.threadId);
     const input = [
       `Job ID: ${job.id}`,
       `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.`,
@@ -250,14 +243,15 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
     const implementationThread = task.kind !== 'planner' && task.agentName !== 'reviewer' ? resolveImplementationThreadDestination(job) : null;
-    if (task.routing && !(implementationThread && task.adapter !== 'chatgpt')) return { task, routed: false };
+    const reviewerThread = task.agentName === 'reviewer' ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
+    if (task.routing && !((implementationThread || reviewerThread) && task.adapter !== 'chatgpt')) return { task, routed: false };
     if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
 
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
-    const candidates = workerCandidates(this.options.adapters, registered, usage).filter(candidate => implementationThread ? candidate.adapter === 'chatgpt' : true);
+    const candidates = workerCandidates(this.options.adapters, registered, usage).filter(candidate => (implementationThread || reviewerThread) ? candidate.adapter === 'chatgpt' : true);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    const requirements = implementationThread ? chatgptThreadRequirements(task.workerRequirements) : (task.workerRequirements ?? { capabilities: [] });
+    const requirements = (implementationThread || reviewerThread) ? chatgptThreadRequirements(task.workerRequirements) : (task.workerRequirements ?? { capabilities: [] });
     const taskFacts = {
       job: {
         id: job.id, title: job.title, objective: job.objective ?? null,
