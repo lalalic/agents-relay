@@ -1,3 +1,4 @@
+import { assignPlannerTaskIds } from './planner-task-ids.js';
 import { randomUUID } from 'node:crypto';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import type { ExecutionContext } from './execution-context.js';
@@ -123,7 +124,8 @@ async function finishPlanner(
   if (error) { await failOrRetry(error.message); releaseLive(); return; }
   let planCommitted = false;
   try {
-    const result = parsePlannerResult(raw);
+    const parsed = parsePlannerResult(raw);
+    const result = assignPlannerTaskIds(parsed, job.repository, job.id, plan.id);
     const executionContext = await ports.plannerContext(job, plan);
     validatePlannerHierarchy(job.tasks, result.next_tasks);
     validatePlannerResolutionMaterialization(job.tasks, result.next_tasks);

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import type { Job } from './types.js';
 import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
@@ -51,7 +53,7 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createDashboardActions(deps: any) {
-  const { getOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState } = deps;
+  const { getOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState, storeDirectory } = deps;
   const currentOverviews = (): ManagedJobOverview[] => getOverviews();
   const dashboardOverview = (jobId: string, target?: { repository?: string; prNumber?: number }) =>
     currentOverviews().find((item: {job: Job}) => item.job.id === jobId
@@ -75,17 +77,25 @@ export function createDashboardActions(deps: any) {
     await refreshAll();
     return result;
   };
-  const workspaceTaskCreate = async (jobId: string, task: import('./types.js').Task) => {
+  const workspaceTaskCreate = async (jobId: string, task: import('./types.js').Task, idempotencyKey?: string) => {
     const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
     if (task.jobId !== jobId) throw new Error(`Task ${task.id} belongs to ${task.jobId}, not ${jobId}`);
     const store = (await requireLocalJobBinding(jobId)).store;
     const job = await store.load(jobId);
     if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
+    if (task.id && isGeneratedEntityId(task.id, job.repository, 'task')) throw new Error('Reserved auto-generated Task ID cannot be assigned manually');
+    if (!task.id) task.id = allocateEntityId(storeDirectory ?? relayStoreDirectory(), job.repository, 'task', idempotencyKey ? `${jobId}:${idempotencyKey}` : undefined);
+    let alreadyCreated = false;
     if (store.mutateJob) {
       await store.mutateJob(jobId, (current: Job) => {
         if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot create task on terminal job ${current.id}`);
-        if (current.tasks.some((item: import('./types.js').Task) => item.id === task.id)) throw new Error(`Task ${task.id} already exists`);
+        const existing = current.tasks.find((item: import('./types.js').Task) => item.id === task.id);
+        if (existing) {
+          if (!idempotencyKey || existing.input !== task.input || JSON.stringify(existing.output) !== JSON.stringify(task.output)) throw new Error(`Task ${task.id} already exists with a different definition or no retry key`);
+          alreadyCreated = true;
+          return current;
+        }
         current.tasks.push(structuredClone(task));
         if (current.state === 'DRAFT') {
         const activation = dispatchJobLifecycleSync(current, 'activate');
@@ -95,12 +105,19 @@ export function createDashboardActions(deps: any) {
         return current;
       });
     } else {
+      if (idempotencyKey) {
+        const existing = job.tasks.find((item: import('./types.js').Task) => item.id === task.id);
+        if (existing) {
+          if (existing.input !== task.input || JSON.stringify(existing.output) !== JSON.stringify(task.output)) throw new Error(`Task ${task.id} already exists with a different definition`);
+          return { ...job, createdTaskId: task.id };
+        }
+      }
       await store.appendTask(task);
       const refreshed = await store.load(jobId);
       if (refreshed.state === 'DRAFT') { await applyJobActivateAction(refreshed); await store.saveJob(refreshed); }
     }
-    await pool.reconcileLocalJob(jobId, 'control.task.create');
-    return await store.load(jobId);
+    if (!alreadyCreated) await pool.reconcileLocalJob(jobId, 'control.task.create');
+    return { ...(await store.load(jobId)), createdTaskId: task.id };
   };
   const workspaceTaskStart = async (jobId: string, taskId: string) => {
     const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);

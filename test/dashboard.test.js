@@ -474,7 +474,7 @@ test('credit providers render one balance value per provider row', () => {
 test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
   assert.match(dashboardHtml, /Number\(job\.externalPrNumber\|\|job\.prNumber\|\|0\)>0/);
-  assert.match(dashboardHtml, /'Job '\+value\(job\.id\)/);
+  assert.match(dashboardHtml, /'Job '\+shortManagedId\(job\.id,job\.repository,'j'\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);

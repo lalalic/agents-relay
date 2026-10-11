@@ -1,3 +1,4 @@
+import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js';
 import type { Job, Priority, ExecutionMode } from './types.js';
 import { type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
@@ -14,7 +15,7 @@ export async function ensureManagedGitHubJob(
   repositoryName: string,
   _trustedAuthors: ReadonlySet<string>,
   options: {
-    id: string; title?: string; objective?: string; projectPath?: string;
+    id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
     priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule'];
     tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
     prNumber?: number; head?: string; base?: string; body?: string;
@@ -22,28 +23,31 @@ export async function ensureManagedGitHubJob(
     storeDirectory?: string; noGitHub?: boolean; localMergeSource?: string; localMergeTarget?: string;
   },
 ): Promise<{ job: Job; pr: PullRequest }> {
-  if (!options.id) throw new Error('--id is required for managed local Jobs');
+  const directory = options.storeDirectory ?? relayStoreDirectory();
+  const knownJobs = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs);
+  const id = options.id || allocateEntityId(directory, repositoryName, 'job', options.idempotencyKey, new Set(knownJobs.map(job => job.id)));
   const requestedNumber = options.prNumber ?? 0;
   if (!Number.isInteger(requestedNumber) || requestedNumber < 0) throw new Error('Invalid external PR binding number');
-  const placeholder: PullRequest = { number: requestedNumber, title: options.title ?? options.id,
+  const placeholder: PullRequest = { number: requestedNumber, title: options.title ?? id,
     body: options.body ?? options.objective ?? '', state: 'OPEN', head: options.head ?? '', base: options.base ?? '' };
-  const directory = options.storeDirectory ?? relayStoreDirectory();
-  const alreadyKnown = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot =>
-    snapshot.jobs.filter(job => job.id === options.id).map(job => ({ job, path: snapshot.path })));
-  if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + options.id);
+  const alreadyKnown = knownJobs.filter(job => job.id === id);
+  if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + id);
   if (alreadyKnown.length === 1) {
-    const existing = alreadyKnown[0].job;
+    const existing = alreadyKnown[0];
     if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber))
       throw new Error('Immutable Job ID is already bound to a different repository or external PR');
+    if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
+    if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
     return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
   }
+  if (options.id && isGeneratedEntityId(id, repositoryName, 'job')) throw new Error('Reserved auto-generated Job ID cannot be assigned manually');
   const pr = placeholder;
   const number = pr.number;
   const local = openLocalManagedStore(repositoryName, number, {
-    directory, jobId: options.id, noGitHub: true,
+    directory, jobId: id, noGitHub: true,
   });
   try {
-    const existing = await local.relay.loadJob(options.id);
+    const existing = await local.relay.loadJob(id);
     if (existing) return { job: existing, pr };
     const now = new Date().toISOString();
     const localMergeSource = options.localMergeSource ?? (options.head ? `refs/heads/${options.head}` : undefined);
@@ -51,7 +55,7 @@ export async function ensureManagedGitHubJob(
     if (options.base && options.base !== 'main') throw new Error('Job base must always be main');
     const localMergeTarget = localMergeSource ? 'refs/heads/main' : undefined;
     const job = createJobEntity({
-      id: options.id,
+      id,
       title: options.title || pr.title || 'Agents Relay job',
       objective: options.objective || pr.body || undefined,
       projectPath: options.projectPath,
@@ -81,7 +85,7 @@ export async function ensureManagedGitHubJob(
     }, { activate: Boolean(options.schedule) });
     await local.store.saveJob(job);
 
-    return { job: await local.store.load(options.id), pr };
+    return { job: await local.store.load(id), pr };
   } finally {
     local.relay.close();
   }

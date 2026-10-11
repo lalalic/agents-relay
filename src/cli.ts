@@ -12,15 +12,16 @@ export { ensureManagedGitHubJob } from './cli-job-create.js';
 async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
   if (!jobId) throw new Error('--id is required for managed task commands');
-  const id = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
-  if (!id) throw new Error(`task ${action} requires --task-id`);
+  let id = arg(args, '--task-id');
+  if (!id && action !== 'create') throw new Error(`task ${action} requires --task-id`);
   let result: Job;
   if (action === 'create') {
     const job = await relayControlJob(args, jobId);
     if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const task = await workerTaskFromArgs(job, args, new Date().toISOString());
     task.id = id;
-    result = await relayTaskCommand(args, { jobId, action, task });
+    result = await relayTaskCommand(args, { jobId, action, task, idempotencyKey: arg(args, '--idempotency-key') || undefined });
+    if (!id) id = (result as Job & { createdTaskId?: string }).createdTaskId ?? '';
   } else if (action === 'complete') {
     const summary = arg(args, '--summary');
     if (!summary) throw new Error('task complete requires --summary');
@@ -36,7 +37,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (managed) {
     const jobId = arg(args, '--id');
     if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
-    const taskId = arg(args, '--task-id', action === 'create' ? randomUUID() : '');
+    const taskId = arg(args, '--task-id');
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
     if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
@@ -206,7 +207,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   }
   if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
-  if (!id) throw new Error('--id is required for managed local Jobs');
+  if (!id && action !== 'create') throw new Error('--id is required for managed local Jobs');
   const prValue = arg(args, '--pr');
   const prNumber = prValue ? Number(prValue) : 0;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
@@ -214,7 +215,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
-      id, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
+      id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), executionMode: requestedExecutionMode(args), schedule: scheduleFromArgs(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
       prNumber, head: arg(args, '--head') || undefined, base: arg(args, '--base', 'main'), body: arg(args, '--body') || objective || undefined,
