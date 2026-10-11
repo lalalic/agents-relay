@@ -40,9 +40,11 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     const browserWorker = await skill(neo, 'chatgpt-browser-worker');
     await skill(neo, 'neo-only');
     await agent(globalRoot, 'duplicate', 'global');
+    await agent(globalRoot, 'global-private', 'global');
+    await agent(neo, 'neo-private', 'neo');
     await agent(neo, 'duplicate', 'neo');
     const projectAgent = await agent(project, 'duplicate', 'project,review');
-    const reviewer = await agent(neo, 'reviewer', 'review');
+    const reviewer = await agent(project, 'reviewer', 'review');
 
     const context = await resolveExecutionContext(project, 'worker', {
       workspaceRoot: workspace,
@@ -63,6 +65,8 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     assert.deepEqual(byAgent.get('duplicate').trustDomains, ['local']);
     assert.deepEqual(byAgent.get('duplicate').delegation, []);
     assert.equal(byAgent.get('reviewer').path, await realpath(reviewer));
+    assert.equal(byAgent.has('neo-private'), false);
+    assert.equal(byAgent.has('global-private'), false);
     assert.deepEqual(context.instructions.map(item => item.source), ['global', 'project', 'project']);
     const neoAgents = await realpath(join(neo, 'AGENTS.md'));
     assert.equal(context.instructions.some(item => item.path === neoAgents), false);
@@ -122,7 +126,7 @@ test('managed worker input loads the selected agent Markdown contract by agentNa
     const neo = join(workspace, 'neo');
     const project = join(workspace, 'project');
     await Promise.all([mkdir(project, { recursive: true }), mkdir(neo, { recursive: true })]);
-    const reviewerPath = await agent(neo, 'reviewer', 'review');
+    const reviewerPath = await agent(project, 'reviewer', 'review');
     await writeFile(reviewerPath, `---\nname: reviewer\ntype: reviewer\ncapabilities: [review]\n---\n\nCANONICAL REVIEW CONTRACT: emit review.started then one decision.`);
     const context = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, neoRoot: neo, globalRoot: join(root, 'global') });
     const job = { id:'j', title:'job', objective:'ship safely', executionMode:'fixed', prNumber:75, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
@@ -155,4 +159,53 @@ test('context resolve CLI exposes the same resolver for XChat without durable st
     assert.deepEqual(context.skills.map(item => item.name), ['local']);
     assert.equal(context.delegation.mode, 'relay-child-task');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('job context agent extends builtin and supports section replacement and extension', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-agent-content-'));
+  try {
+    const project = join(root, 'vlog'); await mkdir(join(project,'agents'),{recursive:true});
+    await writeFile(join(project,'agents','planner.agent.md'), `---
+name: planner
+extends: relay/planner
+mode: extend
+sections:
+  replace: [Planner Agent/Planning contract]
+---
+# Planner Agent
+## Planning contract
+Plan story then design then production for Vlog.
+`);
+    const { resolveAgentMarkdown } = await import('../dist/agent-content-resolver.js');
+    const { BUNDLED_AGENTS_ROOT } = await import('../dist/execution-context.js');
+    const outcome = await resolveAgentMarkdown('planner',BUNDLED_AGENTS_ROOT,project);
+    assert.match(outcome.content,/Plan story then design then production/);
+    assert.doesNotMatch(outcome.content,/Plan the whole objective before choosing Task boundaries/);
+    assert.match(outcome.content,/Agent/);
+    assert.equal(outcome.hash.length,64);
+    await writeFile(join(project,'agents','reviewer.agent.md'),`---
+name: reviewer
+extends: relay/reviewer
+mode: extend
+---
+# Vlog review
+Check real footage evidence.`);
+    const context = await resolveExecutionContext(project,'worker',{workspaceRoot:root,neoRoot:null,globalRoot:join(root,'global')});
+    const {agentContractPrompt}=await import('../dist/execution-context.js');
+    const prompt=await agentContractPrompt(context,'reviewer');
+    assert.match(prompt,/Check real footage evidence/);
+    assert.match(prompt,/BEGIN AGENT CONTRACT/);
+    assert.match(prompt,/Relay Reviewer Agent/);
+    assert.deepEqual(context.agents.find(a => a.name === 'reviewer')?.capabilities, ['review','evidence-verification']);
+    await writeFile(join(project,'agents','planner.agent.md'),`---
+name: planner
+extends: relay/planner
+mode: extend
+sections:
+  replace: [no-such-section]
+---
+## no-such-section
+Oops`);
+    await assert.rejects(resolveAgentMarkdown('planner',BUNDLED_AGENTS_ROOT,project),/missing in base/);
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

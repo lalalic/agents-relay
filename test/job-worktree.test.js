@@ -156,3 +156,19 @@ test('ordinary SQLite Job creates and reuses isolated source branch without touc
   assert.equal(git(f.repo,'symbolic-ref','HEAD'),'refs/heads/main');
   assert.equal(git(f.repo,'rev-parse','main'),main);
 });
+
+
+test('local Job projectPath resolves project-local contract folder inside its isolated worktree', async t => {
+  const f = await fixture(t);
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(join(f.repo,'vlog','agents'),{recursive:true});
+  await writeFile(join(f.repo,'vlog','agents','planner.agent.md'),'Vlog planner');
+  git(f.repo,'add','.');git(f.repo,'commit','-m','add vlog contract');
+  git(f.repo,'branch','episode-proj-branch');
+  const job={id:'vlog-episode',projectPath:'vlog',state:'ACTIVE',repository:'example/isolated',prNumber:0,tasks:[],plans:[],localMerge:{sourceRef:'refs/heads/episode-proj-branch',targetRef:'refs/heads/main',status:'pending'}};
+  const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
+  assert.equal(checkout,join(managedLocalJobWorktreePath(job.repository,job.id,f.root),'vlog'));
+  const {resolveExecutionContext}=await import('../dist/execution-context.js');
+  const context=await resolveExecutionContext(checkout,'planner',{neoRoot:null,globalRoot:join(f.root,'global')});
+  assert.equal(context.agents.find(x=>x.name==='planner')?.source,'project');
+});

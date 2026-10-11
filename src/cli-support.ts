@@ -124,7 +124,7 @@ export async function relayJobStateCommand(args: string[], jobId: string, state:
   if (!response.ok) throw new Error(`Agents Relay job state command failed: ${await response.text() || `HTTP ${response.status}`}`);
   return await response.json() as Job;
 }
-export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'|'update'; summary?: string; task?: Task; expectedUpdatedAt?: string }): Promise<Job> {
+export async function relayTaskCommand(args: string[], body: { jobId: string; taskId?: string; action: 'create'|'start'|'retry'|'cancel'|'complete'|'update'; summary?: string; task?: Task; expectedUpdatedAt?: string; idempotencyKey?: string }): Promise<Job & { createdTaskId?: string }> {
   const host = arg(args, '--host', '127.0.0.1');
   const port = Number(arg(args, '--port', String(SERVICE_DEFAULTS.port)));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
@@ -132,7 +132,7 @@ export async function relayTaskCommand(args: string[], body: { jobId: string; ta
   try { response = await fetch(`http://${host}:${port}/api/task-command`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
   catch (error) { throw new Error(`Agents Relay service unavailable at ${host}:${port}: ${error instanceof Error ? error.message : String(error)}`); }
   if (!response.ok) throw new Error(`Agents Relay task command failed: ${await response.text() || `HTTP ${response.status}`}`);
-  return await response.json() as Job;
+  return await response.json() as Job & { createdTaskId?: string };
 }
 export type EventBusResolution = { bus: EventBus | undefined; transport: 'nats' | 'none'; source: 'explicit' | 'auto' | 'unavailable' | 'local'; natsUrl: string };
 export async function resolveEventBus(args: string[], probe?: (bus: NatsEventBus) => Promise<boolean>): Promise<EventBusResolution> {

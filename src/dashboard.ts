@@ -31,7 +31,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   })));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
-type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
+type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -249,7 +249,7 @@ export function serveDashboard(
       const requestedJobId = url.searchParams.get('id') ?? '';
       const action = url.searchParams.get('action') ?? '';
       const handler = action === 'start' ? resolvedActions?.start : action === 'reconcile' ? resolvedActions?.reconcile : action === 'cancel' ? resolvedActions?.cancel : undefined;
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_.-]+$/.test(requestedJobId) || !handler) { res.writeHead(404); res.end('Job action unavailable'); return; }
       try {
         const result = await handler(requestedJobId);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
@@ -265,12 +265,12 @@ export function serveDashboard(
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { jobId?: string; taskId?: string; action?: string; summary?: string; task?: Task; expectedUpdatedAt?: string };
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { jobId?: string; taskId?: string; action?: string; summary?: string; task?: Task; expectedUpdatedAt?: string; idempotencyKey?: string };
         const requestedJobId = typeof body.jobId === 'string' ? body.jobId : '';
         const requestedTaskId = typeof body.taskId === 'string' ? body.taskId : '';
-        if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
+        if (!/^[A-Za-z0-9_.-]+$/.test(requestedJobId)) throw new Error('Invalid job id');
         let result: Job;
-        if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task);
+        if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task, body.idempotencyKey);
         else if (body.action === 'update' && isTaskId(requestedTaskId) && body.task && body.expectedUpdatedAt && resolvedActions?.taskUpdate) result = await resolvedActions.taskUpdate(requestedJobId, requestedTaskId, body.task, body.expectedUpdatedAt);
         else if (body.action === 'start' && isTaskId(requestedTaskId) && resolvedActions?.taskStart) result = await resolvedActions.taskStart(requestedJobId, requestedTaskId);
         else if (body.action === 'retry' && isTaskId(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
@@ -291,7 +291,7 @@ export function serveDashboard(
       const requestedTaskId = url.searchParams.get('task') ?? '';
       const action = url.searchParams.get('action') ?? '';
       const handler = action === 'retry' ? resolvedActions?.taskRetry : action === 'cancel' ? resolvedActions?.taskCancel : undefined;
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_.-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !handler) { res.writeHead(404); res.end('Task action unavailable'); return; }
       try {
         const result = await handler(requestedJobId, requestedTaskId);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
@@ -310,7 +310,7 @@ export function serveDashboard(
       const parsedPr = Number(url.searchParams.get('pr'));
       const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
       const validState = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'].includes(requestedState);
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !validState || !resolvedActions?.jobSetState) { res.writeHead(404); res.end('Job state override unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_.-]+$/.test(requestedJobId) || !validState || !resolvedActions?.jobSetState) { res.writeHead(404); res.end('Job state override unavailable'); return; }
       try {
         const result = await resolvedActions.jobSetState(requestedJobId, requestedState as JobLifecycleState, { repository, prNumber });
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
@@ -330,7 +330,7 @@ export function serveDashboard(
       const parsedPr = Number(url.searchParams.get('pr'));
       const prNumber = Number.isInteger(parsedPr) && parsedPr > 0 ? parsedPr : undefined;
       const validState = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'].includes(requestedState);
-      if (req.method !== 'POST' || !/^[A-Za-z0-9_-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
+      if (req.method !== 'POST' || !/^[A-Za-z0-9_.-]+$/.test(requestedJobId) || !isTaskId(requestedTaskId) || !validState || !resolvedActions?.taskSetState) { res.writeHead(404); res.end('Task state override unavailable'); return; }
       try {
         const result = await resolvedActions.taskSetState(requestedJobId, requestedTaskId, requestedState as TaskState, { repository, prNumber });
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
@@ -363,7 +363,7 @@ export function serveDashboard(
       const requestedJobId = url.searchParams.get('job') ?? '';
       const requestedTaskId = url.searchParams.get('task');
       const requestedLimit = Number(url.searchParams.get('limit') ?? '60');
-      if (!/^[A-Za-z0-9_-]+$/.test(requestedJobId)) { res.writeHead(400); res.end('Invalid job id'); return; }
+      if (!/^[A-Za-z0-9_.-]+$/.test(requestedJobId)) { res.writeHead(400); res.end('Invalid job id'); return; }
       const events = await eventHistory(requestedJobId, requestedTaskId, Number.isFinite(requestedLimit) ? requestedLimit : 60);
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(events));

@@ -67,7 +67,8 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(result.job.state, 'ACTIVE');
   assert.equal(observed.objective, 'finish the objective');
   assert.equal(observed.guidance, 'focus on the durable objective');
-  const child = result.job.tasks.find(item => item.id === 'implement');
+  const child = result.job.tasks.find(item => item.id === result.round.generatedTaskIds[0]);
+  assert.match(child?.id ?? '', /^t-5-owner-repo-\d+$/);
   assert.ok(child);
   assert.equal(child.parentTaskId, null);
   assert.equal(child.planningDecisionId, 'plan-1');
@@ -92,7 +93,7 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
     }] }; } },
   });
   const result = await reconciler.planJob('auto');
-  const reviewer = result.job.tasks.find(item => item.id === 'immutable-review');
+  const reviewer = result.job.tasks.find(item => item.id === result.round.generatedTaskIds[0]);
   assert.ok(reviewer);
   assert.equal(observedTriggerHeadSha, headSha);
   assert.equal(result.round.headSha, headSha);
@@ -118,10 +119,11 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   ] }) };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto');
-  const day = result.job.tasks.find(item => item.id === 'day-2026-09-28');
-  const hour = result.job.tasks.find(item => item.id === 'hour-17');
+  const [dayId, hourId] = result.round.generatedTaskIds;
+  const day = result.job.tasks.find(item => item.id === dayId);
+  const hour = result.job.tasks.find(item => item.id === hourId);
   assert.equal(day.parentTaskId, null);
-  assert.equal(hour.parentTaskId, 'day-2026-09-28');
+  assert.equal(hour.parentTaskId, dayId);
   assert.equal(hour.planningDecisionId, 'plan-1');
 });
 
@@ -341,13 +343,13 @@ test('planner result with a formatting-only priority variation creates a child t
   const stop = await reconciler.watch('auto');
   await settle(reconciler, 8);
   const result = await store.load('auto');
-  assert.equal(result.tasks.find(item => item.id === 'work-1')?.priority, 'P1');
   const firstPlan = result.plans?.find(item => item.id === 'plan-1');
+  assert.equal(result.tasks.find(item => item.id === firstPlan?.generatedTaskIds[0])?.priority, 'P1');
   assert.equal(firstPlan?.status, 'SUCCEEDED');
-  assert.deepEqual(firstPlan?.generatedTaskIds, ['work-1']);
+  assert.match(firstPlan?.generatedTaskIds[0] ?? '', /^t-5-owner-repo-\d+$/);
   const comments = await store.comments();
   const planIndex = comments.findIndex(comment => comment.body.includes(PLAN_MARKER) && comment.body.includes('\"id\":\"plan-1\"'));
-  const childIndex = comments.findIndex(comment => comment.body.includes(TASK_MARKER) && comment.body.includes('\"id\":\"work-1\"'));
+  const childIndex = comments.findIndex(comment => comment.body.includes(TASK_MARKER) && comment.body.includes('\"id\":\"' + firstPlan.generatedTaskIds[0] + '\"'));
   assert.ok(planIndex >= 0 && childIndex > planIndex, 'Plan comment must precede generated child Task comment');
   await stop();
 });
@@ -411,7 +413,7 @@ test('fixed and autonomous work reaches runtime review after terminal events, no
     assert.equal(result.state, 'ACTIVE');
     assert.equal(deriveJobRuntimeStatus(result, 'OPEN'), 'IDLE');
     if (mode === 'fixed') assert.equal(calls, 0);
-    else assert.equal(result.tasks.find(t=>t.id==='work-1')?.state, 'SUCCEEDED');
+    else assert.equal(result.tasks.find(t=>t.id===result.plans?.find(p=>p.id==='plan-1')?.generatedTaskIds[0])?.state, 'SUCCEEDED');
     await stop();
   }
 });

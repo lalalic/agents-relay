@@ -58,13 +58,13 @@ Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a SQLite-authoritative Job.
 
-Required: --repo OWNER/REPO, --id JOB_ID, and either --head BRANCH or --pr NUMBER.
-With --head, bind the local source branch and use --base as its local merge target without a GitHub query. With --pr, bind an existing external PR reference as optional metadata without a GitHub query.
-Common: --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
+Required: --repo OWNER/REPO and a standalone Job objective (unless binding an existing PR). Job ID defaults to an auto-incrementing repository-scoped number; --id is optional for compatibility.
+With --head, bind the local source branch and use --base as its local merge target without a GitHub query. With --pr, bind an existing external PR reference as optional metadata without a GitHub query. Without either, create a local-first content Job; local Job completion still follows the configured Graph lifecycle.
+Common: --id JOB_ID (optional), --idempotency-key KEY (for retries), --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan follows durable Job creation with the first real Planner round, activates the Job, and publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
-  npx agents-relay job create --repo OWNER/REPO --head feat/example --base main --id job-1 --title "Objective" --objective-file job.md --initial-plan`,
+  npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --idempotency-key submission-123 --initial-plan`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
@@ -116,11 +116,11 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. Use --adapter orchestrator only for synchronous self-work; explicit adapter/provider/model remain compatibility/debug constraints.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID (optional; Relay auto-assigns repository-scoped task number), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. Use --adapter orchestrator only for synchronous self-work; explicit adapter/provider/model remain compatibility/debug constraints.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
-  npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 --task-id build --output task-pr --input-file task.md`,
+  npx agents-relay task create --repo OWNER/REPO --id j-5-owner-repo-1 --output file --output-path story.md --input-file task.md`,
   'task update': `Update mutable durable Task fields in place.
 
 Required: --task-id ID and the normal Job storage options.

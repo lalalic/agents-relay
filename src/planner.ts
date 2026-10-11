@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
 import { validateResolutionProposal, unresolvedTask } from './workflow/task-resolution.js';
-import { ExecutionContext, executionContextPrompt } from './execution-context.js';
+import { ExecutionContext, executionContextPrompt, BUNDLED_AGENTS_ROOT } from './execution-context.js';
+import { resolveAgentMarkdown } from './agent-content-resolver.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
@@ -458,10 +459,11 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
     const resolvedPlanner = context.executionContext?.agents.find(agent => agent.name === 'planner')?.path;
-    const instructions = await readFile(resolvedPlanner ?? this.agentFile, 'utf8');
+    const effectivePlanner = context.executionContext ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, context.executionContext.project.path) : undefined;
+    const instructions = effectivePlanner?.content ?? await readFile(this.agentFile, 'utf8');
     const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
-    const prompt = instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
+    const prompt = (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     return await new Promise<PlannerResult>((resolve, reject) => {
       const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', prompt], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '';

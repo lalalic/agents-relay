@@ -59,9 +59,10 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'job.create') {
       const repository = typeof body.repository === 'string' ? body.repository : '';
       const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
-      if (!repository || typeof options.id !== 'string' || !options.id) throw new Error('job.create requires repository and id');
+      if (!repository) throw new Error('job.create requires repository');
       const result = await ensureManagedGitHubJob(client, repository, trusted, {
-        id: options.id,
+        id: typeof options.id === 'string' && options.id ? options.id : undefined,
+        idempotencyKey: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
         title: typeof options.title === 'string' ? options.title : undefined,
         objective: typeof options.objective === 'string' ? options.objective : undefined,
         projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
@@ -86,6 +87,9 @@ export function createWorkspaceControl(deps: any) {
       await refreshAll();
       if (body.initialPlan === true) {
         const binding = await requireLocalJobBinding(result.job.id);
+        const current = await binding.store.load(result.job.id);
+        const existingPlan = current.plans?.at(-1);
+        if (existingPlan) return { repository, pr: result.pr.number, job: current.id, executionMode: current.executionMode, state: current.state, initialPlan: existingPlan.id, reused: true };
         const reconciler = makeReconciler(binding.store, concurrency);
         try {
           const planned = await reconciler.planJob(result.job.id);
