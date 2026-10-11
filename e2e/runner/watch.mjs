@@ -168,6 +168,30 @@ function scenario004(j){
  return null;
 }
 
+function scenario011(j){
+ const tasks=(j.tasks||[]).filter(x=>x.kind==='work'&&x.agentName==='implementation');
+ const deliveries=tasks.filter(x=>x.chatgptThreadDelivery?.kind==='new-turn');
+ const generations=tasks.flatMap(x=>x.executionHistory||[]).filter(x=>x.id);
+ const implementationThread=String(j.implementationThreadId||'');
+ const reviewerThread=String(j.reviewerThreadId||'');
+ if(!implementationThread||!reviewerThread||implementationThread===reviewerThread)
+  return {type:'SCENARIO_011_THREAD_DESTINATIONS_INVALID',implementationThreadId:j.implementationThreadId||null,reviewerThreadId:j.reviewerThreadId||null};
+ if(j.state==='COMPLETED'){
+  if(new Set(tasks.map(x=>x.id)).size<2||tasks.filter(x=>x.state==='SUCCEEDED').length<2)
+   return {type:'SCENARIO_011_TWO_IMPLEMENTATIONS_MISSING',tasks:tasks.map(x=>({id:x.id,state:x.state,attempt:x.attempt}))};
+  if(deliveries.length<2||deliveries.some(x=>x.chatgptThreadDelivery.threadId!==implementationThread||x.chatgptThreadDelivery.threadSource!=='implementation'))
+   return {type:'SCENARIO_011_IMPLEMENTATION_THREAD_MISMATCH',implementationThreadId,deliveries:deliveries.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
+  if(new Set(generations.map(x=>x.id)).size<2)return {type:'SCENARIO_011_EXECUTION_GENERATIONS_MISSING',generations};
+  const evidence=state.evidence.implementationExecutions||{};
+  const completeIds=tasks.filter(x=>x.state==='SUCCEEDED').map(x=>x.id).filter(id=>evidence[id]?.started&&evidence[id]?.terminal);
+  if(new Set(completeIds).size<2)return {type:'SCENARIO_011_AUTHORITATIVE_EVENTS_MISSING',evidence};
+  const reviewTasks=(j.tasks||[]).filter(x=>x.agentName==='reviewer');
+  if(reviewTasks.length===0||reviewTasks.some(x=>x.chatgptThreadDelivery?.threadId!==reviewerThread))
+   return {type:'SCENARIO_011_REVIEWER_THREAD_MISMATCH',reviewerTasks:reviewTasks.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
+ }
+ return null;
+}
+
 function detect(j){
  const tasks=j.tasks||[],plans=j.plans||[];
  const work=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
@@ -181,6 +205,9 @@ function detect(j){
   if(specific)return specific;
  } else if(scenario.startsWith('004-')){
   const specific=scenario004(j);
+  if(specific)return specific;
+ } else if(scenario.startsWith('011-')){
+  const specific=scenario011(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
@@ -241,6 +268,19 @@ async function tick(){
       state.evidence.workerRejections.push({taskId:e.task_id,executionId:e.data.executionId,reason:e.data.reason,message:e.message});
     }
     if(e.type==='task.rerouting')state.evidence.workerRecoveryRouting=true;
+    if(scenario.startsWith('011-') && e.task_id && e.type==='task.started'){
+      state.evidence.implementationExecutions??={};
+      const id=String(e.task_id);
+      state.evidence.implementationExecutions[id]??={};
+      state.evidence.implementationExecutions[id].started=true;
+      state.evidence.implementationExecutions[id].executionId=e.data?.executionId||e.source?.id||null;
+    }
+    if(scenario.startsWith('011-') && e.task_id && ['task.completed','task.failed','task.blocked','task.cancelled'].includes(e.type)){
+      state.evidence.implementationExecutions??={};
+      const id=String(e.task_id);
+      state.evidence.implementationExecutions[id]??={};
+      state.evidence.implementationExecutions[id].terminal=e.type;
+    }
     if(scenario.startsWith('008-') && e.type==='task.process.async_exited')state.evidence.asyncTransportExit={taskId:e.task_id,executionId:e.data?.executionId,at:e.timestamp};
     if(scenario.startsWith('008-') && e.type==='task.completed' && state.evidence.asyncTransportExit?.taskId===e.task_id)state.evidence.asyncBusinessTerminal={taskId:e.task_id,at:e.timestamp};
   }
