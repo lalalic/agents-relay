@@ -34,6 +34,13 @@ ${projectedReview
   : isLocalJob
     ? `Treat the following durable task input as the authoritative work contract; do not query GitHub.\n\n${task.input}`
     : `Retrieve the durable job and task from GitHub before doing the work. Use whatever GitHub access this environment provides: the URLs, a GitHub integration/tool, or GitHub CLI/API. GitHub is the source of truth for task intent and declared output.`}
+\n[Authoritative execution context]
+Job objective: ${job.objective ?? '(none recorded)'}
+Plan: ${task.planningDecisionId ? `${task.planningDecisionId} (round ${task.planningRound ?? 'unknown'})` : 'directly created Task'}
+Task attempt/execution: ${task.attempt}/${task.maxAttempts} / ${task.executionId}
+Dependencies: ${task.dependencies.length ? task.dependencies.join(', ') : 'none'}
+${task.attempt > 1 || task.error ? `Retry summary: prior error=${task.error ?? 'none'}; prior generations=${(task.executionHistory ?? []).map(item => `${item.id}@${item.attempt}`).join(', ') || 'none'}` : 'Retry summary: first attempt'}
+SQLite/RelayStore and the canonical Mermaid Graphs own lifecycle, merge, recovery, and completion decisions. Do not perform Relay-owned merge or completion actions from this worker.
 ${context ? executionContextPrompt(context) + '\n\n' : ''}${selectedAgent ? selectedAgent + '\n\n' : ''}${selectedGraph ? selectedGraph + '\n\n' : ''}${chairPlan ? `[Review Chair execution plan]\n${JSON.stringify(chairPlan, null, 2)}\n\nUse this runtime-discovered panel to create sibling durable specialist Tasks. Preserve each specialistTasks entry as review metadata, keep the target immutable, and synthesize structured results with synthesizeReview semantics before returning the unified revision plan.\n\n` : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
 [Output contract]
 ${output}

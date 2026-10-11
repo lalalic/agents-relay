@@ -216,7 +216,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), executionMode: requestedExecutionMode(args), schedule: scheduleFromArgs(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
-      reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined,
+      reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
       prNumber, head: arg(args, '--head') || undefined, base: arg(args, '--base', 'main'), body: arg(args, '--body') || objective || undefined,
       localMergeSource: arg(args, '--local-merge-source') || undefined, localMergeTarget: arg(args, '--local-merge-target') || undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
@@ -252,13 +252,14 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--no-review')) job.reviewEnabled = false;
   if (hasArg(args, '--reviewer-thread-id')) job.reviewerThreadId = normalizeThreadId(arg(args, '--reviewer-thread-id'), '--reviewer-thread-id');
   if (hasArg(args, '--creator-thread-id')) job.creatorThreadId = normalizeThreadId(arg(args, '--creator-thread-id'), '--creator-thread-id');
+  if (hasArg(args, '--implementation-thread-id')) job.implementationThreadId = normalizeThreadId(arg(args, '--implementation-thread-id'), '--implementation-thread-id');
   if (hasArg(args, '--continue-kind') || hasArg(args, '--continue-target')) {
     const next = continuation(args);
     if (!next) throw new Error('--continue-kind and --continue-target must be supplied together');
     job.continuation = next;
   }
   const patch: Record<string, unknown> = {};
-  for (const key of ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
+  for (const key of ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }

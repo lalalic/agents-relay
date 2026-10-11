@@ -149,6 +149,13 @@ Workspace verifies the accepted turn and exact thread; Relay persists
 `deliveredAt` only after that verified submission succeeds and never records
 review delivery on launch, transport, verification, or persistence failure.
 
+Implementation-thread ownership is independent of review routing. A normal Job
+may set `implementationThreadId`; executable implementation Tasks then use the
+same verified ChatGPT/browser-worker `new-turn` path for that exact thread,
+while reviewer Tasks continue to resolve reviewer, creator, or one-run override
+destinations. A self-job is an ordinary Job with `implementationThreadId` equal
+to the current/creator ChatGPT thread; it has no special lifecycle.
+
 `--chatgpt-tab-close-policy after-start|never|after-terminal` and `AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY` remain accepted for compatibility with existing Relay event-barrier behavior; they no longer control the Browser Workspace auto-session lifetime. The default remains `after-start`.
 
 ## Continuations

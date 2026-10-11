@@ -10,7 +10,7 @@ import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js'
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
-import { chatgptThreadRequirements, resolveReviewerThreadDestination } from './reviewer-thread.js';
+import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationThreadDestination } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
 
 
@@ -249,14 +249,15 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     };
   }
   protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
-    if (task.routing) return { task, routed: false };
+    const implementationThread = task.kind !== 'planner' && task.agentName !== 'reviewer' ? resolveImplementationThreadDestination(job) : null;
+    if (task.routing && !(implementationThread && task.adapter !== 'chatgpt')) return { task, routed: false };
     if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
 
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
-    const candidates = workerCandidates(this.options.adapters, registered, usage);
+    const candidates = workerCandidates(this.options.adapters, registered, usage).filter(candidate => implementationThread ? candidate.adapter === 'chatgpt' : true);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
-    const requirements = task.workerRequirements ?? { capabilities: [] };
+    const requirements = implementationThread ? chatgptThreadRequirements(task.workerRequirements) : (task.workerRequirements ?? { capabilities: [] });
     const taskFacts = {
       job: {
         id: job.id, title: job.title, objective: job.objective ?? null,

@@ -22,6 +22,7 @@ import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
+import { normalizeThreadId } from './reviewer-thread.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
@@ -76,6 +77,7 @@ export function createWorkspaceControl(deps: any) {
         body: typeof options.body === 'string' ? options.body : undefined,
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
+        implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
         noGitHub,
         localMergeSource: typeof options.localMergeSource === 'string' ? options.localMergeSource : undefined,
         localMergeTarget: typeof options.localMergeTarget === 'string' ? options.localMergeTarget : undefined,
@@ -101,8 +103,13 @@ export function createWorkspaceControl(deps: any) {
 
     if (command === 'job.update') {
       const patch = (body.patch && typeof body.patch === 'object' ? body.patch : {}) as Record<string, unknown>;
-      const mutable = ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','continuation','localMerge'] as const;
-      for (const key of mutable) if (Object.prototype.hasOwnProperty.call(patch, key)) (job as unknown as Record<string, unknown>)[key] = patch[key];
+      const mutable = ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
+      for (const key of mutable) if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        const value = patch[key];
+        if (['reviewerThreadId', 'creatorThreadId', 'implementationThreadId'].includes(key)) {
+          (job as unknown as Record<string, unknown>)[key] = value === undefined || value === null ? undefined : normalizeThreadId(value, `Job ${key}`);
+        } else (job as unknown as Record<string, unknown>)[key] = value;
+      }
       job.updatedAt = new Date().toISOString();
       await store.saveJob(job); await refreshAll(); return await store.load(jobId);
     }
