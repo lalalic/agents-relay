@@ -1,3 +1,4 @@
+import { resolveAgentMarkdown } from './agent-content-resolver.js';
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
@@ -30,7 +31,6 @@ export type ExecutionContext = {
   skills: ResolvedSkill[];
   agents: ResolvedAgent[];
   runtimes: ResolvedRuntime[];
-  projectRoleContract?: { path: string; content: string };
   delegation: { mode: 'relay-child-task'; parentTaskIdRequired: boolean };
 };
 
@@ -44,7 +44,7 @@ export type ExecutionContextOptions = ExecutionContextRoots & {
 };
 
 type Frontmatter = Record<string, string>;
-const BUNDLED_AGENTS_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents');
+export const BUNDLED_AGENTS_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents');
 
 async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
@@ -173,18 +173,6 @@ function selectByName<T extends { name: string }>(items: readonly T[], explicit:
   return selected;
 }
 
-/** Optional project-local supplements; never replace shared Relay safety/lifecycle contracts. */
-async function readProjectRoleContract(project: string, role: string): Promise<{ path: string; content: string } | undefined> {
-  if (!/^[a-z][a-z0-9-]*$/.test(role)) return undefined;
-  const path = join(project, '.agents-relay', 'contracts', `${role}.md`);
-  if (!await exists(path)) return undefined;
-  const concrete = await realpath(path);
-  if (!isWithin(concrete, project)) throw new Error(`Project role contract escapes project root: ${path}`);
-  const content = (await readFile(concrete, 'utf8')).trim();
-  if (!content) throw new Error(`Empty project role contract: ${concrete}`);
-  return { path: concrete, content };
-}
-
 export async function resolveExecutionContext(projectPath: string, role: ExecutionRole, options: ExecutionContextOptions = {}): Promise<ExecutionContext> {
   if (!projectPath) throw new Error('projectPath is required');
   const project = await realpath(resolve(projectPath)).catch(() => { throw new Error(`Project path not found: ${projectPath}`); });
@@ -213,8 +201,26 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
 
   const agentMap = new Map<string, ResolvedAgent>();
   for (const agent of await agentFiles(dirname(BUNDLED_AGENTS_ROOT), 'builtin', [])) agentMap.set(agent.name, agent);
-  for (const layer of uniqueLayers) {
-    for (const agent of await agentFiles(layer.root, layer.source, skillsByLayer.get(layer.root) ?? [])) agentMap.set(agent.name, agent);
+  for (const agent of await agentFiles(project, 'project', [])) {
+    // An extending agent inherits the builtin identity metadata unless the project
+    // explicitly supplies a value. Local-only agents retain their own metadata.
+    const builtin = agentMap.get(agent.name);
+    if (builtin && agent.path) {
+      const { fields } = await metadata(agent.path);
+      if (fields.extends === `relay/${agent.name}`) {
+        agentMap.set(agent.name, {
+          ...builtin, ...agent,
+          description: fields.description === undefined ? builtin.description : agent.description,
+          capabilities: fields.capabilities === undefined ? builtin.capabilities : agent.capabilities,
+          runtime: fields.runtime === undefined && fields.runtimes === undefined ? builtin.runtime : agent.runtime,
+          trustDomains: fields.trustDomains === undefined && fields.trust_domains === undefined && fields.trust === undefined ? builtin.trustDomains : agent.trustDomains,
+          delegation: fields.delegation === undefined ? builtin.delegation : agent.delegation,
+          restrictions: fields.restrictions === undefined && fields.boundaries === undefined ? builtin.restrictions : agent.restrictions,
+        });
+        continue;
+      }
+    }
+    agentMap.set(agent.name, agent);
   }
   for (const registration of options.registeredAgents ?? []) {
     if (agentMap.has(registration.name)) continue;
@@ -235,7 +241,6 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   return {
     project: { name: basename(project), path: project, workspaceRoot, neoRoot, globalRoot },
     role,
-    projectRoleContract: await readProjectRoleContract(project, role),
     instructions: await instructionPaths(project, workspaceRoot, neoRoot, globalRoot),
     skills,
     agents,
@@ -244,21 +249,23 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   };
 }
 
-export async function resolveAgentContract(context: ExecutionContext, agentName: string): Promise<{ agent: ResolvedAgent; definition: string }> {
+export async function resolveAgentContract(context: ExecutionContext, agentName: string): Promise<{ agent: ResolvedAgent; definition: string; hash: string; sources: string[] }> {
   const agent = context.agents.find(candidate => candidate.name === agentName);
   if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
   if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
-  const definition = await readFile(agent.path, 'utf8');
+  const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path);
+  const definition = resolved.content;
   if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
-  return { agent, definition };
+  return { agent, definition, hash: resolved.hash, sources: resolved.sources };
 }
 
 export async function agentContractPrompt(context: ExecutionContext, agentName: string): Promise<string> {
-  const { agent, definition } = await resolveAgentContract(context, agentName);
-  const supplement = await readProjectRoleContract(context.project.path, agentName);
+  const { agent, definition, hash, sources } = await resolveAgentContract(context, agentName);
   return `[Selected task agent contract]
 Agent: ${agent.name}
 Source: ${agent.path ?? agent.source}
+Effective contract SHA-256: ${hash}
+Contract layers: ${sources.join(' -> ')}
 
 The following Markdown is the authoritative behavioral contract for this Task agent.
 Follow it in addition to the shared Job/Task and events-bus contracts. Worker/model routing
@@ -266,11 +273,7 @@ does not change the selected agent identity.
 
 --- BEGIN AGENT CONTRACT ---
 ${definition.trim()}
---- END AGENT CONTRACT ---${supplement ? `
-
-[Project-local agent supplement: ${supplement.path}]
-${supplement.content}
-[End project-local supplement]` : ''}`;
+--- END AGENT CONTRACT ---`;
 }
 
 export function executionContextPrompt(context: ExecutionContext): string {
@@ -290,11 +293,7 @@ export function executionContextPrompt(context: ExecutionContext): string {
   return `[Resolved execution context]
 Role: ${context.role}
 Project path: ${context.project.path}
-${context.projectRoleContract ? `
-[Project-local ${context.role} contract: ${context.projectRoleContract.path}]
-${context.projectRoleContract.content}
-[End project-local contract]
-` : ''}
+
 Instructions (read in listed order; later/project-local instructions override earlier shared defaults):
 ${instructions}
 
