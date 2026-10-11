@@ -2710,3 +2710,56 @@ test('reviewer runtime recovery preserves exact immutable head and accepts verdi
   assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
   await stop(); await reconciler.close();
 });
+
+test('Planner null-review first verdict persists through atomic store mutation',async()=>{
+ for(const verdict of ['review.changes_required','review.approved']){
+  const head='planner-review-head-123456789';
+  const reviewer={...task('planner-review','RUNNING'),agentName:'reviewer',
+   planningDecisionId:'plan-1',reviewHeadSha:head,executionId:'exec-1',
+   executionHistory:[{id:'exec-1',attempt:1,startedAt:now()}],
+   leaseOwner:'worker',leaseExpiresAt:now(),adapter:'chatgpt'};
+  const store=new InMemoryStore({...job([reviewer]),headSha:head,review:null,autoMerge:false});
+  store.mutateJob=async(id,mutation)=>{
+   const updated=mutation(await store.load(id));
+   await store.saveJob(updated);
+   for(const item of updated.tasks) await store.saveTask(item);
+   return store.load(id);
+  };
+  const emitted=[];
+  const reconciler=managedReconciler(store,{owner:'test',
+   adapters:[new FakeChatGptAdapter()],eventBus:new MemoryEventBus(),
+   maxConcurrent:0,emit:event=>emitted.push(event)});
+  const payload={outcome:{head_sha:head,blocking_findings:[{summary:'fix review issue'}]}};
+  const send=(data=payload,exec='exec-1')=>reconciler.handleEvent(
+   eventFor('j',reviewer.id,null,verdict,'succeeded','review verdict',
+    'orchestrator',data,eventSource('j',reviewer.id,exec)));
+  await send(payload,'stale-execution');
+  assert.equal((await store.load('j')).review,null);
+  await send({outcome:{head_sha:'wrong-head'}});
+  assert.equal((await store.load('j')).review,null);
+  await send();
+  let saved=await store.load('j');
+  const completed=saved.tasks.find(item=>item.id===reviewer.id);
+  assert.equal(completed.state,'SUCCEEDED');
+  assert.equal(completed.executionId,null);
+  assert.equal(completed.leaseOwner,null);
+  assert.equal(completed.leaseExpiresAt,null);
+  assert.equal(completed.executionHistory[0].id,'exec-1');
+  const outcome=verdict==='review.approved'?'approved':'changes_required';
+  assert.equal(saved.review.outcome,outcome);
+  assert.equal(saved.review.headSha,head);
+  assert.equal(saved.review.evidence.data.headSha,head);
+  const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
+  assert.equal(fixes.length,verdict==='review.approved'?0:1);
+  await send();
+  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'task.completed',
+    'succeeded','generic completion','orchestrator',{},eventSource('j',reviewer.id,'exec-1')));
+  saved=await store.load('j');
+  assert.equal(saved.review.outcome,outcome);
+  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,fixes.length);
+  if(fixes.length){
+   assert.equal(fixes[0].parentTaskId,reviewer.id);
+   assert.equal(emitted.filter(event=>event.type==='review.fix_task_created').length,1);
+  }
+ }
+});

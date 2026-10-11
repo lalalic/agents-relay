@@ -318,9 +318,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
-    if (!job.review && task.planningDecisionId) {
-      job.review = { outcome: 'pending', headSha, taskId: task.id, evidence: null, updatedAt: event.timestamp || new Date().toISOString() };
-    }
+    const initialReviewOutcome = !job.review && task.planningDecisionId ? 'pending' : job.review?.outcome;
 
     const taskDecision = this.store.mutateJob
       ? dispatchTaskLifecycleSync(structuredClone(task) as Task & Record<string, unknown>, event.type)
@@ -337,7 +335,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
     let needsReconcile = false;
     let pendingFixTask: Task | null = null;
-    const reviewDecision = await dispatchReviewLifecycle(job.review?.outcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
+    const reviewDecision = await dispatchReviewLifecycle(initialReviewOutcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
       if (actionId === 'review.createFix') {
         needsReconcile = true;
         const issues = normalizedEvidence.issues;
@@ -371,11 +369,18 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       const updated = await this.store.mutateJob(job.id, current => {
         const freshTask = current.tasks.find(item => item.id === task.id);
         if (!freshTask || !reviewGenerationMatches(current, job, task, headSha)) return current;
-        const freshDecision = tryTransitionTaskEvent(freshTask, event.type);
+        const candidate = structuredClone(freshTask);
+        const freshDecision = tryTransitionTaskEvent(candidate, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
         if (freshDecision.target !== 'RUNNING') {
-          if (!this.finalizeReviewExecution(job.id, freshTask, event, false)) return current;
           terminalExecutionId = freshTask.executionId;
+          if (!this.finalizeReviewExecution(job.id, candidate, event, false)) return current;
+        }
+        Object.assign(freshTask, candidate);
+        // Bind the first Planner review only after the generation fence has
+        // checked the unmodified outer snapshot and authoritative SQLite state.
+        if (!current.review && freshTask.planningDecisionId) {
+          current.review = { outcome: 'pending', headSha, taskId: freshTask.id, evidence: null, updatedAt: reviewUpdatedAt };
         }
         freshTask.error = null;
         if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };

@@ -73,3 +73,21 @@ test('planner child commit activates DRAFT Job atomically for worker dispatch', 
  assert.equal(activateCommittedPlannerWork(planning),false);
  assert.equal(planning.state,'DRAFT');
 });
+
+test('planner-created first verdict keeps null outer snapshot until atomic binding', async()=>{
+ const sha='a'.repeat(40);
+ const task={id:'review',agentName:'reviewer',planningDecisionId:'plan-1',
+   state:'RUNNING',reviewHeadSha:sha,executionId:'execution-1',
+   executionHistory:[{id:'execution-1'}],leaseOwner:'worker'};
+ const original={id:'job',state:'ACTIVE',headSha:sha,tasks:[task],review:null};
+ const current=structuredClone(original);
+ assert.equal(reviewGenerationMatches(current,original,task,sha),true);
+ const mutatedOuter=structuredClone(original);
+ mutatedOuter.review={outcome:'pending',taskId:task.id,headSha:sha};
+ assert.equal(reviewGenerationMatches(current,mutatedOuter,task,sha),false,
+   'pre-mutation of the outer snapshot causes first verdict rejection');
+ const retried=structuredClone(current);retried.tasks[0].executionId='execution-2';
+ assert.equal(reviewGenerationMatches(retried,original,task,sha),false);
+ const wrongHead=structuredClone(current);wrongHead.tasks[0].reviewHeadSha='wrong';
+ assert.equal(reviewGenerationMatches(wrongHead,original,task,sha),false);
+});

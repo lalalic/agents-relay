@@ -186,6 +186,14 @@ function detect(j){
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
   if(failed.length)return {type:'TASK_FAILED',tasks:failed.map(x=>({id:x.id,state:x.state,error:x.error,executionId:x.executionId,attempt:x.attempt}))};
  }
+ if(scenario.startsWith('011-') && j.state==='COMPLETED'){
+  const planned=reviews.filter(x=>x.planningDecisionId);
+  if(planned.length!==1 || planned[0].state!=='SUCCEEDED'
+     || planned[0].executionId || planned[0].leaseOwner || planned[0].leaseExpiresAt
+     || j.review?.taskId!==planned[0].id || j.review?.outcome!=='approved'
+     || !j.review?.evidence || j.localMerge?.status!=='succeeded')
+    return {type:'PLANNER_REVIEW_VERDICT_NOT_DURABLE',review:j.review,reviewers:planned};
+ }
  if(j.state==='COMPLETED'){
   if(work.some(x=>x.state==='SUCCEEDED') && (!j.reviewEnabled || reviews.some(x=>x.state==='SUCCEEDED')) && (!j.localMerge || j.localMerge.status==='succeeded'))return null;
   return {type:'TERMINAL_INCONSISTENCY',jobState:j.state,reviewStates:reviews.map(x=>x.state),localMerge:j.localMerge||null};
