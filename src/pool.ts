@@ -138,9 +138,18 @@ export class RepositoryWorkerPool {
       const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
       const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
-      await this.reconcileExclusive(job.id, async () => {
-        await this.makeReconciler(store, allowance).reconcile(job.id);
-      });
+      try {
+        await this.reconcileExclusive(job.id, async () => {
+          await this.makeReconciler(store, allowance).reconcile(job.id);
+        });
+      } catch (error) {
+        observability().record({
+          stage: 'reconcile', event: 'reconcile.job_failed', level: 'error', outcome: 'failed',
+          message: `Reconcile failed for ${job.id}: ${errorMessage(error)}`,
+          correlation: { jobId: job.id, repository: job.repository, prNumber: job.prNumber },
+          data: { classification: 'job-isolated' },
+        });
+      }
       capacity -= allowance;
     }
   }

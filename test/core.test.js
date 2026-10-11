@@ -832,6 +832,20 @@ test('local runtime event is independent from pending GitHub PR snapshot seed', 
   } finally {await stop();}
 });
 
+test('targeted reconcile is not failed by an unrelated discovered Job failure', async () => {
+  const targetTask=task('target-task','QUEUED');
+  const badTask=task('bad-task','QUEUED');
+  const target={...job([targetTask]),id:'target-job',repository:'owner/repo',prNumber:51};
+  const bad={...job([badTask]),id:'bad-job',repository:'owner/repo',prNumber:52};
+  const items=[target,bad].map(root=>({job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}));
+  const stores=new Map([[target.id,new InMemoryStore(target)],[bad.id,new InMemoryStore(bad)]]);
+  const calls=[];
+  const pool=localPoolFixture({},['owner/repo'],new Set(),4,()=>({reconcile:async id=>{calls.push(id); if(id==='bad-job') throw new Error('unrelated failure');}}),()=>false,undefined,undefined,async()=>items,async id=>({job:id===target.id?target:bad,store:stores.get(id)}));
+  await pool.reconcileLocalJob(target.id,'test.target');
+  assert.ok(calls.includes('target-job'));
+  assert.ok(calls.includes('bad-job'));
+});
+
 test('repository pool coalesces concurrent targeted reconciles for the same job', async () => {
   const calls=[]; let release;
   const gate=new Promise(resolve=>{release=resolve;});
