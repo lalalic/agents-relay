@@ -30,6 +30,7 @@ export type ExecutionContext = {
   skills: ResolvedSkill[];
   agents: ResolvedAgent[];
   runtimes: ResolvedRuntime[];
+  projectRoleContract?: { path: string; content: string };
   delegation: { mode: 'relay-child-task'; parentTaskIdRequired: boolean };
 };
 
@@ -172,6 +173,18 @@ function selectByName<T extends { name: string }>(items: readonly T[], explicit:
   return selected;
 }
 
+/** Optional project-local supplements; never replace shared Relay safety/lifecycle contracts. */
+async function readProjectRoleContract(project: string, role: string): Promise<{ path: string; content: string } | undefined> {
+  if (!/^[a-z][a-z0-9-]*$/.test(role)) return undefined;
+  const path = join(project, '.agents-relay', 'contracts', `${role}.md`);
+  if (!await exists(path)) return undefined;
+  const concrete = await realpath(path);
+  if (!isWithin(concrete, project)) throw new Error(`Project role contract escapes project root: ${path}`);
+  const content = (await readFile(concrete, 'utf8')).trim();
+  if (!content) throw new Error(`Empty project role contract: ${concrete}`);
+  return { path: concrete, content };
+}
+
 export async function resolveExecutionContext(projectPath: string, role: ExecutionRole, options: ExecutionContextOptions = {}): Promise<ExecutionContext> {
   if (!projectPath) throw new Error('projectPath is required');
   const project = await realpath(resolve(projectPath)).catch(() => { throw new Error(`Project path not found: ${projectPath}`); });
@@ -222,6 +235,7 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   return {
     project: { name: basename(project), path: project, workspaceRoot, neoRoot, globalRoot },
     role,
+    projectRoleContract: await readProjectRoleContract(project, role),
     instructions: await instructionPaths(project, workspaceRoot, neoRoot, globalRoot),
     skills,
     agents,
@@ -241,6 +255,7 @@ export async function resolveAgentContract(context: ExecutionContext, agentName:
 
 export async function agentContractPrompt(context: ExecutionContext, agentName: string): Promise<string> {
   const { agent, definition } = await resolveAgentContract(context, agentName);
+  const supplement = await readProjectRoleContract(context.project.path, agentName);
   return `[Selected task agent contract]
 Agent: ${agent.name}
 Source: ${agent.path ?? agent.source}
@@ -251,7 +266,11 @@ does not change the selected agent identity.
 
 --- BEGIN AGENT CONTRACT ---
 ${definition.trim()}
---- END AGENT CONTRACT ---`;
+--- END AGENT CONTRACT ---${supplement ? `
+
+[Project-local agent supplement: ${supplement.path}]
+${supplement.content}
+[End project-local supplement]` : ''}`;
 }
 
 export function executionContextPrompt(context: ExecutionContext): string {
@@ -271,7 +290,11 @@ export function executionContextPrompt(context: ExecutionContext): string {
   return `[Resolved execution context]
 Role: ${context.role}
 Project path: ${context.project.path}
-
+${context.projectRoleContract ? `
+[Project-local ${context.role} contract: ${context.projectRoleContract.path}]
+${context.projectRoleContract.content}
+[End project-local contract]
+` : ''}
 Instructions (read in listed order; later/project-local instructions override earlier shared defaults):
 ${instructions}
 

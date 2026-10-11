@@ -156,3 +156,23 @@ test('context resolve CLI exposes the same resolver for XChat without durable st
     assert.equal(context.delegation.mode, 'relay-child-task');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('project-local role contracts supplement builtin planner and agent contracts independently', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-role-contract-'));
+  try {
+    const project = join(root, 'vlog');
+    const contractDir = join(project, '.agents-relay', 'contracts');
+    await mkdir(contractDir, { recursive: true });
+    await writeFile(join(contractDir, 'planner.md'), 'For Vlog pilot create Story -> Direction -> Video Tasks.');
+    await agent(project, 'reviewer');
+    await writeFile(join(contractDir, 'reviewer.md'), 'Check source provenance and playable Markcut review.');
+    const { executionContextPrompt, agentContractPrompt } = await import('../dist/execution-context.js');
+    const planner = await resolveExecutionContext(project, 'planner', { workspaceRoot: root, neoRoot: null, globalRoot: join(root, 'global') });
+    assert.match(executionContextPrompt(planner), /For Vlog pilot create Story/);
+    const worker = await resolveExecutionContext(project, 'worker', { workspaceRoot: root, neoRoot: null, globalRoot: join(root, 'global') });
+    assert.doesNotMatch(executionContextPrompt(worker), /For Vlog pilot create Story/);
+    assert.match(await agentContractPrompt(worker, 'reviewer'), /Check source provenance and playable Markcut review/);
+    assert.match(await agentContractPrompt(worker, 'reviewer'), /BEGIN AGENT CONTRACT/);
+    assert.doesNotMatch(await agentContractPrompt(worker, 'planner'), /Check source provenance/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
