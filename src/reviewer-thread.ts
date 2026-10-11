@@ -6,6 +6,10 @@ export type ReviewThreadDestination = {
   source: 'override' | 'reviewer' | 'creator';
 };
 
+export function resolveImplementationThreadDestination(job: Pick<Job, 'implementationThreadId'>): string | null {
+  return job.implementationThreadId ? normalizeThreadId(job.implementationThreadId, 'Job implementation thread ID') ?? null : null;
+}
+
 export function normalizeThreadId(value: unknown, label = 'thread ID'): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new Error(`${label} must be a string`);
@@ -41,13 +45,21 @@ export function runtimeReviewer(args: readonly string[] = []) {
 }
 
 export async function recordThreadDelivery(
-  store: { load(jobId: string): Promise<{ tasks: Task[] }>; saveTask(task: Task): Promise<unknown> },
+  store: { load(jobId: string): Promise<{ tasks: Task[] }>; saveTask(task: Task): Promise<unknown>; mutateJob?: (jobId: string, mutate: (job: Job) => Job) => Promise<unknown> },
   jobId: string, taskId: string, executionId: string, workerTask: Task,
 ): Promise<void> {
   const delivery = workerTask.chatgptThreadDelivery;
-  if (!delivery || delivery.deliveredAt) return;
+  if (!delivery || delivery.deliveredAt || (delivery.executionId !== undefined && delivery.executionId !== executionId)) return;
+  const mark = (job: Job): Job => {
+    const current = job.tasks.find(item => item.id === taskId);
+    if (!current || current.executionId !== executionId || current.state !== 'RUNNING' || !current.chatgptThreadDelivery
+      || current.chatgptThreadDelivery.requestId !== delivery.requestId || current.chatgptThreadDelivery.deliveredAt) return job;
+    current.chatgptThreadDelivery = { ...current.chatgptThreadDelivery, executionId, deliveredAt: new Date().toISOString() };
+    return job;
+  };
+  if (store.mutateJob) { await store.mutateJob(jobId, mark); return; }
   const current = (await store.load(jobId)).tasks.find(item => item.id === taskId);
-  if (current?.executionId !== executionId || current.state !== 'RUNNING' || !current.chatgptThreadDelivery) return;
-  current.chatgptThreadDelivery = { ...current.chatgptThreadDelivery, deliveredAt: new Date().toISOString() };
+  if (!current || current.executionId !== executionId || current.state !== 'RUNNING' || !current.chatgptThreadDelivery || current.chatgptThreadDelivery.requestId !== delivery.requestId || current.chatgptThreadDelivery.deliveredAt) return;
+  current.chatgptThreadDelivery = { ...current.chatgptThreadDelivery, executionId, deliveredAt: new Date().toISOString() };
   await store.saveTask(current);
 }

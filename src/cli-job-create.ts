@@ -18,7 +18,7 @@ export async function ensureManagedGitHubJob(
     priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule'];
     tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
     prNumber?: number; head?: string; base?: string; body?: string;
-    reviewerThreadId?: string; creatorThreadId?: string;
+    reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
     storeDirectory?: string; noGitHub?: boolean; localMergeSource?: string; localMergeTarget?: string;
   },
 ): Promise<{ job: Job; pr: PullRequest }> {
@@ -67,6 +67,9 @@ export async function ensureManagedGitHubJob(
         : {}),
       ...(options.creatorThreadId
         ? { creatorThreadId: normalizeThreadId(options.creatorThreadId, 'creator thread ID') }
+        : {}),
+      ...(options.implementationThreadId
+        ? { implementationThreadId: normalizeThreadId(options.implementationThreadId, 'implementation thread ID') }
         : {}),
       prNumber: pr.number,
       repository: repositoryName,
