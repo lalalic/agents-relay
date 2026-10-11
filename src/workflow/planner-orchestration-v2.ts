@@ -6,7 +6,7 @@ import { isEffectivelyBlocked } from '../unblock.js';
 
 export type PlannerOrchestrationState =
   | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_seed' | 'check_planner'
-  | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_objective'
+  | 'check_resolution_ownership' | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_objective'
   | 'wait' | 'recovered' | 'created';
 
 const source = readFileSync(new URL('../../workflow/planner-orchestration.mmd', import.meta.url), 'utf8');
@@ -14,7 +14,7 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 
 export const plannerOrchestrationV2 = new GraphRuntime(source, {
   states: new Set<PlannerOrchestrationState>([
-    'idle','check_legacy_pending','check_recover','check_seed','check_planner',
+    'idle','check_legacy_pending','check_recover','check_seed','check_planner','check_resolution_ownership',
     'check_blocked','check_work','check_materialized','check_objective','wait','recovered','created',
   ]),
   guards: {
@@ -23,6 +23,7 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
     recoverablePendingPlan: boolGuard('recoverablePendingPlan'),
     hasSeedWork: boolGuard('hasSeedWork'),
     noActivePlanner: boolGuard('noActivePlanner'),
+    resolutionOwnedByTroubleshooter: boolGuard('resolutionOwnedByTroubleshooter'),
     noBlockedWork: boolGuard('noBlockedWork'),
     noActiveImplementation: boolGuard('noActiveImplementation'),
     continuationMaterialized: boolGuard('continuationMaterialized'),
@@ -36,10 +37,10 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
 });
 
 export async function dispatchPlannerOrchestration(facts:Readonly<Record<string,unknown>>, executeAction?:(actionId:string)=>ActionReceipt|Promise<ActionReceipt>):Promise<GraphDecision>{
-  return dispatchWorkflowGraph(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:9,executeAction});
+  return dispatchWorkflowGraph(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:14,executeAction});
 }
 export function decidePlannerOrchestration(facts:Readonly<Record<string,unknown>>):GraphDecision{
-  return dispatchWorkflowGraphSync(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:9});
+  return dispatchWorkflowGraphSync(plannerOrchestrationV2,{initialState:'idle',input:{transport:'event',id:'planner.reconcile',payload:{}},durableFacts:facts,graphName:'planner-orchestration',isTransientState:state=>state.startsWith('check_'),maxSteps:14});
 }
 
 
@@ -63,6 +64,7 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     noActivePlanner: !scopedPlans.some(plan => plan.status === 'PLANNING'),
     noBlockedWork: !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && ['DRAFT', 'QUEUED', 'RUNNING'].includes(task.state)),
+    resolutionOwnedByTroubleshooter: scopedTasks.some(task => task.kind !== 'planner' && task.resolution?.owner === 'troubleshooter' && ['active', 'waiting'].includes(task.resolution.state)),
     continuationMaterialized: !(latestObjective === 'in_progress' && latestId && !job.tasks.some(task => task.kind !== 'planner' && task.planningDecisionId === latestId)),
     objectiveUnsatisfied: latestObjective !== 'satisfied',
   };

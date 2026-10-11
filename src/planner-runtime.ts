@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import type { ExecutionContext } from './execution-context.js';
 import { eventFor } from './events.js';
-import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
+import { materializePlannerChild, parsePlannerResult, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js';
+import { attachResolutionOwnership } from './workflow/task-resolution.js';
 import { samePlannerChildDefinition } from './planner-child.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runtime.js';
@@ -125,6 +126,7 @@ async function finishPlanner(
     const result = parsePlannerResult(raw);
     const executionContext = await ports.plannerContext(job, plan);
     validatePlannerHierarchy(job.tasks, result.next_tasks);
+    validatePlannerResolutionMaterialization(job.tasks, result.next_tasks);
     validatePlannerLifecycleOwnership(job, result.next_tasks);
     validatePlannerProgress(job, result);
     if (result.unblocks.length > 0 && !ports.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
@@ -155,6 +157,8 @@ async function finishPlanner(
           current.changeCycle.consumedByPlannerTaskId = durablePlan.id;
         }
         for (const child of children) {
+          const spec = result.next_tasks.find(item => item.id === child.id);
+          if (spec?.resolution) attachResolutionOwnership(current, child, spec.resolution, 'planner');
           const existing = current.tasks.find(item => item.id === child.id);
           if (!existing) current.tasks.push(structuredClone(child));
           else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
@@ -190,7 +194,11 @@ async function finishPlanner(
         job.updatedAt = now;
         await ports.store.saveJob(job);
       }
-      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) await ports.store.appendTask(child);
+      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) {
+        const spec = result.next_tasks.find(item => item.id === child.id);
+        if (spec?.resolution) await ports.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
+        await ports.store.appendTask(child);
+      }
     }
     planCommitted = true;
     // Cross-Job registrations cannot join this Job's SQLite transaction. The

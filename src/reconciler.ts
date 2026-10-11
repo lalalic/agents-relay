@@ -8,7 +8,7 @@ import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } fr
 import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js';
 import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js';
 import { eventFor } from './events.js';
-import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from './planner.js';
+import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js';
 import { retryPendingPlannerUnblocks } from './planner-runtime.js';
 import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
@@ -24,6 +24,7 @@ import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCan
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import { managedWorkerInput } from './managed-worker-input.js';
+import { attachResolutionOwnership, claimExactOriginalRecovery } from './workflow/task-resolution.js';
 export { managedWorkerInput } from './managed-worker-input.js';
 import { recoverExpiredExecutions, recoverStartupOrphans as recoverStartupExecutionOrphans, type ExecutionRecoveryPorts } from './execution-recovery.js';
 import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
@@ -124,6 +125,8 @@ export class Reconciler extends ReconcilerReviewBase {
       }, jobId);
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
+        const original = (await this.store.load(jobId)).tasks.find(task => task.id === recovery.parentTaskId);
+        if (original) { claimExactOriginalRecovery(original, recovery); await this.store.saveTask(original); }
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
       }
       {
@@ -279,10 +282,13 @@ export class Reconciler extends ReconcilerReviewBase {
   private async recoverPlannerChildren(job: Job): Promise<void> {
     for (const plan of (job.plans ?? []).filter(item => item.status === 'SUCCEEDED' && item.plannerResult)) {
       const executionContext = await this.plannerContext(job, plan);
+      validatePlannerResolutionMaterialization(job.tasks, plan.plannerResult!.next_tasks);
       const children = plan.plannerResult!.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);
         if (existing) continue;
+        const spec = plan.plannerResult!.next_tasks.find(item => item.id === child.id);
+        if (spec?.resolution) await this.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
         await this.store.appendTask(child);
         job.tasks.push(child);
       }
@@ -299,7 +305,11 @@ export class Reconciler extends ReconcilerReviewBase {
       const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', guidance: planner.plannerGuidance, objectiveStatus: result.objective_status, plannerResult: result, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, attempt: planner.attempt, maxAttempts: planner.maxAttempts, leaseOwner: null, leaseExpiresAt: null, executionId: null, timeoutMs: planner.timeoutMs, manualPlanning: planner.manualPlanning, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
       if (!(job.plans ?? []).some(item => item.id === plan.id)) { await this.store.appendPlan(plan); (job.plans ??= []).push(plan); } else continue;
       const children = result.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
-      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) { await this.store.appendTask(child); job.tasks.push(child); }
+      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) {
+        const spec = result.next_tasks.find(item => item.id === child.id);
+        if (spec?.resolution) await this.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
+        await this.store.appendTask(child); job.tasks.push(child);
+      }
     }
   }
 

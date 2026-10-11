@@ -84,6 +84,23 @@ export type BlockerReference = { repository: string; prNumber: number; jobId: st
 export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; registeredAt: string };
 export type BlockedBaseline = { blockedAt: string; headSha?: string; reason?: string };
 export type TaskUnblockRecord = { at: string; source: 'cli' | 'blocker_job'; reason: string; baseline: BlockedBaseline; currentHeadSha?: string; facts?: string[]; blockerJobId?: string; resolution?: 'merge' | 'verified' };
+export type TaskResolutionPath = 'exact_original_retry' | 'same_job_dependency' | 'blocker_job_dependency' | 'escalation_gate' | 'cancel_supersede';
+export type TaskResolutionOwner = 'planner' | 'troubleshooter' | 'blocker-job' | 'human' | 'external' | null;
+export type TaskResolutionState = 'proposed' | 'active' | 'waiting' | 'resolved' | 'cancelled';
+export type TaskResolution = {
+  path: TaskResolutionPath;
+  state: TaskResolutionState;
+  owner: TaskResolutionOwner;
+  targetTaskId?: string;
+  targetJobId?: string;
+  mode?: BlockerResolutionMode;
+  rootCause?: string;
+  solution?: string;
+  deviations?: string[];
+  validationEvidence?: string[];
+  updatedAt: string;
+};
+export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence'>;
 export type JobChangeCycle = { triggeredAt: string; source: 'cli' | 'blocker_job'; reason: string; taskIds: string[]; baselineHeadShas: string[]; currentHeadSha?: string; facts: string[]; consumedByPlannerTaskId?: string }; // legacy read compatibility
 export type PlanTrigger = { source: 'initial' | 'continuation' | 'manual' | 'schedule' | 'unblock'; taskIds?: string[]; reason?: string; facts?: string[]; blockedHeadShas?: string[]; currentHeadSha?: string; unblockSource?: 'cli' | 'blocker_job' };
 export type Plan = { jobId: string; id: string; round: number; source: PlanningDecisionSource; previousPlanId: string | null; trigger: PlanTrigger; status: 'PLANNING' | 'SUCCEEDED' | 'FAILED'; guidance?: string; objectiveStatus?: 'in_progress' | 'satisfied'; plannerResult?: import('./planner.js').PlannerResult; assessment: string; generatedTaskIds: string[]; pendingUnblocks?: import('./planner.js').PlannerUnblockSpec[]; headSha?: string; error?: string; attempt?: number; maxAttempts?: number; leaseOwner?: string | null; leaseExpiresAt?: string | null; executionId?: string | null; retryFeedback?: string; timeoutMs?: number; manualPlanning?: boolean; createdAt: string; updatedAt: string; planUrl?: string };
@@ -125,6 +142,7 @@ export type Task = {
   routingExclusions?: Array<{ provider: string; model: string; profile?: string; reason: string; at: string }>;
   chatgptThreadDelivery?: ChatGptThreadDelivery;
   manualStateOverrides?: ManualTaskStateOverride[];
+  resolution?: TaskResolution;
   failureReason?: string;
   blockedBy?: TaskBlockerReference;
   blockedBaseline?: BlockedBaseline;

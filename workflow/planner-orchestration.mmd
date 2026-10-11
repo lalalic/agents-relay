@@ -5,6 +5,7 @@ checkLegacy["state: check_legacy_pending"]
 checkRecover["state: check_recover"]
 checkSeed["state: check_seed"]
 checkPlanner["state: check_planner"]
+checkResolution["state: check_resolution_ownership"]
 checkBlocked["state: check_blocked"]
 checkWork["state: check_work"]
 checkMaterialized["state: check_materialized"]
@@ -18,6 +19,7 @@ legacyPending["guard: legacyPlanningPending"]
 recoverablePending["guard: recoverablePendingPlan"]
 hasSeed["guard: hasSeedWork"]
 noActivePlanner["guard: noActivePlanner"]
+resolutionOwned["guard: resolutionOwnedByTroubleshooter"]
 noBlocked["guard: noBlockedWork"]
 noActiveWork["guard: noActiveImplementation"]
 materialized["guard: continuationMaterialized"]
@@ -45,7 +47,11 @@ hasSeed -->|true| checkPlanner
 
 checkPlanner -->|on: planner.reconcile| noActivePlanner
 noActivePlanner -->|false| wait
-noActivePlanner -->|true| checkBlocked
+noActivePlanner -->|true| checkResolution
+
+checkResolution -->|on: planner.reconcile| resolutionOwned
+resolutionOwned -->|true| wait
+resolutionOwned -->|false| checkBlocked
 
 checkBlocked -->|on: planner.reconcile| noBlocked
 noBlocked -->|false| wait

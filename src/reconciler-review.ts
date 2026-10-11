@@ -368,6 +368,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         const freshDecision = tryTransitionTaskEvent(candidate, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
         if (freshDecision.target !== 'RUNNING') {
+          // Capture the execution generation before finalization clears it.
+          // Post-commit cleanup must cancel the matching live watchdog.
           terminalExecutionId = freshTask.executionId;
           if (!this.finalizeReviewExecution(job.id, candidate, event, false)) return current;
         }

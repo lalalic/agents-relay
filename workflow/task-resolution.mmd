@@ -1,0 +1,41 @@
+flowchart LR
+%% relay: initial unresolved
+unresolved["state: unresolved"]
+checkOwner["state: check_owner"]
+checkPath["state: check_path"]
+activeRecovery["action: resolution.activateRecovery"]
+sameJob["action: resolution.attachSameJobDependency"]
+blockerJob["action: resolution.registerBlockerDependency"]
+escalate["action: resolution.createEscalationGate"]
+obsolete["action: resolution.cancelSupersede"]
+resolved["state: resolved"]
+recoveryOwner["guard: recoveryOwnerAvailable"]
+plannerOwner["guard: plannerOwnerAvailable"]
+exact["guard: exactOriginalRetry"]
+same["guard: sameJobDependency"]
+blocker["guard: blockerJobDependency"]
+gate["guard: escalationGate"]
+obsoleteGuard["guard: genuinelyObsolete"]
+
+unresolved -->|on: resolution.propose| checkOwner
+checkOwner -->|on: resolution.propose| recoveryOwner
+recoveryOwner -->|true| activeRecovery
+recoveryOwner -->|false| checkPath
+plannerOwner -->|true| checkPath
+plannerOwner -->|false| checkPath
+checkPath -->|on: resolution.propose| exact
+exact -->|true| activeRecovery
+exact -->|false| same
+same -->|true| sameJob
+same -->|false| blocker
+blocker -->|true| blockerJob
+blocker -->|false| gate
+gate -->|true| escalate
+gate -->|false| obsoleteGuard
+obsoleteGuard -->|true| obsolete
+obsoleteGuard -->|false| resolved
+activeRecovery -->|to: resolved| resolved
+sameJob -->|to: resolved| resolved
+blockerJob -->|to: resolved| resolved
+escalate -->|to: resolved| resolved
+obsolete -->|to: resolved| resolved

@@ -168,26 +168,42 @@ function scenario004(j){
  return null;
 }
 
-function scenario011(j){
+function scenario010(j){
+ const tasks=j.tasks||[];
+ const business=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter'&&!String(x.id).startsWith('review-fix-'));
+ const failed=business.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
+ const sibling=business.filter(x=>x.parentTaskId===null||x.parentTaskId===undefined);
+ if(sibling.length>1)return {type:'REPLACEMENT_BUSINESS_TASK',tasks:sibling.map(x=>({id:x.id,state:x.state,parentTaskId:x.parentTaskId,attempt:x.attempt}))};
+ if(failed.length)return {type:'ORIGINAL_BROWSER_TASK_NOT_RECOVERED',tasks:failed.map(x=>({id:x.id,state:x.state,attempt:x.attempt,error:x.error}))};
+ if(j.state==='COMPLETED'){
+  const root=business[0];
+  if(!root||root.state!=='SUCCEEDED'||Number(root.attempt)<2)return {type:'ORIGINAL_BROWSER_TASK_RETRY_NOT_PROVEN',task:root?{id:root.id,state:root.state,attempt:root.attempt}:null};
+  if(j.reviewEnabled!==false&&j.review?.outcome!=='approved')return {type:'FINAL_REVIEW_NOT_APPROVED',review:j.review};
+  if(j.localMerge&&j.localMerge.status!=='succeeded')return {type:'LOCAL_MERGE_NOT_SUCCEEDED',localMerge:j.localMerge};
+ }
+ return null;
+}
+
+function scenario012(j){
  const tasks=(j.tasks||[]).filter(x=>x.kind==='work'&&x.agentName==='implementation');
  const deliveries=tasks.filter(x=>x.chatgptThreadDelivery?.kind==='new-turn');
  const generations=tasks.flatMap(x=>x.executionHistory||[]).filter(x=>x.id);
  const implementationThread=String(j.implementationThreadId||'');
  const reviewerThread=String(j.reviewerThreadId||'');
  if(!implementationThread||!reviewerThread||implementationThread===reviewerThread)
-  return {type:'SCENARIO_011_THREAD_DESTINATIONS_INVALID',implementationThreadId:j.implementationThreadId||null,reviewerThreadId:j.reviewerThreadId||null};
+  return {type:'SCENARIO_012_THREAD_DESTINATIONS_INVALID',implementationThreadId:j.implementationThreadId||null,reviewerThreadId:j.reviewerThreadId||null};
  if(j.state==='COMPLETED'){
   if(new Set(tasks.map(x=>x.id)).size<2||tasks.filter(x=>x.state==='SUCCEEDED').length<2)
-   return {type:'SCENARIO_011_TWO_IMPLEMENTATIONS_MISSING',tasks:tasks.map(x=>({id:x.id,state:x.state,attempt:x.attempt}))};
+   return {type:'SCENARIO_012_TWO_IMPLEMENTATIONS_MISSING',tasks:tasks.map(x=>({id:x.id,state:x.state,attempt:x.attempt}))};
   if(deliveries.length<2||deliveries.some(x=>x.chatgptThreadDelivery.threadId!==implementationThread||x.chatgptThreadDelivery.threadSource!=='implementation'))
-   return {type:'SCENARIO_011_IMPLEMENTATION_THREAD_MISMATCH',implementationThreadId,deliveries:deliveries.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
-  if(new Set(generations.map(x=>x.id)).size<2)return {type:'SCENARIO_011_EXECUTION_GENERATIONS_MISSING',generations};
+   return {type:'SCENARIO_012_IMPLEMENTATION_THREAD_MISMATCH',implementationThreadId,deliveries:deliveries.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
+  if(new Set(generations.map(x=>x.id)).size<2)return {type:'SCENARIO_012_EXECUTION_GENERATIONS_MISSING',generations};
   const evidence=state.evidence.implementationExecutions||{};
   const completeIds=tasks.filter(x=>x.state==='SUCCEEDED').map(x=>x.id).filter(id=>evidence[id]?.started&&evidence[id]?.terminal);
-  if(new Set(completeIds).size<2)return {type:'SCENARIO_011_AUTHORITATIVE_EVENTS_MISSING',evidence};
+  if(new Set(completeIds).size<2)return {type:'SCENARIO_012_AUTHORITATIVE_EVENTS_MISSING',evidence};
   const reviewTasks=(j.tasks||[]).filter(x=>x.agentName==='reviewer');
   if(reviewTasks.length===0||reviewTasks.some(x=>x.chatgptThreadDelivery?.threadId!==reviewerThread))
-   return {type:'SCENARIO_011_REVIEWER_THREAD_MISMATCH',reviewerTasks:reviewTasks.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
+   return {type:'SCENARIO_012_REVIEWER_THREAD_MISMATCH',reviewerTasks:reviewTasks.map(x=>({id:x.id,delivery:x.chatgptThreadDelivery}))};
  }
  return null;
 }
@@ -206,14 +222,17 @@ function detect(j){
  } else if(scenario.startsWith('004-')){
   const specific=scenario004(j);
   if(specific)return specific;
+ } else if(scenario.startsWith('010-')){
+  const specific=scenario010(j);
+  if(specific)return specific;
  } else if(scenario.startsWith('012-')){
-  const specific=scenario011(j);
+  const specific=scenario012(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
   if(failed.length)return {type:'TASK_FAILED',tasks:failed.map(x=>({id:x.id,state:x.state,error:x.error,executionId:x.executionId,attempt:x.attempt}))};
  }
- if(scenario.startsWith('012-') && j.state==='COMPLETED'){
+ if(scenario.startsWith('011-') && j.state==='COMPLETED'){
   const planned=reviews.filter(x=>x.planningDecisionId);
   if(planned.length!==1 || planned[0].state!=='SUCCEEDED'
      || planned[0].executionId || planned[0].leaseOwner || planned[0].leaseExpiresAt

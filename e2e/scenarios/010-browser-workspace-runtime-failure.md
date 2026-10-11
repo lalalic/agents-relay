@@ -10,6 +10,9 @@ Inject a controlled real Browser Workspace runtime/tool dependency failure witho
 - recovery repairs the dependency or routes to a usable worker according to policy
 - exact original Task resumes/retries
 - no manual lifecycle mutation and no false success
+- this covers the PR #49/browser-workspace-session-daemon gap: the durable original
+  business Task is the only implementation owner, and the Job reaches review,
+  local merge, and `COMPLETED` without a sibling replacement Task
 
 <!-- PLANNER-CONTRACT:START -->
 ## Mandatory Planner contract
