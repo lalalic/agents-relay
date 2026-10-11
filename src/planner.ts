@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata } from './types.js';
+import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
+import { validateResolutionProposal, unresolvedTask } from './workflow/task-resolution.js';
 import { ExecutionContext, executionContextPrompt } from './execution-context.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
@@ -30,6 +31,7 @@ export type PlannerTaskSpec = {
   continuation?: Task['continuation'];
   maxAttempts?: number;
   timeoutMs?: number;
+  resolution?: TaskResolutionProposal;
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
@@ -130,13 +132,19 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   const round = 'round' in planner ? planner.round : planner.planningRound ?? 1;
   const plannerHeadSha = 'round' in planner ? planner.headSha : undefined;
   const reviewHeadSha = spec.agentName === 'reviewer' && !(spec.dependencies?.length) ? plannerHeadSha ?? job.headSha : undefined;
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, testInjection: spec.testInjection, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha });
+  const resolution = spec.resolution;
+  if (resolution) {
+    const target = resolution.targetTaskId ? job.tasks.find(task => task.id === resolution.targetTaskId) : undefined;
+    if (!target || !unresolvedTask(target)) throw new Error(`Planner resolution for ${spec.id} must target one unresolved durable Task`);
+    validateResolutionProposal(job, target, resolution);
+  }
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: spec.workerRequirements, testInjection: spec.testInjection, adapter: 'codex', input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
-  return { id: task.id, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs };
+  return { id: task.id, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
 
 
@@ -208,6 +216,17 @@ function routing(value: unknown, field: string): RoutingDecision | undefined {
   for (const key of ['provider', 'model', 'decidedBy', 'decidedAt']) if (typeof route[key] !== 'string' || String(route[key]).length === 0) throw new Error(`Planner ${field}.${key} is required`);
   return { provider: route.provider as string, model: route.model as string, profile: optionalString(route.profile, `${field}.profile`), reasoning: optionalString(route.reasoning, `${field}.reasoning`), cwd: optionalString(route.cwd, `${field}.cwd`), projectId: optionalString(route.projectId, `${field}.projectId`), decidedBy: route.decidedBy as string, decidedAt: route.decidedAt as string };
 }
+function resolutionProposal(value: unknown, field: string): TaskResolutionProposal | undefined {
+  if (value === undefined || value === null) return undefined;
+  const root = record(value, field);
+  const path = root.path;
+  if (typeof path !== 'string' || !['exact_original_retry','same_job_dependency','blocker_job_dependency','escalation_gate','cancel_supersede'].includes(path)) throw new Error(`Planner ${field}.path is invalid`);
+  const stringField = (name: string): string | undefined => optionalString(root[name], `${field}.${name}`);
+  const mode = root.mode === undefined ? undefined : String(root.mode);
+  if (mode !== undefined && mode !== 'merge' && mode !== 'verified') throw new Error(`Planner ${field}.mode must be merge or verified`);
+  const list = (name: string): string[] | undefined => root[name] === undefined ? undefined : stringArray(root[name], `${field}.${name}`);
+  return { path: path as TaskResolutionProposal['path'], targetTaskId: stringField('targetTaskId'), targetJobId: stringField('targetJobId'), mode: mode as 'merge' | 'verified' | undefined, rootCause: stringField('rootCause'), solution: stringField('solution'), deviations: list('deviations'), validationEvidence: list('validationEvidence') };
+}
 
 export function parsePlannerResult(value: unknown): PlannerResult {
   const root = record(value, 'result');
@@ -274,7 +293,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       testInjection: parseTestInjection(task.testInjection ?? task['--test-injection']) ?? optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
-      continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs
+      continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs, resolution: resolutionProposal(task.resolution, `next_tasks[${index}].resolution`)
     };
   });
   return { objective_status: status, assessment: root.assessment, next_tasks, unblocks };
@@ -329,6 +348,17 @@ export function validatePlannerHierarchy(existing: readonly Task[], specs: reado
       parent = specsById.get(parent)?.parentTaskId ?? null;
     }
   }
+}
+
+/** Planner may only materialize a new business Task while unresolved work is either
+ * explicitly resolved in this round or already owned by an active resolution path. */
+export function validatePlannerResolutionMaterialization(existing: readonly Task[], specs: readonly PlannerTaskSpec[]): void {
+  const unresolved = existing.filter(task => unresolvedTask(task) && ['FAILED', 'BLOCKED'].includes(task.state));
+  if (unresolved.length === 0) return;
+  const resolvedIds = new Set(specs.map(spec => spec.resolution?.targetTaskId).filter((id): id is string => Boolean(id)));
+  const owned = unresolved.filter(task => task.resolution && ['active', 'waiting'].includes(task.resolution.state));
+  const uncovered = unresolved.filter(task => !resolvedIds.has(task.id) && !owned.some(candidate => candidate.id === task.id));
+  if (uncovered.length > 0 && specs.length > 0) throw new Error(`Planner cannot create sibling replacement work while unresolved Task(s) lack a graph resolution: ${uncovered.map(task => task.id).join(', ')}`);
 }
 
 export function parsePlannerOutput(output: string): PlannerResult {

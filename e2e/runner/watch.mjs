@@ -168,6 +168,22 @@ function scenario004(j){
  return null;
 }
 
+function scenario010(j){
+ const tasks=j.tasks||[];
+ const business=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter'&&!String(x.id).startsWith('review-fix-'));
+ const failed=business.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
+ const sibling=business.filter(x=>x.parentTaskId===null||x.parentTaskId===undefined);
+ if(sibling.length>1)return {type:'REPLACEMENT_BUSINESS_TASK',tasks:sibling.map(x=>({id:x.id,state:x.state,parentTaskId:x.parentTaskId,attempt:x.attempt}))};
+ if(failed.length)return {type:'ORIGINAL_BROWSER_TASK_NOT_RECOVERED',tasks:failed.map(x=>({id:x.id,state:x.state,attempt:x.attempt,error:x.error}))};
+ if(j.state==='COMPLETED'){
+  const root=business[0];
+  if(!root||root.state!=='SUCCEEDED'||Number(root.attempt)<2)return {type:'ORIGINAL_BROWSER_TASK_RETRY_NOT_PROVEN',task:root?{id:root.id,state:root.state,attempt:root.attempt}:null};
+  if(j.reviewEnabled!==false&&j.review?.outcome!=='approved')return {type:'FINAL_REVIEW_NOT_APPROVED',review:j.review};
+  if(j.localMerge&&j.localMerge.status!=='succeeded')return {type:'LOCAL_MERGE_NOT_SUCCEEDED',localMerge:j.localMerge};
+ }
+ return null;
+}
+
 function detect(j){
  const tasks=j.tasks||[],plans=j.plans||[];
  const work=tasks.filter(x=>x.kind==='work'&&x.agentName!=='reviewer'&&x.agentName!=='troubleshooter');
@@ -181,6 +197,9 @@ function detect(j){
   if(specific)return specific;
  } else if(scenario.startsWith('004-')){
   const specific=scenario004(j);
+  if(specific)return specific;
+ } else if(scenario.startsWith('010-')){
+  const specific=scenario010(j);
   if(specific)return specific;
  } else {
   const failed=tasks.filter(x=>x.state==='FAILED'||x.state==='BLOCKED');
