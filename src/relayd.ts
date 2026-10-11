@@ -18,6 +18,7 @@ import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
+import { ProjectionFailureDeduplicator } from './projection-failure-dedupe.js';
 import { authoritativeBranchPushArgs } from './github-branch-projection.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
@@ -158,7 +159,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (!binding) throw new Error('Local Job ' + jobId + ' not found or ambiguous in SQLite registry');
     return binding;
   };
-
   const gitText = async (cwd: string, args: string[]): Promise<string> => await new Promise<string>((resolve, reject) => {
     const child = spawnOwnedProcess('git', ['-C', cwd, ...args], { invocation: 'workspace.git', timeoutMs: 120000, spawn: { stdio: ['ignore','pipe','pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } } });
     let stdout=''; let stderr='';
@@ -180,6 +180,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       githubAuthError = errorMessage(error);
     }
   };
+  const projectionFailureDeduplicator = new ProjectionFailureDeduplicator();
   const syncGitHubBindings = async (): Promise<void> => {
     if (noGitHub) return;
     await refreshGitHubAuthentication();
@@ -192,7 +193,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     for (const candidate of bindingCandidates) {
       const snapshot = { path: candidate.snapshotPath };
       const discovered = candidate.job;
-      try {
+      try { if (discovered.state === 'CANCELLED') continue;
       if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
       const sourceRef = discovered.localMerge.sourceRef;
       const targetRef = discovered.localMerge.targetRef;
@@ -216,7 +217,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const existingExternalPr = discovered.externalPrNumber ?? (discovered.prNumber > 0 ? discovered.prNumber : 0);
       const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
       if (terminal && existingExternalPr <= 0) continue;
-      const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]);
+      const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
       const facts = await relay.loadPullRequestFacts();
       if (facts?.head?.sha !== sourceSha) {
         await gitText(canonical, ['fetch', '--no-tags', 'origin',
@@ -286,15 +287,17 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         });
       }
       } catch (error) {
+        const reason = errorMessage(error), classification = classifyFailure(error).classification;
+        if (!projectionFailureDeduplicator.shouldReport(discovered.id, discovered.updatedAt, reason, classification)) continue;
         await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivery_failed','failed',
           `GitHub projection failed: ${errorMessage(error)}`,'orchestrator',
-          {operation:'github.projectLocalMerge',error:errorMessage(error)},
+          {operation:'github.projectLocalMerge',error:reason},
           {agent:'relay',component:'github-projection'}))?.catch(()=>{});
         observability().record({
           stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
-          message: `GitHub binding/projection failed for ${discovered.id}: ${errorMessage(error)}`,
+          message: `GitHub binding/projection failed for ${discovered.id}: ${reason}`,
           correlation: { repository: discovered.repository, prNumber: discovered.externalPrNumber ?? discovered.prNumber, jobId: discovered.id },
-          data: { classification: classifyFailure(error).classification, reason: errorMessage(error) },
+          data: { classification, reason },
         });
       }
     }
