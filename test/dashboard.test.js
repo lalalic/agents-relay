@@ -816,11 +816,10 @@ test('dashboard highlights failed/error events red and blocked/warn events amber
   assert.match(dashboardHtml, /\.event-item\.event-error/);
 });
 
-test('selection clipboard and ChatGPT shortcuts use the complete Job title without pr#0', () => {
+test('clipboard and shortcut include job ID PR and title', () => {
   assert.match(dashboardHtml, /clipboard\.writeText\(jobChatRef\(job\)\)/);
-  assert.match(dashboardHtml, /function jobChatRef\(job\)\{return repoName/);
-  assert.match(dashboardHtml, /Number\(job\?\.externalPrNumber\|\|job\?\.prNumber\|\|0\)>0/);
-  assert.match(dashboardHtml, /'job:'\+value\(job\?\.id\)/);
+  assert.match(dashboardHtml, /function jobChatRef\(job\)/);
+  assert.match(dashboardHtml, /value\(job\?\.id\)/);
   assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
   assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
 });

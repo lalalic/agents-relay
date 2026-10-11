@@ -384,7 +384,7 @@ const DEFAULT_CHAT_SHORTCUTS=[
 ].join('\\n');
 function chatShortcutText(){return localStorage.getItem(CHAT_SHORTCUTS_KEY)||DEFAULT_CHAT_SHORTCUTS;}
 function parseChatShortcuts(source){return String(source||'').split(/\\r?\\n/).map(line=>line.trim()).filter(Boolean).map(line=>{const split=line.indexOf(':');return split>0?{name:line.slice(0,split).trim(),prompt:line.slice(split+1).trim()}:null;}).filter(item=>item&&item.name&&item.prompt);}
-function jobChatRef(job){return repoName(job?.repository)+'/'+(Number(job?.externalPrNumber||job?.prNumber||0)>0?'pr#'+value(job.externalPrNumber||job.prNumber):'job:'+value(job?.id))+': '+value(job?.title||job?.id);}
+function jobChatRef(job){const pr=Number(job?.externalPrNumber||job?.prNumber||0);return repoName(job?.repository)+"/job:"+value(job?.id)+(pr>0?"/pr#"+pr:"")+": "+value(job?.title||job?.id);}
 function chatShortcutUrl(prompt){return 'https://chatgpt.com/?prompt='+encodeURIComponent(prompt);}
 const CHAT_SHORTCUT_TARGET='agents-relay-shortcut';
 function chatShortcutField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('ChatGPT shortcut')));const select=document.createElement('select');select.className='job-filter job-chat-shortcut-select';select.setAttribute('aria-label','ChatGPT shortcut');select.append(new Option('',''));for(const item of parseChatShortcuts(chatShortcutText()))select.append(new Option(item.name,item.prompt));select.value='';select.addEventListener('change',()=>{if(!select.value)return;const prompt=select.value.replaceAll('%1',jobChatRef(job));window.open(chatShortcutUrl(prompt),CHAT_SHORTCUT_TARGET,'noopener');select.value='';});box.append(select);return box;}
