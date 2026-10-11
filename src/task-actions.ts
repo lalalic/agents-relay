@@ -2,6 +2,7 @@ import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
+import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
 export const TASK_RECOVER_ACTION = 'task.recover' as const;
@@ -178,7 +179,12 @@ export async function dispatchTaskAction(
           throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
       }
       const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(current, task, request.id);
-      if (request.id === TASK_RETRY_ACTION || request.id === TASK_RECOVER_ACTION) applyTaskRetrySnapshot(task, { extendBudget: true });
+      if (request.id === TASK_RETRY_ACTION) applyTaskRetrySnapshot(task, { extendBudget: true });
+      else if (request.id === TASK_RECOVER_ACTION) {
+        const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
+        const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+        if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
+      }
       else if (request.id === TASK_CANCEL_ACTION) cancelTaskSnapshot(task);
       for (const mutation of relatedMutations) {
         const related = current.tasks.find(item => item.id === mutation.taskId);
@@ -200,7 +206,9 @@ export async function dispatchTaskAction(
     const recovery = request.recoveryTaskId ? job.tasks.find(item => item.id === request.recoveryTaskId) : undefined;
     if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED','RUNNING'].includes(recovery.state))
       throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
-    await applyTaskRetryAction(task, { extendBudget: true });
+    const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
+    const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+    if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
   }
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');

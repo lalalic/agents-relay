@@ -27,7 +27,6 @@ function executionIdFromSource(sourceId: string | undefined, jobId: string, task
   const prefix = `job/${jobId}/task/${taskId}/execution/`;
   return sourceId?.startsWith(prefix) ? sourceId.slice(prefix.length) || undefined : undefined;
 }
-
 const terminalExecutionClaims = new Set<string>();
 const activeExecutionOwners = new Map<string, ReconcilerRuntimeBase>();
 import { withExecutionBoundary } from './execution-boundary.js';
@@ -40,7 +39,6 @@ function claimTerminalExecution(sourceId: string): void {
 function terminalExecutionClaimed(jobId: string, taskId: string, executionId: string): boolean {
   return terminalExecutionClaims.has(executionEventSource(jobId, taskId, executionId));
 }
-
 export abstract class ReconcilerRuntimeBase {
   protected readonly live = new Map<string, LiveExecution>();
   protected readonly plannerLive = new Map<string, LivePlanner>();
@@ -96,8 +94,6 @@ export abstract class ReconcilerRuntimeBase {
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
       if (event.type !== 'task.failed' || event.source?.watchdog !== true || event.data?.workflowEvent !== 'watchdog.failed' || result.reconcile) return result;
-      // The watchdog has already committed FAILED. The graph owns the recovery
-      // action; this correlated event wakes the graph evaluation, not a retry.
       const durable = (await this.store.load(event.job_id)).tasks.find(task => task.id === event.task_id);
       return durable?.state === 'FAILED' && durable.executionHistory?.some(history => history.id === event.data?.executionId)
         ? { applied: true, reconcile: true, reason: 'watchdog.failure-fact' } : result;
@@ -162,7 +158,6 @@ export abstract class ReconcilerRuntimeBase {
     owner.clearExecution(taskId, executionId);
     return true;
   }
-
   protected clearTerminalTimer(taskId: string, executionId: string): void {
     const live = this.live.get(taskId);
     if (!live || live.executionId !== executionId) return;
@@ -170,7 +165,6 @@ export abstract class ReconcilerRuntimeBase {
     if (timer) clearTimeout(timer);
     this.terminalTimers.delete(taskId);
   }
-
   protected clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
     if (!executionId || live?.executionId === executionId) {
@@ -186,7 +180,6 @@ export abstract class ReconcilerRuntimeBase {
   }
   protected async markWorkerStarted(event: EventRecord): Promise<EventHandlingResult> {
     const live = this.live.get(event.task_id);
-    // Event timestamps are worker-authored and may be wrong; exact execution identity is authoritative.
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
@@ -206,7 +199,6 @@ export abstract class ReconcilerRuntimeBase {
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
     return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };
   }
-
   protected isRecoverableWatchdogFailure(task: Task): boolean {
     if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event', 'worker_delivery_after_start'].includes(task.failureReason ?? '')) return true;
     const error = task.error ?? '';
@@ -216,7 +208,6 @@ export abstract class ReconcilerRuntimeBase {
       || error.includes('exited after task.started without publishing a terminal task event')
       || error.includes('Worker delivery failed after task.started');
   }
-
   protected isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
     return task.executionId !== null && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId);
   }
@@ -238,7 +229,6 @@ export abstract class ReconcilerRuntimeBase {
     }
     return true;
   }
-
   protected async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
     const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
       : /BROWSER_WORKSPACE_UNAVAILABLE|browser-workspace runtime dependency unavailable|browser-workspace session start returned no session_id|no close frame received or sent/i.test(message)
@@ -306,21 +296,13 @@ export abstract class ReconcilerRuntimeBase {
       this.detach(this.eventCoordinator.accept({ jobId, reason: 'browser-workspace-runtime-retry' }), jobId, taskId, 'runtime retry reconcile wake');
       return;
     }
-    // failLaunch already committed the authoritative FAILED state. The emitted
-    // task.failed observation may be ignored as a duplicate, so explicitly wake
-    // graph reconciliation from the durable failure fact. This is required for
-    // automatic Troubleshooter recovery, including reviewer start-ack failures.
     this.detach(this.eventCoordinator.accept({ jobId, reason: `worker-${phase}-failure` }), jobId, taskId, 'worker failure reconcile wake');
   }
-
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
     if (live?.executionId === executionId) { live.processSettled = true; live.processError = error; }
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
-    // Async transport settlement is an independent, non-authoritative observation.
-    // A worker terminal event may already have claimed the Task; do not suppress
-    // transport-exit evidence merely because business completion won the race.
     if (!task) return;
     const correlated = task.executionId === executionId || task.executionHistory?.some(item => item.id === executionId);
     if (!correlated) return;
@@ -364,9 +346,6 @@ export abstract class ReconcilerRuntimeBase {
       return;
     }
     let reroutedTask: Task | null = null;
-    // Provider quota failures are recoverable. Commit the retry + route exclusion
-    // before publishing task.failed so event-driven reconciliation can never see
-    // an intermediate FAILED state and spawn a Troubleshooter for quota exhaustion.
     if (reroutableWorkerRejections.has(failureReason) && transition.task.attempt < transition.task.maxAttempts) {
       const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
       if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
@@ -412,16 +391,11 @@ export abstract class ReconcilerRuntimeBase {
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
-        // Reviewer business terminal state is owned by review.approved / review.changes_required / review.blocked.
-        // A generic task.completed may arrive before the review decision and must not consume the execution generation.
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
         if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
-          // A duplicate launch can leave one worker orphaned after another worker
-          // has already produced the terminal fact. Accept only a known execution
-          // from the same durable attempt. A prior retry attempt cannot complete a newer generation.
           if (!prior || prior.attempt !== task.attempt) return false;
         }
         const terminalWaiter = this.terminalWaiters.get(task.id);

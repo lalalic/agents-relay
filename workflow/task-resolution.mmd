@@ -19,10 +19,10 @@ obsoleteGuard["guard: genuinelyObsolete"]
 
 unresolved -->|on: resolution.propose| checkOwner
 checkOwner -->|on: resolution.propose| recoveryOwner
-recoveryOwner -->|true| activeRecovery
-recoveryOwner -->|false| checkPath
+recoveryOwner -->|true| checkPath
+recoveryOwner -->|false| plannerOwner
 plannerOwner -->|true| checkPath
-plannerOwner -->|false| checkPath
+plannerOwner -->|false| resolved
 checkPath -->|on: resolution.propose| exact
 exact -->|true| activeRecovery
 exact -->|false| same

@@ -3,6 +3,7 @@ import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Ta
 import { applyTaskReleaseAction, applyTaskUnblockRetryAction, dispatchTaskAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { dispatchBlockerResolution } from './workflow/blocker-resolution-v2.js';
+import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 
 export type DependentStoreFactory = (repository: string, prNumber: number) => DurableStore;
 export type BlockerResolutionSummary = { resumed: number; obsolete: number; waiting: number; unblocked: BlockerDependentTarget[] };
@@ -31,6 +32,11 @@ export async function registerBlockerDependency(options: {
   if (!task) throw new Error(`Dependent task ${options.dependentTaskId} not found`);
   if (!['DRAFT', 'FAILED', 'BLOCKED'].includes(task.state)) throw new Error(`Dependent task ${task.id} is not waiting/blocked/failed (${task.state})`);
   const now = options.now ?? new Date().toISOString();
+  const resolutionProposal = { path: 'blocker_job_dependency' as const, targetTaskId: task.id, targetJobId: blocker.id, mode: options.resolutionMode ?? blocker.blockerResolutionMode ?? 'merge' };
+  const resolutionDecision = dispatchTaskResolutionSync(task, resolutionProposal, 'blocker-job', { registerBlockerDependency: () => {
+    task.resolution = { ...materializeResolution(task, resolutionProposal, 'blocker-job', now), state: 'waiting' };
+  } });
+  if (!resolutionDecision.accepted) throw new Error(`Task resolution graph rejected blocker dependency for ${task.id}`);
   const relation: BlockerDependent = {
     repository: dependentJob.repository,
     prNumber: dependentJob.prNumber,

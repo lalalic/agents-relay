@@ -10,7 +10,7 @@ const read=async path=>readFile(new URL(path,import.meta.url),'utf8');
 
 test('compressed E2E catalog defines objective ladder and external injected scenarios', async()=>{
   const catalog=await read('../e2e/scenarios/README.md');
-  for(const id of ['003-objective-exception-ladder','004-objective-recovery-exhaustion-escalation','005-watchdog-stale-generation','006-provider-quota-reroute','007-projection-isolation-retry','008-async-browser-handoff','009-daemon-restart-orphan','010-browser-workspace-runtime-failure','012-implementation-thread-ownership']) assert.match(catalog,new RegExp(id));
+  for(const id of ['003-objective-exception-ladder','004-objective-recovery-exhaustion-escalation','005-watchdog-stale-generation','006-provider-quota-reroute','007-projection-isolation-retry','008-async-browser-handoff','009-daemon-restart-orphan','010-browser-workspace-runtime-failure','011-planner-reviewer-first-verdict','012-implementation-thread-ownership']) assert.match(catalog,new RegExp(id));
 });
 
 test('scenario 012 requires distinct durable implementation and reviewer threads', async()=>{
@@ -23,7 +23,7 @@ test('scenario 012 requires distinct durable implementation and reviewer threads
   assert.match(run,/Scenario 012 requires --thread and --reviewer-thread-id/);
   assert.match(scenario,/exactly two independent implementation Tasks/);
   assert.match(scenario,/fresh SQLite\/Relay snapshots and EventBus evidence/);
-  assert.match(watch,/SCENARIO_011/);
+  assert.match(watch,/SCENARIO_012/);
 });
 
 test('scenario 003 preparation installs deterministic worker and review gates', async()=>{
