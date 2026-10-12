@@ -143,6 +143,7 @@ export type Task = {
   reviewHeadSha?: string;
   routingExclusions?: Array<{ provider: string; model: string; profile?: string; reason: string; at: string }>;
   chatgptThreadDelivery?: ChatGptThreadDelivery;
+  interactiveInvocation?: import('./interactive-invocation.js').InteractiveInvocation;
   manualStateOverrides?: ManualTaskStateOverride[];
   resolution?: TaskResolution;
   failureReason?: string;

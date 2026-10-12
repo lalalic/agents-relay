@@ -60,7 +60,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
       failedWork: task.state === 'FAILED',
       ordinaryWork: task.kind !== 'planner' && task.agentName !== 'troubleshooter',
       currentRun: belongsToCurrentRun(job, task),
-      needsRecovery: true,
+      needsRecovery: !(task.state === 'BLOCKED' && (Boolean(task.unblock) || Boolean(task.interactiveInvocation))),
       idUnused: !existing.has(id),
       noRecoveryBarrier: !hasRecoveryBarrier(job, task),
     }, () => { create = true; });

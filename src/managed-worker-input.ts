@@ -22,6 +22,15 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   const output = task.output.kind === 'file'
     ? `file\nPath: ${task.output.path}`
     : (projectedReview ? `task/PR\nProjected PR: ${prUrl}\nTask: ${task.id}` : isLocalJob ? `task/PR\nTask: ${task.id}` : `task/PR\nPR: ${prUrl}\nTask: ${task.id}`);
+  const interactiveContext = task.interactiveInvocation && task.interactiveInvocation.status !== 'awaiting_decision'
+    ? '[Durable interactive review continuation]\n' +
+      JSON.stringify({
+        invocationId: task.interactiveInvocation.invocationId,
+        revision: task.interactiveInvocation.revision,
+        decision: task.interactiveInvocation.status,
+        feedback: task.interactiveInvocation.feedback ?? null,
+      }) + '\nContinue this same Task. For changes_requested, revise the artifact and request review of a NEW immutable revision; for approved, finalize only that approved revision. Never invent a human approval.\n'
+    : '';
   const taskTag = taskTagWorkerPrompt(job); return `[Agents Relay managed task]
 ${projectedReview ? `Job: local ${job.id} (lifecycle authority)\nProjected GitHub PR: ${prUrl}` : isLocalJob ? `Job: local ${job.id}` : `Job URL: ${prUrl}`}
 Job ID: ${job.id}
@@ -36,7 +45,7 @@ ${projectedReview
 \n[Authoritative execution context]
 Job objective: ${job.objective ?? '(none recorded)'}
 Plan: ${task.planningDecisionId ? `${task.planningDecisionId} (round ${task.planningRound ?? 'unknown'})` : 'directly created Task'}
-Task attempt/execution: ${task.attempt}/${task.maxAttempts} / ${task.executionId}
+${interactiveContext}Task attempt/execution: ${task.attempt}/${task.maxAttempts} / ${task.executionId}
 Dependencies: ${task.dependencies.length ? task.dependencies.join(', ') : 'none'}
 ${task.attempt > 1 || task.error ? `Retry summary: prior error=${task.error ?? 'none'}; prior generations=${(task.executionHistory ?? []).map(item => `${item.id}@${item.attempt}`).join(', ') || 'none'}` : 'Retry summary: first attempt'}
 SQLite/RelayStore and the canonical Mermaid Graphs own lifecycle, merge, recovery, and completion decisions. Do not perform Relay-owned merge or completion actions from this worker.
