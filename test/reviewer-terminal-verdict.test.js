@@ -42,6 +42,8 @@ for (const [label, evidence] of [
   ['nested head', {outcome:{head_sha:'abcdef0123456789'}}],
   ['snake case head', {head_sha:'abcdef0123456789'}],
   ['nested camel head', {outcome:{headSha:'abcdef0123456789'}}],
+  ['review head beats conflicting top-level head', {review:{head_sha:'abcdef0123456789'},head_sha:'wrong-head',headSha:'wrong-head'}],
+  ['outcome head beats conflicting review and top-level heads', {outcome:{head_sha:'abcdef0123456789'},review:{head_sha:'wrong-head'},head_sha:'wrong-head'}],
 ]) {
   test(`review terminal changes-required preserves ${label}`, async () => {
     const head='abcdef0123456789'; const now=new Date().toISOString();

@@ -14,8 +14,10 @@ export function normalizeReviewerTerminalEvent(event: EventRecord): EventRecord 
     : raw === 'blocked' ? 'review.blocked' : null;
   if (!type) return null;
   const outcome = record(data.outcome);
-  const head = [outcome.head_sha, outcome.headSha, data.head_sha, data.headSha,
-    record(data.review).head_sha, record(data.review).headSha]
+  const review = record(data.review);
+  // Match canonical review head resolution: outcome > review > top-level data.
+  const head = [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha,
+    data.head_sha, data.headSha]
     .find(value => typeof value === 'string' && value.length > 0);
   const existingFindings = outcome.blocking_findings ?? outcome.blockingFindings;
   const findings = existingFindings ?? (Array.isArray(data.findings) ? data.findings : undefined);
