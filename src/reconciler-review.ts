@@ -313,7 +313,10 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
-    const initialReviewOutcome = !job.review && task.planningDecisionId ? 'pending' : job.review?.outcome;
+    const freshAfterStale = job.review?.outcome === 'stale'
+      && job.review.headSha !== headSha && Boolean(task.planningDecisionId);
+    const initialReviewOutcome = (!job.review || freshAfterStale) && task.planningDecisionId
+      ? 'pending' : job.review?.outcome;
 
     const taskDecision = this.store.mutateJob
       ? dispatchTaskLifecycleSync(structuredClone(task) as Task & Record<string, unknown>, event.type)
@@ -376,7 +379,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         Object.assign(freshTask, candidate);
         // Bind the first Planner review only after the generation fence has
         // checked the unmodified outer snapshot and authoritative SQLite state.
-        if (!current.review && freshTask.planningDecisionId) {
+        if ((!current.review || (current.review.outcome === 'stale' && current.review.headSha !== headSha)) && freshTask.planningDecisionId) {
           current.review = { outcome: 'pending', headSha, taskId: freshTask.id, evidence: null, updatedAt: reviewUpdatedAt };
         }
         freshTask.error = null;
