@@ -1,3 +1,4 @@
+import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
 import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
@@ -93,13 +94,8 @@ export abstract class ReconcilerRuntimeBase {
     if (event.type === 'task.started') return this.markWorkerStarted(event);
     if (event.type === 'task.completed') {
       const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
-      const raw = task?.agentName === 'reviewer' ? event.data?.verdict : null; const verdict = raw === 'approved' || raw === 'pass' ? 'review.approved'
-        : raw === 'changes-required' || raw === 'changes_required' ? 'review.changes_required'
-        : raw === 'blocked' ? 'review.blocked' : null;
-      if (verdict) return this.applyReviewEvent({ ...event, type: verdict, data: {
-        ...event.data, outcome: { head_sha: typeof event.data?.headSha === 'string' ? event.data.headSha : undefined,
-          blocking_findings: Array.isArray(event.data?.findings) ? event.data.findings : [] },
-      } });
+      const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
+      if (normalized) return this.applyReviewEvent(normalized);
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
