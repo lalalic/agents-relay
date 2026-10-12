@@ -13,7 +13,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   const agentGraph = hasArg(args, '--agent-graph') || hasArg(args, '--agent-graph-file') ? await textOption(args, '--agent-graph', '--agent-graph-file') : undefined;
   if (agentGraph) parseAgentGraph(agentGraph);
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
-  if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('task create --adapter must be codex, chatgpt, or orchestrator');
+  if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('task create --adapter must be codex or chatgpt; orchestrator is reserved for legacy recovery only');
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('task create requires --output task-pr|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
   if (adapter !== 'orchestrator' && ['--provider','--profile','--reasoning','--cwd','--chatgpt-project'].some(flag => hasArg(args, flag)) && !model) throw new Error('task create explicit routing requires --model');
   const routing: RoutingDecision | undefined = adapter === 'orchestrator' || !model ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };

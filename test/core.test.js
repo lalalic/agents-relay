@@ -360,59 +360,45 @@ test('CLI task create persists Mermaid Agent Graph from file', async () => {
   await rm(directory,{recursive:true,force:true});
 });
 
-test('CLI task create accepts orchestrator self work without a model', async () => {
+test('CLI task create rejects new Relay-internal orchestrator work', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-create-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
   const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','handle this in the top-level orchestrator'], {cwd:process.cwd()});
   const [code] = await once(result, 'exit');
-  assert.equal(code, 0);
+  assert.equal(code, 1);
   const saved = JSON.parse(await readFile(file, 'utf8'));
-  const created = saved.tasks.find(item => item.id === 'self');
-  assert.equal(created.adapter, 'orchestrator');
-  assert.equal(created.routing, undefined);
-  assert.equal(created.timeoutMs, 0);
+  assert.equal(saved.tasks.length, 0);
   await rm(directory,{recursive:true,force:true});
 });
 
-test('reconciler leaves orchestrator self work queued for its creating orchestrator', async () => {
-  const self = task('self'); self.adapter='orchestrator'; self.routing=undefined; self.timeoutMs=0;
-  const root = {...job([self]), executionMode:'fixed'};
-  const store = new InMemoryStore(root); const events=[];
-  const reconciler = managedReconciler(store,{owner:'test',adapters:[],emit:event=>events.push(event)});
-  await reconciler.reconcile('j');
-  const durable=(await store.load('j')).tasks.find(item=>item.id==='self');
-  assert.equal(durable.state,'QUEUED');
-  assert.equal(durable.leaseOwner,null); assert.equal(durable.executionId,null);
-  assert.equal(events.some(event=>event.type==='task.orchestrator_assigned'),false);
-});
-
-test('reconciler rescues stale queued orchestrator work into ChatGPT execution', async () => {
+test('reconciler rescues queued legacy orchestrator work for Execution Router', async () => {
   const at = '2026-10-04T06:00:00.000Z';
-  const self = task('stale');
+  const self = task('legacy-queued');
   self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0; self.capabilities = ['implementation'];
-  self.createdAt = '2026-10-04T05:29:59.999Z'; self.updatedAt = self.createdAt;
+  self.createdAt = at; self.updatedAt = at;
   const store = new InMemoryStore({ ...job([self]), executionMode: 'fixed' });
   const events = [];
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at), emit: event => events.push(event) });
   await reconciler.reconcile('j');
   const durable = (await store.load('j')).tasks[0];
-  assert.equal(durable.adapter, 'chatgpt');
-  assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'], runtime: 'chatgpt' });
-  assert.notEqual(durable.routing?.provider, 'zai'); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
+  assert.equal(durable.adapter, 'codex');
+  assert.deepEqual(durable.workerRequirements, { capabilities: ['implementation'] });
+  assert.equal(durable.routing, undefined); assert.equal(durable.workerSelection, undefined); assert.equal(durable.state, 'QUEUED');
+  assert.equal(durable.threadId, null);
   assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
 });
 
-test('reconciler immediately rescues P0 troubleshooter orchestrator repair work', async () => {
-  const self = task('urgent-repair');
+test('reconciler recovers RUNNING orphan without an execution identity', async () => {
+  const at = '2026-10-04T06:00:00.000Z';
+  const self = task('legacy-running', 'RUNNING');
   self.adapter = 'orchestrator';
   self.routing = undefined;
   self.workerSelection = undefined;
   self.workerRequirements = undefined;
   self.timeoutMs = 0;
-  self.priority = 'P0';
-  self.agentName = 'troubleshooter';
-  self.createdAt = now();
+  self.capabilities = ['implementation'];
+  self.createdAt = at;
   self.updatedAt = self.createdAt;
   const store = new InMemoryStore({ ...job([self]), executionMode:'fixed' });
   const events=[];
@@ -420,27 +406,32 @@ test('reconciler immediately rescues P0 troubleshooter orchestrator repair work'
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.adapter,'codex');
-  assert.deepEqual(durable.workerRequirements,{capabilities:[...self.capabilities,'local_repo'],runtime:'codex'});
+  assert.deepEqual(durable.workerRequirements,{capabilities:['implementation']});
+  assert.equal(durable.state,'QUEUED');
+  assert.equal(durable.executionId,null);
+  assert.equal(durable.leaseOwner,null);
+  assert.equal(durable.threadId,null);
   assert.ok(events.some(event=>event.type==='task.orchestrator_rescued'));
 });
 
-test('reconciler does not rescue young, running, or terminal orchestrator tasks', async () => {
+test('reconciler preserves active ownership and terminal legacy records', async () => {
   const at = '2026-10-04T06:00:00.000Z';
-  const young = task('young'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = '2026-10-04T05:30:00.001Z';
+  const young = task('active', 'RUNNING'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = at; young.executionId = 'active'; young.leaseOwner = 'other'; young.leaseExpiresAt = '2099-01-01T00:00:00.000Z'; young.threadId = 'thread';
   const running = task('running', 'RUNNING'); running.adapter = 'orchestrator'; running.routing = undefined; running.createdAt = '2026-10-04T04:00:00.000Z'; running.executionId = 'active';
   const done = task('done', 'SUCCEEDED'); done.adapter = 'orchestrator'; done.routing = undefined; done.createdAt = '2026-10-04T04:00:00.000Z';
   const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
   await reconciler.reconcile('j');
-  assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'orchestrator', 'orchestrator']);
+  assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'codex', 'orchestrator']);
 });
 
 test('CLI task complete terminalizes the same orchestrator self task', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-complete-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  let child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','self','--adapter','orchestrator','--output','task-pr','--input','do it now'], {cwd:process.cwd()});
-  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
+  const legacy = task('self'); legacy.adapter = 'orchestrator'; legacy.output = {kind:'task_pr'}; legacy.routing = undefined; legacy.timeoutMs = 0;
+  await writeFile(file, JSON.stringify(job([legacy])));
+  let child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
   child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
   let saved = JSON.parse(await readFile(file, 'utf8'));
@@ -578,6 +569,12 @@ test('startup reconciliation selects expired durable RUNNING leases after daemon
   const live=task('live','RUNNING'); live.executionId='live-exec'; live.leaseExpiresAt='2026-09-19T17:10:00.000Z';
   assert.equal(needsLifecycleReconciliation(job([expired]),Date.parse('2026-09-19T16:59:20.000Z')),true);
   assert.equal(needsLifecycleReconciliation(job([live]),Date.parse('2026-09-19T16:59:20.000Z')),false);
+});
+test('daemon inventory selects RUNNING legacy orchestrator orphans after restart', () => {
+  const orphan = task('legacy-orphan', 'RUNNING');
+  orphan.adapter = 'orchestrator';
+  orphan.executionId = null;
+  assert.equal(needsLifecycleReconciliation(job([orphan]), Date.parse('2026-10-04T06:00:00.000Z')), true);
 });
 test('relay owner change does not reclaim an unexpired durable execution lease', async () => {
   const running=task('owner-still-live','RUNNING');
@@ -2660,14 +2657,14 @@ test('separate Jobs each retain one independent execution slot', async () => {
   } finally { await first.close(); await second.close(); }
 });
 
-test('P0 self execution occupies the Job slot without an execution UUID', async () => {
+test('legacy RUNNING orphan repair releases the Job execution slot', async () => {
   const self = task('orchestrator-owned', 'RUNNING');
   self.adapter = 'orchestrator';
   const store = new InMemoryStore(job([self, task('model-worker')]));
   const adapter = new FakeAdapter();
-  const reconciler = managedReconciler(store, { owner:'p0-serialized', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:4 });
+  const reconciler = managedReconciler(store, { owner:'p0-serialized', adapters:[adapter], eventBus:new MemoryEventBus(), maxConcurrent:1 });
   await reconciler.reconcile('j');
-  assert.equal(adapter.launches, 0);
+  assert.equal(adapter.launches, 1);
 });
 
 test('publication Webhook replay retains the same EventBus event identity per Job', async () => {

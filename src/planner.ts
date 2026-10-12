@@ -145,8 +145,8 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
-  if (!task.output && task.adapter !== 'orchestrator') throw new Error(`Initial task ${task.id} requires an output contract`);
-  if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported adapter`);
+  if (!task.output) throw new Error(`Initial task ${task.id} requires an output contract`);
+  if (!['codex', 'chatgpt'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
   return { id: task.id, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
 

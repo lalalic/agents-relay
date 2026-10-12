@@ -454,7 +454,7 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
   const localJob = join(directory, 'job.json');
   await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', executionMode:'fixed', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
 
-  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--task-id','file-task','--adapter','orchestrator','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
+  const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--task-id','file-task','--adapter','codex','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
   assert.equal(created.status, 0, created.stderr);
   let saved = JSON.parse(await readFile(localJob, 'utf8'));
   assert.equal(saved.tasks[0].input, await readFile(taskFile, 'utf8'));

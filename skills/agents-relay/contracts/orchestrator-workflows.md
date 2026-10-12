@@ -24,18 +24,22 @@ The initial decomposition belongs to that durable Planner round. The orchestrato
 
 ## P0 / self job workflow
 
-A **P0 job** (alias: **self job**) is executed directly by the current active orchestrator thread:
+P0/self work is ordinary durable Relay work. The orchestrator may choose normal
+Task requirements, but every newly created work Task is executable by a
+worker/model route selected by Execution Router. Relay has no privileged
+orchestrator-worker lifecycle, and new Task creation rejects
+`adapter: orchestrator`. P0/self jobs do not require the normal reviewer gate
+unless the user explicitly asks for review; Relay-owned merge and completion
+lifecycle remain in their canonical graphs.
 
-1. The orchestrator creates the durable job.
-2. The orchestrator immediately creates the required orchestrator-owned task(s); do not leave the P0 job idle.
-3. The current orchestrator thread starts executing those tasks immediately rather than delegating them to another worker. Creating an `adapter: orchestrator` Task is never a handoff: the exact creator owns it for this turn.
-4. The orchestrator must terminalize every orchestrator-owned Task it created before ending the turn. It must not return to the user with one of its self-tasks left `QUEUED` or `RUNNING`; successful work uses `task complete` on that same durable Task.
-5. P0/self jobs do not require the normal reviewer gate unless the user explicitly asks for review.
-6. After implementation and local verification, the orchestrator merges the job itself and completes normal post-merge reconciliation.
+Legacy recovery: existing `adapter: orchestrator` work Tasks may be repaired only
+through the canonical rescue graph. The repair converts the selected record in
+place to declarative worker requirements, clears stale execution/thread ownership,
+lets Execution Router select the route, and never launches a Task that already
+has a confirmed durable external-completion result.
 
-Recovery exception: reconciliation may rescue only a `QUEUED` work Task with `adapter: orchestrator` that has no execution identity and is at least 30 minutes past `createdAt`. It converts that Task in place to a normal ChatGPT-routable Task, preserving its durable intent and Task identity while clearing stale routing state. `RUNNING` and terminal Tasks are not rescued. This is a stale-task safety net, not an asynchronous handoff mechanism for newly created self-work.
-
-`job create` still only creates durable job state; the P0 workflow requires the orchestrator to follow it immediately with task creation and execution.
+`job create --initial-plan` remains the normal way to create durable planning
+state and hand subsequent execution to Relay.
 
 ## Merge completion vs deployment evidence
 

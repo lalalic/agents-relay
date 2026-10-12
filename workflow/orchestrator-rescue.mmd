@@ -2,12 +2,21 @@ flowchart LR
 %% relay: initial idle
 idle["state: idle"]
 check["state: check"]
+external["state: external_completed"]
 skip["state: skip"]
 rescued["state: rescued"]
+legacyActive["guard: legacyActive"]
+externallyCompleted["guard: externallyCompleted"]
 rescuable["guard: rescuable"]
 rescue["action: task.rescueOrchestrator"]
+externalCompletion["action: task.applyExternalCompletion"]
 idle -->|on: orchestrator.rescue.reconcile| check
-check -->|on: orchestrator.rescue.reconcile| rescuable
+check -->|on: orchestrator.rescue.reconcile| legacyActive
+legacyActive -->|false| skip
+legacyActive -->|true| externallyCompleted
+externallyCompleted -->|true| externalCompletion
+externalCompletion -->|to: external_completed| external
+externallyCompleted -->|false| rescuable
 rescuable -->|false| skip
 rescuable -->|true| rescue
 rescue -->|to: rescued| rescued

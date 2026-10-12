@@ -10,12 +10,22 @@ function dependenciesSatisfied(job: Job, dependencies: readonly string[]): boole
   return dependencies.every(id => byId.get(id)?.state === 'SUCCEEDED');
 }
 
+function validateTaskRequirements(value: NewTask): void {
+  if (value.adapter === 'orchestrator') {
+    throw new Error('New Tasks cannot use the Relay-internal orchestrator adapter; declare worker requirements and let Execution Router select the route');
+  }
+  if (value.workerRequirements && !Array.isArray(value.workerRequirements.capabilities)) {
+    throw new Error(`Task ${value.id} workerRequirements.capabilities must be an array`);
+  }
+}
+
 /**
  * Canonical creation boundary for new Task entities.
  * Constructors provide metadata/facts only; the Task lifecycle graph derives
  * whether a fresh Task remains DRAFT or becomes QUEUED.
  */
 export function createTaskEntity(job: Job, value: NewTask, options: { defer?: boolean } = {}): Task {
+  validateTaskRequirements(value);
   const task: Task = { ...value, state: 'DRAFT' };
   if (!options.defer) {
     dispatchTaskLifecycleSync(task as Task & Record<string, unknown>, 'reconcile', {

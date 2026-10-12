@@ -17,7 +17,9 @@ export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
-  if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
+  if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
+    || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
+    || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
   return job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= now);
 }
 export function terminalManagedJobs(_items: ManagedJobOverview[]): Job[] { return []; }
