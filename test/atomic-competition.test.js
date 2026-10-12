@@ -91,3 +91,19 @@ test('planner-created first verdict keeps null outer snapshot until atomic bindi
  const wrongHead=structuredClone(current);wrongHead.tasks[0].reviewHeadSha='wrong';
  assert.equal(reviewGenerationMatches(wrongHead,original,task,sha),false);
 });
+
+test('a new-head Planner reviewer may replace only the old STALE review generation', () => {
+ const old='old-head', head='new-head';
+ const reviewer={id:'new-review',agentName:'reviewer',reviewHeadSha:head,
+  executionId:'exec-2',planningDecisionId:'plan-2',state:'RUNNING'};
+ const historical={id:'old-review',agentName:'reviewer',reviewHeadSha:old,state:'SUCCEEDED'};
+ const original={id:'j',state:'ACTIVE',headSha:head,review:{outcome:'stale',headSha:old,taskId:'old-review'},
+  tasks:[historical,reviewer]};
+ assert.equal(reviewGenerationMatches(original,original,reviewer,head),true);
+ const competing={...original,tasks:[...original.tasks,{...reviewer,id:'competing-review'}]};
+ assert.equal(reviewGenerationMatches(competing,original,reviewer,head),false);
+ const untrusted={...original,review:{outcome:'approved',headSha:old,taskId:'old-review'}};
+ assert.equal(reviewGenerationMatches(untrusted,original,reviewer,head),false);
+ const sameHeadStale={...original,review:{outcome:'stale',headSha:head,taskId:'old-review'}};
+ assert.equal(reviewGenerationMatches(sameHeadStale,original,reviewer,head),false);
+});

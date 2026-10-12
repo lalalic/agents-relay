@@ -1,3 +1,4 @@
+import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
 import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
@@ -91,6 +92,11 @@ export abstract class ReconcilerRuntimeBase {
     const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
+    if (event.type === 'task.completed') {
+      const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
+      const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
+      if (normalized) return this.applyReviewEvent(normalized);
+    }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
       if (event.type !== 'task.failed' || event.source?.watchdog !== true || event.data?.workflowEvent !== 'watchdog.failed' || result.reconcile) return result;
