@@ -91,6 +91,25 @@ export abstract class ReconcilerRuntimeBase {
     const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
+    // Worker terminal events with a structured reviewer verdict must drive the
+    // review Graph, not be dropped until the reviewer watchdog times out.
+    if (event.type === 'task.completed') {
+      const job = await this.store.load(event.job_id);
+      const task = job.tasks.find(item => item.id === event.task_id);
+      if (task?.agentName === 'reviewer') {
+        const raw = event.data?.verdict;
+        const verdict = raw === 'approved' || raw === 'pass' ? 'review.approved'
+          : raw === 'changes-required' || raw === 'changes_required' ? 'review.changes_required'
+          : raw === 'blocked' ? 'review.blocked' : null;
+        if (verdict) {
+          const findings = Array.isArray(event.data?.findings) ? event.data.findings : [];
+          const headSha = typeof event.data?.headSha === 'string' ? event.data.headSha : undefined;
+          return this.applyReviewEvent({ ...event, type: verdict, data: {
+            ...event.data, outcome: { head_sha: headSha, blocking_findings: findings },
+          } });
+        }
+      }
+    }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
       if (event.type !== 'task.failed' || event.source?.watchdog !== true || event.data?.workflowEvent !== 'watchdog.failed' || result.reconcile) return result;
