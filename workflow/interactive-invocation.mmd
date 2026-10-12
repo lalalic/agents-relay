@@ -1,0 +1,37 @@
+flowchart LR
+%% relay: initial awaiting_decision
+awaiting_decision["state: awaiting_decision"]
+changes["state: changes_requested"]
+approved["state: approved"]
+context["guard: currentInvocation"]
+awaiting["guard: awaitingDecision"]
+revision["guard: currentRevision"]
+duplicateChanges["guard: duplicateDelivery"]
+duplicateApproved["guard: duplicateDelivery"]
+decisionKind["guard: changesRequested"]
+requestChanges["action: interactive.requestChanges"]
+approve["action: interactive.approve"]
+wake["action: interactive.wakeWorker"]
+wakeChanges["action: interactive.wakeWorker"]
+
+awaiting_decision -->|on: task.interactive_decision| context
+changes -->|on: task.interactive_decision| duplicateChanges
+approved -->|on: task.interactive_decision| duplicateApproved
+context -->|true| awaiting
+context -->|false| awaiting_decision
+awaiting -->|true| revision
+awaiting -->|false| awaiting_decision
+revision -->|true| decisionKind
+revision -->|false| awaiting_decision
+decisionKind -->|true| requestChanges
+decisionKind -->|false| approve
+requestChanges --> wakeChanges
+wakeChanges -->|to: changes_requested| changes
+approve --> wake
+wake -->|to: approved| approved
+duplicateChanges -->|true| wakeChanges
+duplicateChanges -->|false| changes
+duplicateApproved -->|true| wake
+duplicateApproved -->|false| approved
+changes -->|on: task.interactive_recover| wakeChanges
+approved -->|on: task.interactive_recover| wake

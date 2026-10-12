@@ -7,7 +7,9 @@ import type { PullRequestState } from './store.js';
 import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
 import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
+import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
 import { observability } from './observability.js';
+import { hostInvocationTablesSql, recordHostInvocationEvent, hasHostInvocationDecision, recordHostInvocationDecision, type HostInvocationReceipt } from './host-invocation-store.js';
 import {
   ProjectionOutbox,
   SCHEMA_VERSION,
@@ -29,7 +31,6 @@ export type {
   ProjectionRequest,
   ProjectionStatus,
 } from './projection-outbox.js';
-
 export type PullRequestFacts = {
   state: PullRequestState;
   head: { ref: string; sha: string } | null;
@@ -56,6 +57,9 @@ export interface RelayStore {
   recordExecutionProcess(record: ExecutionProcessRecord): Promise<void>;
   loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
   finishExecutionProcess(jobId: string, taskId: string, executionId: string, at?: string): Promise<void>;
+  recordHostInvocationEvent?(delivery: InteractiveDecisionDelivery, outcome: InteractiveDecisionOutcome, fingerprint: string): Promise<void>;
+  hasHostInvocationDecision?(jobId: string, taskId: string, invocationId: string, fingerprint?: string): Promise<boolean>;
+  recordHostInvocationDecision?(delivery: InteractiveDecisionDelivery, fingerprint: string): Promise<{ outcome: InteractiveDecisionOutcome; reason: string; invocation?: InteractiveInvocation }>;
   enqueueProjection(request: ProjectionRequest): Promise<void>;
   enqueueExternalActionOnce?(request: ProjectionRequest): Promise<boolean>;
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
@@ -70,7 +74,6 @@ export interface RelayStore {
   terminalProjectionCount(): Promise<number>;
   close(): void;
 }
-
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
   if (!local) return structuredClone(remote);
   return remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
@@ -83,7 +86,6 @@ function mergeRecords<T extends { id: string; updatedAt: string }>(local: readon
   for (const item of remote) if (!localIds.has(item.id)) merged.push(structuredClone(item));
   return merged;
 }
-
 export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   const base = remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
   base.tasks = mergeRecords<Task>(local.tasks, remote.tasks);
@@ -102,7 +104,6 @@ function monotonicJobTimestamp(previous: string, candidate = new Date().toISOStr
   if (!Number.isFinite(prior)) return candidate;
   return new Date(Math.max(Number.isFinite(next) ? next : Date.now(), prior + 1)).toISOString();
 }
-
 export class SQLiteRelayStore implements RelayStore {
   private readonly db: DatabaseSync;
   private readonly outbox: ProjectionOutbox;
@@ -115,7 +116,6 @@ export class SQLiteRelayStore implements RelayStore {
     this.outbox = new ProjectionOutbox(this.db);
     this.outbox.resetProcessing(new Date().toISOString());
   }
-
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS relay_meta (
@@ -160,6 +160,7 @@ export class SQLiteRelayStore implements RelayStore {
         ended_at TEXT,
         PRIMARY KEY(job_id,task_id,execution_id)
       );
+      ${hostInvocationTablesSql}
       ${ProjectionOutbox.createTableSql()}
       ${ProjectionOutbox.createIndexSql()}
     `);
@@ -174,7 +175,6 @@ export class SQLiteRelayStore implements RelayStore {
   async recordPublication(jobId: string, deliveryId: string, publication: PackagePublication | null, failure: PackagePublishFailure | null, observedAt?: string): Promise<boolean> {
     return recordPublicationInDatabase(this.db, jobId, deliveryId, publication, failure, observedAt);
   }
-
   async loadPublication(jobId: string): Promise<PublicationState | null> {
     return loadPublicationFromDatabase(this.db, jobId);
   }
@@ -182,7 +182,6 @@ export class SQLiteRelayStore implements RelayStore {
   async listPublicationEvents(jobId: string): Promise<PublicationEvent[]> {
     return listPublicationEventsFromDatabase(this.db, jobId);
   }
-
   async loadJob(jobId: string): Promise<Job | null> {
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
     return row?.json ? JSON.parse(row.json) as Job : null;
@@ -192,7 +191,6 @@ export class SQLiteRelayStore implements RelayStore {
     const rows = this.db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as unknown as Array<{ json: string }>;
     return rows.map(row => JSON.parse(row.json) as Job);
   }
-
   async saveJob(job: Job): Promise<void> {
     this.writeJobSnapshot(job, new Date().toISOString());
   }
@@ -218,7 +216,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   async ingestJobSnapshot(job: Job): Promise<Job> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -255,7 +252,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   private writeJobSnapshot(job: Job, now: string): void {
     this.db.prepare(`
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)
@@ -269,7 +265,6 @@ export class SQLiteRelayStore implements RelayStore {
     const rows = this.db.prepare('SELECT json FROM agent_snapshot ORDER BY agent_id').all() as unknown as Array<{ json: string }>;
     return rows.map(row => JSON.parse(row.json) as AgentRegistration);
   }
-
   async saveAgents(agents: readonly AgentRegistration[]): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -297,7 +292,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   async saveAgentWithProjection(agent: AgentRegistration, request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -318,7 +312,6 @@ export class SQLiteRelayStore implements RelayStore {
       ON CONFLICT(agent_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
     `).run(agent.id, JSON.stringify(agent), now);
   }
-
   private markAgentRegistryObserved(now: string): void {
     this.db.prepare(`
       INSERT INTO relay_meta(key,value) VALUES('agent_registry_observed_at',?)
@@ -331,7 +324,6 @@ export class SQLiteRelayStore implements RelayStore {
     if (!row?.state || !row.observed_at) return null;
     return { state: row.state, head: row.head_ref && row.head_sha ? { ref: row.head_ref, sha: row.head_sha } : null, observedAt: row.observed_at };
   }
-
   async savePullRequestFacts(facts: PullRequestFacts): Promise<void> {
     // UNKNOWN means absence of confirmed external evidence; never persist it as a fact.
     if (facts.state === 'UNKNOWN') return;
@@ -357,7 +349,6 @@ export class SQLiteRelayStore implements RelayStore {
       record.pid, record.pgid, record.startToken, record.observedAt, record.endedAt ?? null,
     );
   }
-
   async loadExecutionProcess(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null> {
     const row = this.db.prepare(`SELECT lease_owner,host,pid,pgid,start_token,observed_at,ended_at
       FROM execution_process WHERE job_id=? AND task_id=? AND execution_id=?`).get(jobId, taskId, executionId) as
@@ -371,6 +362,16 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.prepare('UPDATE execution_process SET ended_at=COALESCE(ended_at,?) WHERE job_id=? AND task_id=? AND execution_id=?')
       .run(at, jobId, taskId, executionId);
   }
+  async recordHostInvocationEvent(delivery: InteractiveDecisionDelivery, outcome: InteractiveDecisionOutcome, fingerprint: string): Promise<void> {
+    recordHostInvocationEvent(this.db, delivery, outcome, fingerprint);
+  }
+
+  async hasHostInvocationDecision(jobId: string, taskId: string, invocationId: string, fingerprint?: string): Promise<boolean> {
+    return hasHostInvocationDecision(this.db, jobId, taskId, invocationId, fingerprint);
+  }
+  async recordHostInvocationDecision(delivery: InteractiveDecisionDelivery, fingerprint: string): Promise<HostInvocationReceipt> {
+    return recordHostInvocationDecision(this.db, delivery, fingerprint, (job, at) => this.writeJobSnapshot(job, at));
+  }
 
   async markEventProcessed(eventId: string, stream: string | null = null, sequence: number | null = null): Promise<boolean> {
     const result = this.db.prepare(`
@@ -378,7 +379,6 @@ export class SQLiteRelayStore implements RelayStore {
     `).run(eventId, stream, sequence, new Date().toISOString());
     return Number(result.changes) === 1;
   }
-
   private enqueueProjectionInTransaction(request: ProjectionRequest, now: string): boolean {
     return this.outbox.enqueue(request, now);
   }
@@ -401,7 +401,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
 
   /**
    * Idempotent external-effect reservation. Repeated Graph reconciliation
@@ -429,7 +428,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   async claimDueProjections(limit = 50, now = new Date()): Promise<ProjectionOutboxItem[]> {
     return this.outbox.claimDue(limit, now);
   }
