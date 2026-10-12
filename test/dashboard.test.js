@@ -823,3 +823,34 @@ test('clipboard and shortcut include job ID PR and title', () => {
   assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
   assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
 });
+
+test('selectJob copies the complete actual title for local and GitHub Jobs', () => {
+  const functions = ['jobChatRef', 'copySelectedJobIdentity', 'selectJob'];
+  const source = functions.map(name => {
+    const line = dashboardHtml.split('\n').find(line => line.startsWith(`function ${name}(`));
+    assert.ok(line, `${name} exists in the rendered Dashboard`);
+    return line;
+  }).join('\n');
+  const copied = [];
+  const sandbox = {
+    navigator: { clipboard: { writeText: async value => { copied.push(value); } } },
+    repoName: repo => repo,
+    value: input => String(input ?? ''),
+    jobSelectionKey: job => job.id,
+    rememberSelection() {},
+    clearEvents() {},
+    renderAll() {},
+    loadEventHistory: async () => {},
+    location: { hash: '' },
+    encodeURIComponent,
+    selectedJob: null,
+    selectedTaskId: null,
+    eventTaskId: null,
+  };
+  new Script(source + '\nthis.runSelection=selectJob;').runInNewContext(sandbox);
+  sandbox.runSelection({ id: 'local-7', repository: 'lalalic/agents-relay', prNumber: 0, title: 'Full local Job title' });
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-7: Full local Job title');
+  assert.doesNotMatch(copied.at(-1), /pr#0/);
+  sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 0, externalPrNumber: 280, title: 'Full GitHub Job title' });
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-8/pr#280: Full GitHub Job title');
+});
