@@ -29,12 +29,14 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'context', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
     if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
     const taskId = arg(args, '--task-id');
+    if (action === 'comment') { if (!taskId) throw new Error('task comment requires --task-id'); const message = await textOption(args, '--message', '--message-file'); console.log(JSON.stringify(await relayControlCommand(args, { command: 'task.comment', jobId, taskId, message }), null, 2)); return; }
+    if (action === 'comments') { if (!taskId) throw new Error('task comments requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task.comments ?? [], null, 2)); return; }
     if (action === 'context') { if (!taskId) throw new Error('task context requires --task-id'); const job = await relayControlJob(args, jobId); console.log(JSON.stringify(taskExecutionContext(job, taskId, arg(args, '--execution-id')), null, 2)); return; }
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }

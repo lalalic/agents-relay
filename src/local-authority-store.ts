@@ -258,7 +258,7 @@ export class LocalAuthorityDurableStore implements DurableStore {
     if (current.attempt > task.attempt || current.updatedAt > task.updatedAt) return job;
     if (current.attempt === task.attempt && current.updatedAt === task.updatedAt
         && TASK_STATE_ORDER[current.state] >= TASK_STATE_ORDER[task.state]) return job;
-    job.tasks[index] = structuredClone(task);
+    job.tasks[index] = { ...structuredClone(task), comments: current.comments ?? task.comments };
     return job;
     });
   }

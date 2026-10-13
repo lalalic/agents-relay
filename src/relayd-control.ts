@@ -1,3 +1,4 @@
+import { appendTaskComment } from './task-comments.js';
 import type { Job, Task } from './types.js';
 import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
@@ -132,6 +133,14 @@ export function createWorkspaceControl(deps: any) {
       for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
       await pool.reconcileLocalJob(jobId, 'control.job.unblock');
       return await store.load(jobId);
+    }
+    if (command === 'task.comment') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const message = typeof body.message === 'string' ? body.message : '';
+      if (!taskId || !message.trim()) throw new Error('task comment requires taskId and message');
+      let appended;
+      await store.mutateJob(jobId, (current: Job) => { appended = appendTaskComment(current, taskId, message); return current; });
+      return appended;
     }
     if (command === 'task.supersede') {
       const taskId = typeof body.taskId === 'string' ? body.taskId : '';

@@ -8,7 +8,7 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
   if (task.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(task.state))
     throw new Error(`Stale Task execution ${taskId}/${executionId}; current state ${task.state}`);
   return { job: { id: job.id, repository: job.repository, title: job.title, objective: job.objective,
-    projectPath: job.projectPath, state: job.state }, task, dependencies: task.dependencies.map(id => job.tasks.find(item => item.id === id) ?? { id, missing: true }),
+    projectPath: job.projectPath, state: job.state }, task, comments: task.comments ?? [], dependencies: task.dependencies.map(id => job.tasks.find(item => item.id === id) ?? { id, missing: true }),
     plan: job.plans?.find(plan => plan.id === task.planningDecisionId) ?? null };
 }
 

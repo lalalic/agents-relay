@@ -135,6 +135,7 @@ export type ChatGptThreadDelivery = {
   deliveredAt?: string | null;
 };
 export type Task = {
+  comments?: import('./task-comments.js').TaskComment[];
   jobId?: string; id: string; title?: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
   /** Internal E2E-only planner option, consumed before execution. */
