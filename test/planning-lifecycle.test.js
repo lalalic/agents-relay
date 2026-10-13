@@ -49,7 +49,7 @@ test('zero-task autonomous jobs remain idle until the orchestrator creates the f
 });
 test('reconcile preserves an existing durable task when a planner repeats its id with a changed definition', async () => {
   const existing = { ...work('planned'), input: 'original durable work' };
-  const plannerTask = { ...work('planner-1'), kind: 'planner', state: 'SUCCEEDED', plannerResult: { objective_status: 'in_progress', assessment: 'repeat', next_tasks: [{ id: 'planned', input: 'changed planner wording', adapter: 'codex', output: { kind: 'task_pr' } }] }, result: { summary: 'repeat' } };
+  const plannerTask = { ...work('planner-1'), kind: 'planner', state: 'SUCCEEDED', plannerResult: { objective_status: 'in_progress', assessment: 'repeat', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'planned', input: 'changed planner wording', adapter: 'codex', output: { kind: 'task_pr' } }] }, result: { summary: 'repeat' } };
   const store = new InMemoryStore(job([plannerTask, existing]));
   const bus = new MemoryEventBus();
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'done', next_tasks: [] }) }, eventBus: bus });

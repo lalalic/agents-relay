@@ -4,7 +4,7 @@ import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
-import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks } from './troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, refreshTroubleshooterInput } from './troubleshooter.js';
 import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
@@ -101,6 +101,11 @@ export class Reconciler extends ReconcilerReviewBase {
         detach: (promise, currentJobId, planId, context) => this.detach(promise, currentJobId, planId, context),
         reconcile: currentJobId => this.reconcile(currentJobId),
       }, jobId);
+      for (const { original, recovery } of pendingTroubleshooterReopens(await this.store.load(jobId))) {
+        await transitionTaskEvent(recovery, 'recovery.reopen', { troubleshooterRecovery: recovery.agentName === 'troubleshooter' });
+        refreshTroubleshooterInput(job, original, recovery); await this.store.saveTask(recovery);
+        await this.emit(eventFor(job.id, recovery.id, original.id, 'troubleshooter.reopened', 'queued', `Reusing Troubleshooter ${recovery.id} for Task ${original.id} attempt ${original.attempt}`, 'orchestrator', { originalTaskId: original.id, attempt: original.attempt }));
+      }
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
         await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));

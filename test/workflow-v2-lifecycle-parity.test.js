@@ -74,9 +74,10 @@ const taskRuntime = new GraphRuntime(taskSource, {
     runnable: boolGuard('runnable'),
     dispatchable: boolGuard('dispatchable'),
     recoverableExecution: boolGuard('recoverableExecution'),
+    troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
     retryAvailable: boolGuard('retryAvailable'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen']),
   actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','effect.launchTask']),
 });
 

@@ -7,10 +7,10 @@ function slug(value: string): string {
 }
 
 export function troubleshooterTaskId(task: Task): string {
-  return `troubleshoot-${slug(task.id)}-a${task.attempt}`;
+  return `troubleshoot-${slug(task.id)}`;
 }
 
-function failureInput(job: Job, task: Task): string {
+function failureInput(job: Job, task: Task, recoveryId = troubleshooterTaskId(task)): string {
   return `Recover the failed/blocked task below and make it move again if technically safe.
 
 Original repository: ${job.repository}
@@ -29,7 +29,7 @@ Retrieve this task's lifecycle event history before classifying the root cause o
 GET http://127.0.0.1:8787/api/events?job=${encodeURIComponent(job.id)}&task=${encodeURIComponent(task.id)}&limit=200
 Inspect event order, type/status, source, data/phase, duplicate events, missing expected lifecycle events, late events, and execution identifiers. If the event stream points to delivery/runtime failure, inspect the corresponding Relay/worker/tool logs too. Do not treat the final task.error string as the complete root cause.
 
-Follow the selected Troubleshooter agent contract. Diagnose root cause from durable task state + event history + relevant runtime logs before retry. The final task.error string alone is never sufficient. Classify the evidence as model/provider/runtime, worker/tool/infrastructure, semantic task failure, or timeout/unknown. Select exactly one graph-enabled resolution path: exact_original_retry, same_job_dependency, blocker_job_dependency (with merge or verified mode), escalation_gate, or cancel_supersede. Only model/provider/runtime evidence may call the narrow model re-decision action; that action gathers fresh usage, reloads current policy, updates this exact Task's routing, and does not retry it. Troubleshooter must then reactivate/retry this exact original task and verify progress. Use the dedicated agents-relay task recover path with --task-id ${task.id} and --recovery-task-id ${troubleshooterTaskId(task)}; never use ordinary task retry from a Troubleshooter because manual retry intentionally supersedes active recovery. Do not manually choose a provider/model or create a replacement task; no replacement_task action exists. If the blocker is a shared worker/runtime/tool defect, create and directly complete a P0/self-job in the owning repository, including required release/deploy verification. If diagnosis suggests a genuine human/external blocker, do not publish task.blocked directly and do not implement the result branch procedurally. Call agents-relay escalation with the original intent, blocker, and relevant context. Pass any caller-defined notification plan through --on-needs-user/--on-needs-user-file; do not hard-code a channel. The canonical escalation graph invokes Neo escalation and owns the resolved/failed/needs_user branch; follow its selected outcome. Retry this exact original task only after the blocker is removed, reconcile the original job, and verify durable progress.`;
+Follow the selected Troubleshooter agent contract. Diagnose root cause from durable task state + event history + relevant runtime logs before retry. The final task.error string alone is never sufficient. Classify the evidence as model/provider/runtime, worker/tool/infrastructure, semantic task failure, or timeout/unknown. Select exactly one graph-enabled resolution path: exact_original_retry, same_job_dependency, blocker_job_dependency (with merge or verified mode), escalation_gate, or cancel_supersede. Only model/provider/runtime evidence may call the narrow model re-decision action; that action gathers fresh usage, reloads current policy, updates this exact Task's routing, and does not retry it. Troubleshooter must then reactivate/retry this exact original task and verify progress. Use the dedicated agents-relay task recover path with --task-id ${task.id} and --recovery-task-id ${recoveryId}; never use ordinary task retry from a Troubleshooter because manual retry intentionally supersedes active recovery. Do not manually choose a provider/model or create a replacement task; no replacement_task action exists. If the blocker is a shared worker/runtime/tool defect, create and directly complete a P0/self-job in the owning repository, including required release/deploy verification. If diagnosis suggests a genuine human/external blocker, do not publish task.blocked directly and do not implement the result branch procedurally. Call agents-relay escalation with the original intent, blocker, and relevant context. Pass any caller-defined notification plan through --on-needs-user/--on-needs-user-file; do not hard-code a channel. The canonical escalation graph invokes Neo escalation and owns the resolved/failed/needs_user branch; follow its selected outcome. Retry this exact original task only after the blocker is removed, reconcile the original job, and verify durable progress.`;
 }
 
 function belongsToCurrentRun(job: Job, task: Task): boolean {
@@ -37,17 +37,44 @@ function belongsToCurrentRun(job: Job, task: Task): boolean {
   return !slot || task.createdAt >= slot;
 }
 
-const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED']);
+const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'UNBLOCKED']);
 
 function recoveryTargetsTask(recovery: Task, original: Task): boolean {
   if (recovery.agentName !== 'troubleshooter') return false;
   if (recovery.parentTaskId) return recovery.parentTaskId === original.id;
-  return recovery.id.startsWith(`troubleshoot-${slug(original.id)}-a`);
+  return recovery.id === troubleshooterTaskId(original) || recovery.id.startsWith(`troubleshoot-${slug(original.id)}-a`);
 }
 
 function hasRecoveryBarrier(job: Job, original: Task): boolean {
-  return job.tasks.some(task => recoveryTargetsTask(task, original)
-    && (ACTIVE_RECOVERY_STATES.has(task.state) || ['FAILED', 'CANCELLED'].includes(task.state)));
+  // Exactly one durable recovery identity per original Task, across all failures.
+  return job.tasks.some(task => recoveryTargetsTask(task, original));
+}
+
+function recoveryEpisode(recovery: Task): number {
+  return recovery.recoveryForAttempt ?? Number(/-a(\d+)$/.exec(recovery.id)?.[1] ?? -1);
+}
+
+/** Reuse the existing recovery rather than creating one child per worker retry. */
+export function pendingTroubleshooterReopens(job: Job): Array<{ original: Task; recovery: Task }> {
+  const pending: Array<{ original: Task; recovery: Task }> = [];
+  for (const original of job.tasks) {
+    if (original.kind === 'planner' || original.agentName === 'troubleshooter' || original.state !== 'FAILED') continue;
+    if (!belongsToCurrentRun(job, original)) continue;
+    const recoveries = job.tasks.filter(candidate => recoveryTargetsTask(candidate, original));
+    if (!recoveries.length || recoveries.some(candidate => ACTIVE_RECOVERY_STATES.has(candidate.state))) continue;
+    const recovery = recoveries.sort((a,b) => recoveryEpisode(b) - recoveryEpisode(a))[0];
+    if (!['SUCCEEDED', 'CANCELLED'].includes(recovery.state) || recoveryEpisode(recovery) >= original.attempt) continue;
+    pending.push({ original, recovery });
+  }
+  return pending;
+}
+
+export function refreshTroubleshooterInput(job: Job, original: Task, recovery: Task): void {
+  recovery.input = failureInput(job, original, recovery.id);
+  recovery.recoveryForAttempt = original.attempt;
+  recovery.maxAttempts = Math.max(recovery.maxAttempts, recovery.attempt + 3);
+  recovery.routing = undefined;
+  recovery.workerSelection = undefined;
 }
 
 export function pendingTroubleshooterTasks(job: Job): Task[] {
@@ -69,6 +96,8 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
     recoveries.push(createTaskEntity(job, {
       jobId: job.id,
       id,
+      title: `Diagnose and recover failed task ${task.id}`,
+      recoveryForAttempt: task.attempt,
       kind: 'work',
       priority: 'P0',
       storySize: 'M',

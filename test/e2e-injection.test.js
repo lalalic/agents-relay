@@ -32,7 +32,7 @@ test('after action executes raw method then throws, pass runs as-is',async()=>{
 });
 test('Planner retains structured --test-injection option',()=>{
  const config={method:'github.projectLocalMerge',action:'throw',execution:'skip',error:{code:'503',message:'injected'}};
- const plan=parsePlannerResult({objective_status:'in_progress',assessment:'test',next_tasks:[{id:'impl',input:'work',output:{kind:'task_pr'},'--test-injection':config}]});
+ const plan=parsePlannerResult({objective_status:'in_progress',assessment:'test',next_tasks:[{title: 'Implement and verify durable task outputs', id:'impl',input:'work',output:{kind:'task_pr'},'--test-injection':config}]});
  assert.equal(plan.next_tasks[0].testInjection.method,config.method);assert.equal(plan.next_tasks[0].testInjection.error.message,config.error.message);
 });
 test('projection injection is atomically consumed once for authorized repository',async()=>{

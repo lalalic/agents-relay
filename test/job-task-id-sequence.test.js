@@ -47,8 +47,8 @@ test('planner Task aliases resolve to durable repository IDs without losing DAG 
   const dir=await mkdtemp(join(tmpdir(),'relay-planner-ids-'));
   try {
     const raw={objective_status:'in_progress',assessment:'graph',unblocks:[],next_tasks:[
-      {id:'story',input:'produce story',output:{kind:'task_pr'},dependencies:[]},
-      {id:'direction',input:'direct',output:{kind:'task_pr'},parentTaskId:'story',dependencies:['story','external-task']},
+      {title: 'Implement and verify durable task outputs', id:'story',input:'produce story',output:{kind:'task_pr'},dependencies:[]},
+      {title: 'Implement and verify durable task outputs', id:'direction',input:'direct',output:{kind:'task_pr'},parentTaskId:'story',dependencies:['story','external-task']},
     ]};
     const result=assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir);
     const [story,direction]=result.next_tasks;

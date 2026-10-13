@@ -116,7 +116,7 @@ For `objective_status: "satisfied"`, `assessment` may be a concise evidence-base
 
 Each item in `next_tasks` MUST include a concise, meaningful `title` of **5–8 words** (separate from the detailed `input`). Do not use the input text as a title.
 
-Each item in next_tasks contains id, input, output, and storySize. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain parentTaskId, priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
+Each item in `next_tasks` contains **required `title`**, id, input, output, and storySize. The planner parser rejects missing titles and titles outside 5–8 whitespace-separated words. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain parentTaskId, priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
 
 ### Exact `next_tasks` serialization
 

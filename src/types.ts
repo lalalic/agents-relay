@@ -146,6 +146,7 @@ export type Task = {
   interactiveInvocation?: import('./interactive-invocation.js').InteractiveInvocation;
   manualStateOverrides?: ManualTaskStateOverride[];
   resolution?: TaskResolution;
+  recoveryForAttempt?: number;
   failureReason?: string;
   blockedBy?: TaskBlockerReference;
   blockedBaseline?: BlockedBaseline;

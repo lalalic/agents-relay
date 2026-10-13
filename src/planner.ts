@@ -10,7 +10,7 @@ import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { prepareReviewerThreadDelivery, chatgptThreadRequirements } from './reviewer-thread.js';
-import { spawnOwnedProcess } from './owned-process.js';
+import { spawnOwnedProcess } from './owned-process.js'; import { requiredPlannerTaskTitle } from './planner-task-title.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -292,7 +292,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, title: optionalString(task.title, `next_tasks[${index}].title`), parentTaskId, input: task.input, priority, storySize,
+      id, title: requiredPlannerTaskTitle(task.title, index), parentTaskId, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       testInjection: parseTestInjection(task.testInjection ?? task['--test-injection']) ?? optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),

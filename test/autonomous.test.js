@@ -19,7 +19,7 @@ const route = { provider: 'openai', model: 'gpt-5', decidedBy: 'test', decidedAt
 const output = { kind: 'task_pr' };
 const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do the described work', output, routing: route, state, attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
 const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
-const spec = id => ({ id, input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
+const spec = id => ({ id, title: 'Implement and verify durable task outputs', input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
 function startedAutonomousJob() {
   const seed = { ...task('seed', 'SUCCEEDED'), result: { summary: 'seed complete' } };
   return job([seed]);
@@ -58,7 +58,7 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   const root = { ...job([], 'fixed'), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   let observed;
-  const planner = { plan: async context => { observed = context; return { objective_status: 'in_progress', assessment: 'need implementation', next_tasks: [{ id: 'implement', input: 'implement the objective', output, storySize: 'S', workerRequirements: { capabilities: ['model'] } }] }; } };
+  const planner = { plan: async context => { observed = context; return { objective_status: 'in_progress', assessment: 'need implementation', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'implement', input: 'implement the objective', output, storySize: 'S', workerRequirements: { capabilities: ['model'] } }] }; } };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto', 'focus on the durable objective');
   assert.equal(result.round.id, 'plan-1');
@@ -88,7 +88,7 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
   let observedTriggerHeadSha;
   const reconciler = managedReconciler(store, {
     owner: 'test', adapters: [], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
-    planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{
+    planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{title: 'Implement and verify durable task outputs',
       id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
     }] }; } },
   });
@@ -114,8 +114,8 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   const root = { ...job([], 'fixed'), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   const planner = { plan: async () => ({ objective_status: 'in_progress', assessment: 'hierarchy', next_tasks: [
-    { id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
-    { id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
+    {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
+    {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
   ] }) };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto');
@@ -150,7 +150,7 @@ test('manual plan rejects a concurrent active planning round', async () => {
 
 test('malformed manual planner output fails the round without materializing children', async () => {
   const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'in_progress', assessment: 'bad', next_tasks: [{ id: 'broken', input: 'work without output' }] }) } });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'in_progress', assessment: 'bad', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'broken', input: 'work without output' }] }) } });
   await assert.rejects(() => reconciler.planJob('auto'), /output is required/);
   const saved = await store.load('auto');
   assert.equal(saved.tasks.some(item => item.id === 'broken'), false);
@@ -290,16 +290,16 @@ test('planner persistence delegates reverse unblock registration to durable stor
 });
 
 test('planner rejects command-like shell tasks and requires output', () => {
-  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
-  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',adapter:'codex'}] }), /output is required/);
+  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
+  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'work',adapter:'codex'}] }), /output is required/);
 });
 
 test('planner reports malformed nested output precisely', () => {
-  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{id:'x',input:'work',output:'file'}] }), /output must be an object/);
+  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'work',output:'file'}] }), /output must be an object/);
 });
 
 test('planner preserves worker requirements for worker-router selection', () => {
-  const result = parsePlannerResult({ objective_status: 'in_progress', assessment: 'work', next_tasks: [{
+  const result = parsePlannerResult({ objective_status: 'in_progress', assessment: 'work', next_tasks: [{title: 'Implement and verify durable task outputs',
     id: 'resource-aware', input: 'do work', adapter: 'codex', output,
     workerRequirements: { capabilities: ['model', 'browser-harness'], runtime: 'hosted', taskKind: 'research', labels: { region: 'ca' } },
   }] });
@@ -340,7 +340,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const bus = new MemoryEventBus();
   const store = new InMemoryStore(startedAutonomousJob());
   let calls = 0;
-  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{ ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
+  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs',  ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
   const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
   const stop = await reconciler.watch('auto');
   await settle(reconciler, 8);
@@ -442,19 +442,19 @@ test('story sizes map only the overall execution timeout', () => {
   assert.equal(chatGptStartAckTimeoutMs(900000),300000);
   assert.equal(chatGptStartAckTimeoutMs(2700000),600000);
   assert.equal(chatGptStartAckTimeoutMs(1800000),600000);
-  const sized=parsePlannerResult({objective_status:'in_progress',assessment:'size',next_tasks:[{id:'large',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'L'}]});
+  const sized=parsePlannerResult({objective_status:'in_progress',assessment:'size',next_tasks:[{title: 'Implement and verify durable task outputs', id:'large',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'L'}]});
   assert.equal(sized.next_tasks[0].storySize,'L');
   assert.equal(sized.next_tasks[0].timeoutMs,2700000);
-  const defaulted=parsePlannerResult({objective_status:'in_progress',assessment:'default',next_tasks:[{id:'medium',input:'work',adapter:'codex',output:{kind:'task_pr'}}]});
+  const defaulted=parsePlannerResult({objective_status:'in_progress',assessment:'default',next_tasks:[{title: 'Implement and verify durable task outputs', id:'medium',input:'work',adapter:'codex',output:{kind:'task_pr'}}]});
   assert.equal(defaulted.next_tasks[0].storySize,'M');
   assert.equal(defaulted.next_tasks[0].timeoutMs,900000);
 });
 
 
 test('planner doubles story-size timeout only for high reasoning', () => {
-  const high=parsePlannerResult({objective_status:'in_progress',assessment:'high',next_tasks:[{id:'high',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'high',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
+  const high=parsePlannerResult({objective_status:'in_progress',assessment:'high',next_tasks:[{title: 'Implement and verify durable task outputs', id:'high',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'high',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
   assert.equal(high.next_tasks[0].timeoutMs,1800000);
-  const normal=parsePlannerResult({objective_status:'in_progress',assessment:'normal',next_tasks:[{id:'normal',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'medium',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
+  const normal=parsePlannerResult({objective_status:'in_progress',assessment:'normal',next_tasks:[{title: 'Implement and verify durable task outputs', id:'normal',input:'work',adapter:'codex',output:{kind:'task_pr'},storySize:'M',routing:{provider:'openai',model:'gpt-test',reasoning:'medium',decidedBy:'test',decidedAt:new Date().toISOString()}}]});
   assert.equal(normal.next_tasks[0].timeoutMs,900000);
 });
 
@@ -463,7 +463,7 @@ test('planner parser rejects malformed Agent Graph before child materialization'
   assert.throws(() => parsePlannerResult({
     objective_status: 'in_progress',
     assessment: 'work',
-    next_tasks: [{ id: 'bad-graph', input: 'work', output: { kind: 'task_pr' }, agentGraph: 'graph LR\na --> b' }],
+    next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'bad-graph', input: 'work', output: { kind: 'task_pr' }, agentGraph: 'graph LR\na --> b' }],
   }), /next_tasks\[0\]\.agentGraph is invalid: Agent Graph must start with Mermaid flowchart/);
 });
 
@@ -472,5 +472,5 @@ test('planner instruction contract forbids self-cycles in optional agent graphs'
   const prompt = await readFile(new URL('../skills/agents-relay/agents/planner.agent.md', import.meta.url), 'utf8');
   assert.match(prompt, /agentGraph.*optional/i);
   assert.match(prompt, /do \*\*not\*\* create an edge from an agent\/node to itself/);
-  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'x', next_tasks: [{ id: 'work', input: 'work', storySize: 'S', output: { kind: 'task_pr' }, agentGraph: 'flowchart LR\n  implementation --> implementation' }] }), /Agent Graph self-cycle at implementation/);
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'x', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'work', input: 'work', storySize: 'S', output: { kind: 'task_pr' }, agentGraph: 'flowchart LR\n  implementation --> implementation' }] }), /Agent Graph self-cycle at implementation/);
 });

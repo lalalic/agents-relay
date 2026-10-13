@@ -1,6 +1,6 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, troubleshooterTaskId } from '../dist/troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, troubleshooterTaskId } from '../dist/troubleshooter.js';
 import { InMemoryStore } from '../dist/store.js';
 import { Reconciler } from '../dist/reconciler.js';
 import { MemoryEventBus } from '../dist/events.js';
@@ -102,7 +102,7 @@ test('active recovery suppresses a new troubleshooter when the root attempt incr
     error: 'same deterministic delivery failure after retry',
     updatedAt: now(),
   };
-  assert.notEqual(troubleshooterTaskId(retriedFailure), recovery.id);
+  assert.equal(troubleshooterTaskId(retriedFailure), recovery.id);
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 
@@ -125,15 +125,53 @@ test('failed prior recovery suppresses another automatic recovery generation', (
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 
-test('successful prior recovery permits a later recovery generation', () => {
+test('successful prior recovery is reopened rather than creating another Task', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
   recovery.state = 'SUCCEEDED';
 
   const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
-  const [next] = pendingTroubleshooterTasks(job([retriedFailure, recovery]));
-  assert.equal(next.id, troubleshooterTaskId(retriedFailure));
-  assert.equal(next.parentTaskId, failed.id);
+  assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
+  const [next] = pendingTroubleshooterReopens(job([retriedFailure, recovery]));
+  assert.equal(next.recovery.id, recovery.id);
+  assert.equal(next.original.id, failed.id);
+});
+
+test('one durable Troubleshooter reopens for a subsequent failed attempt', async () => {
+  const original = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([original]));
+  recovery.state = 'SUCCEEDED';
+  const again = { ...original, attempt: 2, error: 'second separate delivery failure' };
+  const store = new InMemoryStore(job([again, recovery]));
+  const emitted = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, emit: event => emitted.push(event) });
+  await reconciler.reconcile(original.jobId);
+  await reconciler.reconcile(original.jobId);
+  const result = await store.load(original.jobId);
+  const recoveries = result.tasks.filter(t => t.agentName === 'troubleshooter');
+  assert.equal(recoveries.length, 1);
+  assert.equal(recoveries[0].id, recovery.id);
+  assert.equal(recoveries[0].state, 'QUEUED');
+  assert.equal(recoveries[0].recoveryForAttempt, 2);
+  assert.match(recoveries[0].input, /second separate delivery failure/);
+  assert.equal(emitted.filter(e => e.type === 'troubleshooter.reopened').length, 1);
+  assert.equal(emitted.filter(e => e.type === 'troubleshooter.created').length, 0);
+});
+
+test('legacy cancelled recovery can be reused without creating a third recovery', async () => {
+  const original = { ...failedReview(), attempt: 3 };
+  const [first] = pendingTroubleshooterTasks(job([{...original,attempt:1}]));
+  first.id = `troubleshoot-${original.id}-a1`;
+  first.state = 'SUCCEEDED';
+  first.recoveryForAttempt = undefined;
+  const second = { ...first, id: `troubleshoot-${original.id}-a2`, state: 'CANCELLED', createdAt: now(), updatedAt: now() };
+  const store = new InMemoryStore(job([original, first, second]));
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, emit() {} });
+  await reconciler.reconcile(original.jobId);
+  const result = await store.load(original.jobId);
+  assert.equal(result.tasks.filter(t => t.agentName === 'troubleshooter').length, 2);
+  assert.equal(result.tasks.find(t => t.id === second.id).state, 'QUEUED');
+  assert.equal(result.tasks.find(t => t.id === first.id).state, 'SUCCEEDED');
 });
 
 test('reconcile automatically creates and routes one troubleshooter for failed work', async () => {

@@ -22,6 +22,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'planner.failed',
   'planner.unavailable',
   'reconcile',
+  'recovery.reopen',
   'release',
   'retry',
   'review.started',

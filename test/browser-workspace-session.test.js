@@ -59,10 +59,10 @@ test('ChatGPT adapter uses Browser Workspace caller-owned session platform run',
   assert.match(source, /browserWorkerRunner/);
   assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
   assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
-  assert.match(source, /\['session', 'start'\]/);
+  assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /browserWorkerRunner/);
   assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
-  assert.match(source, /\['session', 'start'\]/);
+  assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /\['session', 'stop', sessionId\]/);
   assert.match(source, /\['session', 'exec', sessionId\]/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);

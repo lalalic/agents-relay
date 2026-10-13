@@ -298,7 +298,7 @@ async function findExistingReviewTurn(cli: BrowserWorkspaceCli, sessionId: strin
 }
 
 async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'temporary-submit' | 'new-turn' = 'temporary-submit', delivery?: ChatGptThreadDelivery): Promise<string> {
-  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start'], undefined, signal));
+  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
   const sessionId = session.session_id;
   if (typeof sessionId !== 'string' || !sessionId) throw new Error('browser-workspace session start returned no session_id');
   try {

@@ -77,7 +77,7 @@ test('planner declares worker requirements before model routing is selected', ()
   const result = parsePlannerResult({
     objective_status: 'in_progress',
     assessment: 'select a capable worker',
-    next_tasks: [{
+    next_tasks: [{title: 'Implement and verify durable task outputs',
       id: 'route-me',
       input: 'perform the task',
       workerRequirements: {
@@ -150,7 +150,7 @@ test('planner accepts executable tasks without adapter or model routing', () => 
   const result = parsePlannerResult({
     objective_status: 'in_progress',
     assessment: 'work',
-    next_tasks: [{ id: 'unrouted', input: 'do work', workerRequirements: { capabilities: ['model'] }, output: { kind: 'task_pr' }, storySize: 'S' }],
+    next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'unrouted', input: 'do work', workerRequirements: { capabilities: ['model'] }, output: { kind: 'task_pr' }, storySize: 'S' }],
   });
   assert.equal(result.next_tasks[0].adapter, undefined);
   assert.equal(result.next_tasks[0].routing, undefined);
@@ -182,7 +182,7 @@ test('reconciler materializes an unrouted planner child through worker-router be
     plannerResult: {
       objective_status: 'in_progress',
       assessment: 'route next',
-      next_tasks: [{
+      next_tasks: [{title: 'Implement and verify durable task outputs',
         id: 'planned-work',
         input: 'do work',
         workerRequirements: { capabilities: ['model'] },

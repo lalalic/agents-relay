@@ -18,6 +18,11 @@ recoverComplete["guard: recoverableExecution"]
 recoverBlocked["guard: recoverableExecution"]
 recoverFailed["guard: recoverableExecution"]
 recoverCancelled["guard: recoverableExecution"]
+troubleshooterRecovery["guard: troubleshooterRecovery"]
+recoveryReopenClearError["action: mutation.clearError"]
+recoveryReopenClearReason["action: mutation.clearFailureReason"]
+recoveryReopenClearLease["action: mutation.clearLease"]
+recoveryReopenClearExecution["action: mutation.clearExecution"]
 
 retryAvailableRunning["guard: retryAvailable"]
 plannerRetryAvailable["guard: retryAvailable"]
@@ -200,3 +205,12 @@ recoverFailed -->|true| failed
 failed -->|on: task.cancelled| recoverCancelled
 recoverCancelled -->|true| cancelled
 failed -->|on: cancel| cancelled
+
+%% Only a persistent Troubleshooter may reopen a terminal recovery for a new failure episode.
+succeeded -->|on: recovery.reopen| troubleshooterRecovery
+cancelled -->|on: recovery.reopen| troubleshooterRecovery
+troubleshooterRecovery -->|true| recoveryReopenClearError
+recoveryReopenClearError --> recoveryReopenClearReason
+recoveryReopenClearReason --> recoveryReopenClearLease
+recoveryReopenClearLease --> recoveryReopenClearExecution
+recoveryReopenClearExecution --> queued
