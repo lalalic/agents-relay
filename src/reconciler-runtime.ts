@@ -17,8 +17,7 @@ import { ReconcileCoordinator } from './reconcile-coordinator.js';
 import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
-import { monitorExecutionProcess } from './execution-process-tracker.js';
-import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
+import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
 export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
@@ -49,18 +48,12 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>(); private readonly startAckCleanups = new Set<() => Promise<void>>();
-  private readonly taskTransitions: DurableTaskTransitionRuntime;
-  private readonly eventCoordinator: ReconcileCoordinator;
-  protected readonly hostInvocations: HostInteractiveInvocationCoordinator;
+  private readonly taskTransitions: DurableTaskTransitionRuntime; private readonly eventCoordinator: ReconcileCoordinator; protected readonly hostInvocations: HostInteractiveInvocationCoordinator;
   private readonly detachedReconciles = new Set<Promise<unknown>>();
   protected readonly workflowEffects = new WorkflowEffectExecutor();
   protected reconciling = false;
   constructor(protected readonly store: DurableStore, protected readonly options: ReconcileOptions) {
-    this.hostInvocations = new HostInteractiveInvocationCoordinator({
-      store: hostInvocationPorts(store),
-      emit: event => this.emit(event),
-    });
-    this.taskTransitions = new DurableTaskTransitionRuntime(store);
+    this.hostInvocations = new HostInteractiveInvocationCoordinator({ store: hostInvocationPorts(store), emit: event => this.emit(event) }); this.taskTransitions = new DurableTaskTransitionRuntime(store);
     this.eventCoordinator = new ReconcileCoordinator(async (jobId, signals) => {
       let shouldReconcile = false;
       let detached = false;
@@ -88,17 +81,8 @@ export abstract class ReconcilerRuntimeBase {
   }
   abstract reconcile(jobId: string): Promise<Job>;
   protected abstract applyReviewEvent(event: EventRecord): Promise<EventHandlingResult>;
-  protected async applyHostInvocationEvent(event: EventRecord): Promise<EventHandlingResult> {
-    const result = await this.hostInvocations.applyEvent(event);
-    const resumed = result.resumeWorker && result.decision
-      ? await resumeInteractiveTask(this.store, result.decision.jobId, result.decision.taskId,
-        result.decision.invocationId, result.decision.revision, result.decision.decision)
-      : false;
-    return { applied: result.outcome !== 'ignored', reconcile: resumed, reason: `task.interactive_decision.${result.outcome}` };
-  }
-  bindInteractiveInvocation(jobId: string, task: Task, executionId: string, invocationId: string, revision: string): Promise<{ decision: Promise<import('./interactive-invocation.js').AcceptedInteractiveDecision> }> {
-    return this.hostInvocations.bind(jobId, task, executionId, invocationId, revision);
-  }
+  protected async applyHostInvocationEvent(event: EventRecord): Promise<EventHandlingResult> { const result = await this.hostInvocations.applyEvent(event); const resumed = result.resumeWorker && result.decision ? await resumeInteractiveTask(this.store, result.decision.jobId, result.decision.taskId, result.decision.invocationId, result.decision.revision, result.decision.decision) : false; return { applied: result.outcome !== 'ignored', reconcile: resumed, reason: `task.interactive_decision.${result.outcome}` }; }
+  bindInteractiveInvocation(jobId: string, task: Task, executionId: string, invocationId: string, revision: string): Promise<{ decision: Promise<import('./interactive-invocation.js').AcceptedInteractiveDecision> }> { return this.hostInvocations.bind(jobId, task, executionId, invocationId, revision); }
   protected async applyJobEffectOutcomes(job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {
     await applyJobEffectOutcomes(this.store, event => this.emit(event), job, outcomes);
   }
@@ -417,8 +401,7 @@ export abstract class ReconcilerRuntimeBase {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
-        // An interactive Task cannot complete before its current revision is durably approved.
-        if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false;
+        if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
         if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
