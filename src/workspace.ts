@@ -205,7 +205,7 @@ export async function ensureLocalJobSourceBranch(projectPath: string, job: Job):
 }
 
 export async function prepareLocalJobExecutionWorktree(projectPath: string, job: Job, workspaceRoot = defaultWorkspaceRoot()): Promise<string> {
-  if (job.prNumber !== 0 || !job.localMerge?.sourceRef) return resolveRepositoryProjectPath(projectPath, job.projectPath);
+  if (!job.localMerge?.sourceRef) return resolveRepositoryProjectPath(projectPath, job.projectPath);
   const sourceRef = job.localMerge.sourceRef;
   if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(sourceRef) || sourceRef.includes('..') || sourceRef.endsWith('.lock'))
     throw new Error('Local Job execution requires a valid refs/heads sourceRef');
@@ -266,14 +266,15 @@ export async function cleanupCompletedJobWorktree(
   workspaceRoot = defaultWorkspaceRoot(),
 ): Promise<ManagedWorktreeCleanupResult> {
   if (job.state !== 'COMPLETED') return { status: 'blocked', reason: 'Job is not completed' };
-  const expectedHead = job.prNumber === 0 ? (job.localMerge?.sourceSha ?? job.review?.headSha ?? job.headSha) : job.headSha;
+  const isLocalJob = Boolean(job.localMerge?.sourceRef);
+  const expectedHead = isLocalJob ? (job.localMerge?.sourceSha ?? job.review?.headSha ?? job.headSha) : job.headSha;
   if (!expectedHead) return { status: 'blocked', reason: 'No durable Job head SHA' };
   if (job.tasks.some(task => task.executionId !== null || task.leaseOwner !== null))
     return { status: 'blocked', reason: 'Task still owns an execution or lease' };
   if ((job.plans ?? []).some(plan => plan.executionId !== null || plan.leaseOwner !== null))
     return { status: 'blocked', reason: 'Planner still owns an execution or lease' };
 
-  const worktree = job.prNumber === 0 ? managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot) : managedJobWorktreePath(job.repository, job.prNumber, workspaceRoot);
+  const worktree = isLocalJob ? managedLocalJobWorktreePath(job.repository, job.id, workspaceRoot) : managedJobWorktreePath(job.repository, job.prNumber, workspaceRoot);
   let metadata;
   try { metadata = await lstat(worktree); }
   catch (error) {
@@ -287,7 +288,7 @@ export async function cleanupCompletedJobWorktree(
   let origin = '';
   try { origin = await git(primary, ['config', '--get', 'remote.origin.url']); } catch { /* Local-only repositories may have no origin. */ }
   const originRepository = origin ? githubRepositoryFromRemote(origin) : null;
-  if ((job.prNumber > 0 && originRepository !== job.repository) || (job.prNumber === 0 && originRepository && originRepository !== job.repository))
+  if ((job.prNumber > 0 && !isLocalJob && originRepository !== job.repository) || (isLocalJob && originRepository && originRepository !== job.repository))
     return { status: 'blocked', reason: 'Canonical repository identity mismatch' };
   const registered = await git(primary, ['worktree', 'list', '--porcelain']);
   const ownedRoot = await realpath(worktree);

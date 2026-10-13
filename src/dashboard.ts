@@ -31,7 +31,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   })));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
-type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskStart?: (jobId: string, taskId: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskComplete?: (jobId: string, taskId: string, summary: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
+type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
@@ -272,10 +272,8 @@ export function serveDashboard(
         let result: Job;
         if (body.action === 'create' && body.task && resolvedActions?.taskCreate) result = await resolvedActions.taskCreate(requestedJobId, body.task, body.idempotencyKey);
         else if (body.action === 'update' && isTaskId(requestedTaskId) && body.task && body.expectedUpdatedAt && resolvedActions?.taskUpdate) result = await resolvedActions.taskUpdate(requestedJobId, requestedTaskId, body.task, body.expectedUpdatedAt);
-        else if (body.action === 'start' && isTaskId(requestedTaskId) && resolvedActions?.taskStart) result = await resolvedActions.taskStart(requestedJobId, requestedTaskId);
         else if (body.action === 'retry' && isTaskId(requestedTaskId) && resolvedActions?.taskRetry) result = await resolvedActions.taskRetry(requestedJobId, requestedTaskId);
         else if (body.action === 'cancel' && isTaskId(requestedTaskId) && resolvedActions?.taskCancel) result = await resolvedActions.taskCancel(requestedJobId, requestedTaskId);
-        else if (body.action === 'complete' && isTaskId(requestedTaskId) && typeof body.summary === 'string' && body.summary.trim() && resolvedActions?.taskComplete) result = await resolvedActions.taskComplete(requestedJobId, requestedTaskId, body.summary);
         else throw new Error('Task command unavailable');
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
         if (!res.writableEnded) res.end(JSON.stringify(result));

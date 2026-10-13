@@ -7,7 +7,7 @@ export function orderGitHubBindingCandidates(items: readonly GitHubBindingCandid
   return [...items].sort((a,b)=>score(a.job)-score(b.job) || a.job.createdAt.localeCompare(b.job.createdAt));
 }
 function score(job: Job): number {
-  const bound=(job.externalPrNumber ?? (job.prNumber>0?job.prNumber:0))>0;
+  const bound=(job.prNumber)>0;
   const terminal=['COMPLETED','CANCELLED'].includes(job.state);
   if(!terminal && !bound) return 0;
   if(!terminal && bound) return 1;

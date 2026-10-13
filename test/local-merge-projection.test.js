@@ -18,7 +18,7 @@ function fixture(){
  const sourceSha=git(repo,'rev-parse','HEAD'); git(repo,'checkout','main');
  return {root,remote,repo,other,sourceSha,close:()=>rmSync(root,{recursive:true,force:true})};
 }
-function completedJob(delivered){return {id:'job',title:'job',repository:'owner/repo',prNumber:0,externalPrNumber:27,state:'COMPLETED',executionMode:'fixed',continuation:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',...delivered}};}
+function completedJob(delivered){return {id:'job',title:'job',repository:'owner/repo',prNumber:27,state:'COMPLETED',executionMode:'fixed',continuation:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',...delivered}};}
 
 test('local main is pushed to origin without a second merge and repeated delivery is idempotent',()=>{
  const f=fixture(); try{

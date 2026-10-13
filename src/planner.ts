@@ -313,7 +313,7 @@ export function validatePlannerProgress(job: Job, result: PlannerResult): void {
 }
 
 export function validatePlannerLifecycleOwnership(job: Job, specs: readonly PlannerTaskSpec[]): void {
-  if (job.prNumber !== 0 || !job.localMerge) return;
+  if (!job.localMerge?.sourceRef) return;
   for (const spec of specs) {
     // Restrict ownership detection to an individual imperative clause. A long
     // implementation brief may describe Relay-owned completion as context.

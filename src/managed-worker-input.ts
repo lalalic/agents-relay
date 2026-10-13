@@ -6,9 +6,8 @@ import { taskTagWorkerPrompt } from './task-tag.js';
 import { executionEventSource } from './reconciler-runtime.js';
 
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext): Promise<string> {
-  const isLocalJob = job.prNumber === 0;
-  const externalPrNumber = job.externalPrNumber && job.externalPrNumber > 0 ? job.externalPrNumber : (job.prNumber > 0 ? job.prNumber : 0);
-  const projectedReview = isLocalJob && task.agentName === 'reviewer' && externalPrNumber > 0;
+  const isLocalJob = Boolean(job.localMerge?.sourceRef);
+  const projectedReview = isLocalJob && task.agentName === 'reviewer' && job.prNumber > 0;
   if (!['codex', 'chatgpt'].includes(task.adapter) || !job.repository) return task.input;
   const selectedAgent = task.agentName && context ? await agentContractPrompt(context, task.agentName) : '';
   const selectedGraph = task.agentGraph && context ? await agentGraphPrompt(context, task.agentGraph) : '';
@@ -18,7 +17,7 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   if (!task.output) throw new Error(`Task ${task.id} requires an explicit output contract`);
   if (!task.executionId) throw new Error(`Task ${task.id} requires an executionId before worker input is built`);
   const sourceId = executionEventSource(job.id, task.id, task.executionId);
-  const prUrl = externalPrNumber > 0 ? `https://github.com/${job.repository}/pull/${externalPrNumber}` : null;
+  const prUrl = job.prNumber > 0 ? `https://github.com/${job.repository}/pull/${job.prNumber}` : null;
   const taskUrl = task.taskUrl ?? (isLocalJob ? `local:${job.id}/task/${task.id}` : `${prUrl}#issuecomment-${task.id}`);
   const output = task.output.kind === 'file'
     ? `file\nPath: ${task.output.path}`

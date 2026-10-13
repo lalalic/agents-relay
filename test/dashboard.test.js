@@ -385,7 +385,7 @@ test('dashboard renders job clipboard, publication, merge-review, and commit-lin
   assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
   assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
-  assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.externalPrNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
+  assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.prNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
   assert.doesNotMatch(dashboardHtml, /PUBLISHED v/);
   assert.match(dashboardHtml, /job\.state==='ACTIVE'&&job\.reviewEnabled!==false/);
   assert.match(dashboardHtml, /function safeCommitUrl\(repository,sha\)/);
@@ -473,7 +473,7 @@ test('credit providers render one balance value per provider row', () => {
 
 test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
-  assert.match(dashboardHtml, /Number\(job\.externalPrNumber\|\|job\.prNumber\|\|0\)>0/);
+  assert.match(dashboardHtml, /Number\(job\.prNumber\|\|0\)>0/);
   assert.match(dashboardHtml, /'Job '\+shortManagedId\(job\.id,job\.repository,'j'\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
@@ -851,6 +851,6 @@ test('selectJob copies the complete actual title for local and GitHub Jobs', () 
   sandbox.runSelection({ id: 'local-7', repository: 'lalalic/agents-relay', prNumber: 0, title: 'Full local Job title' });
   assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-7: Full local Job title');
   assert.doesNotMatch(copied.at(-1), /pr#0/);
-  sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 0, externalPrNumber: 280, title: 'Full GitHub Job title' });
+  sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 280, localMerge: { sourceRef: 'refs/heads/local-8' }, title: 'Full GitHub Job title' });
   assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-8/pr#280: Full GitHub Job title');
 });

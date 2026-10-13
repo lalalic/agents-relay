@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { withTestInjection, type InjectionConfig } from './e2e-injection.js';
-import { Task, AdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
+import { Task, WorkerAdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
 
@@ -21,7 +21,7 @@ export type Execution = {
 };
 export type LaunchContext = { testInjection?: InjectionConfig; waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
-  readonly name: AdapterName;
+  readonly name: WorkerAdapterName;
   readonly id: string;
   readonly capabilities: readonly string[];
   readonly tabClosePolicy?: ChatGptTabClosePolicy;

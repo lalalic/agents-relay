@@ -8,6 +8,7 @@ import type { PackagePublication, PackagePublishFailure } from './github-webhook
 import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
 import { observability } from './observability.js';
+import { migrateLegacyJobPrNumbers, normalizeLegacyJobPrNumber } from './job-pr-number-migration.js';
 import {
   ProjectionOutbox,
   SCHEMA_VERSION,
@@ -29,13 +30,11 @@ export type {
   ProjectionRequest,
   ProjectionStatus,
 } from './projection-outbox.js';
-
 export type PullRequestFacts = {
   state: PullRequestState;
   head: { ref: string; sha: string } | null;
   observedAt: string;
 };
-
 export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
@@ -70,12 +69,10 @@ export interface RelayStore {
   terminalProjectionCount(): Promise<number>;
   close(): void;
 }
-
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
   if (!local) return structuredClone(remote);
   return remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
 }
-
 function mergeRecords<T extends { id: string; updatedAt: string }>(local: readonly T[], remote: readonly T[]): T[] {
   const remoteById = new Map(remote.map(item => [item.id, item]));
   const merged = local.map(item => newerRecord(item, remoteById.get(item.id) ?? item));
@@ -163,6 +160,8 @@ export class SQLiteRelayStore implements RelayStore {
       ${ProjectionOutbox.createTableSql()}
       ${ProjectionOutbox.createIndexSql()}
     `);
+    migrateLegacyJobPrNumbers(this.db);
+
     const current = this.db.prepare("SELECT value FROM relay_meta WHERE key='schema_version'").get() as { value?: string } | undefined;
     const version = current?.value ? Number(current.value) : 0;
     if (version > SCHEMA_VERSION) throw new Error(`Relay store schema ${version} is newer than supported ${SCHEMA_VERSION}`);
@@ -185,12 +184,12 @@ export class SQLiteRelayStore implements RelayStore {
 
   async loadJob(jobId: string): Promise<Job | null> {
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
-    return row?.json ? JSON.parse(row.json) as Job : null;
+    return row?.json ? normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job) : null;
   }
 
   async listJobs(): Promise<Job[]> {
     const rows = this.db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as unknown as Array<{ json: string }>;
-    return rows.map(row => JSON.parse(row.json) as Job);
+    return rows.map(row => normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job));
   }
 
   async saveJob(job: Job): Promise<void> {
@@ -203,7 +202,7 @@ export class SQLiteRelayStore implements RelayStore {
     try {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
       if (!row?.json) throw new Error(`Local authoritative Job ${jobId} not found`);
-      const current = JSON.parse(row.json) as Job;
+      const current = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
       const before = JSON.stringify(current);
       const next = mutation(current);
       if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');
@@ -478,7 +477,7 @@ export async function discoverLocalRelayStoreSnapshots(directory: string): Promi
     try {
       db = new DatabaseSync(path, { readOnly: true });
       const rows = db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as Array<{ json: string }>;
-      const jobs = rows.map(row => JSON.parse(row.json) as Job);
+      const jobs = rows.map(row => normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job));
       const row = db.prepare('SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts WHERE id=1').get() as {
         state: PullRequestState; head_ref: string | null; head_sha: string | null; observed_at: string;
       } | undefined;

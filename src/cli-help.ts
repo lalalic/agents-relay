@@ -116,7 +116,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID (optional; Relay auto-assigns repository-scoped task number), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New orchestrator Tasks are rejected; adapter=orchestrator is supported only while recovering legacy records.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID (optional; Relay auto-assigns repository-scoped task number), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
@@ -135,12 +135,6 @@ Required: --task-id ID and the normal Job storage options.`,
   'task list': `List durable Tasks for one Job.
 
 Required: the normal Job storage options.`,
-  'task start': `Mark one orchestrator-owned self Task RUNNING when the creating orchestrator actually begins the work.
-
-Legacy recovery only: --task-id ID and the normal Job storage options. New Task creation rejects adapter=orchestrator. The Task must use adapter=orchestrator and be QUEUED. Start must occur before task complete.`,
-  'task complete': `Complete one orchestrator-owned Task after the creating orchestrator has finished the work.
-
-Legacy recovery only: --task-id ID, --summary TEXT, and the normal Job storage options. The Task must use adapter=orchestrator and already be RUNNING. New Task creation rejects this adapter.`,
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

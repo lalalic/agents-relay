@@ -425,101 +425,19 @@ test('reconciler preserves active ownership and terminal legacy records', async 
   assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'codex', 'orchestrator']);
 });
 
-test('CLI task complete terminalizes the same orchestrator self task', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-complete-'));
+test('CLI no longer exposes manual orchestrator task start or complete', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-orchestrator-removed-'));
   const file = join(directory, 'job.json');
-  await writeFile(file, JSON.stringify(job([])));
   const legacy = task('self'); legacy.adapter = 'orchestrator'; legacy.output = {kind:'task_pr'}; legacy.routing = undefined; legacy.timeoutMs = 0;
   await writeFile(file, JSON.stringify(job([legacy])));
-  let child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
-  child = spawn(process.execPath, [join('dist','cli.js'),'task','start','--file',file,'--task-id','self'], {cwd:process.cwd()});
-  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  let saved = JSON.parse(await readFile(file, 'utf8'));
-  assert.equal(saved.tasks.find(item => item.id === 'self').state, 'RUNNING');
-  child = spawn(process.execPath, [join('dist','cli.js'),'task','complete','--file',file,'--task-id','self','--summary','done in creator turn'], {cwd:process.cwd()});
-  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  saved = JSON.parse(await readFile(file, 'utf8'));
-  const completed = saved.tasks.find(item => item.id === 'self');
-  assert.equal(completed.state, 'SUCCEEDED');
-  assert.equal(completed.result.summary, 'done in creator turn');
-  assert.equal(completed.attempt, 1);
-  await rm(directory,{recursive:true,force:true});
-});
-
-test('CLI task create defaults story size to M and derives overall timeout from size', async () => {
-  const dir=await mkdtemp(join(tmpdir(),'agents-relay-story-size-'));
-  const file=join(dir,'job.json');
-  const root=job([]); root.executionMode='fixed'; await writeFile(file,JSON.stringify(root));
-  const child=spawn(process.execPath,[join('dist','cli.js'),'task','create','--file',file,'--task-id','sized','--adapter','codex','--model','gpt-test','--output','task-pr','--story-size','L','--input','sized work'],{cwd:process.cwd()});
-  assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
-  const saved=JSON.parse(await readFile(file,'utf8'));
-  const created=saved.tasks.find(item=>item.id==='sized');
-  assert.equal(created.storySize,'L');
-  assert.equal(created.timeoutMs,2700000);
-  await rm(dir,{recursive:true,force:true});
-});
-
-test('CLI task update mutates safe durable fields in place and preserves execution history', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-'));
-  const file = join(directory, 'job.json');
-  const existing = task('mutable', 'FAILED');
-  existing.attempt = 2; existing.maxAttempts = 3; existing.error = 'old failure';
-  existing.routing = { provider: 'openai', model: 'gpt-old', reasoning: 'medium', decidedBy: 'cli', decidedAt: 'old' };
-  await writeFile(file, JSON.stringify(job([existing])));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'task','update','--file',file,'--task-id','mutable','--adapter','chatgpt','--provider','chatgpt','--model','gpt-5.6-sol','--reasoning','high','--capabilities','model,chatgpt,browser-harness','--max-attempts','4','--timeout','900000'], {cwd:process.cwd()});
-  const [code] = await once(result,'exit');
-  assert.equal(code,0);
-  const saved = JSON.parse(await readFile(file,'utf8')); const updated=saved.tasks[0];
-  assert.equal(updated.id,'mutable'); assert.equal(updated.state,'FAILED'); assert.equal(updated.attempt,2); assert.equal(updated.error,'old failure');
-  assert.equal(updated.adapter,'chatgpt'); assert.equal(updated.routing.provider,'chatgpt'); assert.equal(updated.routing.model,'gpt-5.6-sol'); assert.equal(updated.routing.reasoning,'high');
-  assert.deepEqual(updated.capabilities,['model','chatgpt','browser-harness']); assert.equal(updated.maxAttempts,4); assert.equal(updated.timeoutMs,900000);
-  assert.equal(updated.routing.decidedBy,'cli:update');
-  await rm(directory,{recursive:true,force:true});
-});
-
-test('CLI task update rejects active and terminal execution records', async () => {
-  for (const state of ['RUNNING','SUCCEEDED','CANCELLED']) {
-    const directory = await mkdtemp(join(tmpdir(), 'agents-relay-task-update-guard-')); const file=join(directory,'job.json');
-    await writeFile(file, JSON.stringify(job([task('guard',state)])));
-    const result=spawn(process.execPath,[join('dist','cli.js'),'task','update','--file',file,'--task-id','guard','--model','gpt-5.6-sol'],{cwd:process.cwd()});
-    const [code]=await once(result,'exit'); assert.notEqual(code,0);
-    const saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.tasks[0].routing.model,'gpt-test');
-    await rm(directory,{recursive:true,force:true});
+  for (const action of ['start','complete']) {
+    const args = [join('dist','cli.js'),'task',action,'--file',file,'--task-id','self'];
+    if (action === 'complete') args.push('--summary','legacy manual completion');
+    const child = spawn(process.execPath, args, {cwd:process.cwd()});
+    assert.notEqual(await new Promise(resolve=>child.on('close',resolve)),0);
   }
-});
-
-test('CLI task create rejects terminal completed jobs', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reopen-create-'));
-  const file = join(directory, 'job.json');
-  await writeFile(file, JSON.stringify({...job([]),state:'COMPLETED'}));
-  const result = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','review','--provider','openai','--model','gpt-test','--output','task-pr','--input','review completed job'], {cwd:process.cwd()});
-  const [code] = await once(result,'exit');
-  assert.notEqual(code,0);
-  const saved = JSON.parse(await readFile(file,'utf8'));
-  assert.equal(saved.state,'COMPLETED');
-  assert.equal(saved.tasks.length,0);
-  await rm(directory,{recursive:true,force:true});
-});
-
-test('CLI task create and retry keep ACTIVE lifecycle while runtime changes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-reactivate-')); const file=join(directory,'job.json');
-  const failedTask=task('failed','FAILED'); failedTask.error='old'; failedTask.attempt=1; failedTask.maxAttempts=3;
-  await writeFile(file, JSON.stringify(job([failedTask])));
-  let child=spawn(process.execPath,[join('dist','cli.js'),'task','create','--file',file,'--task-id','replacement','--provider','openai','--model','gpt-test','--output','task-pr','--input','replacement'],{cwd:process.cwd()});
-  let [code]=await once(child,'exit'); assert.equal(code,0); let saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE');
-  child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','failed'],{cwd:process.cwd()});
-  [code]=await once(child,'exit'); assert.equal(code,0); saved=JSON.parse(await readFile(file,'utf8')); assert.equal(saved.state,'ACTIVE'); assert.equal(saved.tasks.find(t=>t.id==='failed').state,'QUEUED');
-  await rm(directory,{recursive:true,force:true});
-});
-test('CLI refuses mutation of legacy planner Task history', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-planner-retry-')); const file=join(directory,'job.json');
-  const failedTask={...task('planner-1','FAILED'),kind:'planner',adapter:'orchestrator',error:'Planner next_tasks[0].output is required',attempt:3,maxAttempts:3};
-  await writeFile(file, JSON.stringify(job([failedTask])));
-  const child=spawn(process.execPath,[join('dist','cli.js'),'task','retry','--file',file,'--task-id','planner-1'],{cwd:process.cwd()});
-  const [code]=await once(child,'exit'); assert.notEqual(code,0);
-  const saved=JSON.parse(await readFile(file,'utf8')); const planner=saved.tasks.find(t=>t.id==='planner-1');
-  assert.equal(planner.state,'FAILED');
-  assert.equal(planner.error,'Planner next_tasks[0].output is required');
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.tasks[0].state, 'QUEUED');
   await rm(directory,{recursive:true,force:true});
 });
 
@@ -527,19 +445,16 @@ test('active replacement work derives QUEUED despite historical failed tasks', (
   const old=task('old','FAILED'); const replacement=task('replacement','QUEUED');
   const value=schedule(job([old,replacement])); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED');
 });
-test('CLI record persists completed orchestrator work without pretending it was a worker execution', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-'));
+test('CLI no longer records synthetic orchestrator Tasks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-removed-'));
   const file = join(directory, 'job.json');
   await writeFile(file, JSON.stringify(job([])));
-  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'record', '--file', file, '--task-id', 'truth-fix', '--project', 'agents-relay', '--summary', 'Reconciled durable state with GitHub truth', '--commit', 'abc123'], { cwd: process.cwd() });
+  const result = spawn(process.execPath, [join('dist', 'cli.js'), 'record', '--file', file, '--task-id', 'truth-fix', '--summary', 'synthetic'], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
-  assert.equal(code, 0);
+  assert.notEqual(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
-  assert.equal(saved.tasks[0].adapter, 'orchestrator');
-  assert.equal(saved.tasks[0].agentName, 'orchestrator');
-  assert.equal(saved.tasks[0].state, 'SUCCEEDED');
-  assert.equal(saved.tasks[0].executionId, 'abc123');
-  assert.equal(saved.tasks[0].result.data.commit, 'abc123');
+  assert.equal(saved.tasks.length, 0);
+  await rm(directory,{recursive:true,force:true});
 });
 test('healthy task states clear stale current errors without deleting history events', async () => {
   const cases=[['FAILED','retry'],['QUEUED','task.started'],['RUNNING','task.completed']];
@@ -1832,7 +1747,7 @@ test('managed model worker input contains durable links without duplicating stor
 test('local projected reviewer input exposes external PR while keeping local lifecycle authority', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
   const t=task('local-reviewer'); t.executionId='review-execution'; t.adapter='chatgpt'; t.projectName='agents-relay'; t.agentName='reviewer'; t.input='Review PR #17 at exactly head SHA abc123.'; t.output={kind:'task_pr'};
-  const root=job([t]); root.prNumber=0; root.externalPrNumber=17; root.repository='lalalic/agents-relay';
+  const root=job([t]); root.prNumber=17; root.localMerge={sourceRef:'refs/heads/local-review',targetRef:'refs/heads/main',status:'pending'}; root.repository='lalalic/agents-relay';
   const input=await managedWorkerInput(root,t);
   assert.match(input,/Job: local j \(lifecycle authority\)/);
   assert.match(input,/Projected GitHub PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
@@ -1846,7 +1761,7 @@ test('local projected reviewer input exposes external PR while keeping local lif
 test('local model worker input includes authoritative task input and event contract', async () => {
   const { managedWorkerInput } = await import('../dist/reconciler.js');
   const t=task('local-worker'); t.executionId='local-execution'; t.adapter='codex'; t.projectName='agents-relay'; t.input='local durable work contract'; t.output={kind:'task_pr'};
-  const root=job([t]); root.prNumber=0; root.repository='lalalic/agents-relay';
+  const root=job([t]); root.prNumber=0; root.localMerge={sourceRef:'refs/heads/local-worker',targetRef:'refs/heads/main',status:'pending'}; root.repository='lalalic/agents-relay';
   const input=await managedWorkerInput(root,t);
   assert.match(input,/\[Agents Relay managed task\]/);
   assert.match(input,/Job: local j/);
@@ -1953,7 +1868,7 @@ test('review thread metadata persists and resolves reviewer, creator, then CLI o
 
 test('thread-bound final review uses the selected durable thread and records delivery', async () => {
   const work = task('work', 'SUCCEEDED');
-  const reviewJob = { ...job([work]), prNumber: 0, externalPrNumber: 16, headSha: 'sha-threaded', creatorThreadId: 'creator-thread' };
+  const reviewJob = { ...job([work]), prNumber: 16, headSha: 'sha-threaded', creatorThreadId: 'creator-thread' };
   const store = new InMemoryStore(reviewJob);
   const bus = new MemoryEventBus();
   const adapter = new FakeAdapter();
@@ -2374,7 +2289,7 @@ test('blocked review transitions reviewer task to BLOCKED', async () => {
 
 test('projected PR stale head delays final review until projection catches up', async () => {
   const implementation=task('implementation','SUCCEEDED');
-  const root={...job([implementation]),headSha:'sha-current',externalPrNumber:99};
+  const root={...job([implementation]),headSha:'sha-current',prNumber:99,localMerge:{sourceRef:'refs/heads/e2e-test',targetRef:'refs/heads/main',status:'pending'}};
   const store=new InMemoryStore(root);
   let projected='sha-bootstrap';
   store.pullRequestHead=async()=>({ref:'e2e/test',sha:projected});

@@ -1,7 +1,5 @@
-import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
-import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
-import { applyTaskRetryAction } from './task-actions.js';
-import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
+import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js'; import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
+import { applyTaskRetryAction } from './task-actions.js'; import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
@@ -386,17 +384,10 @@ export abstract class ReconcilerRuntimeBase {
         reroutedTask = current;
       }
     }
-    const event = eventFor(
-      jobId,
-      taskId,
-      transition.task.parentTaskId,
-      'task.failed',
-      'failed',
-      transition.task.error ?? failureMessage,
-      'user',
+    const event = eventFor(jobId, taskId, transition.task.parentTaskId, 'task.failed', 'failed',
+      transition.task.error ?? failureMessage, 'user',
       { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed', executionId },
-      { agent: 'relay', component: 'agents-relay', watchdog: true },
-    );
+      { agent: 'relay', component: 'agents-relay', watchdog: true });
     await this.emit(event);
     if (reroutedTask) {
       await this.emit(eventFor(jobId, taskId, reroutedTask.parentTaskId,

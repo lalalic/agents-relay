@@ -479,9 +479,7 @@ lifecycle graph authoritatively accepts or rejects the retry transition. Manual
 CLI/dashboard retry, lease-expiry retry, Planner retry, blocker-resolution
 retry, and fixed-job authoritative unblock now use controlled Action semantics.
 
-`task.cancel`, task release/hold, orchestrator self-task completion, and
-`job.activate` / `job.cancel` likewise use shared Action helpers across their
-CLI, dashboard, blocker, manual-plan, and reconcile callers. External effects
+`task.cancel`, task release/hold, and `job.activate` / `job.cancel` likewise use shared Action helpers across their CLI, dashboard, blocker, manual-plan, and reconcile callers. Orchestrator-only Task start/complete actions are not part of the runtime; historical orchestrator-adapter records are handled only by the legacy rescue graph. External effects
 such as closing or merging a pull request remain adapter concerns. Worker,
 review, planner, webhook, and reconcile lifecycle facts remain direct Graph
 Event ingestion and are not wrapped as Actions merely to hide the distinction.

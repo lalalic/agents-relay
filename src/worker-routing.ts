@@ -2,7 +2,7 @@ import { chooseWithDecision, DecisionEngine, DecisionMode, JsonValue } from './d
 import { loadExecutionRouterRules } from './routing-policy.js';
 import { appendRoutingInstruction } from './router-rules.js';
 import { AccountUsageOverview } from './usage.js';
-import { AdapterName, AgentAvailability, AgentRegistration, BrowserWorkspaceCapacity, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
+import { WorkerAdapterName, AgentAvailability, AgentRegistration, BrowserWorkspaceCapacity, ResourceUsageWindow, WorkerRequirements, WorkerSelection } from './types.js';
 
 export const DEFAULT_CHATGPT_PREFERRED_CONCURRENCY = 10;
 
@@ -18,7 +18,7 @@ export const DEFAULT_WORKER_ROUTER_PRINCIPLES = [
 
 export type WorkerCandidate = {
   workerId: string;
-  adapter: Exclude<AdapterName, 'orchestrator'>;
+  adapter: WorkerAdapterName;
   capabilities: readonly string[];
   runtime?: string;
   taskKind?: string;
@@ -83,18 +83,18 @@ export function usageForProvider(snapshot: AccountUsageOverview | undefined, pro
 }
 
 export function workerCandidates(
-  adapters: readonly { name: AdapterName; id: string; capabilities: readonly string[] }[],
+  adapters: readonly { name: WorkerAdapterName; id: string; capabilities: readonly string[] }[],
   registered: readonly AgentRegistration[],
   snapshot?: AccountUsageOverview,
 ): WorkerCandidate[] {
-  return adapters.filter(adapter => adapter.name !== 'orchestrator').flatMap(adapter => {
+  return adapters.flatMap(adapter => {
     const workers = registered.filter(worker => worker.runtime.adapter === adapter.name);
     return (workers.length > 0 ? workers : [undefined]).map(worker => {
       const provider = worker?.runtime.provider ?? (adapter.name === 'chatgpt' ? 'chatgpt' : undefined);
       const resource = provider ? usageForProvider(snapshot, provider) : {};
       return {
         workerId: worker?.id ?? adapter.id,
-        adapter: adapter.name as Exclude<AdapterName, 'orchestrator'>,
+        adapter: adapter.name,
         capabilities: worker?.capabilities ?? [...adapter.capabilities],
         runtime: worker?.runtime.adapter ?? adapter.name,
         trustDomains: worker?.routing.trustDomains,

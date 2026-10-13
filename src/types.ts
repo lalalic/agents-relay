@@ -4,7 +4,9 @@ export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOC
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'UNBLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type JobTag = { description: string; values: Record<string, string> };
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
-export type AdapterName = 'codex' | 'chatgpt' | 'orchestrator';
+export type WorkerAdapterName = 'codex' | 'chatgpt';
+/** Persisted compatibility only: new Tasks may use WorkerAdapterName values only. */
+export type AdapterName = WorkerAdapterName | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
 export type ExecutionMode = 'fixed' | 'autonomous';
 export type MissedRunPolicy = 'run' | 'skip';
@@ -64,7 +66,7 @@ export type ResourceUsageWindow = { remainingPercent: number; resetAt: number | 
 export type BrowserWorkspaceCapacity = { name: string; poolSize: number | null; idle: number | null; leased: number | null; available: number | null; observedAt: string; reason: string | null };
 export type WorkerSelection = {
   workerId: string;
-  adapter: Exclude<AdapterName, 'orchestrator'>;
+  adapter: WorkerAdapterName;
   capabilities: string[];
   selectedBy: string;
   selectedAt: string;
@@ -150,7 +152,7 @@ export type Task = {
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
-export type Job = { localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; externalPrNumber?: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

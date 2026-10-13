@@ -25,14 +25,13 @@ import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
-import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from './task-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
@@ -134,7 +133,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       !['COMPLETED','CANCELLED'].includes(item.job.state) || counts.get(item.job.id) !== 1));
   };
   cachedOverviews = await inventoryFromLocal();
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(argv), projectPathForJob: async job => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (job.prNumber !== 0 || job.schedule) return resolveRepositoryProjectPath(canonical, job.projectPath);
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, reviewer:runtimeReviewer(argv), projectPathForJob: async job => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (!job.localMerge?.sourceRef || job.schedule) return resolveRepositoryProjectPath(canonical, job.projectPath);
     const sourceRef = await ensureLocalJobSourceBranch(canonical, job);
     if (!store.mutateJob) throw new Error('Local Job branch binding requires atomic SQLite mutation');
     const bound = await store.mutateJob(job.id, current => current.localMerge ? current : ({...current, localMerge: {sourceRef,targetRef:'refs/heads/main',status:'pending' as const},updatedAt:new Date().toISOString()}));
@@ -206,7 +205,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.
       if (discovered.state === 'COMPLETED' && discovered.localMerge?.status === 'succeeded'
-          && (discovered.externalPrNumber ?? discovered.prNumber) <= 0) {
+          && discovered.prNumber <= 0) {
         const published = projectAuthoritativeLocalMerge(canonical, discovered);
         if (published.status === 'projected') await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivered','succeeded',
           `GitHub main synchronization ${published.status}`,'orchestrator',
@@ -214,9 +213,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           {agent:'relay',component:'github-projection'}));
         continue;
       }
-      const existingExternalPr = discovered.externalPrNumber ?? (discovered.prNumber > 0 ? discovered.prNumber : 0);
+      const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0;
       const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
-      if (terminal && existingExternalPr <= 0) continue;
+      if (terminal && existingPrNumber <= 0) continue;
       const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
       const facts = await relay.loadPullRequestFacts();
       if (facts?.head?.sha !== sourceSha) {
@@ -237,9 +236,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         }));
       }
       let job = (await relay.loadJob(discovered.id)) ?? discovered;
-      let externalPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
-      if (externalPrNumber === 0 && ['COMPLETED','CANCELLED'].includes(job.state)) continue;
-      if (externalPrNumber === 0) {
+      let prNumber = job.prNumber > 0 ? job.prNumber : 0;
+      if (prNumber === 0 && ['COMPLETED','CANCELLED'].includes(job.state)) continue;
+      if (prNumber === 0) {
         // Do not bootstrap an empty remote-only PR commit: it would diverge from
         // the real local Job branch before its first Worker commit. Publish the
         // review-only PR when there is an actual diff against main.
@@ -253,16 +252,16 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         if (!Number.isFinite(remoteAhead) || remoteAhead <= 0) continue;
         const pr = await resolvePullRequest(client, job.repository, { head: branch, base, title: job.title, body: job.objective ?? job.description ?? '' });
         if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
-        job = await relay.mutateJob(job.id, current => ({ ...current, externalPrNumber: pr.number, updatedAt: new Date().toISOString() }));
-        externalPrNumber = pr.number;
+        job = await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, updatedAt: new Date().toISOString() }));
+        prNumber = pr.number;
         observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
       }
-      if (externalPrNumber <= 0) continue;
+      if (prNumber <= 0) continue;
       const latestFacts = await relay.loadPullRequestFacts();
       if (latestFacts?.state !== 'MERGED' && (latestFacts?.head?.sha !== sourceSha || latestFacts?.head?.ref !== branch)) {
         await relay.savePullRequestFacts({ state: latestFacts?.state === 'CLOSED' ? 'CLOSED' : 'OPEN', head: { ref: branch, sha: sourceSha }, observedAt: new Date().toISOString() });
       }
-      const github = new GitHubStore(client, job.repository, externalPrNumber, trusted);
+      const github = new GitHubStore(client, job.repository, prNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
         const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
@@ -275,14 +274,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         // A review-only PR is never merged by GitHub. Close it after local main
         // has been safely published, retaining the diff, comments and commit link.
         const remotePr = await github.pullRequestState();
-        await archiveDisplayPullRequest(client,job.repository,externalPrNumber,job.id,projectedMerge.projectedCommitSha,remotePr);
+        await archiveDisplayPullRequest(client,job.repository,prNumber,job.id,projectedMerge.projectedCommitSha,remotePr);
         const projectedState = await github.pullRequestState();
         const projectedHead = await github.pullRequestHead();
         await relay.savePullRequestFacts({ state: projectedState, head: projectedHead, observedAt: new Date().toISOString() });
         observability().record({
           stage: 'projection', event: 'github.local_merge_projected', outcome: 'succeeded',
           message: `Projected authoritative local merge ${projectedMerge.localMergedCommitSha} to ${projectedMerge.targetRef}`,
-          correlation: { repository: job.repository, prNumber: externalPrNumber, jobId: job.id },
+          correlation: { repository: job.repository, prNumber, jobId: job.id },
           data: { ...projectedMerge, githubState: projectedState },
         });
       }
@@ -296,7 +295,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         observability().record({
           stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
           message: `GitHub binding/projection failed for ${discovered.id}: ${reason}`,
-          correlation: { repository: discovered.repository, prNumber: discovered.externalPrNumber ?? discovered.prNumber, jobId: discovered.id },
+          correlation: { repository: discovered.repository, prNumber: discovered.prNumber, jobId: discovered.id },
           data: { classification, reason },
         });
       }
@@ -321,7 +320,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   );
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? (await requireLocalJobBinding(fallback.id)).store : new InMemoryStore();
-  const {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskStart,workspaceTaskComplete,workspaceTaskAction,workspaceTaskSetState} = createDashboardActions({getOverviews: () => cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState});
+  const {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskAction,workspaceTaskSetState} = createDashboardActions({getOverviews: () => cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, bus, dashboardTaskAction, dashboardTaskSetState});
   const workspaceControl = createWorkspaceControl({client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockAutonomousTasks, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob});
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = noGitHub ? '' : value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
@@ -329,7 +328,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     secret,
     repositories: new Set(repositories),
     wake: async (event: GitHubWebhookWake): Promise<void> => {
-      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (event.jobId ? item.job.id === event.jobId : (item.job.externalPrNumber ?? item.job.prNumber) === event.pullRequest));
+      const targets = cachedOverviews.filter(item => item.job.repository === event.repository && (event.jobId ? item.job.id === event.jobId : item.job.prNumber === event.pullRequest));
       if (targets.length === 0) return;
       for (const target of targets) {
         const binding = await requireLocalJobBinding(target.job.id);
@@ -383,10 +382,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const binding = await requireLocalJobBinding(jobId);
       return { store: binding.store, repository: binding.job.repository, prNumber: binding.job.prNumber };
     }, async (_repository, _prNumber, jobId) => pool.reconcileLocalJob(jobId, 'control.task.update')),
-    taskStart: workspaceTaskStart,
     taskRetry: workspaceTaskAction('retry'),
     taskCancel: workspaceTaskAction('cancel'),
-    taskComplete: workspaceTaskComplete,
     taskSetState: workspaceTaskSetState,
   }, async ({ jobId, taskId }) => {
     const overview = cachedOverviews.find(item => item.job.id === jobId);

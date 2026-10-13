@@ -118,7 +118,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   private externalReviewPrNumber(job: Job): number {
-    return job.externalPrNumber && job.externalPrNumber > 0 ? job.externalPrNumber : job.prNumber;
+    return job.prNumber;
   }
 
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
@@ -164,7 +164,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     // Local-first Jobs may expose a review-only GitHub PR. Once such a PR is
     // bound, its projected head must match the authoritative local head before
     // a reviewer is asked to review that immutable PR identity.
-    if (!job.externalPrNumber || job.externalPrNumber <= 0 || !this.store.pullRequestHead) return true;
+    if (!job.localMerge?.sourceRef || job.prNumber <= 0 || !this.store.pullRequestHead) return true;
     try {
       const projected = await this.store.pullRequestHead();
       return projected?.sha === headSha;

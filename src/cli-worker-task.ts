@@ -15,13 +15,13 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   if (!input.trim()) throw new Error('task create requires --input-file PATH|- or --input MARKDOWN');
   if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('task create --adapter must be codex or chatgpt; orchestrator is reserved for legacy recovery only');
   if (outputKind !== 'task-pr' && outputKind !== 'file') throw new Error('task create requires --output task-pr|file'); if (outputKind === 'file' && !outputPath) throw new Error('--output file requires --output-path');
-  if (adapter !== 'orchestrator' && ['--provider','--profile','--reasoning','--cwd','--chatgpt-project'].some(flag => hasArg(args, flag)) && !model) throw new Error('task create explicit routing requires --model');
-  const routing: RoutingDecision | undefined = adapter === 'orchestrator' || !model ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
-  const workerRequirements = adapter === 'orchestrator' || routing ? undefined : { capabilities: [], runtime: adapterValue ? adapter : undefined };
+  if (['--provider','--profile','--reasoning','--cwd','--chatgpt-project'].some(flag => hasArg(args, flag)) && !model) throw new Error('task create explicit routing requires --model');
+  const routing: RoutingDecision | undefined = !model ? undefined : { provider: arg(args, '--provider', 'openai'), model, profile: arg(args, '--profile') || undefined, reasoning: arg(args, '--reasoning') || undefined, cwd: arg(args, '--cwd') || undefined, projectId: arg(args, '--chatgpt-project') || undefined, decidedBy: 'cli', decidedAt: now };
+  const workerRequirements = routing ? undefined : { capabilities: [], runtime: adapterValue ? adapter : undefined };
   const closePolicy = hasArg(args, '--chatgpt-tab-close-policy') ? chatGptTabClosePolicy(args) : undefined;
   const size = storySize(args);
   const dependencies = arg(args, '--deps').split(',').filter(Boolean);
-  const timeoutMs = adapter === 'orchestrator' ? 0 : hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
+  const timeoutMs = hasArg(args, '--timeout') ? integerArg(args, '--timeout', taskOverallTimeoutMs(size, routing?.reasoning)) : routing ? taskOverallTimeoutMs(size, routing.reasoning) : 0;
   return createTaskEntity(job, {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),

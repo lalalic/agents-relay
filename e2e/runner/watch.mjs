@@ -56,13 +56,13 @@ function githubCapability(){
 }
 
 function externalJobSnapshot(j){
- const boundPr=Number(j.externalPrNumber||j.prNumber||0);
+ const boundPr=Number(j.prNumber||0);
  if(boundPr<=0)return null;
  const p=spawnSync('curl',['-fsS','http://127.0.0.1:8787/api/jobs?refresh=1'],{encoding:'utf8',timeout:30000,maxBuffer:8000000});
  if(p.status!==0)return {error:p.error?.message||p.stderr||'dashboard GitHub verification unavailable'};
  try{
   const jobs=JSON.parse(p.stdout);
-  const match=(Array.isArray(jobs)?jobs:[]).find(x=>x.id===jobId&&x.repository===repo&&Number(x.externalPrNumber||x.prNumber)===boundPr);
+  const match=(Array.isArray(jobs)?jobs:[]).find(x=>x.id===jobId&&x.repository===repo&&Number(x.prNumber)===boundPr);
   return match?{githubState:match.githubState||'UNKNOWN',prNumber:boundPr}:{error:'Job not found in dashboard inventory'};
  }catch(error){return {error:error.message};}
 }
@@ -406,7 +406,7 @@ async function tick(){
     if(expectedFailure && recovery.some(t=>['DRAFT','QUEUED','RUNNING','SUCCEEDED'].includes(t.state)))issue=null;
   }
   let external=null;
-  const boundPr=Number(j.externalPrNumber||j.prNumber||0);
+  const boundPr=Number(j.prNumber||0);
   if(!issue&&github.enabled&&github.authenticated===false)issue={type:'GITHUB_AUTH_UNAVAILABLE',message:github.error||'GitHub is enabled but authentication is unavailable'};
   // Local merge is authoritative. A display PR is optional, including when
   // the Job completes before there is a publishable source-branch diff.

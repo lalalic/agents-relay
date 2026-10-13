@@ -10,10 +10,8 @@ export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
 export const TASK_CANCEL_ACTION = 'task.cancel' as const;
 export const TASK_RELEASE_ACTION = 'task.release' as const;
 export const TASK_HOLD_ACTION = 'task.hold' as const;
-export const TASK_START_ACTION = 'task.start' as const;
-export const TASK_COMPLETE_ACTION = 'task.complete' as const;
 export const TASK_QUEUE_ACTION = 'task.queue' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_RECOVER_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_START_ACTION | typeof TASK_COMPLETE_ACTION | typeof TASK_QUEUE_ACTION;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_RECOVER_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_QUEUE_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
@@ -116,39 +114,6 @@ export async function applyTaskQueueAction(job: Job, task: Task): Promise<Task> 
   return task;
 }
 
-export async function applyOrchestratorStartAction(task: Task): Promise<Task> {
-  if (task.adapter !== 'orchestrator') throw new Error('task start is only valid for adapter=orchestrator self-tasks');
-  const originalState = task.state;
-  try {
-    await transitionTaskEvent(task, 'task.started');
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
-      throw new Error(`Task ${task.id} is ${originalState}; only QUEUED orchestrator tasks can be started`);
-    }
-    throw error;
-  }
-  task.attempt = Math.max(task.attempt, 1);
-  task.updatedAt = new Date().toISOString();
-  return task;
-}
-
-export async function applyOrchestratorCompleteAction(task: Task, summary: string): Promise<Task> {
-  if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
-  const originalState = task.state;
-  if (task.state !== 'RUNNING') throw new Error(`Task ${task.id} is ${originalState}; orchestrator task must be started before completion`);
-  task.result = { summary };
-  clearExecution(task);
-  try {
-    await transitionTaskEvent(task, 'task.completed');
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
-      throw new Error(`Task ${task.id} is ${originalState}; only RUNNING orchestrator tasks can be completed`);
-    }
-    throw error;
-  }
-  return task;
-}
-
 async function applySelectedRelatedTaskMutations(
   job: Job,
   mutations: readonly RelatedTaskMutation[],
@@ -214,7 +179,6 @@ export async function dispatchTaskAction(
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
   else if (request.id === TASK_RELEASE_ACTION) await applyTaskReleaseAction(task);
   else if (request.id === TASK_HOLD_ACTION) await applyTaskHoldAction(task);
-  else if (request.id === TASK_START_ACTION) await applyOrchestratorStartAction(task);
   else if (request.id === TASK_QUEUE_ACTION) await applyTaskQueueAction(job, task);
   else throw new Error(`Unsupported task action ${request.id}`);
   const changedRelated = await applySelectedRelatedTaskMutations(job, relatedMutations);
