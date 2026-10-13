@@ -180,7 +180,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   console.log(JSON.stringify(context, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -189,7 +189,19 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
     createObjective = await textOption(args, '--objective', '--objective-file');
-    if ((!arg(args, '--pr') || noGitHubMode(args)) && !createObjective.trim()) throw new Error('job create with --head requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
+    if (!createObjective.trim()) throw new Error('job create requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
+    const legacy = ['--pr','--head','--base','--body','--local-merge-source','--local-merge-target','--idempotency-key'].find(flag => hasArg(args, flag));
+    if (legacy) throw new Error(`job create does not accept legacy PR option ${legacy}; use job adopt for an existing PR`);
+  }
+  if (action === 'adopt') {
+    const adoptId = arg(args, '--id');
+    const adoptPr = Number(arg(args, '--pr'));
+    if (!adoptId || !Number.isInteger(adoptPr) || adoptPr <= 0) throw new Error('job adopt requires --id and a positive --pr');
+    const objective = await textOption(args, '--objective', '--objective-file');
+    const result = await relayControlCommand(args, { command: 'job.adopt', repository: repo, options: {
+      id: adoptId, prNumber: adoptPr, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
+    }});
+    console.log(JSON.stringify(result, null, 2)); return;
   }
   if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
@@ -204,8 +216,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), executionMode: requestedExecutionMode(args), schedule: scheduleFromArgs(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
-      prNumber, head: arg(args, '--head') || undefined, base: arg(args, '--base', 'main'), body: arg(args, '--body') || objective || undefined,
-      localMergeSource: arg(args, '--local-merge-source') || undefined, localMergeTarget: arg(args, '--local-merge-target') || undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
   const job = await relayControlJob(args, id);

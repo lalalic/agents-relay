@@ -9,6 +9,7 @@ import { recordPublicationInDatabase, loadPublicationFromDatabase, type Publicat
 import type { ExecutionProcessRecord } from './process-identity.js';
 import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
 import { observability } from './observability.js';
+import { createJobIfAbsent } from './relay-create.js';
 import { migrateLegacyJobPrNumbers, normalizeLegacyJobPrNumber } from './job-pr-number-migration.js';
 import { hostInvocationTablesSql, recordHostInvocationEvent, hasHostInvocationDecision, recordHostInvocationDecision, type HostInvocationReceipt } from './host-invocation-store.js';
 import {
@@ -41,6 +42,7 @@ export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
   saveJob(job: Job): Promise<void>;
+  createJobIfAbsent?(job: Job): Promise<Job>;
   mutateJob?(jobId: string, mutation: (current: Job) => Job): Promise<Job>;
   ingestJobSnapshot(job: Job): Promise<Job>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
@@ -97,7 +99,6 @@ export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   }
   return base;
 }
-
 function monotonicJobTimestamp(previous: string, candidate = new Date().toISOString()): string {
   const prior = Date.parse(previous), next = Date.parse(candidate);
   if (!Number.isFinite(prior)) return candidate;
@@ -106,7 +107,6 @@ function monotonicJobTimestamp(previous: string, candidate = new Date().toISOStr
 export class SQLiteRelayStore implements RelayStore {
   private readonly db: DatabaseSync;
   private readonly outbox: ProjectionOutbox;
-
   constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
@@ -164,7 +164,6 @@ export class SQLiteRelayStore implements RelayStore {
       ${ProjectionOutbox.createIndexSql()}
     `);
     migrateLegacyJobPrNumbers(this.db);
-
     const current = this.db.prepare("SELECT value FROM relay_meta WHERE key='schema_version'").get() as { value?: string } | undefined;
     const version = current?.value ? Number(current.value) : 0;
     if (version > SCHEMA_VERSION) throw new Error(`Relay store schema ${version} is newer than supported ${SCHEMA_VERSION}`);
@@ -172,7 +171,6 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.prepare("INSERT INTO relay_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(String(SCHEMA_VERSION));
   }
-
   async recordPublication(jobId: string, deliveryId: string, publication: PackagePublication | null, failure: PackagePublishFailure | null, observedAt?: string): Promise<boolean> {
     return recordPublicationInDatabase(this.db, jobId, deliveryId, publication, failure, observedAt);
   }
@@ -194,6 +192,9 @@ export class SQLiteRelayStore implements RelayStore {
   }
   async saveJob(job: Job): Promise<void> {
     this.writeJobSnapshot(job, new Date().toISOString());
+  }
+  async createJobIfAbsent(job: Job): Promise<Job> {
+    return createJobIfAbsent(this.db, job);
   }
 
   /** Atomic read/modify/write for local authoritative Task and Plan updates. */

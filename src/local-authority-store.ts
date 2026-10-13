@@ -225,6 +225,14 @@ export class LocalAuthorityDurableStore implements DurableStore {
     });
   }
 
+  async createJobIfAbsent(job: Job): Promise<Job> {
+    if (this.authority.createJobIfAbsent) return this.authority.createJobIfAbsent(job);
+    const existing = await this.authority.loadJob(job.id);
+    if (existing) return existing;
+    await this.authority.saveJob(job);
+    return structuredClone(job);
+  }
+
   async savePlan(plan: Plan): Promise<void> {
     await this.mutate(plan.jobId, job => {
     const plans = [...(job.plans ?? [])];

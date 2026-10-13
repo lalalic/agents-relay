@@ -56,15 +56,17 @@ When provided, --thread-id persists a reviewer destination; otherwise the Job re
 
 Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
-  'job create': `Create a SQLite-authoritative Job.
+  'job create': `Create a SQLite-authoritative Job (objective-only).
 
-Required: --repo OWNER/REPO and a standalone Job objective (unless binding an existing PR). Job ID defaults to an auto-incrementing repository-scoped number; --id is optional for compatibility.
-With --head, bind the local source branch and use --base as its local merge target without a GitHub query. With --pr, bind an existing external PR reference as optional metadata without a GitHub query. Without either, create a local-first content Job; local Job completion still follows the configured Graph lifecycle.
-Common: --id JOB_ID (optional), --idempotency-key KEY (for retries), --base BRANCH (default: main), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive. For a new --head Job, one is required and must contain enough standalone context to complete the Job without the originating chat/thread. Objective Markdown is also the default PR body; --body is an explicit override.
+Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing repository-scoped number; --id is optional for compatibility. Existing PR adoption is an explicit separate command: job adopt.
+Common: --id JOB_ID (optional), --idempotency-key KEY (for retries), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan follows durable Job creation with the first real Planner round, activates the Job, and publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --idempotency-key submission-123 --initial-plan`,
+  'job adopt': `Adopt an existing legacy PR as a SQLite-authoritative Job.
+
+Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. This is the only creation path that binds an existing PR.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
