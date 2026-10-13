@@ -57,10 +57,10 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
     const id = troubleshooterTaskId(task);
     let create = false;
     const decision = dispatchTroubleshooter({
-      failedOrBlocked: ['FAILED','BLOCKED'].includes(task.state),
+      failedWork: task.state === 'FAILED',
       ordinaryWork: task.kind !== 'planner' && task.agentName !== 'troubleshooter',
       currentRun: belongsToCurrentRun(job, task),
-      needsRecovery: !(task.state === 'BLOCKED' && Boolean(task.unblock)),
+      needsRecovery: true,
       idUnused: !existing.has(id),
       noRecoveryBarrier: !hasRecoveryBarrier(job, task),
     }, () => { create = true; });

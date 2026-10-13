@@ -389,7 +389,7 @@ test('reconciler rescues queued legacy orchestrator work for Execution Router', 
   assert.ok(events.some(event => event.type === 'task.orchestrator_rescued'));
 });
 
-test('reconciler recovers RUNNING orphan without an execution identity', async () => {
+test('reconciler quarantines RUNNING legacy orphan without an execution identity', async () => {
   const at = '2026-10-04T06:00:00.000Z';
   const self = task('legacy-running', 'RUNNING');
   self.adapter = 'orchestrator';
@@ -405,13 +405,14 @@ test('reconciler recovers RUNNING orphan without an execution identity', async (
   const reconciler = managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,emit:event=>events.push(event)});
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.adapter,'codex');
-  assert.deepEqual(durable.workerRequirements,{capabilities:['implementation']});
-  assert.equal(durable.state,'QUEUED');
+  assert.equal(durable.adapter,'orchestrator');
+  assert.equal(durable.workerRequirements,undefined);
+  assert.equal(durable.state,'BLOCKED');
+  assert.match(durable.error,/automatic replay is unsafe/);
   assert.equal(durable.executionId,null);
   assert.equal(durable.leaseOwner,null);
   assert.equal(durable.threadId,null);
-  assert.ok(events.some(event=>event.type==='task.orchestrator_rescued'));
+  assert.ok(events.some(event=>event.type==='task.orchestrator_quarantined'));
 });
 
 test('reconciler preserves active ownership and terminal legacy records', async () => {
@@ -422,7 +423,7 @@ test('reconciler preserves active ownership and terminal legacy records', async 
   const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
   await reconciler.reconcile('j');
-  assert.deepEqual((await store.load('j')).tasks.map(item => item.adapter), ['orchestrator', 'codex', 'orchestrator']);
+  { const durable=(await store.load('j')).tasks; assert.deepEqual(durable.map(item => item.adapter), ['orchestrator','orchestrator','orchestrator']); assert.deepEqual(durable.map(item=>item.state), ['RUNNING','BLOCKED','SUCCEEDED']); }
 });
 
 test('CLI no longer exposes manual orchestrator task start or complete', async () => {

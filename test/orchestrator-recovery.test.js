@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { InMemoryStore } from '../dist/store.js';
 import { createTaskEntity } from '../dist/workflow/entity-creation.js';
 import { prepareOrchestratorRepair } from '../dist/workflow/orchestrator-rescue.js';
+import { repairLegacyOrchestrators } from '../dist/legacy-orchestrator-repair.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state = 'QUEUED', fields = {}) => ({
@@ -39,14 +40,16 @@ test('legacy repair clears orphan ownership once and external completion exactly
   assert.equal(prepareOrchestratorRepair(queued, Date.parse('2026-10-04T06:00:01.000Z')).repaired, false);
 
   const running = task('running', 'RUNNING', { leaseOwner: 'gone', leaseExpiresAt: '2026-10-04T06:00:00.000Z', executionId: 'lost', threadId: 'lost' });
-  prepareOrchestratorRepair(running, Date.parse('2026-10-04T06:00:00.000Z'));
-  assert.equal(running.state, 'QUEUED');
+  const quarantined = prepareOrchestratorRepair(running, Date.parse('2026-10-04T06:00:00.000Z'));
+  assert.equal(quarantined.blocked, true);
+  assert.equal(running.state, 'BLOCKED');
+  assert.match(running.error, /automatic replay is unsafe/);
   assert.equal(running.executionId, null);
   assert.equal(running.leaseOwner, null);
   assert.equal(running.threadId, null);
 
   const completed = task('externally-done', 'RUNNING', {
-    result: { summary: 'Release was completed externally' },
+    result: { summary: 'Release was completed externally', data: { externalCompletionVerified: true } },
     leaseOwner: 'gone', leaseExpiresAt: '2026-10-04T06:00:00.000Z', executionId: 'lost', threadId: 'lost',
   });
   const applied = prepareOrchestratorRepair(completed, Date.parse('2026-10-04T06:00:00.000Z'));
@@ -57,6 +60,33 @@ test('legacy repair clears orphan ownership once and external completion exactly
   assert.equal(prepareOrchestratorRepair(completed, Date.parse('2026-10-04T06:00:01.000Z')).repaired, false);
 });
 
+
+
+test('legacy repair never reclaims a non-orchestrator live execution', async () => {
+  const normal = { ...task('normal', 'RUNNING', { executionId: 'live', leaseOwner: 'other' }), adapter: 'codex' };
+  const authority = new InMemoryStore(job([normal]));
+  const store = new Proxy(authority, {
+    get(target, property) {
+      if (property === 'loadExecutionProcess') return async () => { throw new Error('must not probe normal worker'); };
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  await repairLegacyOrchestrators('j', Date.now(), { store, owner: 'repair', emit: () => {} });
+  const unchanged = (await authority.load('j')).tasks[0];
+  assert.equal(unchanged.adapter, 'codex');
+  assert.equal(unchanged.state, 'RUNNING');
+  assert.equal(unchanged.executionId, 'live');
+});
+
+test('unverified legacy RUNNING result is quarantined instead of trusted or replayed', () => {
+  const ambiguous = task('ambiguous', 'RUNNING', { result: { summary: 'claimed done' } });
+  const repaired = prepareOrchestratorRepair(ambiguous, Date.now());
+  assert.equal(repaired.blocked, true);
+  assert.equal(repaired.externallyCompleted, false);
+  assert.equal(ambiguous.state, 'BLOCKED');
+  assert.equal(ambiguous.adapter, 'orchestrator');
+});
 test('atomic repair serializes concurrent reconcilers and launches once', async () => {
   const authority = new InMemoryStore(job([task('orphan')]));
   let mutationQueue = Promise.resolve();
