@@ -7,6 +7,7 @@ import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js';
 import { defaultWorkspaceRoot, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 import { workerTaskFromArgs } from './cli-worker-task.js';
+import { taskExecutionContext } from './task-context.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
@@ -28,12 +29,13 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'context', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
     if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
     const taskId = arg(args, '--task-id');
+    if (action === 'context') { if (!taskId) throw new Error('task context requires --task-id'); const job = await relayControlJob(args, jobId); console.log(JSON.stringify(taskExecutionContext(job, taskId, arg(args, '--execution-id')), null, 2)); return; }
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
     if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }

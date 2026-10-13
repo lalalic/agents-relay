@@ -345,7 +345,7 @@ export class Reconciler extends ReconcilerReviewBase {
         freshTask.chatgptThreadDelivery = {
           kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',
           requestId: `${freshJob.id}:${freshTask.id}:${freshTask.executionId}`,
-          jobId: freshJob.id, prNumber: freshJob.prNumber, executionId: freshTask.executionId,
+          jobId: freshJob.id, repository: freshJob.repository, taskId: freshTask.id, prNumber: freshJob.prNumber, executionId: freshTask.executionId,
           projectId: freshTask.routing?.projectId ?? null, deliveredAt: null,
         };
       }
@@ -370,7 +370,7 @@ export class Reconciler extends ReconcilerReviewBase {
             durable.chatgptThreadDelivery = {
               kind: 'new-turn', threadId: implementationThread, threadSource: 'implementation',
               requestId: `${current.id}:${durable.id}:${durable.executionId}`,
-              jobId: current.id, prNumber: current.prNumber, executionId: durable.executionId,
+              jobId: current.id, repository: current.repository, taskId: durable.id, prNumber: current.prNumber, executionId: durable.executionId,
               projectId: durable.routing?.projectId ?? null, deliveredAt: null,
             };
           }

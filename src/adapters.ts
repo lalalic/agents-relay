@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { withTestInjection, type InjectionConfig } from './e2e-injection.js';
 import { Task, WorkerAdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
+import { taskReferencePrompt } from './task-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
 
 export type Execution = {
@@ -397,7 +398,8 @@ export class ChatGptAdapter implements WorkerAdapter {
       const submit = () => (this.runner ?? browserWorkerRunner())(
         definition,
         {
-          prompt: task.input,
+          prompt: task.chatgptThreadDelivery?.threadSource === 'implementation' && task.chatgptThreadDelivery.repository && task.chatgptThreadDelivery.executionId
+            ? taskReferencePrompt(task.chatgptThreadDelivery.repository, task.chatgptThreadDelivery.jobId, task.id, task.chatgptThreadDelivery.executionId) : task.input,
           ...(task.attachments?.length ? { files: task.attachments } : {}),
           ...(task.chatgptThreadDelivery ? { thread: task.chatgptThreadDelivery } : {}),
           tabClosePolicy: policy,

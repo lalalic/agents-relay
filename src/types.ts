@@ -126,6 +126,8 @@ export type ChatGptThreadDelivery = {
   threadSource: 'override' | 'reviewer' | 'creator' | 'implementation';
   requestId: string;
   jobId: string;
+  repository?: string;
+  taskId?: string;
   prNumber: number;
   reviewHeadSha?: string;
   executionId?: string;

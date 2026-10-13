@@ -129,6 +129,9 @@ Use --clear-routing to remove routing metadata.
 
 Example:
   npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  'task context': `Read the authoritative execution-scoped Task contract.
+
+Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Fails closed on stale execution.`,
   'task show': `Show one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

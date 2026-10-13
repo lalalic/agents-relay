@@ -463,3 +463,15 @@ test('ChatGptAdapter aborts hung browser submission when worker start ack expire
   await assert.rejects(execution.launched,/worker_start_timeout/);
   assert.equal(released,true);
 });
+
+test('implementation-thread delivery sends only execution reference', async () => {
+  const requests = [];
+  const adapter = new ChatGptAdapter({ agentRunner: fakeRunner({ status:'submitted',mode:'new-turn',thread_id:'implementation-thread',verified_by:'user-turn' }, requests) });
+  await adapter.launch(task({ input:'SECRET_LONG_TASK_INSTRUCTIONS', chatgptThreadDelivery: {
+    kind:'new-turn',threadId:'implementation-thread',threadSource:'implementation',requestId:'delivery-1',
+    repository:'owner/repo',jobId:'job-1',taskId:'chat-task',executionId:'exec-1',prNumber:0,
+  } }), new AbortController().signal).promise;
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].prompt,/task context --repo owner\/repo --id job-1 --task-id chat-task --execution-id exec-1/);
+  assert.doesNotMatch(requests[0].prompt,/SECRET_LONG_TASK_INSTRUCTIONS/);
+});
