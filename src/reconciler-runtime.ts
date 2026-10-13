@@ -1,5 +1,8 @@
-import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js'; import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
-import { applyTaskRetryAction } from './task-actions.js'; import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
+import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
+import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
+import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
+import { applyTaskRetryAction } from './task-actions.js';
+import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
@@ -89,24 +92,10 @@ export abstract class ReconcilerRuntimeBase {
     const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
-    // Worker terminal events with a structured reviewer verdict must drive the
-    // review Graph, not be dropped until the reviewer watchdog times out.
     if (event.type === 'task.completed') {
-      const job = await this.store.load(event.job_id);
-      const task = job.tasks.find(item => item.id === event.task_id);
-      if (task?.agentName === 'reviewer') {
-        const raw = event.data?.verdict;
-        const verdict = raw === 'approved' || raw === 'pass' ? 'review.approved'
-          : raw === 'changes-required' || raw === 'changes_required' ? 'review.changes_required'
-          : raw === 'blocked' ? 'review.blocked' : null;
-        if (verdict) {
-          const findings = Array.isArray(event.data?.findings) ? event.data.findings : [];
-          const headSha = typeof event.data?.headSha === 'string' ? event.data.headSha : undefined;
-          return this.applyReviewEvent({ ...event, type: verdict, data: {
-            ...event.data, outcome: { head_sha: headSha, blocking_findings: findings },
-          } });
-        }
-      }
+      const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
+      const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
+      if (normalized) return this.applyReviewEvent(normalized);
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
@@ -384,10 +373,17 @@ export abstract class ReconcilerRuntimeBase {
         reroutedTask = current;
       }
     }
-    const event = eventFor(jobId, taskId, transition.task.parentTaskId, 'task.failed', 'failed',
-      transition.task.error ?? failureMessage, 'user',
+    const event = eventFor(
+      jobId,
+      taskId,
+      transition.task.parentTaskId,
+      'task.failed',
+      'failed',
+      transition.task.error ?? failureMessage,
+      'user',
       { reason: failureReason, exitCode: exit?.exitCode ?? null, signal: exit?.signal ?? null, timeoutMs: transition.task.timeoutMs, workflowEvent: 'watchdog.failed', executionId },
-      { agent: 'relay', component: 'agents-relay', watchdog: true });
+      { agent: 'relay', component: 'agents-relay', watchdog: true },
+    );
     await this.emit(event);
     if (reroutedTask) {
       await this.emit(eventFor(jobId, taskId, reroutedTask.parentTaskId,
