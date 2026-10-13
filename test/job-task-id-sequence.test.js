@@ -6,14 +6,18 @@ import { join } from 'node:path';
 import { allocateEntityId } from '../dist/job-task-id-sequence.js';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
 
-test('job/task IDs are separate repository-scoped increasing sequences and idempotent', async () => {
+test('Job IDs are repository-scoped while Task IDs use one global increasing sequence and remain idempotent', async () => {
   const dir=await mkdtemp(join(tmpdir(),'relay-ids-'));
   try {
     const jobs=await Promise.all(Array.from({length:16},()=>Promise.resolve().then(()=>allocateEntityId(dir,'lalalic/neo','job'))));
     assert.equal(new Set(jobs).size,16);
     assert.equal(jobs[0],'j-7-lalalic-neo-1');
     assert.equal(jobs[15],'j-7-lalalic-neo-16');
-    assert.equal(allocateEntityId(dir,'lalalic/neo','task'),'t-7-lalalic-neo-1');
+    assert.equal(allocateEntityId(dir,'lalalic/neo','task'),'1');
+    assert.equal(allocateEntityId(dir,'other/repo','task'),'2');
+    const neoTask=allocateEntityId(dir,'lalalic/neo','task','same-key');
+    const otherTask=allocateEntityId(dir,'other/repo','task','same-key');
+    assert.notEqual(neoTask,otherTask);
     assert.equal(allocateEntityId(dir,'lalalic/agents-relay','job'),'j-7-lalalic-agents-relay-1');
     const a=allocateEntityId(dir,'lalalic/neo','job','batch-123');
     assert.equal(a,allocateEntityId(dir,'lalalic/neo','job','batch-123'));
@@ -48,8 +52,8 @@ test('planner Task aliases resolve to durable repository IDs without losing DAG 
     ]};
     const result=assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir);
     const [story,direction]=result.next_tasks;
-    assert.equal(story.id,'t-7-lalalic-neo-1');
-    assert.equal(direction.id,'t-7-lalalic-neo-2');
+    assert.equal(story.id,'1');
+    assert.equal(direction.id,'2');
     assert.equal(direction.parentTaskId,story.id);
     assert.deepEqual(direction.dependencies,[story.id,'external-task']);
     assert.deepEqual(assignPlannerTaskIds(raw,'lalalic/neo','episode-1','plan-1',dir),result);
@@ -72,7 +76,7 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
     });
     const task={jobId:job.id,id:'',kind:'work',state:'QUEUED',priority:'P2',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:'Draft storyboard',output:{kind:'file',path:'story.md'},attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const created=await actions.workspaceTaskCreate(job.id,structuredClone(task),'batch-123');
-    assert.equal(created.createdTaskId,'t-7-lalalic-neo-1');
+    assert.equal(created.createdTaskId,'1');
     assert.equal(created.tasks.length,1);
     assert.equal(wakes,1);
     const repeated=await actions.workspaceTaskCreate(job.id,structuredClone(task),'batch-123');
@@ -80,9 +84,9 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
     assert.equal(repeated.tasks.length,1);
     assert.equal(wakes,1);
     await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),input:'Different Task'},'batch-123'),/different definition/);
-    await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),id:'t-7-lalalic-neo-99'}),/Reserved auto-generated Task ID/);
+    await assert.rejects(actions.workspaceTaskCreate(job.id,{...structuredClone(task),id:'99'}),/Reserved auto-generated Task ID/);
     const second=await actions.workspaceTaskCreate(job.id,structuredClone(task),'batch-124');
-    assert.equal(second.createdTaskId,'t-7-lalalic-neo-2');
+    assert.equal(second.createdTaskId,'2');
     assert.equal(second.tasks.length,2);
   } finally { await rm(dir,{recursive:true,force:true}); }
 });

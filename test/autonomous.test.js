@@ -68,7 +68,7 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(observed.objective, 'finish the objective');
   assert.equal(observed.guidance, 'focus on the durable objective');
   const child = result.job.tasks.find(item => item.id === result.round.generatedTaskIds[0]);
-  assert.match(child?.id ?? '', /^t-5-owner-repo-\d+$/);
+  assert.match(child?.id ?? '', /^[1-9]\d*$/);
   assert.ok(child);
   assert.equal(child.parentTaskId, null);
   assert.equal(child.planningDecisionId, 'plan-1');
@@ -346,7 +346,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const firstPlan = result.plans?.find(item => item.id === 'plan-1');
   assert.equal(result.tasks.find(item => item.id === firstPlan?.generatedTaskIds[0])?.priority, 'P1');
   assert.equal(firstPlan?.status, 'SUCCEEDED');
-  assert.match(firstPlan?.generatedTaskIds[0] ?? '', /^t-5-owner-repo-\d+$/);
+  assert.match(firstPlan?.generatedTaskIds[0] ?? '', /^[1-9]\d*$/);
   const comments = await store.comments();
   const planIndex = comments.findIndex(comment => comment.body.includes(PLAN_MARKER) && comment.body.includes('\"id\":\"plan-1\"'));
   const childIndex = comments.findIndex(comment => comment.body.includes(TASK_MARKER) && comment.body.includes('\"id\":\"' + firstPlan.generatedTaskIds[0] + '\"'));
