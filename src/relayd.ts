@@ -207,6 +207,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (discovered.state === 'COMPLETED' && discovered.localMerge?.status === 'succeeded'
           && discovered.prNumber <= 0) {
         const published = projectAuthoritativeLocalMerge(canonical, discovered);
+        if (relay.mutateJob && (discovered.githubProjection?.status !== 'merged_without_pr' || discovered.githubProjection.sourceSha !== published.localMergedCommitSha)) await relay.mutateJob(discovered.id, current => ({ ...current, githubProjection: { status: 'merged_without_pr', sourceSha: published.localMergedCommitSha, observedAt: new Date().toISOString() } }));
         if (published.status === 'projected') await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivered','succeeded',
           `GitHub main synchronization ${published.status}`,'orchestrator',
           {operation:'github.syncMain',deliveryStatus:published.status,mergedCommitSha:published.localMergedCommitSha},
@@ -215,50 +216,52 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       }
       const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0;
       const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
-      if (terminal && existingPrNumber <= 0) continue;
       const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
-      const facts = await relay.loadPullRequestFacts();
-      if (facts?.head?.sha !== sourceSha) {
-        await gitText(canonical, ['fetch', '--no-tags', 'origin',
-          '+refs/heads/main:refs/remotes/origin/main']);
-        await gitText(canonical, ['fetch', '--no-tags', 'origin',
-          `+refs/heads/${branch}:refs/remotes/origin/${branch}`]).catch(() => '');
-        const remoteRef = `refs/remotes/origin/${branch}`;
-        const remoteHeadSha = await gitText(canonical, ['rev-parse', '--verify', remoteRef]).catch(() => '');
-        const remoteTreeMatchesBase = remoteHeadSha
-          ? await gitText(canonical, ['diff', '--quiet', 'refs/remotes/origin/main', remoteRef]).then(() => true, () => false)
-          : false;
-        await gitText(canonical, authoritativeBranchPushArgs({
-          sourceRef,
-          branch,
-          remoteHeadSha: remoteHeadSha || null,
-          remoteTreeMatchesBase,
-        }));
-      }
       let job = (await relay.loadJob(discovered.id)) ?? discovered;
       let prNumber = job.prNumber > 0 ? job.prNumber : 0;
-      if (prNumber === 0 && ['COMPLETED','CANCELLED'].includes(job.state)) continue;
       if (prNumber === 0) {
         // Do not bootstrap an empty remote-only PR commit: it would diverge from
         // the real local Job branch before its first Worker commit. Publish the
         // review-only PR when there is an actual diff against main.
         const ahead = Number(await gitText(canonical, ['rev-list', '--count', `${targetRef}..${sourceRef}`]));
-        if (!Number.isFinite(ahead) || ahead <= 0) continue;
+        if (!Number.isFinite(ahead) || ahead <= 0) {
+          if (terminal && relay.mutateJob && job.githubProjection?.sourceSha !== sourceSha) await relay.mutateJob(job.id, current => ({ ...current, githubProjection: { status: current.localMerge?.status === 'succeeded' ? 'merged_without_pr' : 'no_diff', sourceSha, observedAt: new Date().toISOString() } }));
+          continue;
+        }
         // GitHub compares origin/main, not local main. Do not invoke the legacy
         // empty-PR bootstrap path when the published base already contains the
         // source head (for example when main was pushed by another Job).
         await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/main:refs/remotes/origin/main`]);
         const remoteAhead = Number(await gitText(canonical, ['rev-list','--count',`refs/remotes/origin/main..${sourceRef}`]));
-        if (!Number.isFinite(remoteAhead) || remoteAhead <= 0) continue;
-        const pr = await resolvePullRequest(client, job.repository, { head: branch, base, title: job.title, body: job.objective ?? job.description ?? '' });
-        if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
-        job = await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, updatedAt: new Date().toISOString() }));
-        prNumber = pr.number;
-        observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
+        if (!Number.isFinite(remoteAhead) || remoteAhead <= 0) {
+          if (terminal && relay.mutateJob && job.githubProjection?.sourceSha !== sourceSha) await relay.mutateJob(job.id, current => ({ ...current, githubProjection: { status: 'merged_without_pr', sourceSha, observedAt: new Date().toISOString() } }));
+          continue;
+        }
+        const effect = async (item: import('./projection-outbox.js').ProjectionOutboxItem): Promise<void> => {
+          const payload = item.payload as { repository: string; head: string; base: string; title: string; body: string; sourceRef: string; targetRef: string };
+          await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/${payload.base}:refs/remotes/origin/${payload.base}`]);
+          const remoteRef = `refs/remotes/origin/${payload.head}`;
+          const remoteHeadSha = await gitText(canonical, ['rev-parse', '--verify', remoteRef]).catch(() => '');
+          const remoteTreeMatchesBase = remoteHeadSha ? await gitText(canonical, ['diff','--quiet',`refs/remotes/origin/${payload.base}`,remoteRef]).then(() => true, () => false) : false;
+          await gitText(canonical, authoritativeBranchPushArgs({ sourceRef: payload.sourceRef, branch: payload.head, remoteHeadSha: remoteHeadSha || null, remoteTreeMatchesBase }));
+          const pr = await resolvePullRequest(client, payload.repository, { head: payload.head, base: payload.base, title: payload.title, body: payload.body });
+          if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
+          await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, githubProjection: { status: 'pr_bound', sourceSha, observedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() }));
+          observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
+        };
+        projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, new InMemoryStore(job), undefined, true, effect));
+        if (relay.enqueueExternalActionOnce) await relay.enqueueExternalActionOnce({ idempotencyKey: `create_pull_request:${job.id}:${sourceSha}`, operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: job.repository, head: branch, base, title: job.title, body: job.objective ?? job.description ?? '', sourceRef, targetRef }, priority: 100 });
+        if (terminal) continue;
+        continue;
       }
-      if (prNumber <= 0) continue;
-      const latestFacts = await relay.loadPullRequestFacts();
-      if (latestFacts?.state !== 'MERGED' && (latestFacts?.head?.sha !== sourceSha || latestFacts?.head?.ref !== branch)) {
+      if (prNumber <= 0) continue; if ((await relay.loadPullRequestFacts())?.head?.sha !== sourceSha) {
+        await gitText(canonical, ['fetch','--no-tags','origin','+refs/heads/main:refs/remotes/origin/main']);
+        const remoteRef = `refs/remotes/origin/${branch}`;
+        const remoteHeadSha = await gitText(canonical, ['rev-parse','--verify',remoteRef]).catch(() => '');
+        const sameTree = remoteHeadSha ? await gitText(canonical, ['diff','--quiet','refs/remotes/origin/main',remoteRef]).then(() => true, () => false) : false;
+        await gitText(canonical, authoritativeBranchPushArgs({ sourceRef, branch, remoteHeadSha: remoteHeadSha || null, remoteTreeMatchesBase: sameTree }));
+      }
+      const latestFacts = await relay.loadPullRequestFacts(); if (latestFacts?.state !== 'MERGED' && (latestFacts?.head?.sha !== sourceSha || latestFacts?.head?.ref !== branch)) {
         await relay.savePullRequestFacts({ state: latestFacts?.state === 'CLOSED' ? 'CLOSED' : 'OPEN', head: { ref: branch, sha: sourceSha }, observedAt: new Date().toISOString() });
       }
       const github = new GitHubStore(client, job.repository, prNumber, trusted);

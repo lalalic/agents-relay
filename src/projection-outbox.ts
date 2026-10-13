@@ -8,6 +8,7 @@ export type ProjectionOperation =
   | 'save_task'
   | 'save_agent'
   | 'update_pr_body'
+  | 'create_pull_request'
   | 'merge_pull_request'
   | 'close_pull_request';
 
@@ -104,6 +105,7 @@ export type ProjectionOutboxPort = {
   conflictCount(): number;
   pendingCount(): number;
   terminalCount(): number;
+  recordReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void;
 };
 
 export const SCHEMA_VERSION = 5;
@@ -198,6 +200,16 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
       CREATE INDEX IF NOT EXISTS projection_due_idx ON projection_outbox(status, next_attempt_at, priority DESC, id);
       CREATE INDEX IF NOT EXISTS projection_coalesce_idx ON projection_outbox(coalesce_key, status);
     `;
+  }
+
+  static createReceiptTableSql(): string {
+    return `CREATE TABLE IF NOT EXISTS projection_receipt (
+      operation_key TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK(status IN ('succeeded','failed')),
+      attempts INTEGER NOT NULL,
+      detail_json TEXT,
+      recorded_at TEXT NOT NULL
+    );`;
   }
 
   /** Rebuild a pre-v5 outbox, backfill logical operation keys, and classify legacy dead conflicts. */
@@ -344,6 +356,12 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
       SET status='dead', attempts=attempts+1, next_attempt_at=NULL, last_error=?, updated_at=?
       WHERE id=?
     `).run(error, new Date().toISOString(), id);
+  }
+
+  recordReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void {
+    this.db.prepare(`INSERT INTO projection_receipt(operation_key,status,attempts,detail_json,recorded_at)
+      VALUES(?,?,?,?,?) ON CONFLICT(operation_key) DO UPDATE SET status=excluded.status, attempts=excluded.attempts,
+      detail_json=excluded.detail_json, recorded_at=excluded.recorded_at`).run(operationKey, status, attempts, JSON.stringify(detail ?? null), now);
   }
 
   recordConflict(id: number, diagnostic: ProjectionConflictDiagnostic): void {

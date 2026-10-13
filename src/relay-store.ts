@@ -74,6 +74,7 @@ export interface RelayStore {
   conflictProjectionCount(): Promise<number>;
   pendingProjectionCount(): Promise<number>;
   terminalProjectionCount(): Promise<number>;
+  recordProjectionReceipt?(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void>;
   close(): void;
 }
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
@@ -115,8 +116,7 @@ export class SQLiteRelayStore implements RelayStore {
     this.outbox = new ProjectionOutbox(this.db);
     this.outbox.resetProcessing(new Date().toISOString());
   }
-  private migrate(): void {
-    this.db.exec(`
+  private migrate(): void { this.db.exec(`
       CREATE TABLE IF NOT EXISTS relay_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -161,6 +161,7 @@ export class SQLiteRelayStore implements RelayStore {
       );
       ${hostInvocationTablesSql}
       ${ProjectionOutbox.createTableSql()}
+      ${ProjectionOutbox.createReceiptTableSql()}
       ${ProjectionOutbox.createIndexSql()}
     `);
     migrateLegacyJobPrNumbers(this.db);
@@ -409,7 +410,7 @@ export class SQLiteRelayStore implements RelayStore {
    * must never reset backoff or queue a second merge while a first one runs.
    */
   async enqueueExternalActionOnce(request: ProjectionRequest): Promise<boolean> {
-    if (!['merge_pull_request', 'close_pull_request', 'update_pr_body'].includes(request.operation)) {
+    if (!['merge_pull_request', 'close_pull_request', 'update_pr_body', 'create_pull_request'].includes(request.operation)) {
       throw new Error('Lifecycle projection is forbidden in external-only outbox');
     }
     const key = logicalOperationKey(request.idempotencyKey);
@@ -417,7 +418,7 @@ export class SQLiteRelayStore implements RelayStore {
     try {
       const existing = this.db.prepare(
         'SELECT id FROM projection_outbox WHERE operation_key=? LIMIT 1',
-      ).get(key);
+      ).get(key) ?? this.db.prepare('SELECT operation_key FROM projection_receipt WHERE operation_key=?').get(key);
       if (existing) {
         this.db.exec('COMMIT');
         return false;
@@ -447,10 +448,9 @@ export class SQLiteRelayStore implements RelayStore {
   async resolveProjectionConflict(id: number, resolution: ProjectionConflictResolutionRequest): Promise<boolean> { return this.outbox.resolveConflict(id, resolution); }
 
   async conflictProjectionCount(): Promise<number> { return this.outbox.conflictCount(); }
-
   async pendingProjectionCount(): Promise<number> { return this.outbox.pendingCount(); }
-
   async terminalProjectionCount(): Promise<number> { return this.outbox.terminalCount(); }
+  async recordProjectionReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void> { this.outbox.recordReceipt(operationKey, status, attempts, detail, new Date().toISOString()); }
 
   close(): void { this.db.close(); }
 }

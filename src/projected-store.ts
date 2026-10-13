@@ -15,6 +15,7 @@ type ProjectedPayload =
   | { operation: 'append_task' | 'save_task'; value: Task }
   | { operation: 'save_agent'; value: AgentRegistration }
   | { operation: 'update_pr_body'; value: string }
+  | { operation: 'create_pull_request'; repository: string; head: string; base: string; title: string; body: string; sourceRef: string; targetRef: string }
   | { operation: 'merge_pull_request'; expectedHeadSha?: string }
   | { operation: 'close_pull_request' };
 
@@ -107,6 +108,7 @@ export class GitHubProjectionWriter {
     private readonly github: DurableStore,
     private readonly onConflict?: ProjectionConflictObserver,
     private readonly externalOnly = false,
+    private readonly externalEffect?: (item: ProjectionOutboxItem) => Promise<void>,
   ) {}
 
   async flushOnce(limit = 50, now = new Date()): Promise<{ projected: number; deferred: number }> {
@@ -115,7 +117,7 @@ export class GitHubProjectionWriter {
     let deferred = 0;
     for (const item of items) {
       try {
-        if (this.externalOnly && !['merge_pull_request', 'close_pull_request', 'update_pr_body'].includes(item.operation)) {
+        if (this.externalOnly && !['merge_pull_request', 'close_pull_request', 'update_pr_body', 'create_pull_request'].includes(item.operation)) {
           // Drop legacy lifecycle projections; GitHub may not override SQLite truth.
           await this.relay.completeProjection(item.id);
           continue;
@@ -132,6 +134,7 @@ export class GitHubProjectionWriter {
           });
         }
         await this.relay.completeProjection(item.id);
+        await this.relay.recordProjectionReceipt?.(item.operationKey, 'succeeded', item.attempts, { operation: item.operation });
         projected += 1;
         observability().record({
           stage: 'projection', event: 'projection.completed', outcome: 'succeeded',
@@ -155,6 +158,7 @@ export class GitHubProjectionWriter {
         } else {
           const retryAt = githubProjectionRetryAt(error, item.attempts, now);
           await this.relay.retryProjection(item.id, message, retryAt);
+          await this.relay.recordProjectionReceipt?.(item.operationKey, 'failed', item.attempts + 1, { operation: item.operation, error: message });
           deferred += 1;
           observability().record({
             stage: 'projection', event: 'projection.retry_scheduled', level: 'warn', outcome: 'failed',
@@ -177,6 +181,11 @@ export class GitHubProjectionWriter {
   }
 
   private async apply(item: ProjectionOutboxItem): Promise<void> {
+    if (item.operation === 'create_pull_request') {
+      if (!this.externalEffect) throw new Error('GitHub PR creation effect is unavailable');
+      await this.externalEffect(item);
+      return;
+    }
     const payload = item.payload as ProjectedPayload;
     switch (payload.operation) {
       case 'save_job': await this.github.saveJob(payload.value); return;
