@@ -26,7 +26,7 @@ The trusted marker is the complete durable scheduling truth. No scheduler labels
 ## Creation
 
 ~~~sh
-npx agents-relay job create --repo OWNER/REPO --head feat/scheduled \
+npx agents-relay job create --repo OWNER/REPO \
   --base main --id scheduled-job --mode autonomous \
   --title "Operate the objective" --objective "Keep the objective current" \
   --schedule "*/10 * * * *" --schedule-timezone America/Toronto \

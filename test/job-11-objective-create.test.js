@@ -53,3 +53,14 @@ test('SQLite create-if-absent is atomic and preserves the first complete snapsho
     assert.equal((await store.loadJob('same')).objective, 'one');
   } finally { store.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+
+test('legacy adoption refuses duplicate immutable ID bound elsewhere', async () => {
+  const { adoptLegacyJob, ensureManagedGitHubJob } = await import('../dist/cli-job-create.js');
+  const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-adopt-duplicate-'));
+  try {
+    await ensureManagedGitHubJob({}, 'owner/repo', new Set(), { id: 'taken-id', objective: 'original', storeDirectory: directory });
+    await assert.rejects(() => adoptLegacyJob({}, 'owner/repo', new Set(), { id: 'taken-id', prNumber: 47, storeDirectory: directory }), /already bound/);
+    await assert.rejects(() => adoptLegacyJob({}, 'other/repo', new Set(), { id: 'taken-id', prNumber: 47, storeDirectory: directory }), /already bound/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

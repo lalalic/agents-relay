@@ -15,6 +15,7 @@ test('only code Tasks request managed Git worktrees', () => {
   assert.equal(jobRequiresManagedWorktree(base), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'file', path: 'runs/result.md' } }] }), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'task_pr' } }] }), true);
+  assert.equal(jobRequiresManagedWorktree({ ...base, prNumber: 7, tasks: [{ output: { kind: 'task_pr' } }] }), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, localMerge: { sourceRef: 'refs/heads/legacy', targetRef: 'refs/heads/main', status: 'pending' } }), true);
   assert.equal(jobRequiresManagedWorktree({ ...base, schedule: { cron: '* * * * *' } }), false);
 });

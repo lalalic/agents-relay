@@ -101,6 +101,13 @@ export async function adoptLegacyJob(
 ): Promise<{ job: Job; pr: PullRequest }> {
   if (!options.id || !Number.isInteger(options.prNumber) || options.prNumber <= 0) throw new Error('job adopt requires --id and a positive --pr');
   const directory = options.storeDirectory ?? relayStoreDirectory();
+  const matches = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs).filter(job => job.id === options.id);
+  if (matches.length > 1) throw new Error(`Ambiguous existing immutable Job ID ${options.id}`);
+  if (matches.length === 1) {
+    const existing = matches[0];
+    if (existing.repository !== repositoryName || existing.prNumber !== options.prNumber) throw new Error(`Job ID ${options.id} is already bound to another repository or PR`);
+    return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
+  }
   const local = openLocalManagedStore(repositoryName, options.prNumber, { directory, jobId: options.id, noGitHub: true });
   try {
     const existing = await local.relay.loadJob(options.id);

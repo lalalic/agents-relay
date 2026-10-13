@@ -58,7 +58,7 @@ These paths always represent the current canonical graphs. Historical graph defi
 
 ## Quick start
 
-For new work, create a local Job through Agents Relay. The CLI can bind a known PR number without GitHub access; creating a new PR head uses the external GitHub adapter. Tasks are validated against the SQLite Job, not GitHub markers.
+For new work, create a local Job through Agents Relay. Use `job adopt` to bind a known legacy PR number without GitHub access; the external GitHub projection creates a display PR after the first meaningful code commit. Tasks are validated against the SQLite Job, not GitHub markers.
 
 ~~~sh
 cat > job.md <<'EOF'
@@ -67,7 +67,7 @@ cat > job.md <<'EOF'
 Standalone Job context. Put a Mermaid block first when a workflow/state/architecture diagram helps.
 EOF
 
-npx agents-relay job create --repo OWNER/REPO --head feat/example --base main \
+npx agents-relay job create --repo OWNER/REPO \
   --id job-1 --title "Objective" --objective-file job.md --mode fixed
 
 # The orchestrator decides the initial batch separately
@@ -76,10 +76,10 @@ cat > task.md <<'EOF'
 
 Implement this phase using the Job objective as context.
 EOF
-npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --id job-1 \
   --task-id initial --output task-pr --input-file task.md
 
-npx agents-relay task create --repo OWNER/REPO --pr 12 --id job-1 \
+npx agents-relay task create --repo OWNER/REPO --id job-1 \
   --task-id child --output task-pr \
   --input "Implement the described child task and publish a terminal event."
 
@@ -142,12 +142,12 @@ Autonomous jobs can also be scheduled. The Job marker stores a five-field cron e
 [Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
 operational contract.
 
-job create first resolves an existing open PR with the same head/base, then creates it only when needed. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only and always enables auto-merge; `--no-auto-merge` is not a `job create` option. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
+GitHub projection creates or reuses a display PR after a meaningful source-branch commit; `job adopt` is reserved for existing legacy PR bindings. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only and always enables auto-merge; `--no-auto-merge` is not a `job create` option. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
-To create a Job on an existing unmanaged PR, use the same `job create` action with `--pr` instead of `--head`:
+To create a Job on an existing unmanaged PR, use the explicit `job adopt` compatibility action:
 
 ~~~sh
-npx agents-relay job create --repo OWNER/REPO --pr 6 --id job-6 --title "Existing objective"
+npx agents-relay job adopt --repo OWNER/REPO --pr 6 --id job-6 --title "Existing objective"
 ~~~
 
 Use `job update` for partial mutable metadata changes on an already healthy Job marker/binding:
