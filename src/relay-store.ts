@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -87,7 +87,7 @@ function mergeRecords<T extends { id: string; updatedAt: string }>(local: readon
 }
 export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   const base = remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
-  base.tasks = mergeRecords<Task>(local.tasks, remote.tasks);
+  base.tasks = preserveTaskComments(local.tasks, mergeRecords<Task>(local.tasks, remote.tasks));
   const localPlans = local.plans ?? [];
   const remotePlans = remote.plans ?? [];
   if (localPlans.length > 0 || remotePlans.length > 0) {

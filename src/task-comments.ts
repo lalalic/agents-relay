@@ -14,3 +14,14 @@ export function taskCommentContext(task: Task): string {
   if (!task.comments?.length) return '';
   return '\n\n[Task comments — append-only supplementary context]\n' + task.comments.map(c => `${c.createdAt} (${c.author}, ${c.id}): ${c.text}`).join('\n');
 }
+
+/** Preserve append-only comments across stale external or lifecycle snapshots. */
+export function preserveTaskComments(previous: readonly Task[], incoming: Task[]): Task[] {
+  return incoming.map(task => {
+    const old = previous.find(item => item.id === task.id);
+    if (!old?.comments?.length) return task;
+    const comments = [...old.comments], known = new Set(comments.map(comment => comment.id));
+    for (const comment of task.comments ?? []) if (!known.has(comment.id)) { comments.push(comment); known.add(comment.id); }
+    return { ...task, comments };
+  });
+}

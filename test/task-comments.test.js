@@ -2,7 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { appendTaskComment, taskCommentContext } from '../dist/task-comments.js';
 import { taskExecutionContext } from '../dist/task-context.js';
-import { SQLiteRelayStore } from '../dist/relay-store.js';
+import { SQLiteRelayStore, mergeInboundJobSnapshot } from '../dist/relay-store.js';
 
 const task = { id:'1', state:'RUNNING', executionId:'e1', input:'immutable', dependencies:[] };
 test('Task comments append without mutating original input or execution', () => {
@@ -40,4 +40,11 @@ test('state updates from stale snapshots cannot erase newly appended comments',a
   const saved=await store.load('comment-job');
   assert.deepEqual(saved.tasks[0].comments.map(c=>c.text),['must survive']);
   assert.equal(saved.tasks[0].state,'RUNNING');
+});
+
+test('inbound stale Task snapshot cannot remove durable comments',()=>{
+  const older = { ...task, updatedAt:'2026-01-01T00:00:00Z', comments:[{id:'c1',text:'keep me',author:'cli',createdAt:'2026-01-01T00:00:00Z'}] };
+  const newer = { ...task, updatedAt:'2026-01-02T00:00:00Z' };
+  const merged=mergeInboundJobSnapshot({id:'j',updatedAt:older.updatedAt,tasks:[older]}, {id:'j',updatedAt:newer.updatedAt,tasks:[newer]});
+  assert.deepEqual(merged.tasks[0].comments.map(c=>c.id),['c1']);
 });
