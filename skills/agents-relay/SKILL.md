@@ -61,7 +61,7 @@ For repository work, create/adopt/repair the PR-backed job through the Agents Re
 Example:
 
 ~~~sh
-npx agents-relay job create --repo OWNER/REPO --head feat/example --base main   --id JOB_ID --title "Objective"
+npx agents-relay job create --repo OWNER/REPO --id JOB_ID --title "Objective" --objective-file job.md --initial-plan
 
 npx agents-relay task create --repo OWNER/REPO --pr 12 --id JOB_ID   --task-id implement   --output task-pr   --input "Implement the requested change, validate it, and update the managed task/PR."
 

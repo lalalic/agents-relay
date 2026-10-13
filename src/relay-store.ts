@@ -9,6 +9,7 @@ import { recordPublicationInDatabase, loadPublicationFromDatabase, type Publicat
 import type { ExecutionProcessRecord } from './process-identity.js';
 import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
 import { observability } from './observability.js';
+import { createJobIfAbsent } from './relay-create.js';
 import { migrateLegacyJobPrNumbers, normalizeLegacyJobPrNumber } from './job-pr-number-migration.js';
 import { hostInvocationTablesSql, recordHostInvocationEvent, hasHostInvocationDecision, recordHostInvocationDecision, type HostInvocationReceipt } from './host-invocation-store.js';
 import {
@@ -41,6 +42,7 @@ export interface RelayStore {
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
   saveJob(job: Job): Promise<void>;
+  createJobIfAbsent?(job: Job): Promise<Job>;
   mutateJob?(jobId: string, mutation: (current: Job) => Job): Promise<Job>;
   ingestJobSnapshot(job: Job): Promise<Job>;
   saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void>;
@@ -72,6 +74,7 @@ export interface RelayStore {
   conflictProjectionCount(): Promise<number>;
   pendingProjectionCount(): Promise<number>;
   terminalProjectionCount(): Promise<number>;
+  recordProjectionReceipt?(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void>;
   close(): void;
 }
 function newerRecord<T extends { updatedAt: string }>(local: T | undefined, remote: T): T {
@@ -97,7 +100,6 @@ export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   }
   return base;
 }
-
 function monotonicJobTimestamp(previous: string, candidate = new Date().toISOString()): string {
   const prior = Date.parse(previous), next = Date.parse(candidate);
   if (!Number.isFinite(prior)) return candidate;
@@ -106,7 +108,6 @@ function monotonicJobTimestamp(previous: string, candidate = new Date().toISOStr
 export class SQLiteRelayStore implements RelayStore {
   private readonly db: DatabaseSync;
   private readonly outbox: ProjectionOutbox;
-
   constructor(readonly path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
@@ -115,8 +116,7 @@ export class SQLiteRelayStore implements RelayStore {
     this.outbox = new ProjectionOutbox(this.db);
     this.outbox.resetProcessing(new Date().toISOString());
   }
-  private migrate(): void {
-    this.db.exec(`
+  private migrate(): void { this.db.exec(`
       CREATE TABLE IF NOT EXISTS relay_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -161,10 +161,10 @@ export class SQLiteRelayStore implements RelayStore {
       );
       ${hostInvocationTablesSql}
       ${ProjectionOutbox.createTableSql()}
+      ${ProjectionOutbox.createReceiptTableSql()}
       ${ProjectionOutbox.createIndexSql()}
     `);
     migrateLegacyJobPrNumbers(this.db);
-
     const current = this.db.prepare("SELECT value FROM relay_meta WHERE key='schema_version'").get() as { value?: string } | undefined;
     const version = current?.value ? Number(current.value) : 0;
     if (version > SCHEMA_VERSION) throw new Error(`Relay store schema ${version} is newer than supported ${SCHEMA_VERSION}`);
@@ -172,7 +172,6 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.prepare("INSERT INTO relay_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(String(SCHEMA_VERSION));
   }
-
   async recordPublication(jobId: string, deliveryId: string, publication: PackagePublication | null, failure: PackagePublishFailure | null, observedAt?: string): Promise<boolean> {
     return recordPublicationInDatabase(this.db, jobId, deliveryId, publication, failure, observedAt);
   }
@@ -194,6 +193,9 @@ export class SQLiteRelayStore implements RelayStore {
   }
   async saveJob(job: Job): Promise<void> {
     this.writeJobSnapshot(job, new Date().toISOString());
+  }
+  async createJobIfAbsent(job: Job): Promise<Job> {
+    return createJobIfAbsent(this.db, job);
   }
 
   /** Atomic read/modify/write for local authoritative Task and Plan updates. */
@@ -408,7 +410,7 @@ export class SQLiteRelayStore implements RelayStore {
    * must never reset backoff or queue a second merge while a first one runs.
    */
   async enqueueExternalActionOnce(request: ProjectionRequest): Promise<boolean> {
-    if (!['merge_pull_request', 'close_pull_request', 'update_pr_body'].includes(request.operation)) {
+    if (!['merge_pull_request', 'close_pull_request', 'update_pr_body', 'create_pull_request'].includes(request.operation)) {
       throw new Error('Lifecycle projection is forbidden in external-only outbox');
     }
     const key = logicalOperationKey(request.idempotencyKey);
@@ -416,7 +418,7 @@ export class SQLiteRelayStore implements RelayStore {
     try {
       const existing = this.db.prepare(
         'SELECT id FROM projection_outbox WHERE operation_key=? LIMIT 1',
-      ).get(key);
+      ).get(key) ?? this.db.prepare('SELECT operation_key FROM projection_receipt WHERE operation_key=?').get(key);
       if (existing) {
         this.db.exec('COMMIT');
         return false;
@@ -446,10 +448,9 @@ export class SQLiteRelayStore implements RelayStore {
   async resolveProjectionConflict(id: number, resolution: ProjectionConflictResolutionRequest): Promise<boolean> { return this.outbox.resolveConflict(id, resolution); }
 
   async conflictProjectionCount(): Promise<number> { return this.outbox.conflictCount(); }
-
   async pendingProjectionCount(): Promise<number> { return this.outbox.pendingCount(); }
-
   async terminalProjectionCount(): Promise<number> { return this.outbox.terminalCount(); }
+  async recordProjectionReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void> { this.outbox.recordReceipt(operationKey, status, attempts, detail, new Date().toISOString()); }
 
   close(): void { this.db.close(); }
 }

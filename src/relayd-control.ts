@@ -15,6 +15,8 @@ import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, r
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
+import { openLocalManagedStore } from './local-managed-store.js';
+import { relayStoreDirectory } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
@@ -30,7 +32,7 @@ import { eventFor } from './events.js';
 import { dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
-import { ensureManagedGitHubJob } from './cli-job-create.js';
+import { adoptLegacyJob, ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -72,34 +74,50 @@ export function createWorkspaceControl(deps: any) {
         tag: options.tag as import('./types.js').Job['tag'] | undefined,
         reviewEnabled: typeof options.reviewEnabled === 'boolean' ? options.reviewEnabled : undefined,
         continuation: options.continuation as import('./types.js').Job['continuation'] | undefined,
-        prNumber: typeof options.prNumber === 'number' ? options.prNumber : undefined,
-        head: typeof options.head === 'string' ? options.head : undefined,
-        base: typeof options.base === 'string' ? options.base : undefined,
-        body: typeof options.body === 'string' ? options.body : undefined,
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
         creatorThreadId: typeof options.creatorThreadId === 'string' ? options.creatorThreadId : undefined,
         implementationThreadId: typeof options.implementationThreadId === 'string' ? options.implementationThreadId : undefined,
         noGitHub,
-        localMergeSource: typeof options.localMergeSource === 'string' ? options.localMergeSource : undefined,
-        localMergeTarget: typeof options.localMergeTarget === 'string' ? options.localMergeTarget : undefined,
+        persist: body.initialPlan !== true,
       });
       if (!repositories.includes(repository)) repositories.push(repository);
       await refreshAll();
       if (body.initialPlan === true) {
-        const binding = await requireLocalJobBinding(result.job.id);
-        const current = await binding.store.load(result.job.id);
+        const current = result.job;
         const existingPlan = current.plans?.at(-1);
         if (existingPlan) return { repository, pr: result.pr.number, job: current.id, executionMode: current.executionMode, state: current.state, initialPlan: existingPlan.id, reused: true };
-        const reconciler = makeReconciler(binding.store, concurrency);
+        const unpublished = new InMemoryStore(current);
+        const reconciler = makeReconciler(unpublished, concurrency);
         try {
           const planned = await reconciler.planJob(result.job.id);
+          const unpublishedStore = openLocalManagedStore(repository, 0, { directory: relayStoreDirectory(), jobId: result.job.id, noGitHub: true });
+          let committed = planned.job;
+          try {
+            committed = unpublishedStore.store.createJobIfAbsent
+              ? await unpublishedStore.store.createJobIfAbsent(planned.job)
+              : (await unpublishedStore.store.saveJob(planned.job), planned.job);
+          } finally { unpublishedStore.relay.close(); }
           await pool.reconcileLocalJob(result.job.id, 'control.job.create.initial-plan');
-          return { repository, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state, initialPlan: planned.round.id };
+          return { repository, pr: committed.prNumber, job: committed.id, executionMode: committed.executionMode, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
       return { repository, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state };
     }
 
+    if (command === 'job.adopt') {
+      const repository = typeof body.repository === 'string' ? body.repository : '';
+      const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
+      if (!repository || typeof options.id !== 'string' || typeof options.prNumber !== 'number') throw new Error('job.adopt requires repository, id, and prNumber');
+      const result = await adoptLegacyJob(client, repository, trusted, {
+        id: options.id, title: typeof options.title === 'string' ? options.title : undefined,
+        objective: typeof options.objective === 'string' ? options.objective : undefined,
+        projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
+        prNumber: options.prNumber,
+      });
+      if (!repositories.includes(repository)) repositories.push(repository);
+      await refreshAll();
+      return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
+    }
     if (!jobId) throw new Error(command + ' requires jobId');
     const binding = await requireLocalJobBinding(jobId);
     const store = binding.store;

@@ -296,6 +296,36 @@ test('ProjectedDurableStore queues merge and close as durable GitHub projections
   await tmp.close(relay);
 });
 
+test('PR creation intent retries across failure and restart with durable receipts', async () => {
+  const tmp = await tempDb();
+  let relay = new SQLiteRelayStore(tmp.path);
+  await relay.saveJob({ ...makeJob(), state: 'COMPLETED', prNumber: 0 });
+  const request = { idempotencyKey: 'create_pull_request:job-1:sha-1', operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: 'owner/repo', head: 'relay/job-1', base: 'main', title: 'job', body: 'objective', sourceRef: 'refs/heads/relay/job-1', targetRef: 'refs/heads/main' } };
+  assert.equal(await relay.enqueueExternalActionOnce(request), true);
+  const failed = new GitHubProjectionWriter(relay, new InMemoryStore(makeJob()), undefined, true, async () => { throw new Error('GitHub unavailable'); });
+  assert.deepEqual(await failed.flushOnce(10, new Date('2026-10-13T00:00:00.000Z')), { projected: 0, deferred: 1 });
+  relay.close();
+  relay = new SQLiteRelayStore(tmp.path);
+  assert.equal(await relay.pendingProjectionCount(), 1);
+  assert.equal(await relay.enqueueExternalActionOnce(request), false);
+  const succeeded = new GitHubProjectionWriter(relay, new InMemoryStore(makeJob()), undefined, true, async () => {});
+  assert.deepEqual(await succeeded.flushOnce(10, new Date('2026-10-13T00:01:00.000Z')), { projected: 1, deferred: 0 });
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.enqueueExternalActionOnce(request), false);
+  await tmp.close(relay);
+});
+
+test('terminal local Jobs retain no-diff evidence without a fabricated PR', async () => {
+  const tmp = await tempDb();
+  const relay = new SQLiteRelayStore(tmp.path);
+  const job = { ...makeJob(), state: 'COMPLETED', prNumber: 0, githubProjection: { status: 'merged_without_pr', sourceSha: 'same-as-main', observedAt: now() } };
+  await relay.saveJob(job);
+  const restored = await relay.loadJob(job.id);
+  assert.equal(restored.prNumber, 0);
+  assert.equal(restored.githubProjection.status, 'merged_without_pr');
+  await tmp.close(relay);
+});
+
 test('ProjectedDurableStore resolves blocker domain mutations locally without direct GitHub blocker writes', async () => {
   const rootTmp = await tempDb();
   const dependentTmp = await tempDb();

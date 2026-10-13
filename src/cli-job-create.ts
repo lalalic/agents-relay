@@ -7,8 +7,9 @@ import { normalizeThreadId } from './reviewer-thread.js';
 import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js';
 
 /**
- * Job lifecycle bootstrap: SQLite is authoritative. No GitHub request is
- * required; an explicit PR number is optional external metadata.
+ * Ordinary Job creation is local and objective-oriented. Legacy PR metadata is
+ * handled by adoptLegacyJob below so the normal contract cannot accidentally
+ * create a second external lifecycle.
  */
 export async function ensureManagedGitHubJob(
   _client: GitHubClient,
@@ -20,7 +21,7 @@ export async function ensureManagedGitHubJob(
     tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
-    storeDirectory?: string; noGitHub?: boolean; localMergeSource?: string; localMergeTarget?: string;
+    storeDirectory?: string; noGitHub?: boolean; persist?: boolean; localMergeSource?: string; localMergeTarget?: string;
   },
 ): Promise<{ job: Job; pr: PullRequest }> {
   const directory = options.storeDirectory ?? relayStoreDirectory();
@@ -34,8 +35,7 @@ export async function ensureManagedGitHubJob(
   if (alreadyKnown.length > 1) throw new Error('Duplicate immutable Job ID across SQLite stores: ' + id);
   if (alreadyKnown.length === 1) {
     const existing = alreadyKnown[0];
-    if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber))
-      throw new Error('Immutable Job ID is already bound to a different repository or external PR');
+    if (existing.repository !== repositoryName || (options.prNumber !== undefined && existing.prNumber !== requestedNumber)) throw new Error('Immutable Job ID is already bound to a different repository or external PR');
     if (!options.id && !options.idempotencyKey) throw new Error('Automatically allocated Job ID unexpectedly belongs to an existing Job');
     if (options.idempotencyKey && ((options.objective && options.objective !== existing.objective) || (options.projectPath && options.projectPath !== existing.projectPath) || (options.title && options.title !== existing.title))) throw new Error('Job idempotency key reused for a different Job definition');
     return { job: existing, pr: { ...placeholder, number: existing.prNumber } };
@@ -53,7 +53,6 @@ export async function ensureManagedGitHubJob(
     const localMergeSource = options.localMergeSource ?? (options.head ? `refs/heads/${options.head}` : undefined);
     if (options.localMergeTarget && options.localMergeTarget !== 'refs/heads/main') throw new Error('Local merge target must always be main');
     if (options.base && options.base !== 'main') throw new Error('Job base must always be main');
-    const localMergeTarget = localMergeSource ? 'refs/heads/main' : undefined;
     const job = createJobEntity({
       id,
       title: options.title || pr.title || 'Agents Relay job',
@@ -64,7 +63,7 @@ export async function ensureManagedGitHubJob(
       executionMode: options.executionMode ?? 'fixed',
       tag: options.tag,
       autoMerge: true,
-      ...(localMergeSource && localMergeTarget ? { localMerge: { sourceRef: localMergeSource, targetRef: localMergeTarget, status: 'pending' as const } } : {}),
+      ...(localMergeSource ? { localMerge: { sourceRef: localMergeSource, targetRef: 'refs/heads/main', status: 'pending' as const } } : {}),
       reviewEnabled: options.reviewEnabled ?? true,
       ...(options.reviewerThreadId
         ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') }
@@ -83,10 +82,41 @@ export async function ensureManagedGitHubJob(
       tasks: [],
       ...(options.schedule ? { schedule: options.schedule } : {}),
     }, { activate: Boolean(options.schedule) });
-    await local.store.saveJob(job);
+    if (options.persist !== false) {
+      if (local.store.createJobIfAbsent) await local.store.createJobIfAbsent(job);
+      else await local.store.saveJob(job);
+    }
 
-    return { job: await local.store.load(id), pr };
+    return { job: options.persist === false ? job : await local.store.load(id), pr };
   } finally {
     local.relay.close();
   }
+}
+
+/** Explicit compatibility path for adopting an already-existing PR. */
+export async function adoptLegacyJob(
+  _client: GitHubClient, repositoryName: string, _trustedAuthors: ReadonlySet<string>, options: {
+    id: string; prNumber: number; title?: string; objective?: string; projectPath?: string; storeDirectory?: string;
+  },
+): Promise<{ job: Job; pr: PullRequest }> {
+  if (!options.id || !Number.isInteger(options.prNumber) || options.prNumber <= 0) throw new Error('job adopt requires --id and a positive --pr');
+  const directory = options.storeDirectory ?? relayStoreDirectory();
+  const matches = (await discoverLocalRelayStoreSnapshots(directory)).flatMap(snapshot => snapshot.jobs).filter(job => job.id === options.id);
+  if (matches.length > 1) throw new Error(`Ambiguous existing immutable Job ID ${options.id}`);
+  if (matches.length === 1) {
+    const existing = matches[0];
+    if (existing.repository !== repositoryName || existing.prNumber !== options.prNumber) throw new Error(`Job ID ${options.id} is already bound to another repository or PR`);
+    return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
+  }
+  const local = openLocalManagedStore(repositoryName, options.prNumber, { directory, jobId: options.id, noGitHub: true });
+  try {
+    const existing = await local.relay.loadJob(options.id);
+    if (existing) return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: '' } };
+    const now = new Date().toISOString();
+    const job = createJobEntity({ id: options.id, title: options.title ?? options.id, objective: options.objective, projectPath: options.projectPath,
+      description: options.objective, priority: 'P2', executionMode: 'fixed', autoMerge: true, reviewEnabled: true,
+      prNumber: options.prNumber, repository: repositoryName, continuation: null, createdAt: now, updatedAt: now, tasks: [] });
+    const created = local.store.createJobIfAbsent ? await local.store.createJobIfAbsent(job) : (await local.store.saveJob(job), job);
+    return { job: created, pr: { number: options.prNumber, title: created.title, body: created.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
+  } finally { local.relay.close(); }
 }

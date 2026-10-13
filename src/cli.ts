@@ -4,7 +4,7 @@ import { GhApiClient } from './github-client.js'; import { configureLocalGitMerg
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
-import { defaultWorkspaceRoot, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 import { workerTaskFromArgs } from './cli-worker-task.js';
 import { taskExecutionContext } from './task-context.js';
@@ -180,7 +180,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   console.log(JSON.stringify(context, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -189,7 +189,19 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     const invalid = taskOnlyFlags.find(flag => hasArg(args, flag));
     if (invalid) throw new Error(`job create does not accept task execution option ${invalid}; create the job first, then let the orchestrator create the initial plan/task batch`);
     createObjective = await textOption(args, '--objective', '--objective-file');
-    if ((!arg(args, '--pr') || noGitHubMode(args)) && !createObjective.trim()) throw new Error('job create with --head requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
+    if (!createObjective.trim()) throw new Error('job create requires --objective-file PATH|- or --objective MARKDOWN containing the complete standalone Job context');
+    const legacy = ['--pr','--head','--base','--body','--local-merge-source','--local-merge-target','--idempotency-key'].find(flag => hasArg(args, flag));
+    if (legacy) throw new Error(`job create does not accept ${legacy}; use job adopt only for existing PR bindings`);
+  }
+  if (action === 'adopt') {
+    const adoptId = arg(args, '--id');
+    const adoptPr = Number(arg(args, '--pr'));
+    if (!adoptId || !Number.isInteger(adoptPr) || adoptPr <= 0) throw new Error('job adopt requires --id and a positive --pr');
+    const objective = await textOption(args, '--objective', '--objective-file');
+    const result = await relayControlCommand(args, { command: 'job.adopt', repository: repo, options: {
+      id: adoptId, prNumber: adoptPr, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
+    }});
+    console.log(JSON.stringify(result, null, 2)); return;
   }
   if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
@@ -204,8 +216,6 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), executionMode: requestedExecutionMode(args), schedule: scheduleFromArgs(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
-      prNumber, head: arg(args, '--head') || undefined, base: arg(args, '--base', 'main'), body: arg(args, '--body') || objective || undefined,
-      localMergeSource: arg(args, '--local-merge-source') || undefined, localMergeTarget: arg(args, '--local-merge-target') || undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
   const job = await relayControlJob(args, id);
@@ -250,7 +260,13 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }
-export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => { const workspaceRoot = arg(args, '--workspace-root') || defaultWorkspaceRoot(); const canonical = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : job.repository, arg(args, '--project-path'), workspaceRoot); return job.prNumber === 0 && job.localMerge?.sourceRef ? prepareLocalJobExecutionWorktree(canonical, job, workspaceRoot) : resolveRepositoryProjectPath(canonical, job.projectPath); } }); }
+export function runtime(store: DurableStore, args: string[], bus: EventBus | undefined, usageRegistry = codexAndZaiUsageRegistry()): Reconciler { const emit = (event: ReturnType<typeof eventFor>): void => { process.stderr.write(`${JSON.stringify(event)}\n`); }; const modelRuntime = arg(args, '--codex', 'codex'); const policy = chatGptTabClosePolicy(args); const planner = runtimePlanner(args); return new Reconciler(store, { noGitHub: noGitHubMode(args), owner: arg(args, '--owner', `cli-${process.pid}`), maxConcurrent: Number(arg(args, '--concurrency', '4')), leaseMs: Number(arg(args, '--lease-ms', '300000')), adapters: [new CodexAdapter(modelRuntime), new ChatGptAdapter({ tabClosePolicy: policy })], continuations: [new CodexThreadContinuation(modelRuntime), new CommandContinuation(), new WebhookContinuation()], planner, usageSnapshotProvider: () => usageRegistry.snapshot(), decisionEngine: executionDecisionEngine(), decisionMode: decisionMode(), reviewer: runtimeReviewer(args), eventBus: bus, emit, chatgptTabClosePolicy: policy, projectPathForJob: async job => { const workspaceRoot = arg(args, '--workspace-root') || defaultWorkspaceRoot(); const canonical = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : job.repository, arg(args, '--project-path'), workspaceRoot); if (!jobRequiresManagedWorktree(job)) return resolveRepositoryProjectPath(canonical, job.projectPath);
+    const sourceRef = await ensureLocalJobSourceBranch(canonical, job);
+    if (!job.localMerge?.sourceRef) {
+      if (!store.mutateJob) throw new Error('Managed worktree requires atomic SQLite Job mutation');
+      await store.mutateJob(job.id, current => current.localMerge ? current : ({ ...current, localMerge: { sourceRef, targetRef: 'refs/heads/main', status: 'pending' as const }, updatedAt: new Date().toISOString() }));
+    }
+    return prepareLocalJobExecutionWorktree(canonical, await store.load(job.id), workspaceRoot); } }); }
 export function dashboardJobAction(store: DurableStore, reconciler: Reconciler, action: 'start' | 'reconcile' | 'cancel'): (jobId: string) => Promise<Job> {
   return async (jobId: string): Promise<Job> => {
     const job = await store.load(jobId);

@@ -4,11 +4,21 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, realpath, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
+import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 }
+
+test('only code Tasks request managed Git worktrees', () => {
+  const base = { id: 'job', tasks: [], schedule: undefined };
+  assert.equal(jobRequiresManagedWorktree(base), false);
+  assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'file', path: 'runs/result.md' } }] }), false);
+  assert.equal(jobRequiresManagedWorktree({ ...base, tasks: [{ output: { kind: 'task_pr' } }] }), true);
+  assert.equal(jobRequiresManagedWorktree({ ...base, prNumber: 7, tasks: [{ output: { kind: 'task_pr' } }] }), false);
+  assert.equal(jobRequiresManagedWorktree({ ...base, localMerge: { sourceRef: 'refs/heads/legacy', targetRef: 'refs/heads/main', status: 'pending' } }), true);
+  assert.equal(jobRequiresManagedWorktree({ ...base, schedule: { cron: '* * * * *' } }), false);
+});
 
 async function fixture(t) {
   const temp = await mkdtemp(join(tmpdir(), 'relay-job-tree-'));
