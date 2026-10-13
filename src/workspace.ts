@@ -178,6 +178,11 @@ export function managedLocalJobWorktreePath(repository: string, jobId: string, w
   return join(workspaceRoot, '.worktrees', 'agents-relay', `${repository.replace('/', '-')}-job-${safeJob}-${digest}`, 'job');
 }
 
+/** Only code artifacts need an isolated Git source branch and worktree. */
+export function jobRequiresManagedWorktree(job: Job): boolean {
+  return !job.schedule && (Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr'));
+}
+
 /** Bind an ordinary SQLite Job to one deterministic local work branch.
  * The target is always main, and branch creation never switches the user's checkout.
  * This is a Git-local operation and never needs GitHub credentials.
