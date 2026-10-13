@@ -1,6 +1,20 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { InMemoryStore } from '../dist/store.js';
+
+test('historical cancelled legacy tasks are not relaunched or rewritten by recovery', async () => {
+  const cancelled = task('historical', 'CANCELLED', {
+    error: 'Cancelled by user', adapter: 'orchestrator',
+  });
+  const authority = new InMemoryStore({ ...job([cancelled]), state: 'CANCELLED' });
+  const before = structuredClone(await authority.load('j'));
+  const events = [];
+  await repairLegacyOrchestrators('j', Date.now(), {
+    store: authority, owner: 'recovery', emit: event => events.push(event),
+  });
+  assert.deepEqual(await authority.load('j'), before);
+  assert.deepEqual(events, []);
+});
 import { createTaskEntity } from '../dist/workflow/entity-creation.js';
 import { prepareOrchestratorRepair } from '../dist/workflow/orchestrator-rescue.js';
 import { repairLegacyOrchestrators } from '../dist/legacy-orchestrator-repair.js';
