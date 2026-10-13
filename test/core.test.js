@@ -25,6 +25,7 @@ const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
 const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'ACTIVE',continuation:null,createdAt:now(),updatedAt:now(),tasks});
 const eventSource = (jobId, taskId, executionId) => ({ id: executionEventSource(jobId, taskId, executionId) });
+const reviewFixTasks = value => value.tasks.filter(item => item.agentName === 'implementation' && item.parentTaskId && value.tasks.some(parent => parent.id === item.parentTaskId && parent.agentName === 'reviewer'));
 const activeEventSource = async (store, taskId, jobId='j') => {
   // Fixed polling attempts avoid wall-clock jumps on CI hosts while still
   // bounding the wait for the durable execution claim.
@@ -955,7 +956,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
   assert.equal(durable.tasks.find(item=>item.id===created.id)?.state,'SUCCEEDED');
   assert.equal(durable.tasks.find(item=>item.id===created.id)?.executionId,null);
   assert.equal(durable.review?.outcome,'changes_required');
-  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(reviewFixTasks(durable).length,1);
   await stop(); await rm(contextRoot,{recursive:true,force:true});
 });
 
@@ -1910,7 +1911,7 @@ test('thread-bound final review uses the selected durable thread and records del
   assert.equal(reviewerTask?.chatgptThreadDelivery?.threadSource, 'creator');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.reviewHeadSha, 'sha-threaded');
   assert.equal(reviewerTask?.chatgptThreadDelivery?.prNumber, 16);
-  assert.equal(reviewerTask?.chatgptThreadDelivery?.requestId, 'j:final-review-sha-threaded:sha-threaded');
+  assert.equal(reviewerTask?.chatgptThreadDelivery?.requestId, `j:${reviewerTask?.id}:sha-threaded`);
   assert.match(reviewerTask?.input ?? '', /Job ID: j/);
   assert.match(reviewerTask?.input ?? '', /Review head SHA: sha-threaded/);
   assert.match(reviewerTask?.input ?? '', /Review PR #16 at exactly head SHA sha-threaded/);
@@ -1987,8 +1988,9 @@ test('cancelled same-head review creates a versioned review round instead of con
   let saved=await store.load('j');
   let rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
   assert.equal(rounds.length,2);
-  assert.equal(rounds[1].id,base+'-r2');
-  assert.equal(saved.review?.taskId,base+'-r2');
+  assert.match(rounds[1].id,/^[1-9]\d*$/);
+  assert.notEqual(rounds[1].id,base);
+  assert.equal(saved.review?.taskId,rounds[1].id);
   await reconciler.reconcile('j');
   saved=await store.load('j');
   rounds=saved.tasks.filter(item=>item.agentName==='reviewer'&&item.reviewHeadSha==='sha-review-round');
@@ -2107,9 +2109,9 @@ test('review changes-required creates one routable implementation fix task conta
   const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug',{summary:'third bug'}]}};
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
   let saved=await store.load('j');
-  const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
+  const fixes=reviewFixTasks(saved);
   assert.equal(fixes.length,1);
-  assert.equal(fixes[0].id,'review-fix-sha-fix-');
+  assert.match(fixes[0].id,/^[1-9]\d*$/);
   assert.equal(fixes[0].agentName,'implementation');
   assert.deepEqual(fixes[0].workerRequirements,{capabilities:[]});
   assert.equal(fixes[0].routing,undefined);
@@ -2124,7 +2126,7 @@ test('review changes-required creates one routable implementation fix task conta
   assert.equal(events.filter(event=>event.type==='review.fix_task_created').length,1);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','duplicate event','orchestrator',payload));
   saved=await store.load('j');
-  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(reviewFixTasks(saved).length,1);
 });
 
 test('PR 258-shaped local review evidence creates one idempotent fix and rejects malformed evidence', async () => {
@@ -2149,7 +2151,7 @@ test('PR 258-shaped local review evidence creates one idempotent fix and rejects
   assert.equal(saved.review?.outcome, 'pending');
   assert.equal(saved.review?.evidence, null);
   assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, reviewer.state);
-  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+  assert.equal(reviewFixTasks(saved).length, 0);
 
   await reconciler.handleEvent(eventFor('j', reviewer.id, null, 'review.changes_required', 'failed', 'changes required', 'orchestrator', {
     outcome: {
@@ -2163,9 +2165,9 @@ test('PR 258-shaped local review evidence creates one idempotent fix and rejects
     },
   }, source));
   saved = await store.load('j');
-  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  const fixes = reviewFixTasks(saved);
   assert.equal(fixes.length, 1);
-  assert.equal(fixes[0].id, 'review-fix-059c84f0');
+  assert.match(fixes[0].id, /^[1-9]\d*$/);
   assert.equal(fixes[0].parentTaskId, reviewer.id);
   assert.deepEqual(fixes[0].dependencies, [reviewer.id]);
   assert.equal(fixes[0].agentName, 'implementation');
@@ -2179,7 +2181,7 @@ test('PR 258-shaped local review evidence creates one idempotent fix and rejects
     outcome: { decision: 'changes_required', head_sha: headSha, blocking_findings: [{ summary: 'duplicate' }] },
   }, source));
   saved = await store.load('j');
-  assert.equal(saved.tasks.filter(item => item.id.startsWith('review-fix-')).length, 1);
+  assert.equal(reviewFixTasks(saved).length, 1);
   assert.equal(emitted.filter(event => event.type === 'review.fix_task_created').length, 1);
   await unsubscribe();
 });
@@ -2199,7 +2201,7 @@ test('planner-created review binds its first authoritative verdict to Job review
   assert.equal(saved.review?.taskId, reviewer.id);
   assert.equal(saved.review?.headSha, head);
   assert.equal(saved.tasks.find(item => item.id === reviewer.id)?.state, 'SUCCEEDED');
-  const fixes = saved.tasks.filter(item => item.id.startsWith('review-fix-'));
+  const fixes = reviewFixTasks(saved);
   assert.equal(fixes.length, 1);
   assert.match(fixes[0].input, /Remove unrequested seed artifact/);
 });
@@ -2230,7 +2232,7 @@ test('review changes-required falls back to one fix task from the review message
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer'); assert.ok(reviewer);
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','fix the race and add coverage','orchestrator',{review:{headSha:'fallback12345678'}}));
-  const fixes=(await store.load('j')).tasks.filter(item=>item.id.startsWith('review-fix-'));
+  const fixes=reviewFixTasks(await store.load('j'));
   assert.equal(fixes.length,1);
   assert.match(fixes[0].input,/fix the race and add coverage/);
 });
@@ -2287,7 +2289,7 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
   await store.saveJob(changed);
   await reconciler.handleEvent(eventFor('j', created.id, null, 'review.approved', 'succeeded', 'stale approval', 'orchestrator', { headSha: 'sha-review-1' }));
   assert.equal((await store.load('j')).review?.headSha, 'sha-review-1');
-  assert.equal((await store.load('j')).tasks.filter(item => item.id.startsWith('review-fix-')).length, 0);
+  assert.equal(reviewFixTasks(await store.load('j')).length, 0);
   // The review event may already have started an event-driven reconcile.
   // Wait for that pass before asserting on the next local head generation.
   const deadline = Date.now() + 1000;
@@ -2662,7 +2664,7 @@ test('reviewer runtime recovery preserves exact immutable head and accepts verdi
   assert.equal(recovered.reviewHeadSha,'sha-review-recovered');
   assert.equal(durable.review?.headSha,'sha-review-recovered');
   assert.equal(durable.review?.outcome,'changes_required');
-  assert.equal(durable.tasks.filter(item=>item.id.startsWith('review-fix-')).length,1);
+  assert.equal(reviewFixTasks(durable).length,1);
   await stop(); await reconciler.close();
 });
 
@@ -2704,14 +2706,14 @@ test('Planner null-review first verdict persists through atomic store mutation',
   assert.equal(saved.review.outcome,outcome);
   assert.equal(saved.review.headSha,head);
   assert.equal(saved.review.evidence.data.headSha,head);
-  const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
+  const fixes=reviewFixTasks(saved);
   assert.equal(fixes.length,verdict==='review.approved'?0:1);
   await send();
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'task.completed',
     'succeeded','generic completion','orchestrator',{},eventSource('j',reviewer.id,'exec-1')));
   saved=await store.load('j');
   assert.equal(saved.review.outcome,outcome);
-  assert.equal(saved.tasks.filter(item=>item.id.startsWith('review-fix-')).length,fixes.length);
+  assert.equal(reviewFixTasks(saved).length,fixes.length);
   if(fixes.length){
    assert.equal(fixes[0].parentTaskId,reviewer.id);
    assert.equal(emitted.filter(event=>event.type==='review.fix_task_created').length,1);

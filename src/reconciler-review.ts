@@ -12,6 +12,8 @@ import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
+import { allocateEntityId } from './job-task-id-sequence.js';
+import { relayStoreDirectory } from './relay-store.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -107,14 +109,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   private nextFinalReviewTaskId(job: Job, headSha: string): string {
-    const base = 'final-review-' + headSha.slice(0, 12);
-    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && task.agentName === 'reviewer').map(task => task.id));
-    if (!ids.has(base)) return base;
-    for (let round = 2; round < 1000; round += 1) {
-      const candidate = base + '-r' + round;
-      if (!ids.has(candidate)) return candidate;
-    }
-    throw new Error('Too many final review rounds for ' + headSha);
+    const round = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha).length + 1;
+    return allocateEntityId(relayStoreDirectory(), job.repository, 'task', `review:${job.id}:${headSha}:r${round}`);
   }
 
   private externalReviewPrNumber(job: Job): number {
@@ -338,7 +334,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         needsReconcile = true;
         const issues = normalizedEvidence.issues;
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
-        const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
+        const now = event.timestamp || new Date().toISOString(); const id = allocateEntityId(relayStoreDirectory(), job.repository, 'task', `review-fix:${job.id}:${headSha}`);
         if (!job.tasks.some(item => item.id === id)) {
           const input = 'Address all reviewer findings for PR #' + this.externalReviewPrNumber(job) + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
           const fixTask = createTaskEntity(job, { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });

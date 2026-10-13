@@ -69,7 +69,7 @@ function job(tasks) {
 test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempotent per failed attempt', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
-  assert.equal(recovery.id, troubleshooterTaskId(failed));
+  assert.match(recovery.id, /^[1-9]\d*$/);
   assert.equal(recovery.agentName, 'troubleshooter');
   assert.equal(recovery.parentTaskId, failed.id);
   assert.equal(recovery.priority, 'P0');
@@ -102,13 +102,14 @@ test('active recovery suppresses a new troubleshooter when the root attempt incr
     error: 'same deterministic delivery failure after retry',
     updatedAt: now(),
   };
-  assert.notEqual(troubleshooterTaskId(retriedFailure), recovery.id);
+  assert.match(recovery.id, /^[1-9]\d*$/);
   assert.deepEqual(pendingTroubleshooterTasks(job([retriedFailure, recovery])), []);
 });
 
 test('legacy active recovery without parent linkage still suppresses duplicate root recovery', () => {
   const failed = failedReview();
   const [recovery] = pendingTroubleshooterTasks(job([failed]));
+  recovery.id = troubleshooterTaskId(failed);
   recovery.parentTaskId = null;
   recovery.state = 'BLOCKED';
 
@@ -132,7 +133,8 @@ test('successful prior recovery permits a later recovery generation', () => {
 
   const retriedFailure = { ...failed, attempt: 2, updatedAt: now() };
   const [next] = pendingTroubleshooterTasks(job([retriedFailure, recovery]));
-  assert.equal(next.id, troubleshooterTaskId(retriedFailure));
+  assert.match(next.id, /^[1-9]\d*$/);
+  assert.notEqual(next.id, recovery.id);
   assert.equal(next.parentTaskId, failed.id);
 });
 

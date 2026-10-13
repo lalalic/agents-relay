@@ -33,7 +33,7 @@ for (const [verdict, expected, expectedTask] of [
     assert.equal(saved.tasks.find(t=>t.id===id)?.executionId,null);
     await runtime.handleEvent(event);
     saved=await store.load('j');
-    assert.equal(saved.tasks.filter(t=>t.id.startsWith('review-fix-')).length,verdict==='approved'?0:1);
+    assert.equal(saved.tasks.filter(t=>t.agentName==='implementation' && t.parentTaskId===id).length,verdict==='approved'?0:1);
     await runtime.close();
   });
 }
