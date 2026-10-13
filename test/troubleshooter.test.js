@@ -167,6 +167,26 @@ test('reconcile automatically creates and routes one troubleshooter for failed w
   assert.equal(events.filter(event => event.type === 'troubleshooter.created').length, 1);
 });
 
+test('historical successful plan does not prevent failed Task recovery', async () => {
+  const failed = { ...failedReview(), id: '18', planningDecisionId: 'plan-1' };
+  const j = job([failed]);
+  j.plans = [{
+    jobId: j.id, id: 'plan-1', status: 'SUCCEEDED', round: 1,
+    source: 'model-planner', trigger: { source: 'manual' }, generatedTaskIds: ['18'], assessment: 'work required', createdAt: now(), updatedAt: now(),
+    plannerResult: { objective_status: 'in_progress', assessment: 'work required',
+      next_tasks: [{ id: '18', title: 'Implement planned work in local repo', input: failed.input,
+        output: { kind: 'task_pr' }, storySize: 'M' }] },
+  }];
+  const store = new InMemoryStore(j);
+  const reconciler = managedReconciler(store, { owner: 'test', maxConcurrent: 0, adapters: [], emit() {} });
+  await reconciler.reconcile(j.id);
+  const state = await store.load(j.id);
+  assert.equal(state.tasks.filter(t => t.id === '18').length, 1);
+  assert.equal(state.tasks.find(t => t.id === '18').state, 'FAILED');
+  assert.equal(state.tasks.filter(t => t.agentName === 'troubleshooter').length, 1);
+  assert.equal(state.tasks.find(t => t.agentName === 'troubleshooter').parentTaskId, '18');
+});
+
 test('troubleshooter is a discoverable orchestrator-side execution role', async () => {
   const context = await resolveExecutionContext(process.cwd(), 'troubleshooter');
   const agent = context.agents.find(item => item.name === 'troubleshooter');

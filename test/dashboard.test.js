@@ -16,6 +16,14 @@ test('dashboard renders durable Task title as the primary task label', async () 
   assert.match(source, /field\('Task ID',task\.id/);
 });
 
+test('dashboard thread links use short IDs and reusable implementation tab', () => {
+  assert.match(dashboardHtml, /function threadField\(label,threadId\)/);
+  assert.match(dashboardHtml, /link\.target='implementation'/);
+  assert.match(dashboardHtml, /link\.textContent=id\.slice\(0,8\)/);
+  assert.match(dashboardHtml, /threadField\('Implementation thread'/);
+  assert.match(dashboardHtml, /threadField\('Reviewer thread'/);
+});
+
 test('dashboard inline JavaScript parses before publication', () => {
   const scripts = [...dashboardHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(Boolean);
   assert.ok(scripts.length > 0);

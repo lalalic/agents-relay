@@ -252,7 +252,8 @@ export class Reconciler extends ReconcilerReviewBase {
   private async recoverPlannerChildren(job: Job): Promise<void> {
     for (const plan of (job.plans ?? []).filter(item => item.status === 'SUCCEEDED' && item.plannerResult)) {
       const executionContext = await this.plannerContext(job, plan);
-      validatePlannerResolutionMaterialization(job.tasks, plan.plannerResult!.next_tasks);
+      // Historical plans were validated on commit. Rechecking against later Task failures
+      // blocks recovery before the Troubleshooter graph can run.
       const children = plan.plannerResult!.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
       for (const child of children) {
         const existing = job.tasks.find(item => item.id === child.id);

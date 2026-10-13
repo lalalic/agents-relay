@@ -114,6 +114,8 @@ For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
 For `objective_status: "satisfied"`, `assessment` may be a concise evidence-based completion assessment without a graph.
 
+Each item in `next_tasks` MUST include a concise, meaningful `title` of **5–8 words** (separate from the detailed `input`). Do not use the input text as a title.
+
 Each item in next_tasks contains id, input, output, and storySize. `unblocks`, when present, is an array of `{repository, prNumber, jobId, taskId, resolutionMode?}` records identifying Tasks that must remain waiting until the current Job resolves their blocker. It may also contain parentTaskId, priority, projectName, agentName, dependencies, capabilities, workerRequirements, maxAttempts, and timeoutMs. Adapter/routing fields are selected by Relay after planning; do not invent them.
 
 ### Exact `next_tasks` serialization
@@ -138,6 +140,7 @@ A valid non-satisfied response:
   "next_tasks": [
     {
       "id": "episode-2026-09-26",
+      "title": "Produce and verify daily content package",
       "input": "Produce and verify the dated content package.",
       "output": {"kind": "file", "path": "runs/2026-09-26/package.md"},
       "storySize": "L",
