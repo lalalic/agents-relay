@@ -144,7 +144,7 @@ export async function dispatchTaskAction(
           throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
       }
       const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(current, task, request.id);
-      if (request.id === TASK_RETRY_ACTION) applyTaskRetrySnapshot(task, { extendBudget: true });
+      if (request.id === TASK_RETRY_ACTION) { applyTaskRetrySnapshot(task, { extendBudget: true }); task.routing = undefined; task.workerSelection = undefined; }
       else if (request.id === TASK_RECOVER_ACTION) {
         const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
         const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
@@ -166,7 +166,7 @@ export async function dispatchTaskAction(
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
   const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(job, task, request.id);
-  if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
+  if (request.id === TASK_RETRY_ACTION) { await applyTaskRetryAction(task, { extendBudget: true }); task.routing = undefined; task.workerSelection = undefined; }
   else if (request.id === TASK_RECOVER_ACTION) {
     const recovery = request.recoveryTaskId ? job.tasks.find(item => item.id === request.recoveryTaskId) : undefined;
     if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED','RUNNING'].includes(recovery.state))

@@ -98,10 +98,12 @@ test('internal task.retry preserves retry budget while manual dispatch extends i
   assert.equal(internal.state, 'QUEUED');
   assert.equal(internal.maxAttempts, 3);
 
-  const manual = { ...task('manual-retry', 'FAILED'), attempt: 3, maxAttempts: 3, error: 'manual' };
+  const manual = { ...task('manual-retry', 'FAILED'), attempt: 3, maxAttempts: 3, error: 'manual', routing: {provider:'openai',model:'old-model',decidedBy:'test',decidedAt:new Date().toISOString()}, workerSelection: {workerId:'codex',adapter:'codex',capabilities:['model','codex'],selectedBy:'test',selectedAt:new Date().toISOString()} };
   const manualStore = new InMemoryStore(job([manual]));
   const result = await dispatchTaskAction(manualStore, { id: 'task.retry', jobId: 'j', taskId: 'manual-retry' });
   assert.equal(result.task.maxAttempts, 6);
+  assert.equal(result.task.routing, undefined);
+  assert.equal(result.task.workerSelection, undefined);
 });
 
 test('task.queue uses one graph/action dependency gate for draft and failed work', async () => {
