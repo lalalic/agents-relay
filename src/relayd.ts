@@ -214,8 +214,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           {agent:'relay',component:'github-projection'}));
         continue;
       }
-      const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0;
-      const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
+      const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0; const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
       const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
       let job = (await relay.loadJob(discovered.id)) ?? discovered;
       let prNumber = job.prNumber > 0 ? job.prNumber : 0;
@@ -257,6 +256,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (prNumber <= 0) continue; if ((await relay.loadPullRequestFacts())?.head?.sha !== sourceSha) {
         await gitText(canonical, ['fetch','--no-tags','origin','+refs/heads/main:refs/remotes/origin/main']);
         const remoteRef = `refs/remotes/origin/${branch}`;
+        await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/${branch}:${remoteRef}`]).catch(() => '');
         const remoteHeadSha = await gitText(canonical, ['rev-parse','--verify',remoteRef]).catch(() => '');
         const sameTree = remoteHeadSha ? await gitText(canonical, ['diff','--quiet','refs/remotes/origin/main',remoteRef]).then(() => true, () => false) : false;
         await gitText(canonical, authoritativeBranchPushArgs({ sourceRef, branch, remoteHeadSha: remoteHeadSha || null, remoteTreeMatchesBase: sameTree }));
