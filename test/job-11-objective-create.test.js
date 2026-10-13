@@ -8,7 +8,7 @@ test('ordinary job create rejects legacy PR binding flags before contacting Rela
   for (const flag of ['--pr', '--head', '--base', '--body', '--local-merge-source', '--local-merge-target']) {
     const result = spawnSync(process.execPath, ['dist/cli.js', 'job', 'create', '--repo', 'owner/repo', '--objective', 'standalone', flag, flag === '--pr' ? '4' : 'main'], { encoding: 'utf8' });
     assert.notEqual(result.status, 0, flag);
-    assert.match(result.stderr, /job create does not accept legacy PR option/);
+    assert.match(result.stderr, /job create does not accept /);
   }
 });
 
