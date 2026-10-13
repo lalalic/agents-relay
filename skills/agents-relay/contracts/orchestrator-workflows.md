@@ -33,10 +33,7 @@ unless the user explicitly asks for review; Relay-owned merge and completion
 lifecycle remain in their canonical graphs.
 
 Legacy recovery: existing `adapter: orchestrator` work Tasks may be repaired only
-through the canonical rescue graph. The repair converts the selected record in
-place to declarative worker requirements, clears stale execution/thread ownership,
-lets Execution Router select the route, and never launches a Task that already
-has a confirmed durable external-completion result.
+through the canonical rescue graph. The repair converts only never-started QUEUED records in place to declarative worker requirements and lets Execution Router select the route. A legacy RUNNING record with an unknown outcome is quarantined as BLOCKED instead of replayed; only explicit durable external-completion verification may complete it without execution. Process reclamation is attempted only after the record is proven eligible for this legacy path, so normal live workers are never touched by the migration scan.
 
 `job create --initial-plan` remains the normal way to create durable planning
 state and hand subsequent execution to Relay.

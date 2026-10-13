@@ -268,7 +268,7 @@ GitHub PR state is authoritative for terminal lifecycle: a merged PR reconciles 
 
 Relay has no orchestrator worker adapter for new work. Orchestrators are external clients that create/plan durable Tasks; Execution Router selects a real worker route (`codex` or `chatgpt`). The CLI and dashboard do not expose manual orchestrator-only `task start`, `task complete`, or synthetic `record` paths.
 
-Historical stores may still contain `adapter: orchestrator`. Reconciliation treats that value only as legacy migration evidence: the canonical rescue graph can convert orphaned QUEUED/RUNNING work in place to normal worker requirements, or preserve a confirmed durable completion, without double execution. New Task creation and Task update reject that adapter.
+Historical stores may still contain `adapter: orchestrator`. Reconciliation treats that value only as legacy migration evidence: QUEUED work that never started can be converted in place to normal worker requirements; RUNNING work with an unknown outcome is quarantined as BLOCKED instead of replayed; only explicit durable `externalCompletionVerified` evidence can complete legacy work without execution. New Task creation and Task update reject that adapter.
 
 For managed jobs, the GitHub PR body is the canonical collaboration surface while SQLite remains lifecycle authority.
 

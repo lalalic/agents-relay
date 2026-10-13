@@ -185,6 +185,15 @@ test('dashboard CANCELLED state uses job cancel semantics and closes the PR idem
   assert.equal(store.closes, 2);
 });
 
+test('local Job cancellation never closes its projected GitHub PR', async () => {
+  class ClosingStore extends InMemoryStore { closes = 0; async closePullRequest() { this.closes += 1; } }
+  const local={...job([task('queued')]),localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'}};
+  const store=new ClosingStore(local);
+  const durable=await dashboardJobSetState(store)('j','CANCELLED');
+  assert.equal(durable.state,'CANCELLED');
+  assert.equal(store.closes,0);
+});
+
 test('dashboard direct job lifecycle state override persists without changing runtime status semantics', async () => {
   const store = new InMemoryStore(job([]));
   const durable = await dashboardJobSetState(store)('j', 'COMPLETED');
