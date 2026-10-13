@@ -15,6 +15,7 @@ import { spawnOwnedProcess } from './owned-process.js';
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
   id: string;
+  title?: string;
   parentTaskId?: string | null;
   input: string;
   priority?: Priority;
@@ -38,14 +39,14 @@ export type PlannerTaskSpec = {
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
 export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
-export type SemanticTaskTreeEntry = { id: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
+export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
 
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
   const work = tasks.filter(task => task.kind !== 'planner');
   const ids = new Set(work.map(task => task.id));
   return {
     roots: work.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId)).map(task => task.id),
-    tasks: work.map(task => ({ id: task.id, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review })),
+    tasks: work.map(task => ({ id: task.id, title: task.title, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review })),
   };
 }
 
@@ -141,13 +142,13 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
     validateResolutionProposal(job, target, resolution);
   }
   const reviewerThread = spec.agentName === 'reviewer' ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined;
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: reviewerThread ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: reviewerThread ? 'chatgpt' : 'codex', chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: reviewerThread ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: reviewerThread ? 'chatgpt' : 'codex', chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output) throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
-  return { id: task.id, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
+  return { id: task.id, title: task.title, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
 
 
@@ -291,7 +292,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof maxAttempts !== 'number' || !Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error(`Planner next_tasks[${index}].maxAttempts is invalid`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error(`Planner next_tasks[${index}].timeoutMs is invalid`);
     return {
-      id, parentTaskId, input: task.input, priority, storySize,
+      id, title: optionalString(task.title, `next_tasks[${index}].title`), parentTaskId, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
       testInjection: parseTestInjection(task.testInjection ?? task['--test-injection']) ?? optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),
@@ -408,6 +409,7 @@ export function plannerInput(context: PlannerContext): string {
     visible_agents: visibleAgents ?? [],
     tasks: context.tasks.map(task => ({
       id: task.id,
+      title: task.title,
       kind: task.kind ?? 'work',
       parent_task_id: task.parentTaskId,
       state: task.state,

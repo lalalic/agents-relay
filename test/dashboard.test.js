@@ -8,6 +8,14 @@ import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, 
 import { InMemoryStore } from '../dist/store.js';
 
 
+
+test('dashboard renders durable Task title as the primary task label', async () => {
+  const source = dashboardHtml;
+  assert.match(source, /task\.title\|\|task\.input/);
+  assert.match(source, /field\('Title',task\.title/);
+  assert.match(source, /field\('Task ID',task\.id/);
+});
+
 test('dashboard inline JavaScript parses before publication', () => {
   const scripts = [...dashboardHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(Boolean);
   assert.ok(scripts.length > 0);
@@ -230,7 +238,7 @@ test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /selectedJobTitle\.textContent=value\(job\.title\|\|job\.id\)/);
   assert.match(dashboardHtml, /#workspace-heading \{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
-  assert.doesNotMatch(dashboardHtml, /field\('Title'/);
+  assert.doesNotMatch(dashboardHtml, /summary\.append\(field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
   assert.match(dashboardHtml, /field\('PR state',job\.githubState/);
   assert.match(dashboardHtml, /jobStateField\(job\)/);

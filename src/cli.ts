@@ -41,6 +41,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (action === 'update') {
       const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); const expectedUpdatedAt = task.updatedAt;
       if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
+      if (hasArg(args, '--title')) task.title = arg(args, '--title');
       if (hasArg(args, '--adapter')) { const adapter = arg(args, '--adapter') as AdapterName; if (!['codex','chatgpt'].includes(adapter)) throw new Error('--adapter must be codex or chatgpt'); task.adapter = adapter; }
       if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
       if (hasArg(args, '--story-size')) { task.storySize = storySize(args, task.storySize ?? 'M'); if (!hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize, task.routing?.reasoning); }

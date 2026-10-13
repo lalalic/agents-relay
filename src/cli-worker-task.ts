@@ -25,6 +25,7 @@ export async function workerTaskFromArgs(job: Job, args: string[], now: string):
   return createTaskEntity(job, {
     jobId: job.id,
     id: arg(args, '--task-id', 'initial'),
+    title: arg(args, '--title') || undefined,
     priority: priority(args, job.priority ?? 'P2'),
     storySize: size,
     projectName: arg(args, '--project') || undefined,

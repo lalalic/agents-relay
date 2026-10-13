@@ -1,5 +1,6 @@
 import type { Job, Task } from '../types.js';
 import { dispatchJobLifecycleSync, dispatchTaskLifecycleSync } from './lifecycle.js';
+import { deriveTaskTitle } from '../task-title.js';
 
 export type NewTask = Omit<Task, 'state'>;
 export type NewJob = Omit<Job, 'state'>;
@@ -26,7 +27,7 @@ function validateTaskRequirements(value: NewTask): void {
  */
 export function createTaskEntity(job: Job, value: NewTask, options: { defer?: boolean } = {}): Task {
   validateTaskRequirements(value);
-  const task: Task = { ...value, state: 'DRAFT' };
+  const task: Task = { ...value, title: value.title?.trim() || deriveTaskTitle(value.input, value.agentName ? `${value.agentName} task` : 'Task'), state: 'DRAFT' };
   if (!options.defer) {
     dispatchTaskLifecycleSync(task as Task & Record<string, unknown>, 'reconcile', {
       dependenciesSatisfied: dependenciesSatisfied(job, task.dependencies),

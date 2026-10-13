@@ -149,7 +149,8 @@ test('SQLite startup migrates legacy projected PR binding into prNumber', async 
   legacy['external'+'PrNumber']=88;
   db.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(legacy),'bound-cli-job'); db.close();
   relay=new SQLiteRelayStore(path);
-  assert.equal((await relay.loadJob('bound-cli-job')).prNumber,88);
+  const migratedJob=await relay.loadJob('bound-cli-job');
+  assert.equal(migratedJob.prNumber,88);
   relay.close();
   const raw=new DatabaseSync(path,{readOnly:true}); const stored=JSON.parse(raw.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get('bound-cli-job').json); raw.close();
   assert.equal(stored.prNumber,88); assert.equal(Object.prototype.hasOwnProperty.call(stored,'external'+'PrNumber'),false);
@@ -171,4 +172,15 @@ test('registry upgrades a local Job to external GitHub merge capability after PR
     await resolved.store.mergePullRequest('abcdef1234567890');
     assert.equal(await resolved.relay.pendingProjectionCount(),1);
   } finally {relay.close();await rm(root,{recursive:true,force:true});}
+});
+
+
+test('SQLite startup backfills durable Task titles from historical input', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-task-title-migration-')); const path=join(root,'job.db');
+  let relay=new SQLiteRelayStore(path); const at='2026-10-09T12:00:00.000Z';
+  await relay.saveJob({id:'titles',repository:'owner/repo',prNumber:1,title:'titles',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[{jobId:'titles',id:'legacy-task',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:'## Repair dashboard task labels\nMore details',state:'QUEUED',attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1,createdAt:at,updatedAt:at}]});
+  relay.close(); relay=new SQLiteRelayStore(path);
+  const migrated=await relay.loadJob('titles');
+  assert.equal(migrated.tasks[0].title,'Repair dashboard task labels');
+  relay.close(); await rm(root,{recursive:true,force:true});
 });

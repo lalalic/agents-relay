@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { Job } from './types.js';
+import { deriveTaskTitle } from './task-title.js';
 
 export function normalizeLegacyJobPrNumber(input: Job): Job {
   const record = input as Job & Record<string, unknown>;
@@ -7,6 +8,9 @@ export function normalizeLegacyJobPrNumber(input: Job): Job {
   const legacy = record[legacyKey];
   if ((!Number.isInteger(input.prNumber) || input.prNumber <= 0) && Number.isInteger(legacy) && Number(legacy) > 0) input.prNumber = Number(legacy);
   delete record[legacyKey];
+  for (const task of input.tasks ?? []) {
+    if (!task.title?.trim()) task.title = deriveTaskTitle(task.input, task.agentName ? `${task.agentName} task` : 'Task');
+  }
   return input;
 }
 

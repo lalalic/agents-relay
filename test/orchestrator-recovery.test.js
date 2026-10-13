@@ -25,6 +25,7 @@ test('Task creation boundary rejects internal orchestration and accepts requirem
   assert.throws(() => createTaskEntity(root, task('rejected')), /Execution Router select the route/);
   const declared = createTaskEntity(root, { ...task('accepted'), adapter: 'codex', workerRequirements: { capabilities: ['model'] } });
   assert.equal(declared.state, 'QUEUED');
+  assert.equal(declared.title, 'do the described work');
   assert.deepEqual(declared.workerRequirements, { capabilities: ['model'] });
 });
 
