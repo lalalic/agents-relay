@@ -1,7 +1,4 @@
-import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
-import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js';
-import { validateAgentSelection } from './agent-graph.js';
-import { ReconcilerReviewBase } from './reconciler-review.js';
+import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js';
 import { executeManualPlan } from './manual-plan.js';
 import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
@@ -19,7 +16,7 @@ import { dispatchJobReconcile } from './workflow/job-reconcile-v2.js';
 import { reconcileLocalGitCompletion } from './local-merge-delivery.js';
 import { repairLegacyOrchestrators } from './legacy-orchestrator-repair.js';
 import { launchPlanExecution } from './planner-runtime.js';
-import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js';
+import { classifyFailure, errorMessage, observability, withObservabilityCorrelation } from './observability.js'; import { recoverInteractiveDecisions } from './interactive-resume.js';
 const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 export function compareTaskPriority(a: Task, b: Task, jobPriority: Priority = 'P2'): number { const ar = PRIORITY_RANK[a.priority ?? jobPriority]; const br = PRIORITY_RANK[b.priority ?? jobPriority]; return ar - br || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export class Reconciler extends ReconcilerReviewBase {
@@ -93,6 +90,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await repairLegacyOrchestrators(jobId, now, { store: this.store, owner: this.options.owner, emit: event => this.emit(event) });
+      await recoverInteractiveDecisions(this.store, jobId);
       await this.recoverPlannerChildren(job);
       await retryPendingPlannerUnblocks({
         store: this.store,

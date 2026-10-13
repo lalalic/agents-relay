@@ -227,6 +227,27 @@ export class ProjectedDurableStore implements DurableStore {
     await this.relay.finishExecutionProcess(jobId, taskId, executionId);
   }
 
+  async mutateJob(jobId: string, mutation: (current: Job) => Job): Promise<Job> {
+    if (!this.relay.mutateJob) throw new Error("Relay store does not support atomic job mutation");
+    return this.relay.mutateJob(jobId, mutation);
+  }
+
+  async markEventProcessed(eventId: string, stream?: string | null, sequence?: number | null): Promise<boolean> {
+    return this.relay.markEventProcessed(eventId, stream ?? null, sequence ?? null);
+  }
+
+  async recordHostInvocationEvent(delivery: import('./interactive-invocation.js').InteractiveDecisionDelivery, outcome: import('./interactive-invocation.js').InteractiveDecisionOutcome, fingerprint: string): Promise<void> {
+    await this.relay.recordHostInvocationEvent?.(delivery, outcome, fingerprint);
+  }
+
+  async hasHostInvocationDecision(jobId: string, taskId: string, invocationId: string, fingerprint?: string): Promise<boolean> {
+    return await this.relay.hasHostInvocationDecision?.(jobId, taskId, invocationId, fingerprint) ?? false;
+  }
+
+  async recordHostInvocationDecision(delivery: import('./interactive-invocation.js').InteractiveDecisionDelivery, fingerprint: string): Promise<{ outcome: import('./interactive-invocation.js').InteractiveDecisionOutcome; reason: string; invocation?: import('./interactive-invocation.js').InteractiveInvocation }> {
+    return await this.relay.recordHostInvocationDecision?.(delivery, fingerprint) ?? { outcome: 'ignored', reason: 'interactive_invocations_unsupported' };
+  }
+
   /** Ingest trusted GitHub records without echoing them back through the projection outbox. */
   async hydrate(job: Job): Promise<void> {
     await this.relay.ingestJobSnapshot(structuredClone(job));
