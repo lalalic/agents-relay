@@ -311,6 +311,56 @@ test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
   assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
 });
 
+test('job ordering keeps every non-terminal job ahead of every terminal job', () => {
+  const orderingSource = dashboardHtml.slice(
+    dashboardHtml.indexOf('function isCompleteUnmerged(job)'),
+    dashboardHtml.indexOf('async function loadJSON(url)')
+  );
+  const compareJobs = new Function(`${orderingSource}\nreturn compareJobs;`)();
+  const job = (id, updatedAt, overrides = {}) => ({
+    id,
+    title: id,
+    state: 'ACTIVE',
+    executionMode: 'fixed',
+    githubState: 'OPEN',
+    runtimeStatus: 'IDLE',
+    draft: false,
+    updatedAt,
+    ...overrides
+  });
+  const jobs = [
+    job('merge-pending', '2026-01-01T00:00:00Z', { runtimeStatus: 'MERGE_PENDING' }),
+    job('failed', '2026-01-07T00:00:00Z', { runtimeStatus: 'FAILED' }),
+    job('blocked', '2026-01-06T00:00:00Z', { runtimeStatus: 'BLOCKED' }),
+    job('reviewing', '2026-01-05T00:00:00Z', { runtimeStatus: 'REVIEWING' }),
+    job('running', '2026-01-04T00:00:00Z', { runtimeStatus: 'RUNNING' }),
+    job('queued', '2026-01-03T00:00:00Z', { runtimeStatus: 'QUEUED' }),
+    job('active', '2026-01-02T00:00:00Z', { runtimeStatus: 'WAITING' }),
+    job('autonomous', '2026-01-02T00:00:00Z', { executionMode: 'autonomous' }),
+    job('draft', '2026-01-08T00:00:00Z', { state: 'DRAFT', draft: true, runtimeStatus: 'IDLE' }),
+    job('completed', '2026-01-01T00:00:00Z', { state: 'COMPLETED' }),
+    job('cancelled', '2026-01-02T00:00:00Z', { state: 'CANCELLED' }),
+    job('external-merged', '2026-01-05T00:00:00Z', { githubState: 'MERGED' }),
+    job('external-closed', '2026-01-01T00:00:00Z', { githubState: 'CLOSED' })
+  ];
+
+  assert.deepEqual([...jobs].sort(compareJobs).map(item => item.id), [
+    'merge-pending',
+    'failed',
+    'blocked',
+    'reviewing',
+    'running',
+    'queued',
+    'active',
+    'autonomous',
+    'draft',
+    'external-merged',
+    'cancelled',
+    'completed',
+    'external-closed'
+  ]);
+});
+
 test('job row selection uses repository, PR, and durable id as one UI identity', () => {
   assert.match(dashboardHtml, /function jobSelectionKey\(job\)/);
   assert.match(dashboardHtml, /String\(job\.repository\|\|''\)\+'\|'\+String\(job\.prNumber\|\|''\)\+'\|'\+String\(job\.id\|\|''\)/);
