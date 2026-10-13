@@ -328,6 +328,11 @@ export function validatePlannerLifecycleOwnership(job: Job, specs: readonly Plan
       if (ownsLifecycle && [localMerge, jobCompletion, externalMerge].filter(Boolean).length >= 2) {
         throw new Error(`Planner next task ${spec.id} attempts to own Graph lifecycle delivery; local merge, Job COMPLETED, and projected PR merge are Relay-owned effects and must not be worker Tasks`);
       }
+      const releaseEffect = /\b(?:publish|release|deploy)\b.{0,100}\b(?:package|npm|service|runtime|version)\b|\b(?:package|npm|service|runtime)\b.{0,100}\b(?:publish|release|deploy)\b/.test(clause);
+      const releaseImperative = /^\s*(?:publish|release|deploy)\b|\b(?:then|and)\s+(?:publish|release|deploy)\b/.test(clause);
+      if (releaseEffect && releaseImperative) {
+        throw new Error(`Planner next task ${spec.id} attempts to own Relay release delivery; package publication and service/runtime deployment are Relay-owned effects and must not be worker Tasks`);
+      }
     }
   }
 }
