@@ -13,7 +13,7 @@ export function resolveImplementationThreadDestination(job: Pick<Job, 'implement
 export function resolveImplementationTaskThreadDestination(
   job: Pick<Job, 'implementationThreadId'>, task: Pick<Task, 'agentName'>,
 ): string | null {
-  return task.agentName === 'implementation' ? resolveImplementationThreadDestination(job) : null;
+  return task.agentName === 'implementation' || task.agentName == null ? resolveImplementationThreadDestination(job) : null;
 }
 
 export function normalizeThreadId(value: unknown, label = 'thread ID'): string | undefined {

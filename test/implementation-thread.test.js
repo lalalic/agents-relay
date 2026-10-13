@@ -35,5 +35,5 @@ test('implementation thread ownership does not capture troubleshooter or reviewe
   assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'implementation' }), 'implementation-owner');
   assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'troubleshooter' }), null);
   assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: 'reviewer' }), null);
-  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: undefined }), null);
+  assert.equal(resolveImplementationTaskThreadDestination(job, { agentName: undefined }), 'implementation-owner');
 });

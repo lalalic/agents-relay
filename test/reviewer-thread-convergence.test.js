@@ -10,7 +10,7 @@ function job() {
     reviewerThreadId: 'configured-reviewer-thread', implementationThreadId: 'separate-implementation-thread',
     headSha: 'head-123', tasks: [], createdAt: now, updatedAt: now };
 }
-const context = { agents: [{ name: 'reviewer' }] };
+const context = { agents: [{ name: 'reviewer' }, { name: 'implementation' }] };
 const plan = { id: 'plan-1', round: 1, source: 'model-planner', headSha: 'head-123' };
 const spec = { id: 'review-planned', agentName: 'reviewer', input: 'Review head.', output: { kind: 'task_pr' } };
 
@@ -47,4 +47,16 @@ test('reviewer new-turn receipt persists once across reloaded store and reconcil
   assert.equal(durable.chatgptThreadDelivery.deliveredAt, deliveredAt);
   assert.equal(prepareReviewerThreadDelivery(job(), durable).deliveredAt, deliveredAt);
   assert.throws(() => prepareReviewerThreadDelivery({ ...job(), reviewerThreadId: 'redirect' }, durable), /already delivered/);
+});
+
+
+test('planner-created primary work bound to implementation thread is materialized as ChatGPT', () => {
+  const task = materializePlannerChild(job(), plan, {
+    id: 'implementation-planned', agentName: null, input: 'Implement.', adapter: 'codex',
+    workerRequirements: { runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
+    output: { kind: 'task_pr' },
+  }, context);
+  assert.equal(task.adapter, 'chatgpt');
+  assert.equal(task.workerRequirements.runtime, 'chatgpt');
+  assert.ok(task.workerRequirements.capabilities.includes('browser-workspace'));
 });
