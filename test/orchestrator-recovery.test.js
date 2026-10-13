@@ -138,3 +138,34 @@ test('atomic repair serializes concurrent reconcilers and launches once', async 
   assert.equal(events.filter(event => event.type === 'task.orchestrator_rescued').length, 1);
   assert.equal(repaired.leaseOwner, null);
 });
+
+test('legacy repair preserves cancelled work and never repeats its external effects', async () => {
+  const cancelled = task('release', 'CANCELLED', {
+    result: { summary: 'published outside Relay', data: { externalCompletionVerified: true } },
+  });
+  const authority = new InMemoryStore({ ...job([cancelled]), state: 'CANCELLED' });
+  const before = await authority.load('j');
+  const events = [];
+  await repairLegacyOrchestrators('j', Date.now(), {
+    store: authority, owner: 'restart', emit: event => events.push(event),
+  });
+  const after = await authority.load('j');
+  assert.deepEqual(after.tasks, before.tasks);
+  assert.equal(after.state, 'CANCELLED');
+  assert.equal(events.length, 0);
+});
+
+test('creation and legacy QUEUED rescue require no implementation thread identity', () => {
+  const owner = job([]);
+  assert.equal(owner.implementationThreadId, undefined);
+  const declared = createTaskEntity(owner, {
+    ...task('no-thread'), adapter: 'codex',
+  });
+  assert.equal(declared.state, 'QUEUED');
+  assert.equal(declared.threadId, null);
+  const legacy = task('legacy');
+  const result = prepareOrchestratorRepair(legacy, Date.now());
+  assert.equal(result.repaired, true);
+  assert.equal(legacy.adapter, 'codex');
+  assert.equal(legacy.threadId, null);
+});
