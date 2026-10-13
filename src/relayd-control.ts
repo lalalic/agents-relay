@@ -26,7 +26,7 @@ import { normalizeThreadId } from './reviewer-thread.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
-import { dispatchTaskAction } from './task-actions.js';
+import { dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
@@ -131,6 +131,14 @@ export function createWorkspaceControl(deps: any) {
       const refreshed = await store.load(jobId);
       for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
       await pool.reconcileLocalJob(jobId, 'control.job.unblock');
+      return await store.load(jobId);
+    }
+    if (command === 'task.supersede') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const reason = typeof body.reason === 'string' ? body.reason : '';
+      if (!taskId || !reason.trim()) throw new Error('task supersede requires taskId and reason');
+      await supersedeCancelledTask(store, jobId, taskId, reason);
+      await pool.reconcileLocalJob(jobId, 'control.task.supersede');
       return await store.load(jobId);
     }
     if (command === 'task.recover') {

@@ -1524,6 +1524,23 @@ test('final review ignores troubleshooter recovery history', async () => {
   assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'QUEUED');
 });
 
+test('cancelled Task supersede uses resolution graph and reopens implementation completion gate', async () => {
+  const succeeded=task('done','SUCCEEDED');
+  const cancelled=task('obsolete','CANCELLED'); cancelled.error='Cancelled by user';
+  const store=new InMemoryStore({...job([succeeded,cancelled]),state:'ACTIVE',headSha:'resolution-supersede-sha'});
+  const { supersedeCancelledTask } = await import('../dist/task-actions.js');
+  const { implementationComplete } = await import('../dist/runtime-status.js');
+  assert.equal(implementationComplete(await store.load('j')),false);
+  const result=await supersedeCancelledTask(store,'j','obsolete','after corrected planning generation');
+  assert.equal(result.task.state,'CANCELLED');
+  assert.equal(result.task.resolution?.path,'cancel_supersede');
+  assert.equal(result.task.resolution?.state,'resolved');
+  assert.match(result.task.error,/^Superseded /);
+  assert.equal(implementationComplete(await store.load('j')),true);
+  const failed=task('failed','FAILED'); const failedStore=new InMemoryStore(job([failed]));
+  await assert.rejects(()=>supersedeCancelledTask(failedStore,'j','failed','not obsolete'),/must already be CANCELLED/);
+});
+
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
   const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';

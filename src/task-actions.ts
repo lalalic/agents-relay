@@ -128,6 +128,41 @@ async function applySelectedRelatedTaskMutations(
   return changed;
 }
 
+
+function markCancelledTaskSuperseded(task: Task, reason: string): void {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only`);
+  if (task.state !== 'CANCELLED') throw new Error(`Task ${task.id} must already be CANCELLED before supersede annotation`);
+  if (!reason.trim()) throw new Error('task supersede requires a reason');
+  const proposal = { path: 'cancel_supersede' as const, targetTaskId: task.id, rootCause: reason.trim(), solution: 'Superseded by later corrected durable work' };
+  const decision = dispatchTaskResolutionSync(task, proposal, 'external', { cancelSupersede: () => {
+    task.resolution = { ...materializeResolution(task, proposal, 'external'), state: 'resolved' };
+    task.error = `Superseded ${reason.trim()}`;
+    task.updatedAt = new Date().toISOString();
+  } });
+  if (!decision.accepted) throw new Error(`Task resolution graph rejected cancellation supersede for ${task.id}`);
+}
+
+export async function supersedeCancelledTask(store: DurableStore, jobId: string, taskId: string, reason: string): Promise<TaskActionResult> {
+  if (store.mutateJob) {
+    let updatedTask: Task | undefined;
+    const updated = await store.mutateJob(jobId, current => {
+      const task = current.tasks.find(item => item.id === taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
+      markCancelledTaskSuperseded(task, reason);
+      updatedTask = structuredClone(task);
+      return current;
+    });
+    if (!updatedTask) throw new Error(`Task ${taskId} was not updated`);
+    return { job: updated, task: updatedTask };
+  }
+  const job = await store.load(jobId);
+  const task = job.tasks.find(item => item.id === taskId);
+  if (!task) throw new Error(`Task ${taskId} not found`);
+  markCancelledTaskSuperseded(task, reason);
+  await store.saveTask(task);
+  return { job: await store.load(jobId), task };
+}
+
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
 export async function dispatchTaskAction(
   store: DurableStore,

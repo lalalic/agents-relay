@@ -144,6 +144,9 @@ Required: --task-id ID, --recovery-task-id TROUBLESHOOTER_ID, and the normal Job
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  'task supersede': `Mark an already-CANCELLED durable Task as superseded by later corrected work through the Task Resolution Graph.
+
+Required: --task-id ID, --reason TEXT, and the normal managed Job storage options. This does not change Task state and cannot supersede FAILED/BLOCKED/runnable work.`,
   plan: `Invoke the Planner against the current durable Job state.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.

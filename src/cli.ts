@@ -28,7 +28,7 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'retry', 'recover', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
@@ -36,6 +36,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     const taskId = arg(args, '--task-id');
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
+    if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task unblock requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'update') {
