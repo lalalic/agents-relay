@@ -502,7 +502,7 @@ test('authoritative local merge completion never enqueues a second GitHub merge 
   remote.mergePullRequest=async()=>{merges+=1;};
   const store=new LocalAuthorityDurableStore(db,remote,undefined,false);
   try {
-    await store.saveJob({...job(),prNumber:0,externalPrNumber:77,headSha:repo.head,localMerge:{...mergeRefs}});
+    await store.saveJob({...job(),prNumber:77,headSha:repo.head,localMerge:{...mergeRefs}});
     await store.applyPullRequestFacts({state:'OPEN',head:{ref:'feature',sha:repo.head},observedAt:timestamp()});
     const reconciler=managedReconciler(store,{owner:'external-merge-after-local',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
     const completed=await reconciler.reconcile('local-job');
@@ -518,7 +518,7 @@ test('authoritative local merge completion never enqueues a second GitHub merge 
 
 test('external merge enqueue failure cannot roll back authoritative local completion', async()=>{
   const repo=localRepository();
-  const base=new InMemoryStore({...job(),prNumber:0,externalPrNumber:88,headSha:repo.head,localMerge:{...mergeRefs}});
+  const base=new InMemoryStore({...job(),prNumber:88,headSha:repo.head,localMerge:{...mergeRefs}});
   base.mergePullRequest=async()=>{throw new Error('projection transport unavailable');};
   const reconciler=managedReconciler(base,{owner:'external-merge-isolation',adapters:[],noGitHub:false,maxConcurrent:0,projectPathForJob:()=>repo.path});
   try {

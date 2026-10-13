@@ -2,14 +2,14 @@
 import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
-import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyOrchestratorStartAction, applyOrchestratorCompleteAction, applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
+import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { defaultWorkspaceRoot, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 import { workerTaskFromArgs } from './cli-worker-task.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
-async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'complete', args: string[]): Promise<void> {
+async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
   if (!jobId) throw new Error('--id is required for managed task commands');
   let id = arg(args, '--task-id');
@@ -22,30 +22,28 @@ async function runManagedTaskCommand(action: 'create'|'start'|'retry'|'cancel'|'
     task.id = id;
     result = await relayTaskCommand(args, { jobId, action, task, idempotencyKey: arg(args, '--idempotency-key') || undefined });
     if (!id) id = (result as Job & { createdTaskId?: string }).createdTaskId ?? '';
-  } else if (action === 'complete') {
-    const summary = arg(args, '--summary');
-    if (!summary) throw new Error('task complete requires --summary');
-    result = await relayTaskCommand(args, { jobId, taskId: id, action, summary });
   } else result = await relayTaskCommand(args, { jobId, taskId: id, action });
   const task = result.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} missing after ${action}`);
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'list', 'start', 'complete', 'retry', 'recover', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
     if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
     const taskId = arg(args, '--task-id');
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
-    if (['create','start','complete','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'start'|'retry'|'cancel'|'complete', args); return; }
+    if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
+    if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task unblock requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'update') {
       const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); const expectedUpdatedAt = task.updatedAt;
       if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
-      if (hasArg(args, '--adapter')) { const adapter = arg(args, '--adapter') as AdapterName; if (!['codex','chatgpt','orchestrator'].includes(adapter)) throw new Error('--adapter must be codex, chatgpt, or orchestrator'); task.adapter = adapter; }
+      if (hasArg(args, '--title')) task.title = arg(args, '--title');
+      if (hasArg(args, '--adapter')) { const adapter = arg(args, '--adapter') as AdapterName; if (!['codex','chatgpt'].includes(adapter)) throw new Error('--adapter must be codex or chatgpt'); task.adapter = adapter; }
       if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
       if (hasArg(args, '--story-size')) { task.storySize = storySize(args, task.storySize ?? 'M'); if (!hasArg(args, '--timeout')) task.timeoutMs = taskOverallTimeoutMs(task.storySize, task.routing?.reasoning); }
       if (hasArg(args, '--input') || hasArg(args, '--input-file')) task.input = await textOption(args, '--input', '--input-file');
@@ -79,22 +77,6 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
-  if (action === 'start') {
-    await applyOrchestratorStartAction(task);
-    await store.saveTask(task);
-    await saveLocal(localFile, await store.load(job.id));
-    console.log(JSON.stringify(task, null, 2));
-    return;
-  }
-  if (action === 'complete') {
-    const summary = arg(args, '--summary');
-    if (!summary) throw new Error('task complete requires --summary');
-    await applyOrchestratorCompleteAction(task, summary);
-    await store.saveTask(task);
-    await saveLocal(localFile, await store.load(job.id));
-    console.log(JSON.stringify(task, null, 2));
-    return;
-  }
   if (action === 'retry' || action === 'recover' || action === 'cancel') {
     let outputJob = job;
     let outputTask = task;
@@ -119,7 +101,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
   if (hasArg(args, '--adapter')) {
     const adapter = arg(args, '--adapter') as AdapterName;
-    if (!['codex', 'chatgpt', 'orchestrator'].includes(adapter)) throw new Error('--adapter must be codex, chatgpt, or orchestrator');
+    if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('--adapter must be codex or chatgpt');
     task.adapter = adapter;
   }
   if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
@@ -225,7 +207,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
-  const boundPrNumber = job.externalPrNumber ?? (job.prNumber > 0 ? job.prNumber : 0);
+  const boundPrNumber = job.prNumber > 0 ? job.prNumber : 0;
   if (job.repository !== repo || (prValue && boundPrNumber !== prNumber)) {
     throw new Error('Local Job/PR binding mismatch');
   }
@@ -300,7 +282,7 @@ export async function createService(args: string[]): Promise<Service> {
   const webhook = !noGitHubMode(args) && repo && webhookSecret ? {
     secret: webhookSecret,
     repositories: new Set([repo]),
-    pullRequest: loaded.job.externalPrNumber ?? loaded.job.prNumber,
+    pullRequest: loaded.job.prNumber,
     jobId: loaded.job.id,
     wake: async (event: import('./github-webhook.js').GitHubWebhookWake): Promise<void> => {
       if (event.pullRequestFacts && loaded.store.applyPullRequestFacts) {
@@ -391,15 +373,10 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(await response.json(), null, 2));
     return;
   }
-  if (!arg(args, '--file') && ['plan','reconcile','record','agent-register','agent-discover'].includes(command)) {
+  if (!arg(args, '--file') && ['plan','reconcile','agent-register','agent-discover'].includes(command)) {
     const jobId = arg(args, '--id'); if (!jobId) throw new Error(`${command} requires --repo and --id`);
     if (command === 'plan') { const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined; console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.plan', jobId, ...(guidance?.trim() ? { guidance: guidance.trim() } : {}) }), null, 2)); return; }
     if (command === 'reconcile') { console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.reconcile', jobId }), null, 2)); return; }
-    if (command === 'record') {
-      const now = new Date().toISOString(); const id = arg(args, '--task-id', randomUUID()); const summary = arg(args, '--summary'); if (!summary) throw new Error('record requires --summary'); const commit = arg(args, '--commit');
-      const task: Task = { jobId, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
-      const updated = await relayControlCommand<Job>(args, { command: 'record', jobId, task }); console.log(JSON.stringify(updated.tasks.find(item => item.id === id), null, 2)); return;
-    }
     if (command === 'agent-register') {
       const now = new Date().toISOString(); const agent: AgentRegistration = { id: arg(args, '--agent-id', randomUUID()), name: arg(args, '--name'), responsibility: arg(args, '--responsibility'), role: arg(args, '--role'), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), boundaries: arg(args, '--boundaries').split('|').filter(Boolean), endpoint: { kind: arg(args, '--endpoint-kind', 'adapter') as 'adapter' | 'command' | 'http', target: arg(args, '--endpoint') }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: arg(args, '--availability', 'available') as AgentRegistration['availability'], routing: { labels: arg(args, '--labels').split(',').filter(Boolean).reduce<Record<string, string>>((out, item) => { const [key, value] = item.split('=', 2); if (key && value) out[key] = value; return out; }, {}), trustDomains: arg(args, '--trust-domains').split(',').filter(Boolean), regions: arg(args, '--regions').split(',').filter(Boolean) }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
       if (!agent.name || !agent.responsibility || !agent.role || !agent.endpoint.target) throw new Error('--name, --responsibility, --role, and --endpoint are required'); console.log(JSON.stringify(await relayControlCommand(args, { command: 'agent.register', jobId, agent }), null, 2)); return;
@@ -426,13 +403,6 @@ async function main(): Promise<void> {
     await store.saveAgent(agent); console.log(`Registered ${agent.id}`); return;
   }
   if (command === 'agent-discover') { const candidates = discoverAgents(await store.listAgents(), { capabilities: arg(args, '--capabilities').split(',').filter(Boolean), runtime: arg(args, '--runtime') || undefined, availability: arg(args, '--availability').split(',').filter(Boolean) as AgentRegistration['availability'][], trustDomain: arg(args, '--trust-domain') || undefined, taskKind: arg(args, '--task-kind') || undefined, explore: args.includes('--explore') }); console.log(JSON.stringify(candidates, null, 2)); return; }
-  if (command === 'record') {
-    const now = new Date().toISOString(); const id = arg(args, '--task-id', randomUUID()); const summary = arg(args, '--summary');
-    if (!summary) throw new Error('record requires --summary');
-    const commit = arg(args, '--commit');
-    const task: Task = { jobId: job.id, id, projectName: arg(args, '--project') || undefined, agentName: arg(args, '--agent', 'orchestrator'), parentTaskId: arg(args, '--parent') || null, dependencies: arg(args, '--deps').split(',').filter(Boolean), capabilities: [], adapter: 'orchestrator', input: arg(args, '--input', summary), continuation: null, continuationDeliveredAt: null, state: 'SUCCEEDED', attempt: 1, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: commit || null, threadId: null, result: { summary, data: commit ? { commit } : undefined }, error: null, timeoutMs: 0, createdAt: now, updatedAt: now };
-    await store.appendTask(task); job.tasks.push(task); await saveLocal(localFile, job); console.log(`Recorded ${id}`); return;
-  }
   if (command === 'serve') { await startService(args); return; }
   if (command === 'reconcile') {
     await withEventBus(args, async bus => {

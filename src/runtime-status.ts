@@ -3,7 +3,8 @@ import { Job, JobRuntimeStatus, Task } from './types.js';
 export type PullRequestRuntimeState = 'UNKNOWN' | 'OPEN' | 'MERGED' | 'CLOSED';
 
 function isSuperseded(task: Task): boolean {
-  return task.state === 'CANCELLED' && typeof task.error === 'string' && task.error.startsWith('Superseded ');
+  return task.state === 'CANCELLED' && ((task.resolution?.path === 'cancel_supersede' && task.resolution.state === 'resolved')
+    || (typeof task.error === 'string' && task.error.startsWith('Superseded ')));
 }
 
 export function implementationTasks(job: Job): Task[] {

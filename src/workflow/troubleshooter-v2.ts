@@ -11,7 +11,7 @@ const boolGuard=(name:string)=>(facts:{readonly durableFacts:Readonly<Record<str
 export const troubleshooterV2=new GraphRuntime(source,{
   states:new Set<TroubleshooterGraphState>(['idle','check_ordinary','check_run','check_needs','check_id','check_barrier','skip','create']),
   guards:{
-    failedOrBlocked:boolGuard('failedOrBlocked'),
+    failedWork:boolGuard('failedWork'),
     ordinaryWork:boolGuard('ordinaryWork'),
     currentRun:boolGuard('currentRun'),
     needsRecovery:boolGuard('needsRecovery'),

@@ -52,7 +52,7 @@ export function prepareReviewerThreadDelivery(
   return {
     kind: 'new-turn', threadId: destination.threadId, threadSource: destination.source,
     requestId: existing?.requestId ?? `${job.id}:${task.id}:${task.reviewHeadSha ?? job.headSha ?? 'review'}`,
-    jobId: job.id, prNumber: job.externalPrNumber && job.externalPrNumber > 0 ? job.externalPrNumber : job.prNumber,
+    jobId: job.id, prNumber: job.prNumber,
     ...(task.reviewHeadSha ? { reviewHeadSha: task.reviewHeadSha } : {}),
     projectId: task.routing?.projectId ?? null,
     ...(existing?.executionId ? { executionId: existing.executionId } : {}),

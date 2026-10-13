@@ -10,6 +10,7 @@ import { RepositoryWorkerPool } from '../dist/pool.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 const execFileAsync = promisify(execFile);
 
 test('SQLite registry routes no-PR schedule, startup recovery, and targeted worker events by jobId', async () => {
@@ -135,19 +136,28 @@ test('registry resolves unique ACTIVE Job over archived same-ID terminal snapsho
 
 
 
-test('CLI local store accepts projected external PR binding while local prNumber remains zero', async () => {
+test('SQLite startup migrates legacy projected PR binding into prNumber', async () => {
   const { storeFor } = await import('../dist/cli-support.js');
   const root=await mkdtemp(join(tmpdir(),'relay-cli-external-binding-'));
-  const relay=new SQLiteRelayStore(join(root,'job.db'));
-  const previousHome=process.env.HOME;
-  try {
-    const at='2026-10-09T12:00:00.000Z';
-    await relay.saveJob({id:'bound-cli-job',repository:'owner/repo',prNumber:0,externalPrNumber:88,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]});
-    const loaded=await storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','88','--store-dir',root]);
-    assert.equal(loaded.job.prNumber,0);
-    assert.equal(loaded.job.externalPrNumber,88);
-    await assert.rejects(()=>storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','89','--store-dir',root]),/external PR binding mismatch/);
-  } finally { relay.close(); if(previousHome===undefined) delete process.env.HOME; else process.env.HOME=previousHome; await rm(root,{recursive:true,force:true}); }
+  const path=join(root,'job.db');
+  let relay=new SQLiteRelayStore(path);
+  const at='2026-10-09T12:00:00.000Z';
+  await relay.saveJob({id:'bound-cli-job',repository:'owner/repo',prNumber:0,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]});
+  relay.close();
+  const db=new DatabaseSync(path);
+  const legacy={id:'bound-cli-job',repository:'owner/repo',prNumber:0,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  legacy['external'+'PrNumber']=88;
+  db.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(legacy),'bound-cli-job'); db.close();
+  relay=new SQLiteRelayStore(path);
+  const migratedJob=await relay.loadJob('bound-cli-job');
+  assert.equal(migratedJob.prNumber,88);
+  relay.close();
+  const raw=new DatabaseSync(path,{readOnly:true}); const stored=JSON.parse(raw.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get('bound-cli-job').json); raw.close();
+  assert.equal(stored.prNumber,88); assert.equal(Object.prototype.hasOwnProperty.call(stored,'external'+'PrNumber'),false);
+  const loaded=await storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','88','--store-dir',root]);
+  assert.equal(loaded.job.prNumber,88);
+  await assert.rejects(()=>storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','89','--store-dir',root]),/Local Job\/PR binding mismatch/);
+  await rm(root,{recursive:true,force:true});
 });
 
 test('registry upgrades a local Job to external GitHub merge capability after PR binding', async () => {
@@ -156,10 +166,21 @@ test('registry upgrades a local Job to external GitHub merge capability after PR
   const relay=new SQLiteRelayStore(join(root,'job.db'));
   try {
     const at='2026-10-09T12:00:00.000Z';
-    await relay.saveJob({id:'bound-job',repository:'owner/repo',prNumber:0,externalPrNumber:77,title:'bound',state:'COMPLETED',executionMode:'autonomous',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
+    await relay.saveJob({id:'bound-job',repository:'owner/repo',prNumber:77,title:'bound',state:'COMPLETED',executionMode:'autonomous',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
     const resolved=await createJobIdRegistryResolver(root,new Map(),{client:{},noGitHub:false})('bound-job');
     assert.ok(resolved);
     await resolved.store.mergePullRequest('abcdef1234567890');
     assert.equal(await resolved.relay.pendingProjectionCount(),1);
   } finally {relay.close();await rm(root,{recursive:true,force:true});}
+});
+
+
+test('SQLite startup backfills durable Task titles from historical input', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-task-title-migration-')); const path=join(root,'job.db');
+  let relay=new SQLiteRelayStore(path); const at='2026-10-09T12:00:00.000Z';
+  await relay.saveJob({id:'titles',repository:'owner/repo',prNumber:1,title:'titles',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[{jobId:'titles',id:'legacy-task',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:'## Repair dashboard task labels\nMore details',state:'QUEUED',attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1,createdAt:at,updatedAt:at}]});
+  relay.close(); relay=new SQLiteRelayStore(path);
+  const migrated=await relay.loadJob('titles');
+  assert.equal(migrated.tasks[0].title,'Repair dashboard task labels');
+  relay.close(); await rm(root,{recursive:true,force:true});
 });

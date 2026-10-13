@@ -14,5 +14,5 @@ export async function runReviewCommand(action: string, reviewArgs: string[]): Pr
   if (!arg(reviewArgs, '--repo') || !jobId) throw new Error('review request requires --repo and --id');
   const threadId = reviewRequestThreadOverride(reviewArgs);
   const job = await relayControlCommand<any>(reviewArgs, { command: 'review.request', jobId, ...(threadId !== undefined ? { threadId } : {}) });
-  console.log(JSON.stringify({ jobId: job.id, pr: job.externalPrNumber ?? job.prNumber ?? 0, reviewerThreadId: job.reviewerThreadId ?? null, status: 'requested', note: 'Relay graph will create the review Task once eligible; this is not a delivery receipt.' }, null, 2));
+  console.log(JSON.stringify({ jobId: job.id, pr: job.prNumber ?? 0, reviewerThreadId: job.reviewerThreadId ?? null, status: 'requested', note: 'Relay graph will create the review Task once eligible; this is not a delivery receipt.' }, null, 2));
 }

@@ -31,7 +31,7 @@ export function dashboardJobSetState(store: DurableStore): (jobId: string, state
     const job = await store.load(jobId);
     if (state === 'CANCELLED') {
       if (job.state !== 'CANCELLED') await applyJobCancelAction(store, job);
-      await store.closePullRequest?.();
+      if (!job.localMerge?.sourceRef) await store.closePullRequest?.();
       return await store.load(job.id);
     }
     if (job.state === state) return job;

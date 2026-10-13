@@ -68,7 +68,7 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(observed.objective, 'finish the objective');
   assert.equal(observed.guidance, 'focus on the durable objective');
   const child = result.job.tasks.find(item => item.id === result.round.generatedTaskIds[0]);
-  assert.match(child?.id ?? '', /^t-5-owner-repo-\d+$/);
+  assert.match(child?.id ?? '', /^[1-9]\d*$/);
   assert.ok(child);
   assert.equal(child.parentTaskId, null);
   assert.equal(child.planningDecisionId, 'plan-1');
@@ -205,6 +205,8 @@ test('local-first planner cannot delegate Relay-owned merge and completion lifec
   assert.throws(() => validatePlannerLifecycleOwnership(root, [release]), /Relay-owned effects/);
   assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'verify',input:'Verify the implementation tests and report findings without changing lifecycle state.'}]));
   assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'implementation',input:'Create a fixture and run npm test. Relay must handle review, local merge, Job COMPLETED and GitHub PR MERGED. Do not perform manual lifecycle actions.'}]));
+  assert.throws(() => validatePlannerLifecycleOwnership(root, [{...release,id:'publish',input:'Resolve the release blocker if safe, then publish the current npm package and deploy the runtime service.'}]), /release delivery/);
+  assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'verify-release',input:'Verify the published npm package and deployed runtime service; report evidence only.'}]));
 });
 
 test('planner input exposes semantic ownership separately from plan provenance', () => {
@@ -346,7 +348,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const firstPlan = result.plans?.find(item => item.id === 'plan-1');
   assert.equal(result.tasks.find(item => item.id === firstPlan?.generatedTaskIds[0])?.priority, 'P1');
   assert.equal(firstPlan?.status, 'SUCCEEDED');
-  assert.match(firstPlan?.generatedTaskIds[0] ?? '', /^t-5-owner-repo-\d+$/);
+  assert.match(firstPlan?.generatedTaskIds[0] ?? '', /^[1-9]\d*$/);
   const comments = await store.comments();
   const planIndex = comments.findIndex(comment => comment.body.includes(PLAN_MARKER) && comment.body.includes('\"id\":\"plan-1\"'));
   const childIndex = comments.findIndex(comment => comment.body.includes(TASK_MARKER) && comment.body.includes('\"id\":\"' + firstPlan.generatedTaskIds[0] + '\"'));

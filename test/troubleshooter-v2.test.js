@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { decideTroubleshooter } from '../dist/workflow/troubleshooter-v2.js';
 
 const base={
-  failedOrBlocked:true,
+  failedWork:true,
   ordinaryWork:true,
   currentRun:true,
   needsRecovery:true,
@@ -13,7 +13,7 @@ const base={
 
 test('Troubleshooter v2 graph owns recovery-task eligibility', () => {
   for (const [fact,value] of [
-    ['failedOrBlocked',false],
+    ['failedWork',false],
     ['ordinaryWork',false],
     ['currentRun',false],
     ['needsRecovery',false],
@@ -27,4 +27,10 @@ test('Troubleshooter v2 graph owns recovery-task eligibility', () => {
   const create=decideTroubleshooter(base);
   assert.equal(create.target,'create');
   assert.deepEqual(create.actions.map(action=>action.id),['troubleshooter.create']);
+});
+
+test('BLOCKED work is outside Troubleshooter eligibility and waits for authoritative unblock', () => {
+  const decision=decideTroubleshooter({...base,failedWork:false});
+  assert.equal(decision.target,'skip');
+  assert.deepEqual(decision.actions,[]);
 });

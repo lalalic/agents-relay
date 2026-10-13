@@ -116,7 +116,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID (optional; Relay auto-assigns repository-scoped task number), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. Use --adapter orchestrator only for synchronous self-work; explicit adapter/provider/model remain compatibility/debug constraints.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID (optional; Relay auto-assigns a global increasing integer Task ID), --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
@@ -124,7 +124,7 @@ Example:
   'task update': `Update mutable durable Task fields in place.
 
 Required: --task-id ID and the normal Job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Use --clear-routing to remove routing metadata.
 
 Example:
@@ -135,12 +135,6 @@ Required: --task-id ID and the normal Job storage options.`,
   'task list': `List durable Tasks for one Job.
 
 Required: the normal Job storage options.`,
-  'task start': `Mark one orchestrator-owned self Task RUNNING when the creating orchestrator actually begins the work.
-
-Required: --task-id ID and the normal Job storage options. The Task must use adapter=orchestrator and be QUEUED. Start must occur before task complete.`,
-  'task complete': `Complete one orchestrator-owned Task after the creating orchestrator has finished the work.
-
-Required: --task-id ID, --summary TEXT, and the normal Job storage options. The Task must use adapter=orchestrator and already be RUNNING. This command is for the same orchestrator turn that created the self-task; it is not a deferred handoff mechanism.`,
   'task retry': `Retry one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
@@ -150,6 +144,9 @@ Required: --task-id ID, --recovery-task-id TROUBLESHOOTER_ID, and the normal Job
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
+  'task supersede': `Mark an already-CANCELLED durable Task as superseded by later corrected work through the Task Resolution Graph.
+
+Required: --task-id ID, --reason TEXT, and the normal managed Job storage options. This does not change Task state and cannot supersede FAILED/BLOCKED/runnable work.`,
   plan: `Invoke the Planner against the current durable Job state.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.

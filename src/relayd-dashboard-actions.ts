@@ -27,14 +27,13 @@ import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
-import { applyOrchestratorStartAction, applyOrchestratorCompleteAction } from './task-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
@@ -53,12 +52,12 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createDashboardActions(deps: any) {
-  const { getOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, applyOrchestratorStartAction, applyOrchestratorCompleteAction, publishOrchestratorTaskStarted, publishOrchestratorTaskCompletion, bus, dashboardTaskAction, dashboardTaskSetState, storeDirectory } = deps;
+  const { getOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, bus, dashboardTaskAction, dashboardTaskSetState, storeDirectory } = deps;
   const currentOverviews = (): ManagedJobOverview[] => getOverviews();
   const dashboardOverview = (jobId: string, target?: { repository?: string; prNumber?: number }) =>
     currentOverviews().find((item: {job: Job}) => item.job.id === jobId
       && (!target?.repository || item.job.repository === target.repository)
-      && (!target?.prNumber || (item.job.externalPrNumber ?? item.job.prNumber) === target.prNumber));
+      && (!target?.prNumber || (item.job.prNumber) === target.prNumber));
   const workspaceJobAction = (action: 'start' | 'reconcile' | 'cancel') => async (jobId: string) => {
     const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -119,32 +118,6 @@ export function createDashboardActions(deps: any) {
     if (!alreadyCreated) await pool.reconcileLocalJob(jobId, 'control.task.create');
     return { ...(await store.load(jobId)), createdTaskId: task.id };
   };
-  const workspaceTaskStart = async (jobId: string, taskId: string) => {
-    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
-    if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = (await requireLocalJobBinding(jobId)).store;
-    const job = await store.load(jobId);
-    const task = job.tasks.find((item: import('./types.js').Task) => item.id === taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
-    await applyOrchestratorStartAction(task);
-    await store.saveTask(task);
-    await publishOrchestratorTaskStarted(bus, job, task);
-    await pool.reconcileLocalJob(jobId, 'control.task.start');
-    return await store.load(jobId);
-  };
-  const workspaceTaskComplete = async (jobId: string, taskId: string, summary: string) => {
-    const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
-    if (!overview) throw new Error(`Managed job ${jobId} not found`);
-    const store = (await requireLocalJobBinding(jobId)).store;
-    const job = await store.load(jobId);
-    const task = job.tasks.find((item: import('./types.js').Task) => item.id === taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
-    await applyOrchestratorCompleteAction(task, summary);
-    await store.saveTask(task);
-    await publishOrchestratorTaskCompletion(bus, job, task, summary);
-    await pool.reconcileLocalJob(jobId, 'control.task.complete');
-    return await store.load(jobId);
-  };
   const workspaceTaskAction = (action: 'retry' | 'cancel') => async (jobId: string, taskId: string) => {
     const overview = currentOverviews().find((item: {job: Job}) => item.job.id === jobId);
     if (!overview) throw new Error(`Managed job ${jobId} not found`);
@@ -160,5 +133,5 @@ export function createDashboardActions(deps: any) {
     return result;
   };
 
- return {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskStart,workspaceTaskComplete,workspaceTaskAction,workspaceTaskSetState};
+ return {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskAction,workspaceTaskSetState};
 }

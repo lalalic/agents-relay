@@ -8,6 +8,14 @@ import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, 
 import { InMemoryStore } from '../dist/store.js';
 
 
+
+test('dashboard renders durable Task title as the primary task label', async () => {
+  const source = dashboardHtml;
+  assert.match(source, /task\.title\|\|task\.input/);
+  assert.match(source, /field\('Title',task\.title/);
+  assert.match(source, /field\('Task ID',task\.id/);
+});
+
 test('dashboard inline JavaScript parses before publication', () => {
   const scripts = [...dashboardHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(Boolean);
   assert.ok(scripts.length > 0);
@@ -230,7 +238,7 @@ test('selected job heading is title-only and single-line', () => {
   assert.match(dashboardHtml, /selectedJobTitle\.textContent=value\(job\.title\|\|job\.id\)/);
   assert.match(dashboardHtml, /#workspace-heading \{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
   assert.match(dashboardHtml, /#selected-job-title \{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; \}/);
-  assert.doesNotMatch(dashboardHtml, /field\('Title'/);
+  assert.doesNotMatch(dashboardHtml, /summary\.append\(field\('Title'/);
   assert.doesNotMatch(dashboardHtml, /field\('Description'/);
   assert.match(dashboardHtml, /field\('PR state',job\.githubState/);
   assert.match(dashboardHtml, /jobStateField\(job\)/);
@@ -385,7 +393,7 @@ test('dashboard renders job clipboard, publication, merge-review, and commit-lin
   assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
   assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
-  assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.externalPrNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
+  assert.match(dashboardHtml, /if\(job\.publicationFailure\).*else if\(job\.publication\?\.version\).*else if\(Number\(job\.prNumber\|\|0\)>0&&job\.githubState==='MERGED'\)/s);
   assert.doesNotMatch(dashboardHtml, /PUBLISHED v/);
   assert.match(dashboardHtml, /job\.state==='ACTIVE'&&job\.reviewEnabled!==false/);
   assert.match(dashboardHtml, /function safeCommitUrl\(repository,sha\)/);
@@ -473,7 +481,7 @@ test('credit providers render one balance value per provider row', () => {
 
 test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
-  assert.match(dashboardHtml, /Number\(job\.externalPrNumber\|\|job\.prNumber\|\|0\)>0/);
+  assert.match(dashboardHtml, /Number\(job\.prNumber\|\|0\)>0/);
   assert.match(dashboardHtml, /'Job '\+shortManagedId\(job\.id,job\.repository,'j'\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
@@ -822,4 +830,35 @@ test('clipboard and shortcut include job ID PR and title', () => {
   assert.match(dashboardHtml, /value\(job\?\.id\)/);
   assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
   assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
+});
+
+test('selectJob copies the complete actual title for local and GitHub Jobs', () => {
+  const functions = ['jobChatRef', 'copySelectedJobIdentity', 'selectJob'];
+  const source = functions.map(name => {
+    const line = dashboardHtml.split('\n').find(line => line.startsWith(`function ${name}(`));
+    assert.ok(line, `${name} exists in the rendered Dashboard`);
+    return line;
+  }).join('\n');
+  const copied = [];
+  const sandbox = {
+    navigator: { clipboard: { writeText: async value => { copied.push(value); } } },
+    repoName: repo => repo,
+    value: input => String(input ?? ''),
+    jobSelectionKey: job => job.id,
+    rememberSelection() {},
+    clearEvents() {},
+    renderAll() {},
+    loadEventHistory: async () => {},
+    location: { hash: '' },
+    encodeURIComponent,
+    selectedJob: null,
+    selectedTaskId: null,
+    eventTaskId: null,
+  };
+  new Script(source + '\nthis.runSelection=selectJob;').runInNewContext(sandbox);
+  sandbox.runSelection({ id: 'local-7', repository: 'lalalic/agents-relay', prNumber: 0, title: 'Full local Job title' });
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-7: Full local Job title');
+  assert.doesNotMatch(copied.at(-1), /pr#0/);
+  sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 280, localMerge: { sourceRef: 'refs/heads/local-8' }, title: 'Full GitHub Job title' });
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-8/pr#280: Full GitHub Job title');
 });

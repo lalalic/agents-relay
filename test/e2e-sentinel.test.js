@@ -71,7 +71,7 @@ test('Scenario 001 treats GitHub PR as optional and archives any bound display P
   assert.match(source,/githubEnabled===true/);
   assert.doesNotMatch(source,/GITHUB_PR_NOT_CREATED/);
   assert.match(source,/GITHUB_AUTH_UNAVAILABLE/);
-  assert.match(source,/externalPrNumber/);
+  assert.doesNotMatch(source,/externalPrNumber/);
   assert.match(source,/GITHUB_PR_NOT_ARCHIVED/);
 });
 

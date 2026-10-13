@@ -9,7 +9,7 @@ checkBarrier["state: check_barrier"]
 skip["state: skip"]
 create["state: create"]
 
-failedOrBlocked["guard: failedOrBlocked"]
+failed["guard: failedWork"]
 ordinary["guard: ordinaryWork"]
 currentRun["guard: currentRun"]
 needsRecovery["guard: needsRecovery"]
@@ -17,9 +17,9 @@ idUnused["guard: idUnused"]
 noBarrier["guard: noRecoveryBarrier"]
 createAction["action: troubleshooter.create"]
 
-idle -->|on: troubleshooter.reconcile| failedOrBlocked
-failedOrBlocked -->|false| skip
-failedOrBlocked -->|true| checkOrdinary
+idle -->|on: troubleshooter.reconcile| failed
+failed -->|false| skip
+failed -->|true| checkOrdinary
 
 checkOrdinary -->|on: troubleshooter.reconcile| ordinary
 ordinary -->|false| skip

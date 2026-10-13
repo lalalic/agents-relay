@@ -1,5 +1,6 @@
 import type { Job, Task } from '../types.js';
 import { dispatchJobLifecycleSync, dispatchTaskLifecycleSync } from './lifecycle.js';
+import { deriveTaskTitle } from '../task-title.js';
 
 export type NewTask = Omit<Task, 'state'>;
 export type NewJob = Omit<Job, 'state'>;
@@ -10,13 +11,23 @@ function dependenciesSatisfied(job: Job, dependencies: readonly string[]): boole
   return dependencies.every(id => byId.get(id)?.state === 'SUCCEEDED');
 }
 
+function validateTaskRequirements(value: NewTask): void {
+  if (value.adapter === 'orchestrator') {
+    throw new Error('New Tasks cannot use the Relay-internal orchestrator adapter; declare worker requirements and let Execution Router select the route');
+  }
+  if (value.workerRequirements && !Array.isArray(value.workerRequirements.capabilities)) {
+    throw new Error(`Task ${value.id} workerRequirements.capabilities must be an array`);
+  }
+}
+
 /**
  * Canonical creation boundary for new Task entities.
  * Constructors provide metadata/facts only; the Task lifecycle graph derives
  * whether a fresh Task remains DRAFT or becomes QUEUED.
  */
 export function createTaskEntity(job: Job, value: NewTask, options: { defer?: boolean } = {}): Task {
-  const task: Task = { ...value, state: 'DRAFT' };
+  validateTaskRequirements(value);
+  const task: Task = { ...value, title: value.title?.trim() || deriveTaskTitle(value.input, value.agentName ? `${value.agentName} task` : 'Task'), state: 'DRAFT' };
   if (!options.defer) {
     dispatchTaskLifecycleSync(task as Task & Record<string, unknown>, 'reconcile', {
       dependenciesSatisfied: dependenciesSatisfied(job, task.dependencies),

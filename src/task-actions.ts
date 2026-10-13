@@ -10,10 +10,8 @@ export const TASK_UNBLOCK_RETRY_ACTION = 'task.unblock.retry' as const;
 export const TASK_CANCEL_ACTION = 'task.cancel' as const;
 export const TASK_RELEASE_ACTION = 'task.release' as const;
 export const TASK_HOLD_ACTION = 'task.hold' as const;
-export const TASK_START_ACTION = 'task.start' as const;
-export const TASK_COMPLETE_ACTION = 'task.complete' as const;
 export const TASK_QUEUE_ACTION = 'task.queue' as const;
-export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_RECOVER_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_START_ACTION | typeof TASK_COMPLETE_ACTION | typeof TASK_QUEUE_ACTION;
+export type TaskActionId = typeof TASK_RETRY_ACTION | typeof TASK_RECOVER_ACTION | typeof TASK_UNBLOCK_RETRY_ACTION | typeof TASK_CANCEL_ACTION | typeof TASK_RELEASE_ACTION | typeof TASK_HOLD_ACTION | typeof TASK_QUEUE_ACTION;
 
 export type TaskActionRequest = {
   id: TaskActionId;
@@ -116,39 +114,6 @@ export async function applyTaskQueueAction(job: Job, task: Task): Promise<Task> 
   return task;
 }
 
-export async function applyOrchestratorStartAction(task: Task): Promise<Task> {
-  if (task.adapter !== 'orchestrator') throw new Error('task start is only valid for adapter=orchestrator self-tasks');
-  const originalState = task.state;
-  try {
-    await transitionTaskEvent(task, 'task.started');
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
-      throw new Error(`Task ${task.id} is ${originalState}; only QUEUED orchestrator tasks can be started`);
-    }
-    throw error;
-  }
-  task.attempt = Math.max(task.attempt, 1);
-  task.updatedAt = new Date().toISOString();
-  return task;
-}
-
-export async function applyOrchestratorCompleteAction(task: Task, summary: string): Promise<Task> {
-  if (task.adapter !== 'orchestrator') throw new Error('task complete is only valid for adapter=orchestrator self-tasks');
-  const originalState = task.state;
-  if (task.state !== 'RUNNING') throw new Error(`Task ${task.id} is ${originalState}; orchestrator task must be started before completion`);
-  task.result = { summary };
-  clearExecution(task);
-  try {
-    await transitionTaskEvent(task, 'task.completed');
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('No enabled workflow transition')) {
-      throw new Error(`Task ${task.id} is ${originalState}; only RUNNING orchestrator tasks can be completed`);
-    }
-    throw error;
-  }
-  return task;
-}
-
 async function applySelectedRelatedTaskMutations(
   job: Job,
   mutations: readonly RelatedTaskMutation[],
@@ -161,6 +126,41 @@ async function applySelectedRelatedTaskMutations(
     changed.push(related);
   }
   return changed;
+}
+
+
+function markCancelledTaskSuperseded(task: Task, reason: string): void {
+  if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only`);
+  if (task.state !== 'CANCELLED') throw new Error(`Task ${task.id} must already be CANCELLED before supersede annotation`);
+  if (!reason.trim()) throw new Error('task supersede requires a reason');
+  const proposal = { path: 'cancel_supersede' as const, targetTaskId: task.id, rootCause: reason.trim(), solution: 'Superseded by later corrected durable work' };
+  const decision = dispatchTaskResolutionSync(task, proposal, 'external', { cancelSupersede: () => {
+    task.resolution = { ...materializeResolution(task, proposal, 'external'), state: 'resolved' };
+    task.error = `Superseded ${reason.trim()}`;
+    task.updatedAt = new Date().toISOString();
+  } });
+  if (!decision.accepted) throw new Error(`Task resolution graph rejected cancellation supersede for ${task.id}`);
+}
+
+export async function supersedeCancelledTask(store: DurableStore, jobId: string, taskId: string, reason: string): Promise<TaskActionResult> {
+  if (store.mutateJob) {
+    let updatedTask: Task | undefined;
+    const updated = await store.mutateJob(jobId, current => {
+      const task = current.tasks.find(item => item.id === taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
+      markCancelledTaskSuperseded(task, reason);
+      updatedTask = structuredClone(task);
+      return current;
+    });
+    if (!updatedTask) throw new Error(`Task ${taskId} was not updated`);
+    return { job: updated, task: updatedTask };
+  }
+  const job = await store.load(jobId);
+  const task = job.tasks.find(item => item.id === taskId);
+  if (!task) throw new Error(`Task ${taskId} not found`);
+  markCancelledTaskSuperseded(task, reason);
+  await store.saveTask(task);
+  return { job: await store.load(jobId), task };
 }
 
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
@@ -179,7 +179,7 @@ export async function dispatchTaskAction(
           throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
       }
       const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(current, task, request.id);
-      if (request.id === TASK_RETRY_ACTION) applyTaskRetrySnapshot(task, { extendBudget: true });
+      if (request.id === TASK_RETRY_ACTION) { applyTaskRetrySnapshot(task, { extendBudget: true }); task.routing = undefined; task.workerSelection = undefined; }
       else if (request.id === TASK_RECOVER_ACTION) {
         const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
         const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
@@ -201,7 +201,7 @@ export async function dispatchTaskAction(
   const task = job.tasks.find(item => item.id === request.taskId);
   if (!task) throw new Error(`Task ${request.taskId} not found`);
   const relatedMutations = request.id === TASK_RECOVER_ACTION ? [] : selectRelatedTaskMutations(job, task, request.id);
-  if (request.id === TASK_RETRY_ACTION) await applyTaskRetryAction(task, { extendBudget: true });
+  if (request.id === TASK_RETRY_ACTION) { await applyTaskRetryAction(task, { extendBudget: true }); task.routing = undefined; task.workerSelection = undefined; }
   else if (request.id === TASK_RECOVER_ACTION) {
     const recovery = request.recoveryTaskId ? job.tasks.find(item => item.id === request.recoveryTaskId) : undefined;
     if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED','RUNNING'].includes(recovery.state))
@@ -214,7 +214,6 @@ export async function dispatchTaskAction(
   else if (request.id === TASK_CANCEL_ACTION) await applyTaskCancelAction(task, 'Cancelled by user');
   else if (request.id === TASK_RELEASE_ACTION) await applyTaskReleaseAction(task);
   else if (request.id === TASK_HOLD_ACTION) await applyTaskHoldAction(task);
-  else if (request.id === TASK_START_ACTION) await applyOrchestratorStartAction(task);
   else if (request.id === TASK_QUEUE_ACTION) await applyTaskQueueAction(job, task);
   else throw new Error(`Unsupported task action ${request.id}`);
   const changedRelated = await applySelectedRelatedTaskMutations(job, relatedMutations);
