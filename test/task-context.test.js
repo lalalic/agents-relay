@@ -25,3 +25,13 @@ test('reference prompt carries identity not task content',()=>{
   assert.match(prompt,/task context --repo owner\/repo --id j1 --task-id build --execution-id exec-1/);
   assert.doesNotMatch(prompt,/Produce an implementation/);
 });
+
+test('reference prompt preserves canonical event contract and excludes task body',()=>{
+  const source='LONG_PRIVATE_TASK_BODY\n[Execution event contract — mandatory]\nsource.id=job/j1/task/build/execution/exec-1\ntask.started\ntask.completed';
+  const prompt=taskReferencePrompt('owner/repo','j1','build','exec-1',source);
+  assert.doesNotMatch(prompt,/LONG_PRIVATE_TASK_BODY/);
+  assert.match(prompt,/source.id=job\/j1\/task\/build\/execution\/exec-1/);
+  assert.match(prompt,/task.started/);
+  assert.match(prompt,/task.completed/);
+  assert.throws(()=>taskReferencePrompt('owner/repo','j1','build','exec-1','missing'),/Missing managed execution event contract/);
+});

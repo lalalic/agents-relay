@@ -351,7 +351,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         definition,
         {
           prompt: task.chatgptThreadDelivery?.threadSource === 'implementation' && task.chatgptThreadDelivery.repository && task.chatgptThreadDelivery.executionId
-            ? taskReferencePrompt(task.chatgptThreadDelivery.repository, task.chatgptThreadDelivery.jobId, task.id, task.chatgptThreadDelivery.executionId) : task.input,
+            ? taskReferencePrompt(task.chatgptThreadDelivery.repository, task.chatgptThreadDelivery.jobId, task.id, task.chatgptThreadDelivery.executionId, task.input) : task.input,
           ...(task.attachments?.length ? { files: task.attachments } : {}),
           ...(task.chatgptThreadDelivery ? { thread: task.chatgptThreadDelivery } : {}),
           tabClosePolicy: policy,

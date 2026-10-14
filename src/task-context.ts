@@ -12,6 +12,10 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
     plan: job.plans?.find(plan => plan.id === task.planningDecisionId) ?? null };
 }
 
-export function taskReferencePrompt(repository: string, jobId: string, taskId: string, executionId: string): string {
-  return `[Agents Relay managed task]\nRepository: ${repository}\nJob ID: ${jobId}\nTask ID: ${taskId}\nExecution ID: ${executionId}\n\nRetrieve the authoritative task contract using the connected NeoY shell/Agents Relay CLI:\n  agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}\nRead the returned Task input, dependencies, Plan, project context, and output requirements before execution. Check that the execution ID matches. If the CLI or context is unavailable, report blocked; never guess or execute from this envelope. Continue in this thread; Relay owns completion and review. Do not create another Job.`;
+export function taskReferencePrompt(repository: string, jobId: string, taskId: string, executionId: string, managedInput?: string): string {
+  const marker = '[Execution event contract — mandatory]';
+  const index = managedInput?.indexOf(marker) ?? -1;
+  if (managedInput !== undefined && index < 0) throw new Error(`Missing managed execution event contract for ${jobId}/${taskId}/${executionId}`);
+  const eventContract = index >= 0 ? `\n\n${managedInput!.slice(index)}` : '';
+  return `[Agents Relay managed task]\nRepository: ${repository}\nJob ID: ${jobId}\nTask ID: ${taskId}\nExecution ID: ${executionId}\n\nRetrieve the authoritative task contract using the connected NeoY shell/Agents Relay CLI:\n  agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}\nRead the returned Task input, dependencies, Plan, project context, and output requirements before execution. Check that the execution ID matches. If the CLI or context is unavailable, report blocked; never guess or execute from this envelope. Continue in this thread; Relay owns completion and review. Do not create another Job.${eventContract}`;
 }
