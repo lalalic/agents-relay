@@ -133,8 +133,7 @@ export class GitHubProjectionWriter {
             observedAt: new Date().toISOString(),
           });
         }
-        await this.relay.completeProjection(item.id);
-        await this.relay.recordProjectionReceipt?.(item.operationKey, 'succeeded', item.attempts, { operation: item.operation });
+        await this.relay.completeProjectionWithReceipt(item.id, item.operationKey, 'succeeded', item.attempts, { operation: item.operation });
         projected += 1;
         observability().record({
           stage: 'projection', event: 'projection.completed', outcome: 'succeeded',
@@ -157,8 +156,7 @@ export class GitHubProjectionWriter {
           });
         } else {
           const retryAt = githubProjectionRetryAt(error, item.attempts, now);
-          await this.relay.retryProjection(item.id, message, retryAt);
-          await this.relay.recordProjectionReceipt?.(item.operationKey, 'failed', item.attempts + 1, { operation: item.operation, error: message });
+          await this.relay.retryProjectionWithReceipt(item.id, item.operationKey, message, retryAt, item.attempts + 1, { operation: item.operation, error: message });
           deferred += 1;
           observability().record({
             stage: 'projection', event: 'projection.retry_scheduled', level: 'warn', outcome: 'failed',

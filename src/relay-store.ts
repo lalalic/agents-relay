@@ -66,6 +66,8 @@ export interface RelayStore {
   enqueueExternalActionOnce?(request: ProjectionRequest): Promise<boolean>;
   claimDueProjections(limit?: number, now?: Date): Promise<ProjectionOutboxItem[]>;
   completeProjection(id: number): Promise<void>;
+  completeProjectionWithReceipt(id: number, operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void>;
+  retryProjectionWithReceipt(id: number, operationKey: string, error: string, nextAttemptAt: Date, attempts: number, detail: unknown): Promise<void>;
   retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void>;
   deadLetterProjection(id: number, error: string): Promise<void>;
   recordProjectionConflict(id: number, diagnostic: ProjectionConflictDiagnostic): Promise<void>;
@@ -437,7 +439,15 @@ export class SQLiteRelayStore implements RelayStore {
 
   async completeProjection(id: number): Promise<void> { this.outbox.complete(id); }
 
+  async completeProjectionWithReceipt(id: number, operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void> {
+    this.outbox.completeWithReceipt(id, operationKey, status, attempts, detail, new Date().toISOString());
+  }
+
   async retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void> { this.outbox.retry(id, error, nextAttemptAt); }
+
+  async retryProjectionWithReceipt(id: number, operationKey: string, error: string, nextAttemptAt: Date, attempts: number, detail: unknown): Promise<void> {
+    this.outbox.retryWithReceipt(id, operationKey, error, nextAttemptAt, attempts, detail, new Date().toISOString());
+  }
 
   async deadLetterProjection(id: number, error: string): Promise<void> { this.outbox.deadLetter(id, error); }
 
