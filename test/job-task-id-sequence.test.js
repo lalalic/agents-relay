@@ -6,23 +6,34 @@ import { join } from 'node:path';
 import { allocateEntityId } from '../dist/job-task-id-sequence.js';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
 
-test('Job IDs are repository-scoped while Task IDs use one global increasing sequence and remain idempotent', async () => {
+test('Job and Task IDs each use a global increasing sequence and remain idempotent', async () => {
   const dir=await mkdtemp(join(tmpdir(),'relay-ids-'));
   try {
     const jobs=await Promise.all(Array.from({length:16},()=>Promise.resolve().then(()=>allocateEntityId(dir,'lalalic/neo','job'))));
     assert.equal(new Set(jobs).size,16);
-    assert.equal(jobs[0],'j-7-lalalic-neo-1');
-    assert.equal(jobs[15],'j-7-lalalic-neo-16');
+    assert.equal(jobs[0],'1');
+    assert.equal(jobs[15],'16');
     assert.equal(allocateEntityId(dir,'lalalic/neo','task'),'1');
     assert.equal(allocateEntityId(dir,'other/repo','task'),'2');
     const neoTask=allocateEntityId(dir,'lalalic/neo','task','same-key');
     const otherTask=allocateEntityId(dir,'other/repo','task','same-key');
     assert.notEqual(neoTask,otherTask);
-    assert.equal(allocateEntityId(dir,'lalalic/agents-relay','job'),'j-7-lalalic-agents-relay-1');
+    assert.equal(allocateEntityId(dir,'lalalic/agents-relay','job'),'17');
     const a=allocateEntityId(dir,'lalalic/neo','job','batch-123');
     assert.equal(a,allocateEntityId(dir,'lalalic/neo','job','batch-123'));
-    assert.equal(allocateEntityId(dir,'lalalic/neo','job'),'j-7-lalalic-neo-18');
-    assert.equal(allocateEntityId(dir,'lalalic/neo','job',undefined,new Set(['j-7-lalalic-neo-19'])), 'j-7-lalalic-neo-20');
+    assert.equal(allocateEntityId(dir,'lalalic/neo','job'),'19');
+    assert.equal(allocateEntityId(dir,'lalalic/neo','job',undefined,new Set(['20'])), '21');
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('numeric Job IDs are globally unique across repositories, reserve historic IDs, and keep keyed retries scoped', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'relay-global-job-'));
+  try {
+    assert.equal(allocateEntityId(dir,'first/repo','job','key'), '1');
+    assert.equal(allocateEntityId(dir,'other/repo','job','key'), '2');
+    assert.equal(allocateEntityId(dir,'first/repo','job','key'), '1');
+    assert.equal(allocateEntityId(dir,'third/repo','job',undefined,new Set(['3','4'])), '5');
+    assert.equal(allocateEntityId(dir,'first/repo','job'), '6');
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 
@@ -33,12 +44,12 @@ test('job bootstrap can omit id and retry same submission key', async () => {
     const options={title:'Test Vlog',objective:'Create a private video',projectPath:'vlog',storeDirectory:dir,idempotencyKey:'vlog-submission-123'};
     const first=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
     const second=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),options);
-    assert.equal(first.job.id,'j-7-lalalic-neo-1');
+    assert.equal(first.job.id,'1');
     assert.equal(first.job.id,second.job.id);
     assert.equal(first.job.projectPath,'vlog');
     await assert.rejects(ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,objective:'Different objective'}),/idempotency key reused/);
     const third=await ensureManagedGitHubJob(client,'lalalic/neo',new Set(),{...options,idempotencyKey:'vlog-submission-124'});
-    assert.equal(third.job.id,'j-7-lalalic-neo-2');
+    assert.equal(third.job.id,'2');
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
 

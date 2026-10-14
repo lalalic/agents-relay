@@ -24,6 +24,14 @@ The initial decomposition belongs to that durable Planner round. The orchestrato
 
 ## P0 / self job workflow
 
+For a self Job owned by the current XChat thread, resolve the current thread ID
+before creating the Job. If it cannot be retrieved reliably, ask the user for
+the thread ID before proceeding. Set `creatorThreadId`,
+`implementationThreadId`, and `reviewerThreadId` to that same thread ID at
+creation, using the corresponding `--creator-thread-id`,
+`--implementation-thread-id`, and `--reviewer-thread-id` options. Do not infer
+the thread ID from an unrelated worker, execution, or previous conversation.
+
 P0/self work is ordinary durable Relay work. The orchestrator may choose normal
 Task requirements, but every newly created work Task is executable by a
 worker/model route selected by Execution Router. Relay has no privileged

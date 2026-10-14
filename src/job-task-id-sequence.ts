@@ -14,16 +14,18 @@ export function isGeneratedEntityId(id: string, repository: string, kind: 'job' 
     const legacyPrefix = generatedEntityPrefix(repository, kind);
     return id.startsWith(legacyPrefix) && /^[0-9]+$/.test(id.slice(legacyPrefix.length));
   }
+  if (/^[1-9][0-9]*$/.test(id)) return true;
   const prefix = generatedEntityPrefix(repository, kind);
   return id.startsWith(prefix) && /^[0-9]+$/.test(id.slice(prefix.length));
 }
 
 
-/** Jobs remain repository-scoped. Task IDs are one Relay-global monotonically increasing integer sequence. Allocation is serialized by SQLite. */
+/** Job and Task IDs each use their own store-global sequence. SQLite serializes allocation; legacy identifiers remain readable. */
 export function allocateEntityId(directory: string, repository: string, kind: 'job'|'task', requestKey?: string, occupied: ReadonlySet<string> = new Set()): string {
-  const prefix = kind === 'job' ? generatedEntityPrefix(repository, kind) : '';
-  const scope = kind === 'task' ? '*' : repository;
-  const scopedRequestKey = requestKey && kind === 'task' ? `${repository}:${requestKey}` : requestKey;
+  generatedEntityPrefix(repository, kind); // validate repository even though its name no longer appears in the ID
+  const prefix = '';
+  const scope = '*';
+  const scopedRequestKey = requestKey ? `${repository}:${requestKey}` : undefined;
   if (requestKey !== undefined && (!requestKey || requestKey.length > 512)) throw new Error('Invalid idempotency key');
   mkdirSync(directory,{recursive:true});
   const db = new DatabaseSync(join(directory,'entity-id-sequences.sqlite'));
@@ -37,6 +39,7 @@ export function allocateEntityId(directory: string, repository: string, kind: 'j
         if(row){db.exec('COMMIT');return row.entity_id;}
       }
       const old=db.prepare('SELECT value FROM sequences WHERE repository=? AND kind=?').get(scope,kind) as {value:number}|undefined;
+      // Existing generated numeric IDs across all repositories are reserved by the caller.
       let next=(old?.value??0)+1;
       while (occupied.has(prefix + next)) next++;
       db.prepare('INSERT INTO sequences VALUES (?,?,?) ON CONFLICT(repository,kind) DO UPDATE SET value=excluded.value').run(scope,kind,next);

@@ -58,7 +58,7 @@ Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
-Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing repository-scoped number; --id is optional for compatibility. Existing PR adoption is an explicit separate command: job adopt.
+Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id is optional for compatibility. Existing PR adoption is an explicit separate command: job adopt.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
