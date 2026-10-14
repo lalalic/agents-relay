@@ -254,59 +254,11 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
 }
 
 
-/**
- * The upstream new-turn action accepts idempotency_key but does not enforce it.
- * Inspect the current thread before resubmitting after an ambiguous exit.
- * If the transcript is not observable, fail closed rather than duplicate.
- */
-async function findExistingReviewTurn(cli: BrowserWorkspaceCli, sessionId: string, delivery: ChatGptThreadDelivery, signal: AbortSignal): Promise<BrowserWorkerResponse | null> {
-  const pathname = delivery.projectId
-    ? `/g/${encodeURIComponent(delivery.projectId)}/c/${encodeURIComponent(delivery.threadId)}`
-    : `/c/${encodeURIComponent(delivery.threadId)}`;
-  const marker = `Relay delivery ID: ${delivery.requestId}`;
-  const inspectJs = `(() => {
-    const legacy = [...document.querySelectorAll('[data-message-author-role="user"]')]
-      .map(e => ({text: (e.innerText || '').trim(), id: e.getAttribute('data-message-id') || ''})).filter(x => x.text);
-    if (legacy.length) return legacy;
-    return [...document.querySelectorAll('h4')].filter(e => (e.innerText || '').trim() === 'You said:')
-      .map((e,i) => ({text: (e.parentElement?.innerText || '').trim(), id: 'dom-user-' + i})).filter(x => x.text);
-  })()`;
-  const script = [
-    'import json, time',
-    'from urllib.parse import urlsplit',
-    `url = ${JSON.stringify(`https://chatgpt.com${pathname}`)}`,
-    `marker = ${JSON.stringify(marker)}`,
-    'goto_url(url)',
-    'wait_for_load()',
-    'if urlsplit(page_info().get("url", "")).path.rstrip("/") != urlsplit(url).path.rstrip("/"): raise RuntimeError("review thread redirect mismatch")',
-    'turns = []',
-    'for attempt in range(30):',
-    `    turns = js(${JSON.stringify(inspectJs)}) or []`,
-    '    if turns: break',
-    '    time.sleep(0.5)',
-    'if not turns: raise RuntimeError("review thread transcript unavailable; refusing ambiguous resubmission")',
-    'matches = [turn for turn in turns if marker in turn.get("text", "")]',
-    'if len(matches) > 1: raise RuntimeError("duplicate review delivery detected; manual reconciliation required")',
-    'print(json.dumps({"found": bool(matches), "user_message_id": matches[0].get("id") if matches else None}), flush=True)',
-  ].join('\n');
-  const envelope = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'exec', sessionId], script, signal));
-  if (envelope.ok !== true || typeof envelope.stdout !== 'string') throw new Error('review thread inspection returned no executable result');
-  const observation = parseWorkspaceJson(envelope.stdout);
-  if (typeof observation.found !== 'boolean') throw new Error('review thread inspection returned no authoritative result');
-  if (!observation.found) return null;
-  return { status: 'submitted', mode: 'new-turn', thread_id: delivery.threadId, project_id: delivery.projectId,
-    verified_by: 'existing-user-turn', user_message_id: typeof observation.user_message_id === 'string' ? observation.user_message_id : null };
-}
-
-async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'temporary-submit' | 'new-turn' = 'temporary-submit', delivery?: ChatGptThreadDelivery): Promise<string> {
+async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'temporary-submit' | 'new-turn' = 'temporary-submit'): Promise<string> {
   const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
   const sessionId = session.session_id;
   if (typeof sessionId !== 'string' || !sessionId) throw new Error('browser-workspace session start returned no session_id');
   try {
-    if (delivery) {
-      const existing = await findExistingReviewTurn(cli, sessionId, delivery, signal);
-      if (existing) return JSON.stringify(existing);
-    }
     return await browserWorkspaceCommand(
       cli,
       ['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile],
@@ -336,7 +288,7 @@ function browserWorkerRunner(): ChatGptAgentRunner {
         }));
         if (signal.aborted) throw new Error('browser-worker execution aborted');
         const action = delivery ? 'new-turn' : 'temporary-submit';
-        const output = await runBrowserWorker(cli, configFile, signal, action, delivery);
+        const output = await runBrowserWorker(cli, configFile, signal, action);
         return JSON.stringify(parseDriverJson(output));
       } finally {
         await unlink(configFile).catch(() => {});

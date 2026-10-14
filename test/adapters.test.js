@@ -357,68 +357,41 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
 });
 
 
-test('existing ChatGPT review turn is reconciled after an ambiguous exit or restart', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-review-dedup-'));
+test('ChatGPT thread delivery delegates deduplication to Browser Workspace platform', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-platform-dedup-'));
   const command = join(root, 'fake-workspace');
   const log = join(root, 'calls.log');
-  const scriptCapture = join(root, 'preflight.py');
   const script = [
     '#!/usr/bin/env node',
     "const fs=require('node:fs');",
-    "const argv=process.argv.slice(2);",
-    "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,argv.slice(0,2).join(' ')+'\\n');",
-    "if(argv[0]==='session'&&argv[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
-    "else if(argv[0]==='session'&&argv[1]==='exec') {",
-    "  let input=''; process.stdin.on('data',x=>input+=x);process.stdin.on('end',()=>{",
-    "    fs.writeFileSync(process.env.FAKE_REVIEW_SCRIPT, input);",
-    "    if(!input.includes('Relay delivery ID:')) process.exit(11);",
-    "    if(process.env.FAKE_REVIEW_INSPECT==='error'){console.error('transcript unavailable');process.exit(4)}",
-    "    console.log(JSON.stringify({ok:true,stdout:JSON.stringify({found:process.env.FAKE_REVIEW_INSPECT==='found',user_message_id:'prior-user-turn'})}));",
-    "  });",
-    "}",
-    "else if(argv[0]==='platform'&&argv[1]==='run') {",
-    "  const conf=JSON.parse(fs.readFileSync(argv[argv.indexOf('--config')+1]));",
-    "  if(!conf.message.includes('Relay delivery ID: job:review:sha')) process.exit(12);",
-    "  console.log(JSON.stringify({result:{status:'submitted',mode:'new-turn',thread_id:conf.thread_id,verified_by:'user-turn',user_message_id:'new-user-turn'}}));",
-    "}",
-    "else if(argv[0]==='session'&&argv[1]==='stop')console.log(JSON.stringify({stopped:true}));",
+    "const a=process.argv.slice(2);",
+    "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,a.slice(0,3).join(' ')+'\\n');",
+    "if(a[0]==='session'&&a[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
+    "else if(a[0]==='platform'&&a[1]==='run') {",
+    "const config=JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1]));",
+    "if(config.idempotency_key!=='job:review:sha')process.exit(12);",
+    "console.log(JSON.stringify({result:{status:'submitted',mode:'new-turn',thread_id:config.thread_id,verified_by:'platform-dedup',user_message_id:'prior-turn'}}));",
+    "} else if(a[0]==='session'&&a[1]==='stop') console.log(JSON.stringify({stopped:true}));",
     "else process.exit(13);",
   ].join('\n');
   await writeFile(command, script, { mode: 0o700 });
-  const oldCommand = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;
-  const oldLog = process.env.FAKE_REVIEW_CALLS;
-  const oldInspect = process.env.FAKE_REVIEW_INSPECT;
-  const oldCapture = process.env.FAKE_REVIEW_SCRIPT;
-  const thread = { kind: 'new-turn', threadId: 'review-thread', threadSource: 'creator',
-    requestId: 'job:review:sha', jobId: 'job', prNumber: 7, reviewHeadSha: 'sha' };
-  process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND = command;
-  process.env.FAKE_REVIEW_CALLS = log;
-  process.env.FAKE_REVIEW_SCRIPT = scriptCapture;
+  const oldCommand=process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;
+  const oldLog=process.env.FAKE_REVIEW_CALLS;
+  process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND=command;
+  process.env.FAKE_REVIEW_CALLS=log;
   try {
-    // First delivery observes no matching user turn and actually submits.
-    process.env.FAKE_REVIEW_INSPECT = 'missing';
-    let execution = new ChatGptAdapter().launch(task({ chatgptThreadDelivery: thread }), new AbortController().signal);
-    assert.equal((await execution.promise).data.verifiedBy, 'user-turn');
-    // After process restart, delivery receipt was lost but the existing user turn is visible.
-    process.env.FAKE_REVIEW_INSPECT = 'found';
-    execution = new ChatGptAdapter().launch(task({ chatgptThreadDelivery: thread }), new AbortController().signal);
-    assert.equal((await execution.promise).data.verifiedBy, 'existing-user-turn');
-    const probe = await readFile(scriptCapture, 'utf8');
-    assert.match(probe, /review thread redirect mismatch/);
-    assert.match(probe, /user_message_id/);
-    let calls = await readFile(log, 'utf8');
-    assert.equal((calls.match(/platform run/g) || []).length, 1);
-    // A hidden, redirected, or unreadable transcript must fail closed, not send again.
-    process.env.FAKE_REVIEW_INSPECT = 'error';
-    await assert.rejects(new ChatGptAdapter().launch(task({ chatgptThreadDelivery: thread }), new AbortController().signal).promise, /transcript unavailable/);
-    calls = await readFile(log, 'utf8');
-    assert.equal((calls.match(/platform run/g) || []).length, 1);
+    for (const threadSource of ['creator','implementation']) {
+      const thread={kind:'new-turn',threadId:'review-thread',threadSource,requestId:'job:review:sha',jobId:'job',prNumber:7,reviewHeadSha:'sha'};
+      const execution=new ChatGptAdapter().launch(task({chatgptThreadDelivery:thread}),new AbortController().signal);
+      assert.equal((await execution.promise).data.verifiedBy,'platform-dedup');
+    }
+    const calls=await readFile(log,'utf8');
+    assert.equal((calls.match(/platform run/g)||[]).length,2);
+    assert.equal((calls.match(/session exec/g)||[]).length,0);
   } finally {
-    if (oldCommand === undefined) delete process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND; else process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND = oldCommand;
-    if (oldLog === undefined) delete process.env.FAKE_REVIEW_CALLS; else process.env.FAKE_REVIEW_CALLS = oldLog;
-    if (oldInspect === undefined) delete process.env.FAKE_REVIEW_INSPECT; else process.env.FAKE_REVIEW_INSPECT = oldInspect;
-    if (oldCapture === undefined) delete process.env.FAKE_REVIEW_SCRIPT; else process.env.FAKE_REVIEW_SCRIPT = oldCapture;
-    await rm(root, { recursive: true, force: true });
+    if(oldCommand===undefined)delete process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;else process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND=oldCommand;
+    if(oldLog===undefined)delete process.env.FAKE_REVIEW_CALLS;else process.env.FAKE_REVIEW_CALLS=oldLog;
+    await rm(root,{recursive:true,force:true});
   }
 });
 
