@@ -78,13 +78,13 @@ test('scheduled Job creation persists to local SQLite without GitHub API', async
     const { ensureManagedGitHubJob } = await import('../dist/cli.js');
     const { SQLiteRelayStore, relayJobStorePath } = await import('../dist/relay-store.js');
     const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      id:'scheduled',executionMode:'autonomous',schedule:schedule(),storeDirectory:directory,
+      idempotencyKey:'scheduled',executionMode:'autonomous',schedule:schedule(),storeDirectory:directory,
     });
     assert.equal(result.job.prNumber,0);
     assert.equal(result.job.schedule.nextRunAt,'2026-09-21T16:20:00Z');
     assert.equal(githubCalls,0);
-    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory,'scheduled'));
-    assert.equal((await sqlite.loadJob('scheduled')).schedule.nextRunAt,'2026-09-21T16:20:00Z');
+    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory,result.job.id));
+    assert.equal((await sqlite.loadJob(result.job.id)).schedule.nextRunAt,'2026-09-21T16:20:00Z');
     sqlite.close();
   } finally {await rm(directory,{recursive:true,force:true});}
 });

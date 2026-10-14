@@ -33,6 +33,7 @@ def consolidate(directory, target):
         dst.execute('BEGIN IMMEDIATE')
         dst.execute('CREATE TABLE source_registry (job_id TEXT PRIMARY KEY, source_file TEXT NOT NULL UNIQUE, repository TEXT NOT NULL, pr_number INTEGER NOT NULL)')
         dst.execute('CREATE TABLE migration_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        dst.execute('CREATE INDEX source_registry_repo_pr ON source_registry(repository,pr_number)')
         # Old schemas do not all have the same tables. Each logical table gains
         # scope_job_id to avoid colliding primary keys from different Jobs.
         specs = {}
@@ -72,6 +73,12 @@ def consolidate(directory, target):
                         dst.execute('CREATE TABLE '+q(table)+' ('+prefix+cols+pk_sql+')')
                         if table=='projection_outbox':
                             dst.execute('CREATE UNIQUE INDEX projection_unified_idempotency ON projection_outbox(scope_job_id,idempotency_key)')
+                            dst.execute('CREATE INDEX projection_unified_due ON projection_outbox(scope_job_id,status,next_attempt_at,priority DESC,id)')
+                            dst.execute('CREATE INDEX projection_unified_coalesce ON projection_outbox(scope_job_id,coalesce_key,status)')
+                        if table=='host_invocation_decision':
+                            dst.execute('CREATE UNIQUE INDEX host_invocation_event_unique ON host_invocation_decision(job_id,task_id,event_id)')
+                        if table=='job_snapshot':
+                            dst.execute('CREATE INDEX job_snapshot_updated ON job_snapshot(updated_at)')
                         idx_col='job_id' if has_job_id else 'scope_job_id'
                         dst.execute('CREATE INDEX '+q('ix_'+table+'_job')+' ON '+q(table)+'('+idx_col+')')
                     elif specs[table] != [(col[1],col[2] or 'BLOB') for col in info]:
@@ -93,7 +100,9 @@ def consolidate(directory, target):
             for table in ('sequences','idempotency'):
                 info = ids.execute('PRAGMA table_info('+q(table)+')').fetchall()
                 cols = [(col[1],col[2] or 'BLOB') for col in info]
-                dst.execute('CREATE TABLE '+q(table)+' ('+', '.join(q(n)+' '+t for n,t in cols)+')')
+                pk_cols=[row[1] for row in sorted(info,key=lambda r:r[5]) if row[5]]
+                pk_sql=', PRIMARY KEY('+','.join(map(q,pk_cols))+')' if pk_cols else ''
+                dst.execute('CREATE TABLE '+q(table)+' ('+', '.join(q(n)+' '+t for n,t in cols)+pk_sql+')')
                 rows = ids.execute('SELECT '+','.join(q(n) for n,_ in cols)+' FROM '+q(table)).fetchall()
                 if rows:
                     dst.executemany('INSERT INTO '+q(table)+' ('+','.join(q(n) for n,_ in cols)+') VALUES ('+','.join('?' for _ in cols)+')',rows)

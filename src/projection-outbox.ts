@@ -172,7 +172,11 @@ const OUTBOX_COLUMNS = 'id,idempotency_key,operation_key,coalesce_key,operation,
  * separately and enqueue one projection request.
  */
 export class ProjectionOutbox implements ProjectionOutboxPort {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync, private readonly scopeJobId?: string) {}
+  private get scopeAnd(): string { return this.scopeJobId ? ' AND scope_job_id=?' : ''; }
+  private bind(...params: (string | number | null)[]): (string | number | null)[] {
+    return this.scopeJobId ? [...params,this.scopeJobId] : params;
+  }
 
   static createTableSql(table = 'projection_outbox'): string {
     return `CREATE TABLE IF NOT EXISTS ${table} (
@@ -264,7 +268,7 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
 
   resetProcessing(now: string): void {
     const cutoff = new Date(Date.parse(now) - 120_000).toISOString();
-    this.db.prepare("UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing' AND updated_at<=?").run(now, cutoff);
+    this.db.prepare(`UPDATE projection_outbox SET status='pending', updated_at=? WHERE status='processing' AND updated_at<=?${this.scopeAnd}`).run(...this.bind(now, cutoff));
   }
 
   enqueue(request: ProjectionRequest, now: string): boolean {
@@ -273,20 +277,32 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
     if (request.coalesceKey) {
       const removed = this.db.prepare(`
         DELETE FROM projection_outbox
-        WHERE coalesce_key=? AND status='pending' AND operation_key<>?
-      `).run(request.coalesceKey, operationKey);
+        WHERE coalesce_key=? AND status='pending' AND operation_key<>?${this.scopeAnd}
+      `).run(...this.bind(request.coalesceKey, operationKey));
       coalesced = Number(removed.changes) > 0;
     }
-    const existing = this.db.prepare('SELECT status FROM projection_outbox WHERE operation_key=? ORDER BY id DESC LIMIT 1')
-      .get(operationKey) as { status?: string } | undefined;
+    const existing = this.db.prepare(`SELECT status FROM projection_outbox WHERE operation_key=?${this.scopeAnd} ORDER BY id DESC LIMIT 1`)
+      .get(...this.bind(operationKey)) as { status?: string } | undefined;
     // A writer may be applying this key outside the transaction, or a deterministic
     // conflict may already be recorded for it. Never rewrite that row's payload: its
     // completion must only remove its own row, and a recorded conflict must stay the
     // classification evidence until explicitly repaired. New mutations queue beside it.
-    const nextId = Number((this.db.prepare('SELECT COALESCE(MAX(id),0)+1 AS next_id FROM projection_outbox').get() as { next_id?: number | bigint }).next_id ?? 1);
+    const nextId = Number((this.db.prepare(`SELECT COALESCE(MAX(id),0)+1 AS next_id FROM projection_outbox${this.scopeJobId ? ' WHERE scope_job_id=?' : ''}`).get(...(this.scopeJobId ? [this.scopeJobId] : [])) as { next_id?: number | bigint }).next_id ?? 1);
     const collides = existing?.status === 'processing' || existing?.status === 'conflict' || existing?.status === 'dead';
     const idempotencyKey = collides ? `${operationKey}:queued:${nextId}` : operationKey;
-    this.db.prepare(`
+    const insertSql = this.scopeJobId ? `
+      INSERT INTO projection_outbox(
+        scope_job_id,id,idempotency_key,operation_key,coalesce_key,operation,payload_json,priority,status,
+        attempts,next_attempt_at,last_error,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,'pending',0,NULL,NULL,?,?)
+      ON CONFLICT(scope_job_id,idempotency_key) DO UPDATE SET
+        operation_key=excluded.operation_key,
+        coalesce_key=excluded.coalesce_key,
+        operation=excluded.operation,
+        payload_json=excluded.payload_json,
+        priority=MAX(projection_outbox.priority,excluded.priority),
+        status='pending', next_attempt_at=NULL, last_error=NULL, updated_at=excluded.updated_at
+    ` : `
       INSERT INTO projection_outbox(
         idempotency_key,operation_key,coalesce_key,operation,payload_json,priority,status,
         attempts,next_attempt_at,last_error,created_at,updated_at
@@ -297,20 +313,11 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
         operation=excluded.operation,
         payload_json=excluded.payload_json,
         priority=MAX(projection_outbox.priority,excluded.priority),
-        status='pending',
-        next_attempt_at=NULL,
-        last_error=NULL,
-        updated_at=excluded.updated_at
-    `).run(
-      idempotencyKey,
-      operationKey,
-      request.coalesceKey ?? null,
-      request.operation,
-      JSON.stringify(request.payload),
-      request.priority ?? 0,
-      now,
-      now,
-    );
+        status='pending', next_attempt_at=NULL, last_error=NULL, updated_at=excluded.updated_at
+    `;
+    const params = [idempotencyKey, operationKey, request.coalesceKey ?? null,
+      request.operation, JSON.stringify(request.payload), request.priority ?? 0,now,now];
+    this.db.prepare(insertSql).run(...(this.scopeJobId ? [this.scopeJobId,nextId,...params] : params));
     return coalesced;
   }
 
@@ -322,14 +329,14 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
       const rows = this.db.prepare(`
         SELECT ${OUTBOX_COLUMNS}
         FROM projection_outbox
-        WHERE status='pending' AND (next_attempt_at IS NULL OR next_attempt_at<=?)
+        WHERE status='pending' AND (next_attempt_at IS NULL OR next_attempt_at<=?)${this.scopeAnd}
         ORDER BY priority DESC, id ASC
         LIMIT ?
-      `).all(observedAt, Math.max(1, Math.floor(limit))) as unknown as OutboxRow[];
-      const mark = this.db.prepare("UPDATE projection_outbox SET status='processing', updated_at=? WHERE id=? AND status='pending'");
+      `).all(observedAt, ...(this.scopeJobId ? [this.scopeJobId] : []), Math.max(1, Math.floor(limit))) as unknown as OutboxRow[];
+      const mark = this.db.prepare(`UPDATE projection_outbox SET status='processing', updated_at=? WHERE id=? AND status='pending'${this.scopeAnd}`);
       const claimed: OutboxRow[] = [];
       for (const row of rows) {
-        const result = mark.run(observedAt, row.id);
+        const result = mark.run(...this.bind(observedAt, row.id));
         if (Number(result.changes) === 1) claimed.push({ ...row, updated_at: observedAt });
       }
       this.db.exec('COMMIT');
@@ -341,14 +348,14 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
   }
 
   complete(id: number): void {
-    this.db.prepare('DELETE FROM projection_outbox WHERE id=?').run(id);
+    this.db.prepare(`DELETE FROM projection_outbox WHERE id=?${this.scopeAnd}`).run(...this.bind(id));
   }
 
   completeWithReceipt(id: number, operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.recordReceipt(operationKey, status, attempts, detail, now);
-      this.db.prepare('DELETE FROM projection_outbox WHERE id=?').run(id);
+      this.db.prepare(`DELETE FROM projection_outbox WHERE id=?${this.scopeAnd}`).run(...this.bind(id));
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -360,8 +367,8 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`UPDATE projection_outbox
-        SET status='pending', attempts=?, next_attempt_at=?, last_error=?, updated_at=? WHERE id=?`)
-        .run(attempts, nextAttemptAt.toISOString(), error, now, id);
+        SET status='pending', attempts=?, next_attempt_at=?, last_error=?, updated_at=? WHERE id=?${this.scopeAnd}`)
+        .run(...this.bind(attempts, nextAttemptAt.toISOString(), error, now, id));
       this.recordReceipt(operationKey, 'failed', attempts, detail, now);
       this.db.exec('COMMIT');
     } catch (caught) {
@@ -374,22 +381,28 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
     this.db.prepare(`
       UPDATE projection_outbox
       SET status='pending', attempts=attempts+1, next_attempt_at=?, last_error=?, updated_at=?
-      WHERE id=?
-    `).run(nextAttemptAt.toISOString(), error, new Date().toISOString(), id);
+      WHERE id=?${this.scopeAnd}
+    `).run(...this.bind(nextAttemptAt.toISOString(), error, new Date().toISOString(), id));
   }
 
   deadLetter(id: number, error: string): void {
     this.db.prepare(`
       UPDATE projection_outbox
       SET status='dead', attempts=attempts+1, next_attempt_at=NULL, last_error=?, updated_at=?
-      WHERE id=?
-    `).run(error, new Date().toISOString(), id);
+      WHERE id=?${this.scopeAnd}
+    `).run(...this.bind(error, new Date().toISOString(), id));
   }
 
   recordReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void {
-    this.db.prepare(`INSERT INTO projection_receipt(operation_key,status,attempts,detail_json,recorded_at)
-      VALUES(?,?,?,?,?) ON CONFLICT(operation_key) DO UPDATE SET status=excluded.status, attempts=excluded.attempts,
-      detail_json=excluded.detail_json, recorded_at=excluded.recorded_at`).run(operationKey, status, attempts, JSON.stringify(detail ?? null), now);
+    if (this.scopeJobId) {
+      this.db.prepare(`INSERT INTO projection_receipt(scope_job_id,operation_key,status,attempts,detail_json,recorded_at)
+        VALUES(?,?,?,?,?,?) ON CONFLICT(scope_job_id,operation_key) DO UPDATE SET status=excluded.status, attempts=excluded.attempts,
+        detail_json=excluded.detail_json, recorded_at=excluded.recorded_at`).run(this.scopeJobId, operationKey, status, attempts, JSON.stringify(detail ?? null), now);
+    } else {
+      this.db.prepare(`INSERT INTO projection_receipt(operation_key,status,attempts,detail_json,recorded_at)
+        VALUES(?,?,?,?,?) ON CONFLICT(operation_key) DO UPDATE SET status=excluded.status, attempts=excluded.attempts,
+        detail_json=excluded.detail_json, recorded_at=excluded.recorded_at`).run(operationKey, status, attempts, JSON.stringify(detail ?? null), now);
+    }
   }
 
   recordConflict(id: number, diagnostic: ProjectionConflictDiagnostic): void {
@@ -406,21 +419,21 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
       SET status='conflict', attempts=attempts+1, next_attempt_at=NULL, last_error=?,
           conflict_definition_json=?, conflict_evidence_json=?, conflict_detected_at=?,
           conflict_disposition='awaiting_repair', conflict_resolution_json=NULL, updated_at=?
-      WHERE id=? AND status NOT IN ('conflict','dead')
-    `).run(diagnostic.message, JSON.stringify(diagnostic.localDefinition), evidence, diagnostic.detectedAt, diagnostic.detectedAt, id);
+      WHERE id=? AND status NOT IN ('conflict','dead')${this.scopeAnd}
+    `).run(...this.bind(diagnostic.message, JSON.stringify(diagnostic.localDefinition), evidence, diagnostic.detectedAt, diagnostic.detectedAt, id));
   }
 
   listConflicts(): ProjectionConflictRecord[] {
     const rows = this.db.prepare(`
-      SELECT ${OUTBOX_COLUMNS} FROM projection_outbox WHERE status='conflict' ORDER BY id ASC
-    `).all() as unknown as OutboxRow[];
+      SELECT ${OUTBOX_COLUMNS} FROM projection_outbox WHERE status='conflict'${this.scopeAnd} ORDER BY id ASC
+    `).all(...(this.scopeJobId ? [this.scopeJobId] : [])) as unknown as OutboxRow[];
     return rows.map(rowToConflict);
   }
 
   /** Explicit repair: requeue the original projection, or discard the blocked local mutation for a fresh one. */
   resolveConflict(id: number, resolution: ProjectionConflictResolutionRequest): boolean {
     const now = new Date().toISOString();
-    const record = this.db.prepare('SELECT status FROM projection_outbox WHERE id=?').get(id) as { status?: string } | undefined;
+    const record = this.db.prepare(`SELECT status FROM projection_outbox WHERE id=?${this.scopeAnd}`).get(...this.bind(id)) as { status?: string } | undefined;
     if (!record || record.status !== 'conflict') return false;
     const resolutionJson = JSON.stringify({ action: resolution.action, resolvedAt: now, ...(resolution.note ? { note: resolution.note } : {}) });
     if (resolution.action === 'requeue') {
@@ -428,10 +441,10 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
         UPDATE projection_outbox
         SET status='pending', attempts=0, next_attempt_at=NULL, conflict_disposition='requeued',
             conflict_resolution_json=?, updated_at=?
-        WHERE id=? AND status='conflict'
-      `).run(resolutionJson, now, id);
+        WHERE id=? AND status='conflict'${this.scopeAnd}
+      `).run(...this.bind(resolutionJson, now, id));
     } else {
-      this.db.prepare('DELETE FROM projection_outbox WHERE id=? AND status=?').run(id, 'conflict');
+      this.db.prepare(`DELETE FROM projection_outbox WHERE id=? AND status=?${this.scopeAnd}`).run(...this.bind(id, 'conflict'));
     }
     return true;
   }
@@ -441,7 +454,7 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
   terminalCount(): number { return this.count("status='dead'"); }
 
   private count(where: string): number {
-    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM projection_outbox WHERE ${where}`).get() as { count?: number | bigint } | undefined;
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM projection_outbox WHERE ${where}${this.scopeAnd}`).get(...(this.scopeJobId ? [this.scopeJobId] : [])) as { count?: number | bigint } | undefined;
     return Number(row?.count ?? 0);
   }
 }

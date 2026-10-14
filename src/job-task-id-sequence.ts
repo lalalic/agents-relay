@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 function validateRepository(repository: string): void {
   const [owner, repo, extra] = repository.split('/');
@@ -20,7 +20,7 @@ export function allocateEntityId(directory: string, repository: string, kind: 'j
   const scopedRequestKey = requestKey ? `${repository}:${requestKey}` : undefined;
   if (requestKey !== undefined && (!requestKey || requestKey.length > 512)) throw new Error('Invalid idempotency key');
   mkdirSync(directory,{recursive:true});
-  const db = new DatabaseSync(join(directory,'entity-id-sequences.sqlite'));
+  const db = new DatabaseSync(process.env.AGENTS_RELAY_SQLITE_MODE === 'unified' ? join(dirname(directory),'relay.sqlite') : join(directory,'entity-id-sequences.sqlite'));
   try {
     db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000;');
     db.exec('CREATE TABLE IF NOT EXISTS sequences (repository TEXT NOT NULL, kind TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY(repository,kind)); CREATE TABLE IF NOT EXISTS idempotency (repository TEXT NOT NULL, kind TEXT NOT NULL, request_key TEXT NOT NULL, entity_id TEXT NOT NULL, PRIMARY KEY(repository,kind,request_key));');

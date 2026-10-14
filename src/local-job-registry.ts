@@ -1,6 +1,6 @@
 import { GitHubStore, InMemoryStore, type GitHubClient } from './store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, unifiedRelayStoreEnabled, SQLiteRelayStore } from './relay-store.js';
 
 /** Resolve exactly one SQLite-backed Job from its immutable ID, independent of PR binding. */
 export function createJobIdRegistryResolver(
@@ -17,10 +17,11 @@ export function createJobIdRegistryResolver(
     const selected = live.length === 1 ? live[0] : live.length === 0 && matches.length === 1 ? matches[0] : null;
     if (!selected) return null;
     const { snapshot, job } = selected;
-    let relay = openStores.get(snapshot.path);
+    const scopedKey = unifiedRelayStoreEnabled() ? `${snapshot.path}#${job.id}` : snapshot.path;
+    let relay = openStores.get(scopedKey);
     if (!relay) {
-      relay = new SQLiteRelayStore(snapshot.path);
-      openStores.set(snapshot.path, relay);
+      relay = new SQLiteRelayStore(snapshot.path, unifiedRelayStoreEnabled() ? job.id : undefined);
+      openStores.set(scopedKey, relay);
     }
     // SQLite remains lifecycle authority. A positive PR binding only enables
     // the external collaboration adapter for projection/merge side effects.

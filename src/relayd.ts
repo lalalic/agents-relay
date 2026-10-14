@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
@@ -13,7 +13,7 @@ import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { discoverLocalRelayStoreSnapshots, relayStoreDirectory, relayStorePath, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, relayStoreDirectory, relayStorePath, relayUnifiedStorePath, unifiedRelayStoreEnabled, resolveUnifiedJobScope, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
@@ -23,7 +23,6 @@ import { authoritativeBranchPushArgs } from './github-branch-projection.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
-import { basename } from 'node:path';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
@@ -100,7 +99,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const key = `${repository}#${prNumber}`;
     let relay = relayStores.get(key);
     if (!relay) {
-      relay = new SQLiteRelayStore(relayStorePath(relayStoreDirectory(), repository, prNumber));
+      const scope = unifiedRelayStoreEnabled() ? resolveUnifiedJobScope(relayStoreDirectory(), repository, prNumber) : undefined;
+      relay = new SQLiteRelayStore(scope ? relayUnifiedStorePath(relayStoreDirectory()) : relayStorePath(relayStoreDirectory(), repository, prNumber), scope);
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
@@ -109,7 +109,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (!noGitHub) projectionWriters.set(key, projected.projection);
     return projected;
   };
-  // SQLite inventory, not GitHub discovery, defines which repositories exist.
   const existingInventory = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
   for (const snapshot of existingInventory) for (const job of snapshot.jobs) {
     if (!repositories.includes(job.repository)) repositories.push(job.repository);
@@ -197,7 +196,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
       if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
-      let relay = relayStores.get(snapshot.path); if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
+      const scopedKey = unifiedRelayStoreEnabled() ? `${snapshot.path}#${discovered.id}` : snapshot.path;
+      let relay = relayStores.get(scopedKey); if (!relay) { relay = new SQLiteRelayStore(snapshot.path, unifiedRelayStoreEnabled() ? discovered.id : undefined); relayStores.set(scopedKey, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.
