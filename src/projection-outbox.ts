@@ -97,6 +97,8 @@ export type ProjectionOutboxPort = {
   enqueue(request: ProjectionRequest, now: string): boolean;
   claimDue(limit: number, now: Date): ProjectionOutboxItem[];
   complete(id: number): void;
+  completeWithReceipt(id: number, operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void;
+  retryWithReceipt(id: number, operationKey: string, error: string, nextAttemptAt: Date, attempts: number, detail: unknown, now: string): void;
   retry(id: number, error: string, nextAttemptAt: Date): void;
   deadLetter(id: number, error: string): void;
   recordConflict(id: number, diagnostic: ProjectionConflictDiagnostic): void;
@@ -340,6 +342,32 @@ export class ProjectionOutbox implements ProjectionOutboxPort {
 
   complete(id: number): void {
     this.db.prepare('DELETE FROM projection_outbox WHERE id=?').run(id);
+  }
+
+  completeWithReceipt(id: number, operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.recordReceipt(operationKey, status, attempts, detail, now);
+      this.db.prepare('DELETE FROM projection_outbox WHERE id=?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  retryWithReceipt(id: number, operationKey: string, error: string, nextAttemptAt: Date, attempts: number, detail: unknown, now: string): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`UPDATE projection_outbox
+        SET status='pending', attempts=?, next_attempt_at=?, last_error=?, updated_at=? WHERE id=?`)
+        .run(attempts, nextAttemptAt.toISOString(), error, now, id);
+      this.recordReceipt(operationKey, 'failed', attempts, detail, now);
+      this.db.exec('COMMIT');
+    } catch (caught) {
+      this.db.exec('ROLLBACK');
+      throw caught;
+    }
   }
 
   retry(id: number, error: string, nextAttemptAt: Date): void {

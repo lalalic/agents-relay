@@ -247,6 +247,7 @@ test('projection writer records transient retry with classification and retry sc
       async completeProjection() {},
       async deadLetterProjection() { throw new Error('transient must not be dead-lettered'); },
       async retryProjection(_id, error, nextAttemptAt) { this.retried = { error, nextAttemptAt }; },
+      async retryProjectionWithReceipt(_id, _key, error, nextAttemptAt) { this.retried = { error, nextAttemptAt }; },
     };
     const github = { async saveJob() { throw Object.assign(new Error('rate limited'), { status: 429 }); } };
     const writer = new GitHubProjectionWriter(relay, github);

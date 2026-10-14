@@ -52,7 +52,6 @@ import { createWorkspaceControl } from './relayd-control.js';
 import { createDashboardActions } from './relayd-dashboard-actions.js';
 export { daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
 import { configureDaemonObservability, firstStageChoices, value, type GitHubReadPathDiagnostics, type PullRequestRefreshTrigger, daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
-
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureDaemonObservability();
@@ -192,15 +191,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     for (const candidate of bindingCandidates) {
       const snapshot = { path: candidate.snapshotPath };
       const discovered = candidate.job;
-      try { if (discovered.state === 'CANCELLED') continue;
+      try {
       if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
-      const sourceRef = discovered.localMerge.sourceRef;
-      const targetRef = discovered.localMerge.targetRef;
+      const sourceRef = discovered.localMerge.sourceRef, targetRef = discovered.localMerge.targetRef;
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
       if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
-      let relay = relayStores.get(snapshot.path);
-      if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
+      let relay = relayStores.get(snapshot.path); if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.
@@ -214,10 +211,27 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           {agent:'relay',component:'github-projection'}));
         continue;
       }
-      const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0; const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
-      const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
-      let job = (await relay.loadJob(discovered.id)) ?? discovered;
-      let prNumber = job.prNumber > 0 ? job.prNumber : 0;
+      const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state); const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
+      let job = (await relay.loadJob(discovered.id)) ?? discovered; let prNumber = job.prNumber > 0 ? job.prNumber : 0;
+      // The callback is part of the durable create intent, not daemon memory.
+      // Rebuild it on every scan so a reclaimed row remains executable after a
+      // crash, including when the binding mutation committed first.
+      const effect = async (item: import('./projection-outbox.js').ProjectionOutboxItem): Promise<void> => {
+        const payload = item.payload as { repository: string; head: string; base: string; title: string; body: string; sourceRef: string; targetRef: string };
+        await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/${payload.base}:refs/remotes/origin/${payload.base}`]);
+        const remoteRef = `refs/remotes/origin/${payload.head}`;
+        const remoteHeadSha = await gitText(canonical, ['rev-parse', '--verify', remoteRef]).catch(() => '');
+        const remoteTreeMatchesBase = remoteHeadSha ? await gitText(canonical, ['diff','--quiet',`refs/remotes/origin/${payload.base}`,remoteRef]).then(() => true, () => false) : false;
+        await gitText(canonical, authoritativeBranchPushArgs({ sourceRef: payload.sourceRef, branch: payload.head, remoteHeadSha: remoteHeadSha || null, remoteTreeMatchesBase }));
+        // Lookup by head/base first: a crash after GitHub created the PR must
+        // bind the existing collaboration projection rather than create one.
+        const pr = await resolvePullRequest(client, payload.repository, { head: payload.head, base: payload.base, title: payload.title, body: payload.body });
+        if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
+        await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, githubProjection: { status: 'pr_bound', sourceSha, observedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() }));
+        observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
+      };
+      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, prNumber > 0 ? new GitHubStore(client, job.repository, prNumber, trusted) : new InMemoryStore(job), undefined, true, effect));
+      if (job.state === 'CANCELLED') continue; // Drain committed effects only; never push.
       if (prNumber === 0) {
         // Do not bootstrap an empty remote-only PR commit: it would diverge from
         // the real local Job branch before its first Worker commit. Publish the
@@ -236,20 +250,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           if (terminal && relay.mutateJob && job.githubProjection?.sourceSha !== sourceSha) await relay.mutateJob(job.id, current => ({ ...current, githubProjection: { status: 'merged_without_pr', sourceSha, observedAt: new Date().toISOString() } }));
           continue;
         }
-        const effect = async (item: import('./projection-outbox.js').ProjectionOutboxItem): Promise<void> => {
-          const payload = item.payload as { repository: string; head: string; base: string; title: string; body: string; sourceRef: string; targetRef: string };
-          await gitText(canonical, ['fetch','--no-tags','origin',`+refs/heads/${payload.base}:refs/remotes/origin/${payload.base}`]);
-          const remoteRef = `refs/remotes/origin/${payload.head}`;
-          const remoteHeadSha = await gitText(canonical, ['rev-parse', '--verify', remoteRef]).catch(() => '');
-          const remoteTreeMatchesBase = remoteHeadSha ? await gitText(canonical, ['diff','--quiet',`refs/remotes/origin/${payload.base}`,remoteRef]).then(() => true, () => false) : false;
-          await gitText(canonical, authoritativeBranchPushArgs({ sourceRef: payload.sourceRef, branch: payload.head, remoteHeadSha: remoteHeadSha || null, remoteTreeMatchesBase }));
-          const pr = await resolvePullRequest(client, payload.repository, { head: payload.head, base: payload.base, title: payload.title, body: payload.body });
-          if (!relay.mutateJob) throw new Error('Atomic SQLite mutation is required for GitHub PR binding');
-          await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, githubProjection: { status: 'pr_bound', sourceSha, observedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() }));
-          observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
-        };
-        projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, new InMemoryStore(job), undefined, true, effect));
-        if (relay.enqueueExternalActionOnce) await relay.enqueueExternalActionOnce({ idempotencyKey: `create_pull_request:${job.id}:${sourceSha}`, operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: job.repository, head: branch, base, title: job.title, body: job.objective ?? job.description ?? '', sourceRef, targetRef }, priority: 100 });
+        // A terminal Job may drain an already-committed intent, but terminal
+        // state is never permission to create a new external PR intent.
+        if (!terminal && relay.enqueueExternalActionOnce) await relay.enqueueExternalActionOnce({ idempotencyKey: `create_pull_request:${job.id}:${sourceSha}`, operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: job.repository, head: branch, base, title: job.title, body: job.objective ?? job.description ?? '', sourceRef, targetRef }, priority: 100 });
         if (terminal) continue;
         continue;
       }
@@ -265,7 +268,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         await relay.savePullRequestFacts({ state: latestFacts?.state === 'CLOSED' ? 'CLOSED' : 'OPEN', head: { ref: branch, sha: sourceSha }, observedAt: new Date().toISOString() });
       }
       const github = new GitHubStore(client, job.repository, prNumber, trusted);
-      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true));
+      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true, effect));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
         const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
         const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
@@ -273,7 +276,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           `GitHub local merge projection ${projectedMerge.status}`,'orchestrator',
           {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
           {agent:'relay',component:'github-projection'}));
-
         // A review-only PR is never merged by GitHub. Close it after local main
         // has been safely published, retaining the diff, comments and commit link.
         const remotePr = await github.pullRequestState();
@@ -450,7 +452,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     };
   },
   async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5));
-
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }
@@ -493,7 +494,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     .catch(error => observability().record({ stage: 'daemon', event: 'daemon.startup_refresh_failed', level: 'warn', outcome: 'failed', message: 'Startup local refresh unavailable: ' + errorMessage(error), data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
-
 function conflictJobId(repository: string, prNumber: number): string {
   return `${repository}#${prNumber}`;
 }

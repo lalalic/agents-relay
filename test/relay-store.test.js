@@ -315,6 +315,50 @@ test('PR creation intent retries across failure and restart with durable receipt
   await tmp.close(relay);
 });
 
+test('PR creation writer is recoverable after binding commit but before projection completion', async () => {
+  const tmp = await tempDb();
+  let relay = new SQLiteRelayStore(tmp.path);
+  const job = { ...makeJob(), state: 'CANCELLED', prNumber: 0 };
+  await relay.saveJob(job);
+  const request = { idempotencyKey: 'create_pull_request:job-1:sha-restart', operation: 'create_pull_request', payload: { operation: 'create_pull_request', repository: 'owner/repo', head: 'relay/job-1', base: 'main', title: 'job', body: 'objective', sourceRef: 'refs/heads/relay/job-1', targetRef: 'refs/heads/main' } };
+  await relay.enqueueExternalActionOnce(request);
+
+  let firstAttempt = true;
+  const first = new GitHubProjectionWriter(relay, new InMemoryStore(job), undefined, true, async () => {
+    await relay.mutateJob(job.id, current => ({ ...current, prNumber: 41 }));
+    if (firstAttempt) { firstAttempt = false; throw new Error('daemon crashed after binding'); }
+  });
+  assert.deepEqual(await first.flushOnce(10, new Date('2026-10-13T00:00:00.000Z')), { projected: 0, deferred: 1 });
+  relay.close();
+
+  relay = new SQLiteRelayStore(tmp.path);
+  const ageing = new DatabaseSync(tmp.path);
+  ageing.prepare("UPDATE projection_outbox SET updated_at=? WHERE status='pending'").run('2026-10-12T23:56:00.000Z');
+  ageing.close();
+  const restarted = new GitHubProjectionWriter(relay, new InMemoryStore(job), undefined, true, async () => {
+    await relay.mutateJob(job.id, current => ({ ...current, prNumber: 41 }));
+  });
+  assert.deepEqual(await restarted.flushOnce(10, new Date('2026-10-13T00:01:00.000Z')), { projected: 1, deferred: 0 });
+  assert.equal((await relay.loadJob(job.id)).prNumber, 41);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.enqueueExternalActionOnce(request), false);
+  await tmp.close(relay);
+});
+
+test('projection completion and receipt survive a SQLite restart as one commit', async () => {
+  const tmp = await tempDb();
+  let relay = new SQLiteRelayStore(tmp.path);
+  await relay.enqueueProjection({ idempotencyKey: 'save-task:atomic', operation: 'save_task', payload: { operation: 'save_task', value: makeTask() } });
+  const [item] = await relay.claimDueProjections();
+  await relay.completeProjectionWithReceipt(item.id, item.operationKey, 'succeeded', item.attempts, { operation: item.operation });
+  relay.close();
+
+  relay = new SQLiteRelayStore(tmp.path);
+  assert.equal(await relay.pendingProjectionCount(), 0);
+  assert.equal(await relay.enqueueExternalActionOnce({ idempotencyKey: item.operationKey, operation: 'update_pr_body', payload: { operation: 'update_pr_body', value: 'replay' } }), false);
+  await tmp.close(relay);
+});
+
 test('terminal local Jobs retain no-diff evidence without a fabricated PR', async () => {
   const tmp = await tempDb();
   const relay = new SQLiteRelayStore(tmp.path);
