@@ -45,6 +45,18 @@ def consolidate(directory, target):
                 if not jobs:
                     continue
                 job_rows = src.execute('SELECT job_id,json FROM job_snapshot').fetchall()
+                if len(job_rows) == 0:
+                    # Some legacy paths were opened but never received a Job. Skip
+                    # only a genuinely empty shell; never drop orphaned effects.
+                    material = ('pull_request_facts','publication_state','publication_delivery',
+                                'agent_snapshot','event_receipt','execution_process',
+                                'projection_outbox','host_invocation_event',
+                                'host_invocation_decision','projection_receipt')
+                    for table in material:
+                        if src.execute('SELECT 1 FROM sqlite_master WHERE type="table" AND name=?',(table,)).fetchone():
+                            if src.execute('SELECT 1 FROM '+q(table)+' LIMIT 1').fetchone():
+                                raise RuntimeError(f'Orphaned data in empty Job database: {source} {table}')
+                    continue
                 if len(job_rows) != 1:
                     raise RuntimeError(f'Expected one Job per source, found {len(job_rows)}: {source}')
                 jid, snapshot = job_rows[0]

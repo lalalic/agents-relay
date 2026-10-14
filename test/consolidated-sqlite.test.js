@@ -27,6 +27,9 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
     await a.enqueueProjection({idempotencyKey:'same-key',operation:'save_job',payload:{jobId:'1'}});
     await b.enqueueProjection({idempotencyKey:'same-key',operation:'save_job',payload:{jobId:'2'}});
     a.close(); b.close();
+    // Empty legacy DB shells may exist from attempted Job opens; they must not be treated as Jobs.
+    const shellOnly = new SQLiteRelayStore(relayJobStorePath(source,'ghost'));
+    shellOnly.close();
     assert.equal(allocateEntityId(source,'example/first','job',undefined,new Set(['1','2'])),'3');
     const result = spawnSync('python3',['scripts/consolidate-relay-sqlite.py',source,target],{encoding:'utf8'});
     assert.equal(result.status,0,result.stderr);
