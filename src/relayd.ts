@@ -211,8 +211,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           {agent:'relay',component:'github-projection'}));
         continue;
       }
-      const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0; const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
-      const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
+      const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state); const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
       let job = (await relay.loadJob(discovered.id)) ?? discovered; let prNumber = job.prNumber > 0 ? job.prNumber : 0;
       // The callback is part of the durable create intent, not daemon memory.
       // Rebuild it on every scan so a reclaimed row remains executable after a
@@ -231,7 +230,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         await relay.mutateJob(job.id, current => ({ ...current, prNumber: pr.number, githubProjection: { status: 'pr_bound', sourceSha, observedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() }));
         observability().record({ stage: 'projection', event: 'github.pr_bound', outcome: 'succeeded', message: `Bound local Job ${job.id} to GitHub PR #${pr.number}`, correlation: { repository: job.repository, prNumber: pr.number, jobId: job.id }, data: { head: branch, base } });
       };
-      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, new InMemoryStore(job), undefined, true, effect));
+      projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, prNumber > 0 ? new GitHubStore(client, job.repository, prNumber, trusted) : new InMemoryStore(job), undefined, true, effect));
+      if (job.state === 'CANCELLED') continue; // Drain committed effects only; never push.
       if (prNumber === 0) {
         // Do not bootstrap an empty remote-only PR commit: it would diverge from
         // the real local Job branch before its first Worker commit. Publish the
