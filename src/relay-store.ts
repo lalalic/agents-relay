@@ -180,7 +180,6 @@ export class SQLiteRelayStore implements RelayStore {
   async loadPublication(jobId: string): Promise<PublicationState | null> {
     return loadPublicationFromDatabase(this.db, jobId);
   }
-
   async listPublicationEvents(jobId: string): Promise<PublicationEvent[]> {
     return listPublicationEventsFromDatabase(this.db, jobId);
   }
@@ -188,7 +187,6 @@ export class SQLiteRelayStore implements RelayStore {
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
     return row?.json ? normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job) : null;
   }
-
   async listJobs(): Promise<Job[]> {
     const rows = this.db.prepare('SELECT json FROM job_snapshot ORDER BY job_id').all() as unknown as Array<{ json: string }>;
     return rows.map(row => normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job));
@@ -199,7 +197,6 @@ export class SQLiteRelayStore implements RelayStore {
   async createJobIfAbsent(job: Job): Promise<Job> {
     return createJobIfAbsent(this.db, job);
   }
-
   /** Atomic read/modify/write for local authoritative Task and Plan updates. */
   async mutateJob(jobId: string, mutation: (current: Job) => Job): Promise<Job> {
     this.db.exec('BEGIN IMMEDIATE');
@@ -236,7 +233,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   async saveJobWithProjection(job: Job, request: ProjectionRequest): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -263,7 +259,6 @@ export class SQLiteRelayStore implements RelayStore {
       ON CONFLICT(job_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
     `).run(job.id, JSON.stringify(job), now);
   }
-
   async loadAgents(): Promise<AgentRegistration[] | null> {
     const observed = this.db.prepare("SELECT value FROM relay_meta WHERE key='agent_registry_observed_at'").get() as { value?: string } | undefined;
     if (!observed?.value) return null;
@@ -284,7 +279,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   async upsertAgent(agent: AgentRegistration): Promise<void> {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
@@ -310,7 +304,6 @@ export class SQLiteRelayStore implements RelayStore {
       throw error;
     }
   }
-
   private writeAgentSnapshot(agent: AgentRegistration, now: string): void {
     this.db.prepare(`
       INSERT INTO agent_snapshot(agent_id,json,updated_at) VALUES(?,?,?)
@@ -323,7 +316,6 @@ export class SQLiteRelayStore implements RelayStore {
       ON CONFLICT(key) DO UPDATE SET value=excluded.value
     `).run(now);
   }
-
   async loadPullRequestFacts(): Promise<PullRequestFacts | null> {
     const row = this.db.prepare('SELECT state,head_ref,head_sha,observed_at FROM pull_request_facts WHERE id=1').get() as { state?: PullRequestState; head_ref?: string | null; head_sha?: string | null; observed_at?: string } | undefined;
     if (!row?.state || !row.observed_at) return null;
@@ -341,7 +333,6 @@ export class SQLiteRelayStore implements RelayStore {
           OR (pull_request_facts.state='MERGED' AND excluded.state='MERGED'))
     `).run(facts.state, facts.head?.ref ?? null, facts.head?.sha ?? null, facts.observedAt);
   }
-
   async recordExecutionProcess(record: ExecutionProcessRecord): Promise<void> {
     const existing = await this.loadExecutionProcess(record.jobId, record.taskId, record.executionId);
     if (existing && (existing.pid !== record.pid || existing.pgid !== record.pgid || existing.host !== record.host || existing.startToken !== record.startToken)) {
@@ -362,7 +353,6 @@ export class SQLiteRelayStore implements RelayStore {
       host: row.host, pid: row.pid, pgid: row.pgid, startToken: row.start_token,
       observedAt: row.observed_at, endedAt: row.ended_at } : null;
   }
-
   async finishExecutionProcess(jobId: string, taskId: string, executionId: string, at = new Date().toISOString()): Promise<void> {
     this.db.prepare('UPDATE execution_process SET ended_at=COALESCE(ended_at,?) WHERE job_id=? AND task_id=? AND execution_id=?')
       .run(at, jobId, taskId, executionId);
@@ -370,14 +360,12 @@ export class SQLiteRelayStore implements RelayStore {
   async recordHostInvocationEvent(delivery: InteractiveDecisionDelivery, outcome: InteractiveDecisionOutcome, fingerprint: string): Promise<void> {
     recordHostInvocationEvent(this.db, delivery, outcome, fingerprint);
   }
-
   async hasHostInvocationDecision(jobId: string, taskId: string, invocationId: string, fingerprint?: string): Promise<boolean> {
     return hasHostInvocationDecision(this.db, jobId, taskId, invocationId, fingerprint);
   }
   async recordHostInvocationDecision(delivery: InteractiveDecisionDelivery, fingerprint: string): Promise<HostInvocationReceipt> {
     return recordHostInvocationDecision(this.db, delivery, fingerprint, (job, at) => this.writeJobSnapshot(job, at));
   }
-
   async markEventProcessed(eventId: string, stream: string | null = null, sequence: number | null = null): Promise<boolean> {
     const result = this.db.prepare(`
       INSERT OR IGNORE INTO event_receipt(event_id,stream,sequence,received_at) VALUES(?,?,?,?)

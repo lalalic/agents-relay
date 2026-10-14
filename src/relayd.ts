@@ -52,7 +52,6 @@ import { createWorkspaceControl } from './relayd-control.js';
 import { createDashboardActions } from './relayd-dashboard-actions.js';
 export { daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
 import { configureDaemonObservability, firstStageChoices, value, type GitHubReadPathDiagnostics, type PullRequestRefreshTrigger, daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
-
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureDaemonObservability();
@@ -194,13 +193,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const discovered = candidate.job;
       try {
       if (!repositoryPaths.has(discovered.repository) || !discovered.localMerge?.sourceRef || !discovered.localMerge?.targetRef) continue;
-      const sourceRef = discovered.localMerge.sourceRef;
-      const targetRef = discovered.localMerge.targetRef;
+      const sourceRef = discovered.localMerge.sourceRef, targetRef = discovered.localMerge.targetRef;
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
       if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
-      let relay = relayStores.get(snapshot.path);
-      if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
+      let relay = relayStores.get(snapshot.path); if (!relay) { relay = new SQLiteRelayStore(snapshot.path); relayStores.set(snapshot.path, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.
@@ -216,8 +213,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       }
       const existingPrNumber = discovered.prNumber > 0 ? discovered.prNumber : 0; const terminal = ['COMPLETED','CANCELLED'].includes(discovered.state);
       const sourceSha = await gitText(canonical, ['rev-parse', '--verify', sourceRef]).catch(() => ''); if (!sourceSha) continue;
-      let job = (await relay.loadJob(discovered.id)) ?? discovered;
-      let prNumber = job.prNumber > 0 ? job.prNumber : 0;
+      let job = (await relay.loadJob(discovered.id)) ?? discovered; let prNumber = job.prNumber > 0 ? job.prNumber : 0;
       // The callback is part of the durable create intent, not daemon memory.
       // Rebuild it on every scan so a reclaimed row remains executable after a
       // crash, including when the binding mutation committed first.
@@ -280,7 +276,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
           `GitHub local merge projection ${projectedMerge.status}`,'orchestrator',
           {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
           {agent:'relay',component:'github-projection'}));
-
         // A review-only PR is never merged by GitHub. Close it after local main
         // has been safely published, retaining the diff, comments and commit link.
         const remotePr = await github.pullRequestState();
@@ -457,7 +452,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     };
   },
   async () => (await decisionAuditStore.read()).filter((record): record is import('./decision-audit.js').DecisionAuditRecord => record.record_type === 'decision' && record.schema_version === 5));
-
   await once(server,'listening');
   const reconcileSafely = async (): Promise<void> => {
     try { await pool.reconcile(); }
@@ -500,7 +494,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     .catch(error => observability().record({ stage: 'daemon', event: 'daemon.startup_refresh_failed', level: 'warn', outcome: 'failed', message: 'Startup local refresh unavailable: ' + errorMessage(error), data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }));
 }
 if (isEntrypoint(import.meta.url)) runDaemon(process.argv.slice(2)).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exitCode=1;});
-
 function conflictJobId(repository: string, prNumber: number): string {
   return `${repository}#${prNumber}`;
 }
