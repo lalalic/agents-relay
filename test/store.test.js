@@ -270,7 +270,7 @@ test('managed no-GitHub Job creation is GitHub-independent and idempotent by imm
     let apiCalls=0;
     const client={request:async()=>{apiCalls++;throw Error('GitHub REST forbidden');},
       graphql:async()=>{apiCalls++;throw Error('GitHub GraphQL forbidden');}};
-    const options={id:'managed',title:'Managed work',head:'feat/managed',base:'main',
+    const options={idempotencyKey:'managed',title:'Managed work',head:'feat/managed',base:'main',
       body:'body', reviewerThreadId:'reviewer-thread',creatorThreadId:'creator-thread',
       storeDirectory:directory,noGitHub:true};
     const first=await ensureManagedGitHubJob(client,'owner/repo',new Set(),options);
@@ -283,12 +283,12 @@ test('managed no-GitHub Job creation is GitHub-independent and idempotent by imm
     assert.equal(first.job.reviewerThreadId,'reviewer-thread');
     assert.equal(first.job.creatorThreadId,'creator-thread');
     assert.equal(apiCalls,0);
-    const sqlite=new SQLiteRelayStore(relayJobStorePath(directory,'managed'));
-    assert.equal((await sqlite.loadJob('managed')).title,'Managed work');
+    const sqlite=new SQLiteRelayStore(relayJobStorePath(directory,first.job.id));
+    assert.equal((await sqlite.loadJob(first.job.id)).title,'Managed work');
     assert.equal((await sqlite.listJobs()).length,1);
     assert.equal(await sqlite.pendingProjectionCount(),0);
     sqlite.close();
-    await assert.rejects(ensureManagedGitHubJob(client,'someone/other',new Set(),options),
+    await assert.rejects(ensureManagedGitHubJob(client,'someone/other',new Set(),{...options,id:first.job.id}),
       /different repository/);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
@@ -303,7 +303,7 @@ test('managed head Job bootstrap is GitHub-independent and derives local merge r
       graphql: async () => { apiCalls++; throw new Error('GitHub GraphQL forbidden'); },
     };
     const options = {
-      id: 'head-managed', title: 'Head managed work', objective: 'body',
+      idempotencyKey: 'head-managed', title: 'Head managed work', objective: 'body',
       head: 'feat/head-managed', base: 'main', body: 'body', storeDirectory: directory,
     };
     const first = await ensureManagedGitHubJob(client, 'owner/repo', new Set(['bot']), options);
@@ -315,8 +315,8 @@ test('managed head Job bootstrap is GitHub-independent and derives local merge r
       sourceRef: 'refs/heads/feat/head-managed', targetRef: 'refs/heads/main', status: 'pending',
     });
     assert.equal(second.job.id, first.job.id);
-    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory, 'head-managed'));
-    assert.equal((await sqlite.loadJob('head-managed')).prNumber, 0);
+    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory, first.job.id));
+    assert.equal((await sqlite.loadJob(first.job.id)).prNumber, 0);
     sqlite.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -362,12 +362,12 @@ test('managed Job binds a known PR number entirely offline with zero GitHub read
       graphql: async () => { throw new Error('GitHub disconnected'); },
     };
     const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      id: 'adopted', prNumber: 6, storeDirectory: directory,
+      idempotencyKey: 'adopted', prNumber: 6, storeDirectory: directory,
     });
     assert.equal(result.pr.number, 6);
-    assert.equal(result.job.id, 'adopted');
+    assert.match(result.job.id, /^[1-9][0-9]*$/);
     const sqlite = new SQLiteRelayStore(relayStorePath(directory, 'owner/repo', 6));
-    assert.equal((await sqlite.loadJob('adopted')).state, 'DRAFT');
+    assert.equal((await sqlite.loadJob(result.job.id)).state, 'DRAFT');
     assert.equal(await sqlite.pendingProjectionCount(), 0);
     sqlite.close();
   } finally {
@@ -443,12 +443,12 @@ test('managed Task creation is gated on the local SQLite Job, never PR markers',
       graphql: async () => { throw new Error('GitHub disconnected'); },
     };
     const { store, relay } = openLocalManagedStore('owner/repo', 6, { directory, client });
-    await assert.rejects(store.appendTask(task('gated', 'child')), /Local authoritative Job gated not found/);
-    await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      id: 'gated', prNumber: 6, storeDirectory: directory,
+    await assert.rejects(store.appendTask(task('1', 'child')), /Local authoritative Job 1 not found/);
+    const created = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
+      idempotencyKey: 'gated', prNumber: 6, storeDirectory: directory,
     });
-    await store.appendTask(task('gated', 'child'));
-    const durable = await store.load('gated');
+    await store.appendTask(task(created.job.id, 'child'));
+    const durable = await store.load(created.job.id);
     assert.deepEqual(durable.tasks.map(item => item.id), ['child']);
     assert.equal(await relay.pendingProjectionCount(), 0);
     relay.close();
@@ -542,7 +542,7 @@ test('managed Job creation never bootstraps a GitHub branch and retains local me
       graphql:async()=>{apiCalls++;throw Error('GitHub API forbidden');},
     };
     const result=await ensureManagedGitHubJob(client,'owner/repo',new Set(),{
-      id:'empty-job',title:'Local source job',head:'feat/empty',base:'main',
+      idempotencyKey:'empty-job',title:'Local source job',head:'feat/empty',base:'main',
       localMergeSource:'refs/heads/feature',localMergeTarget:'refs/heads/main',
       body:'body',storeDirectory:directory,noGitHub:true,
     });
@@ -783,7 +783,7 @@ test('default managed store honors AGENTS_RELAY_STORE_DIR isolation', async () =
   try {
     const { ensureManagedGitHubJob } = await import('../dist/cli.js');
     const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
-      id: 'fixture-isolation-regression', title: 'fixture isolation regression',
+      idempotencyKey: 'fixture-isolation-regression', title: 'fixture isolation regression',
       objective: 'fixture isolation regression', head: 'feat/fixture-isolation', noGitHub: true,
     });
     assert.equal(result.job.repository, 'owner/repo');

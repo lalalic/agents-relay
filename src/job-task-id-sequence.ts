@@ -2,27 +2,19 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-export function generatedEntityPrefix(repository: string, kind: 'job' | 'task'): string {
-  const [owner, repo] = repository.split('/');
-  if (!owner || !repo || !/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo) || owner === '..' || repo === '..') throw new Error('Invalid repository');
-  return `${kind === 'job' ? 'j' : 't'}-${owner.length}-${owner}-${repo}-`;
+function validateRepository(repository: string): void {
+  const [owner, repo, extra] = repository.split('/');
+  if (!owner || !repo || extra || !/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo) || owner === '..' || repo === '..') throw new Error('Invalid repository');
 }
 
-export function isGeneratedEntityId(id: string, repository: string, kind: 'job' | 'task'): boolean {
-  if (kind === 'task') {
-    if (/^[1-9][0-9]*$/.test(id)) return true;
-    const legacyPrefix = generatedEntityPrefix(repository, kind);
-    return id.startsWith(legacyPrefix) && /^[0-9]+$/.test(id.slice(legacyPrefix.length));
-  }
-  if (/^[1-9][0-9]*$/.test(id)) return true;
-  const prefix = generatedEntityPrefix(repository, kind);
-  return id.startsWith(prefix) && /^[0-9]+$/.test(id.slice(prefix.length));
+/** A generated ID is always a positive decimal. Historic nonnumeric Task IDs remain ordinary Task identifiers. */
+export function isGeneratedEntityId(id: string, _repository: string, _kind: 'job' | 'task'): boolean {
+  return /^[1-9][0-9]*$/.test(id);
 }
 
-
-/** Job and Task IDs each use their own store-global sequence. SQLite serializes allocation; legacy identifiers remain readable. */
+/** Job and Task IDs each use their own store-global sequence. SQLite serializes allocation. */
 export function allocateEntityId(directory: string, repository: string, kind: 'job'|'task', requestKey?: string, occupied: ReadonlySet<string> = new Set()): string {
-  generatedEntityPrefix(repository, kind); // validate repository even though its name no longer appears in the ID
+  validateRepository(repository);
   const prefix = '';
   const scope = '*';
   const scopedRequestKey = requestKey ? `${repository}:${requestKey}` : undefined;

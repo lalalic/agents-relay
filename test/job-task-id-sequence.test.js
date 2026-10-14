@@ -1,10 +1,12 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { allocateEntityId } from '../dist/job-task-id-sequence.js';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
+import { SQLiteRelayStore, relayStorePath, relayJobStorePath } from '../dist/relay-store.js';
 
 test('Job and Task IDs each use a global increasing sequence and remain idempotent', async () => {
   const dir=await mkdtemp(join(tmpdir(),'relay-ids-'));
@@ -100,4 +102,51 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
     assert.equal(second.createdTaskId,'2');
     assert.equal(second.tasks.length,2);
   } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('new Job creation refuses nonnumeric explicitly supplied IDs', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'relay-numeric-only-'));
+  try {
+    const client={request:async()=>{throw new Error('unexpected GitHub')},graphql:async()=>{throw new Error('unexpected GitHub')}};
+    await assert.rejects(ensureManagedGitHubJob(client,'owner/repo',new Set(),{id:'legacy-slug',objective:'invalid',storeDirectory:dir}),/positive decimal integer/);
+    const {adoptExistingPullRequestJob}=await import('../dist/cli-job-create.js');
+    await assert.rejects(adoptExistingPullRequestJob(client,'owner/repo',new Set(),{id:'legacy-pr-id',prNumber:12,storeDirectory:dir}),/positive decimal integer/);
+    const adopted=await adoptExistingPullRequestJob(client,'owner/repo',new Set(),{prNumber:12,storeDirectory:dir});
+    assert.equal(adopted.job.id,'1');
+    assert.equal((await adoptExistingPullRequestJob(client,'owner/repo',new Set(),{prNumber:12,storeDirectory:dir})).job.id,'1');
+    assert.equal(allocateEntityId(dir,'other/repo','job'),'2');
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test('one-time offline migration rewrites Job snapshots and file identities, preserves a rollback, and advances allocation', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-numeric-migration-'));
+  const dir=join(root,'stores');
+  await mkdir(dir);
+  const timestamp='2026-01-01T00:00:00.000Z';
+  const job=(id,prNumber,repository)=>({id,title:id,repository,prNumber,createdAt:timestamp,updatedAt:timestamp,state:'COMPLETED',executionMode:'fixed',continuation:null,tasks:[{id:'task',jobId:id,state:'SUCCEEDED',dependencies:[]}],plans:[{id:'plan-1',jobId:id,round:1,createdAt:timestamp,updatedAt:timestamp}]});
+  try {
+    const a=new SQLiteRelayStore(relayStorePath(dir,'owner/repo',7));
+    await a.saveJob(job('old-repo-seven',7,'owner/repo'));a.close();
+    const b=new SQLiteRelayStore(relayJobStorePath(dir,'old-local-job'));
+    await b.saveJob(job('old-local-job',0,'other/repo'));b.close();
+    allocateEntityId(dir,'owner/repo','task');
+    const command=spawnSync('python3',['scripts/migrate-numeric-job-ids.py',dir],{encoding:'utf8'});
+    assert.equal(command.status,0,command.stderr);
+    assert.match(command.stdout,/MIGRATION_COMMITTED/);
+    const old=await import('node:fs/promises').then(x=>x.readdir(root));
+    assert.ok(old.some(x=>x.startsWith('stores.pre-numeric-')));
+    const first=new SQLiteRelayStore(relayStorePath(dir,'owner/repo',7));
+    const one=(await first.listJobs())[0];first.close();
+    assert.equal(one.id,'2');
+    assert.equal(one.tasks[0].jobId,'2');
+    assert.equal(one.plans[0].jobId,'2');
+    const second=new SQLiteRelayStore(relayJobStorePath(dir,'1'));
+    const other=(await second.listJobs())[0];second.close();
+    assert.equal(other.id,'1');
+    assert.equal(other.tasks[0].jobId,'1');
+    assert.equal(allocateEntityId(dir,'next/repo','job'),'3');
+    const repeated=spawnSync('python3',['scripts/migrate-numeric-job-ids.py',dir],{encoding:'utf8'});
+    assert.notEqual(repeated.status,0);
+    assert.match(repeated.stderr,/already exist/);
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

@@ -46,7 +46,7 @@ Common options:
   --pr NUMBER             Existing PR number
 
 Example:
-  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
+  npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
   review: `Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
 Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
@@ -58,15 +58,15 @@ Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job reviewer/creator thread or legacy route. Rejects pending reviews and wakes managed reconciliation.`,
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
-Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id is optional for compatibility. Existing PR adoption is an explicit separate command: job adopt.
+Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job. Existing PR adoption is an explicit separate command: job adopt.
 Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
-  'job adopt': `Adopt an existing legacy PR as a SQLite-authoritative Job.
+  'job adopt': `Adopt an existing PR as a SQLite-authoritative Job.
 
-Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. This is the only creation path that binds an existing PR.`,
+Required: --repo OWNER/REPO and --pr NUMBER. The Job ID is allocated atomically from the global SQLite sequence. Optional --id references an already-existing numeric Job only.`,
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
@@ -74,13 +74,13 @@ Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, -
 Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:
-  npx agents-relay job update --repo OWNER/REPO --pr 12 --id job-1 --priority P0 --no-auto-merge`,
+  npx agents-relay job update --repo OWNER/REPO --pr 12 --id 101 --priority P0 --no-auto-merge`,
   'job show': `Show one durable Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
 
 Example:
-  npx agents-relay job show --repo OWNER/REPO --pr 12 --id job-1`,
+  npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
   'job list': `List managed Jobs in a repository.
 
 Required: --repo OWNER/REPO.
@@ -130,7 +130,7 @@ Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, -
 Use --clear-routing to remove routing metadata.
 
 Example:
-  npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  npx agents-relay task update --repo OWNER/REPO --pr 12 --id 101 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
   'task comment': `Append an immutable Task comment. Does not retry or change Task state.
 
 Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID and --message TEXT or --message-file FILE.`,
@@ -166,7 +166,7 @@ Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt
 The command persists one real plan-N round, materializes validated next_tasks with planner provenance, and wakes normal reconciliation. It works for zero-task DRAFT Jobs. Historical planner-N rounds remain readable, but new rounds use plan-N.
 
 Example:
-  npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt "Plan the full implementation now; keep independent work parallel."`,
+  npx agents-relay plan --repo OWNER/REPO --pr 12 --id 101 --prompt "Plan the full implementation now; keep independent work parallel."`,
   blocker: `Manage durable cross-Job blocker dependencies.
 
 Usage:
@@ -211,20 +211,20 @@ Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id
 Managed GitHub jobs are reconciled by agents-relayd. The CLI publishes a job.wake request and does not launch workers; NATS is auto-detected when reachable; use --events nats to require it explicitly. Local/runtime invocations may use --thread-id ID to override the durable reviewer/creator thread for ChatGPT review delivery.
 
 Example:
-  npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id job-1`,
+  npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id 101`,
   init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
 
 Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
 
 Example:
-  npx agents-relay init --repo OWNER/REPO --pr 12 --id job-1 --title "Objective"`,
+  npx agents-relay init --repo OWNER/REPO --pr 12 --id 101 --title "Objective"`,
   serve: `Run the dashboard and reconciliation service for a managed job.
 
 Required: --file PATH for local demo mode, or --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 Common: --port PORT, --interval MS, --events nats (optional; reachable NATS is auto-detected), --thread-id ID (reviewer-thread override).
 
 Example:
-  npx agents-relay serve --repo OWNER/REPO --pr 12 --id job-1`,
+  npx agents-relay serve --repo OWNER/REPO --pr 12 --id 101`,
   'agent-register': `Register an agent role and its execution endpoint.
 
 Required for durable service mode: --repo OWNER/REPO --id JOB_ID plus --name NAME --responsibility TEXT --role ROLE --endpoint TARGET. Use --file only for explicit demo mode.

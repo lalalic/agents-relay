@@ -32,7 +32,7 @@ import { eventFor } from './events.js';
 import { dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
-import { adoptLegacyJob, ensureManagedGitHubJob } from './cli-job-create.js';
+import { adoptExistingPullRequestJob, ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
@@ -107,9 +107,9 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'job.adopt') {
       const repository = typeof body.repository === 'string' ? body.repository : '';
       const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
-      if (!repository || typeof options.id !== 'string' || typeof options.prNumber !== 'number') throw new Error('job.adopt requires repository, id, and prNumber');
-      const result = await adoptLegacyJob(client, repository, trusted, {
-        id: options.id, title: typeof options.title === 'string' ? options.title : undefined,
+      if (!repository || typeof options.prNumber !== 'number') throw new Error('job.adopt requires repository and prNumber');
+      const result = await adoptExistingPullRequestJob(client, repository, trusted, {
+        id: typeof options.id === 'string' ? options.id : undefined, title: typeof options.title === 'string' ? options.title : undefined,
         objective: typeof options.objective === 'string' ? options.objective : undefined,
         projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
         prNumber: options.prNumber,

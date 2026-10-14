@@ -26,14 +26,16 @@ test('objective creation accepts explicit request identity without conflating eq
 });
 
 test('job adopt is the explicit legacy PR binding path and remains offline', async () => {
-  const { adoptLegacyJob } = await import('../dist/cli-job-create.js');
+  const { adoptExistingPullRequestJob } = await import('../dist/cli-job-create.js');
   const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-adopt-'));
   try {
     let calls = 0;
     const client = { request: async () => { calls += 1; throw new Error('offline'); }, graphql: async () => { calls += 1; throw new Error('offline'); } };
-    const result = await adoptLegacyJob(client, 'owner/repo', new Set(), { id: 'legacy-4', prNumber: 4, objective: 'adopted', storeDirectory: directory });
+    const result = await adoptExistingPullRequestJob(client, 'owner/repo', new Set(), { prNumber: 4, objective: 'adopted', storeDirectory: directory });
     assert.equal(result.job.prNumber, 4);
     assert.equal(result.pr.number, 4);
+    assert.equal(result.job.id, '1');
+    assert.equal((await adoptExistingPullRequestJob(client, 'owner/repo', new Set(), { prNumber: 4, storeDirectory: directory })).job.id, '1');
     assert.equal(calls, 0);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -56,11 +58,11 @@ test('SQLite create-if-absent is atomic and preserves the first complete snapsho
 
 
 test('legacy adoption refuses duplicate immutable ID bound elsewhere', async () => {
-  const { adoptLegacyJob, ensureManagedGitHubJob } = await import('../dist/cli-job-create.js');
+  const { adoptExistingPullRequestJob, ensureManagedGitHubJob } = await import('../dist/cli-job-create.js');
   const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-adopt-duplicate-'));
   try {
-    await ensureManagedGitHubJob({}, 'owner/repo', new Set(), { id: 'taken-id', objective: 'original', storeDirectory: directory });
-    await assert.rejects(() => adoptLegacyJob({}, 'owner/repo', new Set(), { id: 'taken-id', prNumber: 47, storeDirectory: directory }), /already bound/);
-    await assert.rejects(() => adoptLegacyJob({}, 'other/repo', new Set(), { id: 'taken-id', prNumber: 47, storeDirectory: directory }), /already bound/);
+    const original=await ensureManagedGitHubJob({}, 'owner/repo', new Set(), { idempotencyKey: 'taken-id', objective: 'original', storeDirectory: directory });
+    await assert.rejects(() => adoptExistingPullRequestJob({}, 'owner/repo', new Set(), { id: original.job.id, prNumber: 47, storeDirectory: directory }), /already bound/);
+    await assert.rejects(() => adoptExistingPullRequestJob({}, 'other/repo', new Set(), { id: original.job.id, prNumber: 47, storeDirectory: directory }), /already bound/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

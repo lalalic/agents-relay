@@ -196,10 +196,10 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'adopt') {
     const adoptId = arg(args, '--id');
     const adoptPr = Number(arg(args, '--pr'));
-    if (!adoptId || !Number.isInteger(adoptPr) || adoptPr <= 0) throw new Error('job adopt requires --id and a positive --pr');
+    if (!Number.isInteger(adoptPr) || adoptPr <= 0) throw new Error('job adopt requires a positive --pr');
     const objective = await textOption(args, '--objective', '--objective-file');
     const result = await relayControlCommand(args, { command: 'job.adopt', repository: repo, options: {
-      id: adoptId, prNumber: adoptPr, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
+      id: adoptId || undefined, prNumber: adoptPr, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
     }});
     console.log(JSON.stringify(result, null, 2)); return;
   }
