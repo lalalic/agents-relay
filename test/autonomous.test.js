@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InMemoryStore } from '../dist/store.js';
 import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, parseTask, renderJobComment, renderPlanComment } from '../dist/markers.js';
-import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress } from '../dist/planner.js';
+import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
 import { schedule } from '../dist/scheduler.js';
@@ -494,4 +494,14 @@ test('planner instruction contract forbids self-cycles in optional agent graphs'
   assert.match(prompt, /agentGraph.*optional/i);
   assert.match(prompt, /do \*\*not\*\* create an edge from an agent\/node to itself/);
   assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'x', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'work', input: 'work', storySize: 'S', output: { kind: 'task_pr' }, agentGraph: 'flowchart LR\n  implementation --> implementation' }] }), /Agent Graph self-cycle at implementation/);
+});
+
+
+test('Planner validation feedback identifies missing Resolution and a corrected recovery child passes', () => {
+  const original=task('34','FAILED');
+  const child=spec('35');
+  assert.throws(()=>validatePlannerResolutionMaterialization([original],[child]), error =>
+    error.message.includes('34') && error.message.includes('same_job_dependency') && error.message.includes('targetTaskId'));
+  const corrected={...child,resolution:{path:'same_job_dependency',targetTaskId:'34',rootCause:'worker failure',solution:'retry via a recovery child'}};
+  assert.doesNotThrow(()=>validatePlannerResolutionMaterialization([original],[corrected]));
 });

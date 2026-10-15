@@ -367,7 +367,7 @@ export function validatePlannerResolutionMaterialization(existing: readonly Task
   const resolvedIds = new Set(specs.map(spec => spec.resolution?.targetTaskId).filter((id): id is string => Boolean(id)));
   const owned = unresolved.filter(task => task.resolution && ['active', 'waiting'].includes(task.resolution.state));
   const uncovered = unresolved.filter(task => !resolvedIds.has(task.id) && !owned.some(candidate => candidate.id === task.id));
-  if (uncovered.length > 0 && specs.length > 0) throw new Error(`Planner cannot create sibling replacement work while unresolved Task(s) lack a graph resolution: ${uncovered.map(task => task.id).join(', ')}`);
+  if (uncovered.length > 0 && specs.length > 0) throw new Error(`Planner cannot create sibling replacement work while unresolved Task(s) lack a graph resolution: ${uncovered.map(task => task.id).join(', ')}. Correct next_tasks by adding resolution: {"path":"same_job_dependency","targetTaskId":"<unresolved original task id>","rootCause":"<evidence>","solution":"<how new task resolves original>"} to each relevant recovery Task. The targetTaskId must refer to the FAILED/BLOCKED original, not the new Task. Do not bypass this check or mark work satisfied without evidence.`);
 }
 
 export function parsePlannerOutput(output: string): PlannerResult {
