@@ -92,7 +92,7 @@ async function finishPlanner(
       if (fresh.status !== 'PLANNING' || fresh.executionId !== executionId) return;
       const attempt = fresh.attempt ?? 0;
       const maxAttempts = fresh.maxAttempts ?? (fresh.manualPlanning ? 1 : 3);
-      retry = attempt < maxAttempts;
+      retry = attempt < maxAttempts && !message.startsWith('Planner JSON correction failed after one retry:');
       fresh.status = retry ? 'PLANNING' : 'FAILED';
       fresh.retryFeedback = message;
       fresh.error = message;
