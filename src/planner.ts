@@ -471,8 +471,8 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
     const prompt = (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
-    return await new Promise<PlannerResult>((resolve, reject) => {
-      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', prompt], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
+    const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
+      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '';
       let finalMessage = '';
       let stderrTail = '';
@@ -492,8 +492,15 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         if (stdoutBuffer) consume(stdoutBuffer);
         if (code !== 0) { reject(new Error(stderrTail.trim() || 'Planner agent runtime exited ' + code)); return; }
         if (!finalMessage) { reject(new Error('Planner agent returned no final message')); return; }
-        try { resolve(parsePlannerOutput(finalMessage)); } catch (error) { reject(error); }
+        resolve(finalMessage);
       });
     });
+    const first = await runAgent(prompt);
+    try { return parsePlannerOutput(first); }
+    catch (error) {
+      if (signal.aborted) throw error;
+      const correction = `${prompt}\n\n## Format correction (one retry only)\nYour previous final response was not valid Planner JSON. Error: ${error instanceof Error ? error.message : String(error)}\nPrevious response (possibly truncated):\n${first.slice(0, 12000)}\nReturn exactly one valid JSON object conforming to the Planner contract. No prose, no second JSON object.`;
+      return parsePlannerOutput(await runAgent(correction));
+    }
   }
 }
