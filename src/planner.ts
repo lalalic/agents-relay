@@ -58,7 +58,7 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
   const unblocked = job.tasks.filter(task => ['DRAFT', 'QUEUED', 'UNBLOCKED'].includes((task as Task & { state: string }).state) && task.unblock && !consumed.has(task.id));
   const hasUnblock = unblocked.length > 0 || Boolean(job.changeCycle && !job.changeCycle.consumedByPlannerTaskId);
   const decision = dispatchPlannerTrigger({
-    manualPlan: manual,
+    manualPlan: manual && !hasUnblock,
     hasUnblock,
     scheduledRun: Boolean(job.schedule?.currentRunSlot),
     initialPlan: (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner'),

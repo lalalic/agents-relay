@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2.js';
 import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 import type { Job } from '../types.js';
-import { isEffectivelyBlocked, unconsumedUnblockTrigger } from '../unblock.js';
+import { isEffectivelyBlocked, unblockNeedsNewPlan, unconsumedUnblockTrigger } from '../unblock.js';
 
 export type PlannerOrchestrationState =
   | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_seed' | 'check_planner'
@@ -61,7 +61,7 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     legacyPlanningPending: job.initialPlanning?.status === 'pending',
     recoverablePendingPlan,
     hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),
-    noActivePlanner: !scopedPlans.some(plan => plan.status === 'PLANNING'),
+    noActivePlanner: unblockNeedsNewPlan(job) || !unconsumedUnblockTrigger(job) ? !scopedPlans.some(plan => plan.status === 'PLANNING') : false,
     noBlockedWork: Boolean(unconsumedUnblockTrigger(job)) || !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),
     resolutionOwnedByTroubleshooter: scopedTasks.some(task => task.kind !== 'planner' && task.resolution?.owner === 'troubleshooter' && ['active', 'waiting'].includes(task.resolution.state)),

@@ -31,3 +31,11 @@ test('unconsumed unblock bypasses empty successful manual continuation gate', ()
   assert.equal(facts.continuationMaterialized,true);
   assert.equal(decidePlannerOrchestration(facts).target,'created');
 });
+
+
+test('terminal failed unblock Plan pauses automatic retry until manually requested', () => {
+  const job={executionMode:'autonomous',tasks:[{id:'30',kind:'work',state:'DRAFT',unblock:{event:'task.unblocked',at:'2026-10-15T01:20:24Z',source:'cli',reason:'retry',baseline:{blockedAt:'2026-10-15T01:10:00Z'}}}],plans:[{id:'plan-8',round:8,status:'FAILED',trigger:{source:'unblock',taskIds:['30']},objectiveStatus:'in_progress'}]};
+  const facts=plannerOrchestrationFacts(job,false);
+  assert.equal(facts.noActivePlanner,false);
+  assert.equal(decidePlannerOrchestration(facts).target,'wait');
+});

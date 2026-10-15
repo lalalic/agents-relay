@@ -49,6 +49,15 @@ export function unconsumedUnblockTrigger(job: Job): PlanTrigger | undefined {
   };
 }
 
+/** A failed Planner round keeps the unblock pending, but must not spin up endless rounds. */
+export function unblockNeedsNewPlan(job: Job): boolean {
+  const pending = unconsumedUnblockTrigger(job);
+  if (!pending) return false;
+  const latest = job.plans?.at(-1);
+  return !(latest?.status === 'FAILED' && latest.trigger.source === 'unblock'
+    && latest.trigger.taskIds?.some(id => pending.taskIds?.includes(id)));
+}
+
 export async function unblockAutonomousTasks(options: { store: DurableStore; job: Job; tasks: Task[]; trigger: UnblockSource; now?: string }): Promise<PlanTrigger> {
   const { store, job, trigger } = options;
   const tasks = options.tasks.filter(isEffectivelyBlocked);
