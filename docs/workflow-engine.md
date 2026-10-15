@@ -8,6 +8,8 @@ by Relay. There is no generated JSON/YAML workflow definition.
 The working tree contains one current canonical graph for each workflow. Graph history and prior formats are retrieved from Git commits or tags rather than kept as parallel versioned files.
 Canonical workflow filenames and graph identities must not carry `v1`, `v2`, or similar version suffixes. Git commits, tags, and history are the versioning mechanism; callers always reference the stable canonical graph name.
 
+For the cross-graph unblock, Planner validation/retry, and Task resolution narrative, see [Unblock and resolution workflow](unblock-resolution-workflow.md) and its [end-to-end diagram](diagrams/unblock-resolution-end-to-end.mmd). These are explanatory, not executable workflow definitions.
+
 Production durable lifecycle graphs:
 
 - `workflow/job-lifecycle.mmd`

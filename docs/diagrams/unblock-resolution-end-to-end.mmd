@@ -1,0 +1,39 @@
+flowchart TD
+  blocked["Task BLOCKED"]
+  source{"Unblock source"}
+  cli["CLI / blocker Job resolution"]
+  review["Interactive review decision"]
+  verify{"Task still blocked and target valid?"}
+  reject["Reject / no state mutation"]
+  atomic["Atomic Task snapshot mutation: record baseline, reason, time, task.unblocked"]
+  mode{"Job executionMode"}
+  fixed["Fixed: Task QUEUED; reset execution/lease and extend retry budget"]
+  queued["Scheduler claims work"]
+  running["RUNNING"]
+  draft["Autonomous: Task DRAFT, keep unblock evidence; no direct dispatch"]
+  wake["Emit task.unblocked + Job wake; Reconciler"]
+  guard{"Planner orchestration gates"}
+  wait["Wait: active work/plan, troubleshooter ownership or failed unblock round"]
+  plan["Plan PLANNING; trigger unblock"]
+  model["Planner reads Job, unresolved Tasks, prior Plans and retry_feedback"]
+  validate{"Parse + hierarchy + resolution ownership + progress + materialization validation"}
+  retry{"Remaining attempts in same Plan?"}
+  feedback["Save retryFeedback; retry same Plan (bounded)"]
+  fail["Plan FAILED; retain unblock evidence; stop automatic new rounds"]
+  commit["Atomic Plan SUCCEEDED + resolution ownership + children"]
+  supersede["Supersede old unblocked Task when applicable"]
+  next["New child Task queue / dependency reconciliation"]
+  source --> cli --> verify
+  blocked --> review
+  blocked --> source
+  verify -->|no| reject
+  verify -->|yes| atomic --> mode
+  mode -->|fixed| fixed --> queued --> running
+  mode -->|autonomous| draft --> wake --> guard
+  review -->|separate interactive invocation graph; decided revision| fixed
+  guard -->|not eligible| wait
+  guard -->|eligible| plan --> model --> validate
+  validate -->|rejected| retry
+  retry -->|yes| feedback --> model
+  retry -->|no| fail
+  validate -->|accepted| commit --> supersede --> next --> queued

@@ -9,6 +9,8 @@ The canonical V2 architecture contract is
 [DESIGN-PRINCIPLES.md](DESIGN-PRINCIPLES.md). README sections below describe
 the runtime; they do not replace that contract.
 
+For authoritative Task unblock, Resolution ownership, Planner rejection feedback, and failure recovery, see [Unblock and Resolution workflow](docs/unblock-resolution-workflow.md) with its [Mermaid diagram](docs/diagrams/unblock-resolution-end-to-end.mmd).
+
 ## V2 architecture
 
 \`\`\`mermaid
