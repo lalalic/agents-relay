@@ -465,7 +465,6 @@ function parsePlannerAgentMessage(line: string): string | undefined {
 export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
-    const resolvedPlanner = context.executionContext?.agents.find(agent => agent.name === 'planner')?.path;
     const effectivePlanner = context.executionContext ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, context.executionContext.project.path) : undefined;
     const instructions = effectivePlanner?.content ?? await readFile(this.agentFile, 'utf8');
     const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
@@ -473,22 +472,16 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const prompt = (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
-      let stdoutBuffer = '';
-      let finalMessage = '';
-      let stderrTail = '';
+      let stdoutBuffer = '', finalMessage = '', stderrTail = '';
       const consume = (line: string): void => {
-        const message = parsePlannerAgentMessage(line);
-        if (message) finalMessage = message;
+        const message = parsePlannerAgentMessage(line); if (message) finalMessage = message;
       };
       child.stdout?.on('data', (chunk: Buffer) => {
-        stdoutBuffer += chunk.toString();
-        const lines = stdoutBuffer.split(/\r?\n/);
-        stdoutBuffer = lines.pop() ?? '';
-        for (const line of lines) consume(line);
+        stdoutBuffer += chunk.toString(); const lines = stdoutBuffer.split(/\r?\n/);
+        stdoutBuffer = lines.pop() ?? ''; for (const line of lines) consume(line);
       });
       child.stderr?.on('data', (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-16384); });
-      child.on('error', reject);
-      child.on('close', code => {
+      child.on('error', reject); child.on('close', code => {
         if (stdoutBuffer) consume(stdoutBuffer);
         if (code !== 0) { reject(new Error(stderrTail.trim() || 'Planner agent runtime exited ' + code)); return; }
         if (!finalMessage) { reject(new Error('Planner agent returned no final message')); return; }
@@ -498,8 +491,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const first = await runAgent(prompt);
     try { return parsePlannerOutput(first); }
     catch (error) {
-      if (signal.aborted) throw error;
-      const correction = `${prompt}\n\n## Format correction (one retry only)\nYour previous final response was not valid Planner JSON. Error: ${error instanceof Error ? error.message : String(error)}\nPrevious response (possibly truncated):\n${first.slice(0, 12000)}\nReturn exactly one valid JSON object conforming to the Planner contract. No prose, no second JSON object.`;
+      if (signal.aborted) throw error; const correction = `${prompt}\n\n## Format correction (one retry only)\nYour previous final response was not valid Planner JSON. Error: ${error instanceof Error ? error.message : String(error)}\nPrevious response (possibly truncated):\n${first.slice(0, 12000)}\nReturn exactly one valid JSON object conforming to the Planner contract. No prose, no second JSON object.`;
       try { return parsePlannerOutput(await runAgent(correction)); }
       catch (retryError) { throw new Error(`Planner JSON correction failed after one retry: ${retryError instanceof Error ? retryError.message : String(retryError)}`); }
     }
