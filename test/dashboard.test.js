@@ -371,7 +371,7 @@ test('job ordering keeps every non-terminal job ahead of every terminal job', ()
 
 test('job row selection uses repository, PR, and durable id as one UI identity', () => {
   assert.match(dashboardHtml, /function jobSelectionKey\(job\)/);
-  assert.match(dashboardHtml, /String\(job\.repository\|\|''\)\+'\|'\+String\(job\.prNumber\|\|''\)\+'\|'\+String\(job\.id\|\|''\)/);
+  assert.match(dashboardHtml, /String\(job\.repository\|\|''\)\+'\|'\+String\(job\.id\|\|''\)/);
   assert.match(dashboardHtml, /function jobForSelection\(selection\).*jobSelectionKey\(job\)===selection.*job\.id===selection/);
   assert.match(dashboardHtml, /row\.setAttribute\('aria-current',String\(jobSelectionKey\(job\)===selectedJob\)\)/);
   assert.match(dashboardHtml, /row\.addEventListener\('click',\(\)=>selectJob\(job\)\)/);
@@ -919,4 +919,11 @@ test('selectJob copies the complete actual title for local and GitHub Jobs', () 
   assert.doesNotMatch(copied.at(-1), /pr#0/);
   sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 280, localMerge: { sourceRef: 'refs/heads/local-8' }, title: 'Full GitHub Job title' });
   assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-8/pr#280: Full GitHub Job title');
+});
+
+
+test('dashboard deduplicates jobs by repository and durable ID while retaining PR identity', () => {
+  assert.match(dashboardHtml, /function jobSelectionKey\(job\)\{return job\?String\(job.repository\|\|''\)\+'\|'\+String\(job.id\|\|''\)/);
+  assert.match(dashboardHtml, /jobs=dedupeJobs\(Array.isArray\(discovered\)\?discovered:\[\]\)/);
+  assert.match(dashboardHtml, /prNumber:Number\(preferred.prNumber\|\|0\)>0\?preferred.prNumber:other.prNumber/);
 });
