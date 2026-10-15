@@ -37,7 +37,7 @@ function belongsToCurrentRun(job: Job, task: Task): boolean {
   return !slot || task.createdAt >= slot;
 }
 
-const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED', 'UNBLOCKED']);
+const ACTIVE_RECOVERY_STATES = new Set(['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED']);
 
 function recoveryTargetsTask(recovery: Task, original: Task): boolean {
   if (recovery.agentName !== 'troubleshooter') return false;

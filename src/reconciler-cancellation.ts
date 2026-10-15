@@ -17,7 +17,7 @@ export async function cancelActiveTasks(
       plan.updatedAt = new Date().toISOString();
       await store.savePlan(plan);
     }
-    for (const task of job.tasks.filter(item => item.kind !== 'planner' && !['SUCCEEDED', 'FAILED', 'UNBLOCKED', 'CANCELLED'].includes(item.state))) {
+    for (const task of job.tasks.filter(item => item.kind !== 'planner' && !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(item.state))) {
       cancelExecutionGeneration(job.id, task.id, task.executionId ?? task.executionHistory?.at(-1)?.id);
       cancelPlanner(task.id);
       await applyTaskCancelAction(task, reason);

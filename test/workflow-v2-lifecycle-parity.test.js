@@ -37,9 +37,8 @@ const taskCases = [
   ['RUNNING','task.failed',{},'FAILED'],
   ['RUNNING','watchdog.failed',{},'FAILED'],
   ['RUNNING','task.cancelled',{},'CANCELLED'],
-  ['BLOCKED','task.unblocked',{},'UNBLOCKED'],
+  ['BLOCKED','task.unblocked',{},'QUEUED'],
   ['BLOCKED','cancel',{},'CANCELLED'],
-  ['UNBLOCKED','retry',{},'QUEUED'],
   ['FAILED','retry',{},'QUEUED'],
   ['FAILED','task.started',{recoverableExecution:true},'RUNNING'],
   ['FAILED','task.completed',{recoverableExecution:true},'SUCCEEDED'],
@@ -67,7 +66,7 @@ const taskSource = readFileSync(new URL('../workflow/task-lifecycle.mmd', import
 const jobSource = readFileSync(new URL('../workflow/job-lifecycle.mmd', import.meta.url), 'utf8');
 
 const taskRuntime = new GraphRuntime(taskSource, {
-  states: new Set(['DRAFT','QUEUED','RUNNING','BLOCKED','UNBLOCKED','SUCCEEDED','FAILED','CANCELLED']),
+  states: new Set(['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED']),
   guards: {
     dependenciesSatisfied: boolGuard('dependenciesSatisfied'),
     dependenciesUnsatisfied: boolGuard('dependenciesUnsatisfied'),
@@ -76,6 +75,7 @@ const taskRuntime = new GraphRuntime(taskSource, {
     recoverableExecution: boolGuard('recoverableExecution'),
     troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
     retryAvailable: boolGuard('retryAvailable'),
+    autonomousJob: boolGuard('autonomousJob'),
   },
   events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen']),
   actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','effect.launchTask']),

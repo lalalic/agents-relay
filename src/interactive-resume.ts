@@ -19,7 +19,7 @@ export async function resumeInteractiveTask(
         invocation.invocationId !== invocationId || invocation.revision !== revision ||
         invocation.status !== decision || !invocation.decidedAt) return job;
     // Both state transitions and retry eligibility are owned by task-lifecycle.mmd.
-    if (!tryTransitionTaskEvent(task, 'task.unblocked').accepted) {
+    if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) {
       throw new Error('Interactive Task unblock rejected by canonical lifecycle Graph');
     }
     applyTaskUnblockRetrySnapshot(task);

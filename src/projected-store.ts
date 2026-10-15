@@ -351,7 +351,7 @@ export class ProjectedDurableStore implements DurableStore {
     if (index >= 0) tasks[index] = structuredClone(task); else tasks.push(structuredClone(task));
     job.tasks = tasks;
     const value = structuredClone(task);
-    const terminal = ['SUCCEEDED', 'FAILED', 'BLOCKED', 'UNBLOCKED', 'CANCELLED'].includes(task.state);
+      const terminal = ['SUCCEEDED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(task.state);
     await this.relay.saveJobWithProjection(job, {
       idempotencyKey: `save_task:${task.jobId}:${task.id}`,
       coalesceKey: taskKey(task),

@@ -6,7 +6,7 @@ import {
   WORKFLOW_MUTATION_NAMES,
 } from './contracts.js';
 
-const TASK_STATES = ['DRAFT','QUEUED','RUNNING','BLOCKED','UNBLOCKED','SUCCEEDED','FAILED','CANCELLED'] as const;
+const TASK_STATES = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'] as const;
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean =>
@@ -40,6 +40,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   recoverableExecution: boolGuard('recoverableExecution'),
   troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
   retryAvailable: boolGuard('retryAvailable'),
+  autonomousJob: boolGuard('autonomousJob'),
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {

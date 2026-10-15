@@ -45,7 +45,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task unblock requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'update') {
       const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); const expectedUpdatedAt = task.updatedAt;
-      if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
+      if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
       if (hasArg(args, '--title')) task.title = arg(args, '--title');
       if (hasArg(args, '--adapter')) { const adapter = arg(args, '--adapter') as AdapterName; if (!['codex','chatgpt'].includes(adapter)) throw new Error('--adapter must be codex or chatgpt'); task.adapter = adapter; }
       if (hasArg(args, '--priority')) task.priority = priority(args, task.priority ?? job.priority ?? 'P2');
@@ -102,7 +102,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     return;
   }
   const expectedUpdatedAt = task.updatedAt;
-  if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
+  if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${id} is ${task.state}; durable execution fields are immutable in this state`);
   if (hasArg(args, '--adapter')) {
     const adapter = arg(args, '--adapter') as AdapterName;
     if (!['codex', 'chatgpt'].includes(adapter)) throw new Error('--adapter must be codex or chatgpt');

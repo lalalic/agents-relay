@@ -1,7 +1,7 @@
 import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import type { AgentRegistration, Job, Plan, Task } from './types.js';
+import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
 import type { PullRequestState } from './store.js';
 import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
 import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
@@ -193,11 +193,13 @@ export class SQLiteRelayStore implements RelayStore {
   async loadJob(jobId: string): Promise<Job | null> {
     this.assertScope(jobId);
     const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
-    return row?.json ? normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job) : null;
+    if (!row?.json) return null; const job = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
+    job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task, job.executionMode));
+    return job;
   }
   async listJobs(): Promise<Job[]> {
     const rows = this.db.prepare(this.scopeJobId ? 'SELECT json FROM job_snapshot WHERE job_id=? ORDER BY job_id' : 'SELECT json FROM job_snapshot ORDER BY job_id').all(...(this.scopeJobId ? [this.scopeJobId] : [])) as unknown as Array<{ json: string }>;
-    return rows.map(row => normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job));
+    return rows.map(row => { const job = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job); job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task, job.executionMode)); return job; });
   }
   async saveJob(job: Job): Promise<void> {
     if (!this.scopeJobId) { this.writeJobSnapshot(job, new Date().toISOString()); return; }
@@ -219,6 +221,7 @@ export class SQLiteRelayStore implements RelayStore {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
       if (!row?.json) throw new Error(`Local authoritative Job ${jobId} not found`);
       const current = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
+      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task, current.executionMode));
       const before = JSON.stringify(current);
       const next = mutation(current);
       if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');

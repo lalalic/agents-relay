@@ -1,4 +1,4 @@
-import { Job, Plan, Task } from './types.js';
+import { Job, Plan, Task, normalizeLegacyTaskLifecycle } from './types.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
@@ -104,7 +104,7 @@ export class InMemoryStore implements DurableStore {
       for (const task of job.tasks) this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task));
     }
   }
-  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId); return job; }
+  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId).map(task => normalizeLegacyTaskLifecycle(task, job.executionMode)); return job; }
   async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
   async appendPlan(plan: Plan): Promise<void> { const key = `${PLAN_MARKER}:${plan.jobId}:${plan.id}`; const existing = this.values.get(key); if (existing) { const current = parsePlan(existing); if (current && samePlanDefinition(current, plan)) return; throw new DurableDefinitionConflictError('plan', 'append_plan', plan.jobId, plan.id, plan, current ?? null, current ? planDefinitionDivergence(current, plan) : []); } this.values.set(key, renderPlanComment(plan)); }
   async savePlan(plan: Plan): Promise<void> { this.values.set(`${PLAN_MARKER}:${plan.jobId}:${plan.id}`, renderPlanComment(plan)); }

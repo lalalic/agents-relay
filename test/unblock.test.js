@@ -11,7 +11,7 @@ const at='2026-09-29T09:00:00.000Z';
 const baseTask=(id,state='BLOCKED')=>({jobId:'dependent',id,kind:'work',priority:'P0',storySize:'S',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:'release 4.4.9',output:{kind:'task_pr'},continuation:null,continuationDeliveredAt:null,state,attempt:1,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:'old release blockers',timeoutMs:300000,createdAt:at,updatedAt:at,blockedBaseline:{blockedAt:at,headSha:'c7bd3d6',reason:'old release blockers'}});
 const makeJob=(tasks,mode='autonomous')=>({id:'dependent',title:'release',objective:'publish',priority:'P0',executionMode:mode,autoMerge:false,reviewEnabled:false,prNumber:6,repository:'lalalic/team-mate',state:'ACTIVE',continuation:null,headSha:'7555d05',createdAt:at,updatedAt:at,tasks});
 
-test('explicit unblock transitions to UNBLOCKED and returns Plan trigger facts without retrying the old task', async()=>{
+test('explicit autonomous unblock transitions to planner-waiting DRAFT with durable event metadata', async()=>{
   const blocked=baseTask('public-release-4-4-9');
   const changed={...baseTask('media','SUCCEEDED'),attempt:1,error:null,result:{summary:'fresh 4.4.9 screenshots and demo required'},updatedAt:'2026-09-29T09:50:22.000Z'};
   const store=new InMemoryStore(makeJob([blocked,changed]));
@@ -20,7 +20,8 @@ test('explicit unblock transitions to UNBLOCKED and returns Plan trigger facts w
   assert.equal(result.replanning,true);
   const saved=await store.load('dependent');
   const release=saved.tasks.find(t=>t.id==='public-release-4-4-9');
-  assert.equal(release.state,'UNBLOCKED');
+  assert.equal(release.state,'DRAFT');
+  assert.equal(release.unblock.event,'task.unblocked');
   assert.equal(release.unblock.source,'cli');
   assert.equal(saved.changeCycle,undefined);
   assert.deepEqual(result.planTrigger.blockedHeadShas,['c7bd3d6']);
@@ -57,7 +58,7 @@ test('blocker Job resolution sends autonomous BLOCKED dependents to replanning, 
   const resolvedBlocked=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker',dependentStore:()=>blockedStore,resolution:'verified',now:'2026-09-29T10:00:00.000Z'});
   assert.deepEqual(resolvedBlocked.unblocked,[{repository:'lalalic/team-mate',prNumber:6,jobId:'dependent',taskId:'release'}]);
   const blockedResult=await blockedStore.load('dependent');
-  assert.equal(blockedResult.tasks[0].state,'UNBLOCKED');
+  assert.equal(blockedResult.tasks[0].state,'DRAFT');
   assert.equal(blockedResult.tasks[0].unblock.source,'blocker_job');
   assert.equal(blockedResult.changeCycle,undefined);
 
@@ -72,7 +73,7 @@ test('blocker Job resolution sends autonomous BLOCKED dependents to replanning, 
 });
 
 
-test('blocker resolution resumes a fixed Job interrupted after durable UNBLOCKED', async()=>{
+test('blocker resolution resumes a fixed Job interrupted after durable unblock', async()=>{
   const blockerJob={id:'blocker-interrupted',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const blocked={...baseTask('interrupted'),attempt:2,maxAttempts:3};
@@ -80,19 +81,19 @@ test('blocker resolution resumes a fixed Job interrupted after durable UNBLOCKED
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker-interrupted',dependentStore,dependentJobId:'dependent',dependentTaskId:'interrupted',resolutionMode:'verified',now:at});
 
   const durable=(await dependentStore.load('dependent')).tasks[0];
-  durable.state='UNBLOCKED';
-  durable.unblock={at:'2026-09-29T09:59:00.000Z',source:'blocker_job',reason:'blocker cleared',baseline:{blockedAt:at},currentHeadSha:'abc'};
+  durable.state='QUEUED';
+  durable.unblock={event:'task.unblocked',at:'2026-09-29T09:59:00.000Z',source:'blocker_job',reason:'blocker cleared',baseline:{blockedAt:at},currentHeadSha:'abc'};
   await dependentStore.saveTask(durable);
 
   const resolved=await resolveBlockerDependencies({blockerStore,blockerJobId:'blocker-interrupted',dependentStore:()=>dependentStore,resolution:'verified',now:'2026-09-29T10:00:00.000Z'});
   assert.equal(resolved.resumed,1);
   const saved=(await dependentStore.load('dependent')).tasks[0];
   assert.equal(saved.state,'QUEUED');
-  assert.equal(saved.maxAttempts,6);
+  assert.equal(saved.maxAttempts,3);
   assert.equal(saved.error,null);
 });
 
-test('fixed authoritative unblock uses distinct unblock retry semantics', async()=>{
+test('fixed authoritative unblock queues directly with a reset retry budget', async()=>{
   const blocked={...baseTask('fixed-release'),attempt:3,maxAttempts:3};
   const store=new InMemoryStore(makeJob([blocked],'fixed'));
   const current=await store.load('dependent');
@@ -100,24 +101,24 @@ test('fixed authoritative unblock uses distinct unblock retry semantics', async(
   assert.equal(result.replanning,false);
   const saved=(await store.load('dependent')).tasks[0];
   assert.equal(saved.state,'QUEUED');
-  assert.equal(saved.maxAttempts,6);
+  assert.equal(saved.maxAttempts,3);
   assert.equal(saved.unblock.source,'cli');
   assert.equal(saved.error,null);
 });
 
-test('UNBLOCKED tasks do not spawn a troubleshooter before Planner', async()=>{
+test('planner-waiting DRAFT tasks do not spawn a troubleshooter before Planner', async()=>{
   const blocked=baseTask('release');
   const store=new InMemoryStore(makeJob([blocked]));
   const current=await store.load('dependent');
   await unblockTask({store,job:current,task:current.tasks[0],trigger:{source:'cli',reason:'facts changed'},now:'2026-09-29T10:00:00.000Z'});
   const saved=await store.load('dependent');
-  assert.equal(saved.tasks[0].state,'UNBLOCKED');
+  assert.equal(saved.tasks[0].state,'DRAFT');
   assert.equal(saved.tasks[0].unblock.source,'cli');
   assert.deepEqual(pendingTroubleshooterTasks(saved),[]);
 });
 
 
-test('UNBLOCKED history no longer blocks implementation completion accounting', async()=>{
+test('unblock history no longer blocks implementation completion accounting', async()=>{
   const blocked=baseTask('old-release');
   const replacement={...baseTask('replacement','SUCCEEDED'),error:null,result:{summary:'replacement complete'},blockedBaseline:undefined};
   const store=new InMemoryStore(makeJob([blocked,replacement]));
@@ -127,7 +128,7 @@ test('UNBLOCKED history no longer blocks implementation completion accounting', 
   assert.deepEqual(implementationTasks(saved).map(t=>t.id),['replacement']);
 });
 
-test('autonomous reconcile consumes UNBLOCKED evidence into exactly one durable Plan', async()=>{
+test('autonomous reconcile consumes unblock evidence into exactly one durable Plan', async()=>{
   const priorPlan={...baseTask('plan-1','SUCCEEDED'),kind:'planner',agentName:'planner',error:null,plannerResult:{objective_status:'in_progress',assessment:'release still blocked',next_tasks:[]},planningRound:1};
   const blocked={...baseTask('release'),planningDecisionId:'plan-1'};
   const store=new InMemoryStore(makeJob([priorPlan,blocked]));

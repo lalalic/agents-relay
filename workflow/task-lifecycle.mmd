@@ -4,7 +4,6 @@ draft["state: DRAFT"]
 queued["state: QUEUED"]
 running["state: RUNNING"]
 blocked["state: BLOCKED"]
-unblocked["state: UNBLOCKED"]
 succeeded["state: SUCCEEDED"]
 failed["state: FAILED"]
 cancelled["state: CANCELLED"]
@@ -76,6 +75,8 @@ completeClearError["action: mutation.clearError"]
 completeClearReason["action: mutation.clearFailureReason"]
 unblockRetryClearError["action: mutation.clearError"]
 unblockRetryClearReason["action: mutation.clearFailureReason"]
+unblockDraftClearError["action: mutation.clearError"]
+unblockDraftClearReason["action: mutation.clearFailureReason"]
 failedRetryClearError["action: mutation.clearError"]
 failedRetryClearReason["action: mutation.clearFailureReason"]
 recoverStartClearError["action: mutation.clearError"]
@@ -179,12 +180,15 @@ leaseFailRunningClearExecution --> failed
 running -->|on: task.cancelled| cancelled
 running -->|on: cancel| cancelled
 
-blocked -->|on: task.unblocked| unblocked
-blocked -->|on: cancel| cancelled
-
-unblocked -->|on: retry| unblockRetryClearError
+autonomousJob["guard: autonomousJob"]
+blocked -->|on: task.unblocked| autonomousJob
+autonomousJob -->|true| unblockDraftClearError
+unblockDraftClearError --> unblockDraftClearReason
+unblockDraftClearReason --> draft
+autonomousJob -->|false| unblockRetryClearError
 unblockRetryClearError --> unblockRetryClearReason
 unblockRetryClearReason --> queued
+blocked -->|on: cancel| cancelled
 
 failed -->|on: queue| depSat
 failed -->|on: retry| failedRetryClearError

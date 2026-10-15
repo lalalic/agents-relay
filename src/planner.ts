@@ -54,8 +54,8 @@ export interface ObjectivePlanner { plan(context: PlannerContext, signal: AbortS
 export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeoutMs?: number; now?: string };
 
 function plannerTrigger(job: Job, manual = false): PlanTrigger {
-  const consumed = new Set((job.plans ?? []).flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
-  const unblocked = job.tasks.filter(task => task.state === 'UNBLOCKED' && task.unblock && !consumed.has(task.id));
+  const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
+  const unblocked = job.tasks.filter(task => ['DRAFT', 'QUEUED', 'UNBLOCKED'].includes((task as Task & { state: string }).state) && task.unblock && !consumed.has(task.id));
   const hasUnblock = unblocked.length > 0 || Boolean(job.changeCycle && !job.changeCycle.consumedByPlannerTaskId);
   const decision = dispatchPlannerTrigger({
     manualPlan: manual,

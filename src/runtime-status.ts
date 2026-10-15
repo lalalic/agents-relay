@@ -12,7 +12,7 @@ export function implementationTasks(job: Job): Task[] {
     && task.agentName !== 'reviewer'
     && task.agentName !== 'troubleshooter'
     && !isSuperseded(task)
-    && task.state !== 'UNBLOCKED');
+    && task.state !== 'DRAFT');
 }
 
 export function implementationComplete(job: Job): boolean {

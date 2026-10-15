@@ -115,16 +115,16 @@ export async function resolveBlockerDependencies(options: {
       loadError = error instanceof Error ? error.message : String(error);
     }
 
-    const targetMatches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'UNBLOCKED'].includes(task.state) && task.attempt === relation.blockedAttempt;
+    const targetMatches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'QUEUED'].includes(task.state) && task.attempt === relation.blockedAttempt;
     let note = 'dependent task requeued';
     const decision = await dispatchBlockerResolution({
       resolutionAllowed: !(mode === 'verified' && options.resolution !== 'verified'),
       targetMatches,
       autonomousJob: targetJob?.executionMode === 'autonomous',
       effectivelyBlocked: !!task && isEffectivelyBlocked(task),
-      alreadyUnblocked: task?.state === 'UNBLOCKED' && Boolean(task.unblock),
+      alreadyUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),
       isDraft: task?.state === 'DRAFT', isBlocked: task?.state === 'BLOCKED',
-      isFailed: task?.state === 'FAILED', isUnblocked: task?.state === 'UNBLOCKED',
+      isFailed: task?.state === 'FAILED', isUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),
     }, async actionId => {
       if (!targetJob || !task) throw new Error('Blocker graph requested action without a matching dependent task');
       if (actionId === 'blocker.autonomousUnblock') {

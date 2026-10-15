@@ -19,7 +19,7 @@ import { nextScheduleRun, scheduleBucket } from './scheduler.js';
  * not lifecycle storage. An explicit one-time import must use RelayStore directly.
  */
 const TASK_STATE_ORDER: Record<Task['state'], number> = {
-  DRAFT: 0, QUEUED: 1, UNBLOCKED: 2, RUNNING: 3, BLOCKED: 4,
+  DRAFT: 0, QUEUED: 1, RUNNING: 2, BLOCKED: 3,
   SUCCEEDED: 5, FAILED: 5, CANCELLED: 5,
 };
 

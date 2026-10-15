@@ -55,8 +55,10 @@ function applyTaskRetrySnapshot(task: Task, policy: TaskRetryPolicy = {}): void 
 
 /** Fixed-job authoritative unblock continuation, applied inside one Job snapshot mutation. */
 export function applyTaskUnblockRetrySnapshot(task: Task): void {
-  if (!tryTransitionTaskEvent(task, 'retry').accepted) throw lifecycleRejection(task, 'retryable after unblock');
-  task.maxAttempts = extendRetryBudget(task);
+  if (task.state === 'BLOCKED' && !tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) throw lifecycleRejection(task, 'retryable after unblock');
+  if (!['QUEUED', 'DRAFT'].includes(task.state)) throw lifecycleRejection(task, 'retryable after unblock');
+  task.attempt = 0;
+  task.maxAttempts = Math.max(3, task.maxAttempts);
   clearExecution(task);
   delete task.blockedBy;
 }
@@ -72,8 +74,10 @@ export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy =
 
 /** Fixed-job authoritative unblock continuation: legality is owned by the lifecycle graph. */
 export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
-  await transitionTaskAction(task, 'retry', 'retryable after unblock');
-  task.maxAttempts = extendRetryBudget(task);
+  if (task.state === 'BLOCKED') await transitionTaskAction(task, 'task.unblocked', 'retryable after unblock', { autonomousJob: false });
+  if (!['QUEUED', 'DRAFT'].includes(task.state)) throw lifecycleRejection(task, 'retryable after unblock');
+  task.attempt = 0;
+  task.maxAttempts = Math.max(3, task.maxAttempts);
   clearExecution(task);
   delete task.blockedBy;
   return task;

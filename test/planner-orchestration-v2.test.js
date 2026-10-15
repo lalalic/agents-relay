@@ -23,3 +23,11 @@ test('unconsumed unblock permits planning despite an unrelated BLOCKED task', ()
   job.plans.push({id:'plan-4',round:4,status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']},objectiveStatus:'in_progress'});
   assert.equal(plannerOrchestrationFacts(job,false).noBlockedWork,false);
 });
+
+
+test('unconsumed unblock bypasses empty successful manual continuation gate', () => {
+  const job = {executionMode:'autonomous',tasks:[{id:'30',kind:'work',state:'DRAFT',planningDecisionId:'plan-3',unblock:{event:'task.unblocked',at:'2026-10-15T01:20:24Z',source:'cli',reason:'retry',baseline:{blockedAt:'2026-10-15T01:10:00Z'}}}],plans:[{id:'plan-7',round:7,status:'SUCCEEDED',trigger:{source:'manual'},objectiveStatus:'in_progress'}]};
+  const facts = plannerOrchestrationFacts(job,false);
+  assert.equal(facts.continuationMaterialized,true);
+  assert.equal(decidePlannerOrchestration(facts).target,'created');
+});

@@ -155,7 +155,7 @@ test('external decision releases a BLOCKED interactive Task and requeues the sam
   assert.equal(resumed.interactiveInvocation.status, 'changes_requested');
   assert.equal(resumed.interactiveInvocation.feedback, 'revise narration');
   assert.equal((await fixture.store.loadJob(job.id)).tasks.length, 1);
-  assert.ok(resumed.maxAttempts > task.maxAttempts);
+  assert.equal(resumed.attempt, 0);
   assert.equal((await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'approved'))).reconcile, false);
   await fixture.dispose();
 });

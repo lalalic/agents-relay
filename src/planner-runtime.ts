@@ -10,6 +10,7 @@ import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runtime.js';
 import type { DurableStore } from './store.js';
 import { storySizeTimeoutMs, type EventRecord, type Job, type Plan } from './types.js';
+import { tryTransitionTaskEvent } from './scheduler.js';
 
 /** Activate queued planner work inside the same authoritative SQLite mutation. */
 export function activateCommittedPlannerWork(job: Job): boolean {
@@ -165,6 +166,14 @@ async function finishPlanner(
           if (!existing) current.tasks.push(structuredClone(child));
           else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
         }
+        const consumedUnblocks = new Set(durablePlan.trigger.source === 'unblock' ? durablePlan.trigger.taskIds ?? [] : []);
+        for (const task of current.tasks) {
+          if (!consumedUnblocks.has(task.id) || !task.unblock || task.state === 'CANCELLED' || durablePlan.generatedTaskIds.includes(task.id)) continue;
+          if (tryTransitionTaskEvent(task, 'cancel').accepted) {
+            task.error = `Superseded by successful unblock plan ${durablePlan.id}`;
+            task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+          }
+        }
         // Planner children are committed atomically with Job activation.
         // Otherwise the DRAFT Job is invisible to the ACTIVE-only dispatcher.
         activateCommittedPlannerWork(current);
@@ -195,6 +204,11 @@ async function finishPlanner(
         job.changeCycle.consumedByPlannerTaskId = plan.id;
         job.updatedAt = now;
         await ports.store.saveJob(job);
+      }
+      const consumedUnblocks = new Set(plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []);
+      for (const task of job.tasks) {
+        if (!consumedUnblocks.has(task.id) || !task.unblock || task.state === 'CANCELLED' || plan.generatedTaskIds.includes(task.id)) continue;
+        if (tryTransitionTaskEvent(task, 'cancel').accepted) { task.error = `Superseded by successful unblock plan ${plan.id}`; await ports.store.saveTask(task); }
       }
       for (const child of children) if (!job.tasks.some(item => item.id === child.id)) {
         const spec = result.next_tasks.find(item => item.id === child.id);

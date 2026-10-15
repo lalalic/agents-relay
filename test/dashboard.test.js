@@ -404,7 +404,7 @@ test('selected job exposes one direct durable lifecycle selector while runtime s
 });
 
 test('selected task exposes one direct durable state selector instead of retry and cancel buttons', () => {
-  assert.match(dashboardHtml, /const TASK_STATES=\['DRAFT','QUEUED','RUNNING','BLOCKED','UNBLOCKED','SUCCEEDED','FAILED','CANCELLED'\]/);
+  assert.match(dashboardHtml, /const TASK_STATES=\['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'\]/);
   assert.match(dashboardHtml, /task-state-select/);
   assert.match(dashboardHtml, /new URLSearchParams\(\{id:job\.id,task:task\.id,state,repo:job\.repository,pr:String\(job\.prNumber\)\}\)/);
   assert.doesNotMatch(dashboardHtml, /taskActionButton\(task,'retry'/);

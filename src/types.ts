@@ -1,7 +1,7 @@
 import { assertV2StateTransition, jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
 export type JobLifecycleState = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'FAILED' | 'REVIEWING' | 'MERGE_PENDING' | 'MERGED' | 'COMPLETED' | 'CANCELLED';
-export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'UNBLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type JobTag = { description: string; values: Record<string, string> };
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 export type WorkerAdapterName = 'codex' | 'chatgpt';
@@ -85,7 +85,7 @@ export type BlockerResolutionMode = 'merge' | 'verified';
 export type BlockerReference = { repository: string; prNumber: number; jobId: string };
 export type TaskBlockerReference = BlockerReference & { blockedAttempt: number; registeredAt: string };
 export type BlockedBaseline = { blockedAt: string; headSha?: string; reason?: string };
-export type TaskUnblockRecord = { at: string; source: 'cli' | 'blocker_job'; reason: string; baseline: BlockedBaseline; currentHeadSha?: string; facts?: string[]; blockerJobId?: string; resolution?: 'merge' | 'verified' };
+export type TaskUnblockRecord = { event: 'task.unblocked'; at: string; source: 'cli' | 'blocker_job'; reason: string; baseline: BlockedBaseline; currentHeadSha?: string; facts?: string[]; blockerJobId?: string; resolution?: 'merge' | 'verified' };
 export type TaskResolutionPath = 'exact_original_retry' | 'same_job_dependency' | 'blocker_job_dependency' | 'escalation_gate' | 'cancel_supersede';
 export type TaskResolutionOwner = 'planner' | 'troubleshooter' | 'blocker-job' | 'human' | 'external' | null;
 export type TaskResolutionState = 'proposed' | 'active' | 'waiting' | 'resolved' | 'cancelled';
@@ -156,6 +156,16 @@ export type Task = {
   unblock?: TaskUnblockRecord;
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
 };
+/** Normalize snapshots written before UNBLOCKED was removed from the lifecycle graph. */
+export function normalizeLegacyTaskLifecycle(task: Task, executionMode: ExecutionMode): Task {
+  const legacy = task as Task & { state: string };
+  if ((legacy as { state: string }).state !== 'UNBLOCKED') return task;
+  legacy.state = executionMode === 'autonomous' ? 'DRAFT' : 'QUEUED';
+  // Preserve the historical execution count when upgrading old snapshots.
+  task.maxAttempts = Math.max(3, task.maxAttempts ?? 0, task.attempt + 1);
+  task.unblock = task.unblock ? { ...task.unblock, event: 'task.unblocked' } : undefined;
+  return task;
+}
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
 export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };

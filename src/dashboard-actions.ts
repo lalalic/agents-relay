@@ -49,9 +49,7 @@ export function dashboardTaskSetState(store: DurableStore): (jobId: string, task
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.state === state) return job;
-    if (task.state === 'BLOCKED' && state !== 'CANCELLED') throw new Error(`Task ${task.id} is BLOCKED; only authoritative unblock may transition it to UNBLOCKED`);
-    if (state === 'UNBLOCKED') throw new Error(`Task ${task.id} may enter UNBLOCKED only through authoritative unblock`);
-    if (task.state === 'UNBLOCKED') throw new Error(`Task ${task.id} is historical UNBLOCKED work and cannot be changed by dashboard state override`);
+    if (task.state === 'BLOCKED' && state !== 'CANCELLED') throw new Error(`Task ${task.id} is BLOCKED; only authoritative unblock may resume it`);
 
     const now = new Date().toISOString();
     const from = task.state;

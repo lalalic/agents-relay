@@ -17,7 +17,7 @@ export async function applyManagedTaskUpdate(
   const current = job.tasks.find(item => item.id === taskId);
   if (!current || proposed.id !== taskId || proposed.jobId !== jobId) throw new Error('Task update identity mismatch');
   if (current.updatedAt !== expectedUpdatedAt) throw new Error('Task changed since update preflight; refresh and retry');
-  if (['RUNNING', 'UNBLOCKED', 'SUCCEEDED', 'CANCELLED'].includes(current.state) || current.executionId || current.leaseOwner)
+  if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(current.state) || current.executionId || current.leaseOwner)
     throw new Error('Task is not mutable while active or terminal');
   if (current.attempt > 0 && current.adapter !== proposed.adapter) throw new Error('Cannot replace adapter after an execution attempt');
   if (proposed.maxAttempts < current.attempt) throw new Error('Retry budget is below execution attempts');
