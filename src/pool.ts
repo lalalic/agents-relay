@@ -9,6 +9,7 @@ import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordina
 import type { EventRecord } from './types.js';
 import { errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
+import { unconsumedUnblockTrigger } from './unblock.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -17,6 +18,7 @@ export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
+  if (job.executionMode === 'autonomous' && unconsumedUnblockTrigger(job)) return true;
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
     || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;

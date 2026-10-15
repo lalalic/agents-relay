@@ -2718,3 +2718,13 @@ test('Planner null-review first verdict persists through atomic store mutation',
   }
  }
 });
+
+test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
+  const blocked=task('25','BLOCKED');
+  const unblocked=task('30','UNBLOCKED');
+  unblocked.unblock={at:now(),source:'cli',reason:'retry',baseline:{blockedAt:now()}};
+  const value={...job([blocked,unblocked]),executionMode:'autonomous',plans:[]};
+  assert.equal(needsLifecycleReconciliation(value),true);
+  value.plans=[{id:'plan-4',trigger:{source:'unblock',taskIds:['30']}}];
+  assert.equal(needsLifecycleReconciliation(value),false);
+});
