@@ -13,7 +13,7 @@ import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { discoverLocalRelayStoreSnapshots, relayStoreDirectory, relayStorePath, relayUnifiedStorePath, unifiedRelayStoreEnabled, resolveUnifiedJobScope, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, relayStoreDirectory, relayUnifiedStorePath, resolveUnifiedJobScope, SQLiteRelayStore } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
@@ -99,8 +99,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const key = `${repository}#${prNumber}`;
     let relay = relayStores.get(key);
     if (!relay) {
-      const scope = unifiedRelayStoreEnabled() ? resolveUnifiedJobScope(relayStoreDirectory(), repository, prNumber) : undefined;
-      relay = new SQLiteRelayStore(scope ? relayUnifiedStorePath(relayStoreDirectory()) : relayStorePath(relayStoreDirectory(), repository, prNumber), scope);
+      const scope = resolveUnifiedJobScope(relayStoreDirectory(), repository, prNumber);
+      relay = new SQLiteRelayStore(relayUnifiedStorePath(relayStoreDirectory()), scope);
       relayStores.set(key, relay);
     }
     const github = new GitHubStore(client, repository, prNumber, trusted, seed);
@@ -196,8 +196,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (!sourceRef.startsWith('refs/heads/') || !targetRef.startsWith('refs/heads/')) continue;
       if (targetRef !== 'refs/heads/main') throw new Error('GitHub sync only supports local main as merge target');
       const branch = sourceRef.slice('refs/heads/'.length), base = targetRef.slice('refs/heads/'.length);
-      const scopedKey = unifiedRelayStoreEnabled() ? `${snapshot.path}#${discovered.id}` : snapshot.path;
-      let relay = relayStores.get(scopedKey); if (!relay) { relay = new SQLiteRelayStore(snapshot.path, unifiedRelayStoreEnabled() ? discovered.id : undefined); relayStores.set(scopedKey, relay); }
+      const scopedKey = `${snapshot.path}#${discovered.id}`;
+      let relay = relayStores.get(scopedKey); if (!relay) { relay = new SQLiteRelayStore(snapshot.path, discovered.id); relayStores.set(scopedKey, relay); }
       const canonical = repositoryPaths.get(discovered.repository) ?? await resolveManagedProjectPath(discovered.repository, explicitProjectPath, workspaceRoot);
       // A completed local Job may never have had a display PR. Publish main
       // regardless: GitHub availability cannot determine SQLite completion.

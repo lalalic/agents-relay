@@ -14,7 +14,7 @@ import { Reconciler } from './reconciler.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, ManagedJobOverview, resolvePullRequest, type DurableStore, type ManagedGitHubPullRequestSnapshot } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { discoverLocalRelayStoreSnapshots, relayStorePath, SQLiteRelayStore } from './relay-store.js';
+import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
 import { relayStoreDirectory } from './relay-store.js';
 import { createJobIdRegistryResolver } from './local-job-registry.js';

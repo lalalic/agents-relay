@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SQLiteRelayStore, relayStorePath } from '../dist/relay-store.js';
+import { SQLiteRelayStore, relayUnifiedStorePath } from '../dist/relay-store.js';
 import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { InMemoryStore } from '../dist/store.js';
 import { MemoryEventBus } from '../dist/events.js';
@@ -16,7 +16,8 @@ const job = { id: 'publish-service', title: 'Release', repository: 'owner/repo',
 
 test('single-job GitHub webhook records facts without changing lifecycle', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-service-publish-'));
-  const sqlite = new SQLiteRelayStore(relayStorePath(dir, job.repository, job.prNumber));
+  const directory = join(dir, 'stores');
+  const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory), job.id);
   const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
   const bus = new MemoryEventBus();
   const observed = [];
@@ -27,8 +28,8 @@ test('single-job GitHub webhook records facts without changing lifecycle', async
     publishFailure: failure, pullRequestFacts: null };
   try {
     await store.saveJob(job);
-    await handleServicePublication(job, wake, bus, dir);
-    await handleServicePublication(job, wake, bus, dir);
+    await handleServicePublication(job, wake, bus, directory);
+    await handleServicePublication(job, wake, bus, directory);
     assert.deepEqual((await store.load(job.id)).tasks, []);
     assert.equal((await store.load(job.id)).state, 'ACTIVE');
     assert.equal(observed.filter(e => e.type === 'package.publish_failed').length, 2);
@@ -39,7 +40,7 @@ test('single-job GitHub webhook records facts without changing lifecycle', async
 
     const publication = { package: 'agents-relay', version: '2.2.0', registry: null, sha: 'abc1234' };
     await handleServicePublication(job, { ...wake, deliveryId: 'delivery-success',
-      publication, publishFailure: null }, bus, dir);
+      publication, publishFailure: null }, bus, directory);
     stored = await sqlite.loadPublication(job.id);
     assert.equal(stored.latest.version, '2.2.0');
     assert.equal(stored.failure, null);

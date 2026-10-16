@@ -5,12 +5,15 @@ import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
-import { SQLiteRelayStore, relayStorePath, relayJobStorePath, discoverLocalRelayStoreSnapshots } from '../dist/relay-store.js';
+import { SQLiteRelayStore, discoverLocalRelayStoreSnapshots } from '../dist/relay-store.js';
 import { ProjectionOutbox } from '../dist/projection-outbox.js';
 import { openLocalManagedStore } from '../dist/local-managed-store.js';
 import { createJobIdRegistryResolver } from '../dist/local-job-registry.js';
 import { ensureManagedGitHubJob } from '../dist/cli-job-create.js';
 import { allocateEntityId } from '../dist/job-task-id-sequence.js';
+// Legacy path names are test fixtures for the explicit offline migration tool only.
+const relayStorePath = (directory, repository, pr) => join(directory, repository.replace('/', '_')+'-'+pr+'.db');
+const relayJobStorePath = (directory, id) => join(directory, 'job-'+id+'.db');
 
 test('single SQLite consolidation preserves independent Job records, outboxes and global sequences', async () => {
   const root = await mkdtemp(join(tmpdir(),'relay-unified-'));
@@ -30,9 +33,14 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
     // Empty legacy DB shells may exist from attempted Job opens; they must not be treated as Jobs.
     const shellOnly = new SQLiteRelayStore(relayJobStorePath(source,'ghost'));
     shellOnly.close();
-    assert.equal(allocateEntityId(source,'example/first','job',undefined,new Set(['1','2'])),'3');
+    // This test alone constructs an explicit legacy migration input, including its old global sequence file.
+    const legacySequences = new DatabaseSync(join(source, 'entity-id-sequences.sqlite'));
+    legacySequences.exec('CREATE TABLE sequences (repository TEXT NOT NULL,kind TEXT NOT NULL,value INTEGER NOT NULL,PRIMARY KEY(repository,kind)); CREATE TABLE idempotency (repository TEXT NOT NULL,kind TEXT NOT NULL,request_key TEXT NOT NULL,entity_id TEXT NOT NULL,PRIMARY KEY(repository,kind,request_key))');
+    legacySequences.prepare('INSERT INTO sequences VALUES (?,?,?)').run('*','job',2);
+    legacySequences.close();
     const result = spawnSync('python3',['scripts/consolidate-relay-sqlite.py',source,target],{encoding:'utf8'});
     assert.equal(result.status,0,result.stderr);
+    assert.equal(allocateEntityId(source,'example/first','job',undefined,new Set(['1','2'])),'3');
     const details=JSON.parse(result.stdout);
     assert.equal(details.jobs,2);
     assert.ok((await stat(target)).size>0);
@@ -85,9 +93,7 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
     assert.equal((await scopedA.loadJob('1')).title,'Job 1');
     assert.equal((await scopedB.loadJob('2')).title,'Updated Job 2');
     scopedA.close(); scopedB.close();
-    const previousMode=process.env.AGENTS_RELAY_SQLITE_MODE;
-    process.env.AGENTS_RELAY_SQLITE_MODE='unified';
-    try {
+    {
       const inventory=await discoverLocalRelayStoreSnapshots(source);
       assert.deepEqual(inventory.map(item=>item.jobs[0].id),['1','2']);
       assert.equal(inventory[0].path,target);
@@ -105,9 +111,6 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
       assert.equal((await discoverLocalRelayStoreSnapshots(source)).length,3);
       const againCreated=await ensureManagedGitHubJob(client,'example/third',new Set(),{title:'New unified job',objective:'unified',storeDirectory:source,idempotencyKey:'new-unified'});
       assert.equal(againCreated.job.id,'4');
-    } finally {
-      if(previousMode === undefined) delete process.env.AGENTS_RELAY_SQLITE_MODE;
-      else process.env.AGENTS_RELAY_SQLITE_MODE=previousMode;
     }
     const again=spawnSync('python3',['scripts/consolidate-relay-sqlite.py',source,target],{encoding:'utf8'});
     assert.notEqual(again.status,0);

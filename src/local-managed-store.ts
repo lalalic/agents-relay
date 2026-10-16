@@ -2,7 +2,7 @@ import { GhApiClient } from './github-client.js';
 import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
 import { GitHubStore, type GitHubClient } from './store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
-import { relayStoreDirectory, relayStorePath, relayJobStorePath, relayUnifiedStorePath, unifiedRelayStoreEnabled, resolveUnifiedJobScope, SQLiteRelayStore } from './relay-store.js';
+import { relayStoreDirectory, relayUnifiedStorePath, resolveUnifiedJobScope, SQLiteRelayStore } from './relay-store.js';
 
 export type LocalManagedStore = { store: LocalAuthorityDurableStore; relay: SQLiteRelayStore };
 
@@ -16,9 +16,9 @@ export function openLocalManagedStore(
     throw new Error('Local managed store requires a repository and either a positive PR number or immutable jobId');
   }
   const directory = options.directory ?? relayStoreDirectory();
-  const unified = unifiedRelayStoreEnabled();
-  const scope = unified ? resolveUnifiedJobScope(directory, repository, prNumber, options.jobId) : undefined;
-  const relay = new SQLiteRelayStore(unified ? relayUnifiedStorePath(directory) : (prNumber === 0 ? relayJobStorePath(directory, options.jobId!) : relayStorePath(directory, repository, prNumber)), scope);
+  const path = relayUnifiedStorePath(directory);
+  const scope = resolveUnifiedJobScope(directory, repository, prNumber, options.jobId);
+  const relay = new SQLiteRelayStore(path, scope);
   const client = prNumber === 0 || options.noGitHub || noGitHubMode() ? new DisabledGitHubClient() : options.client ?? new GhApiClient();
   const github = new GitHubStore(client, repository, prNumber, options.trustedAuthors ?? new Set<string>());
   return {

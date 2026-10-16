@@ -27,7 +27,8 @@ test('objective creation accepts explicit request identity without conflating eq
 
 test('job adopt is the explicit legacy PR binding path and remains offline', async () => {
   const { adoptExistingPullRequestJob } = await import('../dist/cli-job-create.js');
-  const directory = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-adopt-'));
+  const root = await mkdtemp(join(process.env.AGENTS_RELAY_STORE_DIR ?? '/tmp', 'job-11-adopt-'));
+  const directory = join(root, 'stores');
   try {
     let calls = 0;
     const client = { request: async () => { calls += 1; throw new Error('offline'); }, graphql: async () => { calls += 1; throw new Error('offline'); } };
@@ -37,7 +38,7 @@ test('job adopt is the explicit legacy PR binding path and remains offline', asy
     assert.equal(result.job.id, '1');
     assert.equal((await adoptExistingPullRequestJob(client, 'owner/repo', new Set(), { prNumber: 4, storeDirectory: directory })).job.id, '1');
     assert.equal(calls, 0);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('SQLite create-if-absent is atomic and preserves the first complete snapshot', async () => {

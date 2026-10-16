@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SQLiteRelayStore, relayStorePath, relayJobStorePath } from '../dist/relay-store.js';
+import { SQLiteRelayStore, relayUnifiedStorePath } from '../dist/relay-store.js';
 import { openLocalManagedStore } from '../dist/local-managed-store.js';
 import { dashboardManagedJobs, GitHubStore, InMemoryStore, listManagedGitHubJobs, loadManagedGitHubPullRequestGraphql, loadManagedGitHubPullRequestSnapshotGraphql } from '../dist/store.js';
 import { AGENT_MARKER, JOB_MARKER, PLAN_MARKER, marker, parseAgent, parseJob, parsePlan, parseTask, renderJobBody, TASK_MARKER } from '../dist/markers.js';
@@ -265,7 +265,8 @@ class ManagedGitHubClient {
 
 test('managed no-GitHub Job creation is GitHub-independent and idempotent by immutable jobId', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory = await mkdtemp(join(tmpdir(), 'relay-local-job-create-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-local-job-create-'));
+  const directory = join(root, 'stores');
   try {
     let apiCalls=0;
     const client={request:async()=>{apiCalls++;throw Error('GitHub REST forbidden');},
@@ -283,19 +284,20 @@ test('managed no-GitHub Job creation is GitHub-independent and idempotent by imm
     assert.equal(first.job.reviewerThreadId,'reviewer-thread');
     assert.equal(first.job.creatorThreadId,'creator-thread');
     assert.equal(apiCalls,0);
-    const sqlite=new SQLiteRelayStore(relayJobStorePath(directory,first.job.id));
+    const sqlite=new SQLiteRelayStore(relayUnifiedStorePath(directory), first.job.id);
     assert.equal((await sqlite.loadJob(first.job.id)).title,'Managed work');
     assert.equal((await sqlite.listJobs()).length,1);
     assert.equal(await sqlite.pendingProjectionCount(),0);
     sqlite.close();
     await assert.rejects(ensureManagedGitHubJob(client,'someone/other',new Set(),{...options,id:first.job.id}),
       /different repository/);
-  } finally {await rm(directory,{recursive:true,force:true});}
+  } finally {await rm(root,{recursive:true,force:true});}
 });
 
 test('managed head Job bootstrap is GitHub-independent and derives local merge refs', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory = await mkdtemp(join(tmpdir(), 'relay-head-job-create-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-head-job-create-'));
+  const directory = join(root, 'stores');
   try {
     let apiCalls = 0;
     const client = {
@@ -315,11 +317,11 @@ test('managed head Job bootstrap is GitHub-independent and derives local merge r
       sourceRef: 'refs/heads/feat/head-managed', targetRef: 'refs/heads/main', status: 'pending',
     });
     assert.equal(second.job.id, first.job.id);
-    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory, first.job.id));
+    const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory), first.job.id);
     assert.equal((await sqlite.loadJob(first.job.id)).prNumber, 0);
     sqlite.close();
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -355,7 +357,8 @@ test('dashboard terminal history uses latest durable activity for discovery orde
 
 test('managed Job binds a known PR number entirely offline with zero GitHub reads', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory = await mkdtemp(join(tmpdir(), 'relay-offline-adopt-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-offline-adopt-'));
+  const directory = join(root, 'stores');
   try {
     const client = {
       request: async () => { throw new Error('GitHub disconnected'); },
@@ -366,12 +369,12 @@ test('managed Job binds a known PR number entirely offline with zero GitHub read
     });
     assert.equal(result.pr.number, 6);
     assert.match(result.job.id, /^[1-9][0-9]*$/);
-    const sqlite = new SQLiteRelayStore(relayStorePath(directory, 'owner/repo', 6));
+    const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory), result.job.id);
     assert.equal((await sqlite.loadJob(result.job.id)).state, 'DRAFT');
     assert.equal(await sqlite.pendingProjectionCount(), 0);
     sqlite.close();
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -436,13 +439,14 @@ test('job update validation rejects duplicate markers instead of repairing them'
 
 test('managed Task creation is gated on the local SQLite Job, never PR markers', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory = await mkdtemp(join(tmpdir(), 'relay-task-gate-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-task-gate-'));
+  const directory = join(root, 'stores');
   try {
     const client = {
       request: async () => { throw new Error('GitHub disconnected'); },
       graphql: async () => { throw new Error('GitHub disconnected'); },
     };
-    const { store, relay } = openLocalManagedStore('owner/repo', 6, { directory, client });
+    const { store, relay } = openLocalManagedStore('owner/repo', 6, { directory, client, jobId: '1' });
     await assert.rejects(store.appendTask(task('1', 'child')), /Local authoritative Job 1 not found/);
     const created = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
       idempotencyKey: 'gated', prNumber: 6, storeDirectory: directory,
@@ -453,7 +457,7 @@ test('managed Task creation is gated on the local SQLite Job, never PR markers',
     assert.equal(await relay.pendingProjectionCount(), 0);
     relay.close();
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -534,7 +538,8 @@ test('saveTask collapses duplicate durable markers for one job and task id', asy
 
 test('managed Job creation never bootstraps a GitHub branch and retains local merge refs', async () => {
   const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-  const directory=await mkdtemp(join(tmpdir(),'relay-local-merge-source-'));
+  const root=await mkdtemp(join(tmpdir(),'relay-local-merge-source-'));
+  const directory=join(root,'stores');
   try {
     let apiCalls=0;
     const client={
@@ -552,7 +557,7 @@ test('managed Job creation never bootstraps a GitHub branch and retains local me
     assert.deepEqual(result.job.localMerge,{
       sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending',
     });
-  } finally {await rm(directory,{recursive:true,force:true});}
+  } finally {await rm(root,{recursive:true,force:true});}
 });
 
 test('GitHubStore closes its backing pull request explicitly', async () => {
@@ -773,7 +778,8 @@ test('job tag contract and task tag round-trip through trusted markers', async (
 
 
 test('default managed store honors AGENTS_RELAY_STORE_DIR isolation', async () => {
-  const stores = await mkdtemp(join(tmpdir(), 'relay-store-isolation-'));
+  const root = await mkdtemp(join(tmpdir(), 'relay-store-isolation-'));
+  const stores = join(root, 'stores');
   const previous = process.env.AGENTS_RELAY_STORE_DIR;
   process.env.AGENTS_RELAY_STORE_DIR = stores;
   const client = {
@@ -788,10 +794,10 @@ test('default managed store honors AGENTS_RELAY_STORE_DIR isolation', async () =
     });
     assert.equal(result.job.repository, 'owner/repo');
     const { readdir } = await import('node:fs/promises');
-    assert.ok((await readdir(stores)).some(name => name.endsWith('.db')));
+    assert.ok((await readdir(root)).includes('relay.sqlite'));
   } finally {
     if (previous === undefined) delete process.env.AGENTS_RELAY_STORE_DIR;
     else process.env.AGENTS_RELAY_STORE_DIR = previous;
-    await rm(stores, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

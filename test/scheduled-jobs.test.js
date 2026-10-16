@@ -70,21 +70,22 @@ test('schedule metadata round-trips through the trusted job marker', () => {
 });
 
 test('scheduled Job creation persists to local SQLite without GitHub API', async () => {
-  const directory=await mkdtemp(join(tmpdir(),'relay-scheduled-create-'));
+  const root=await mkdtemp(join(tmpdir(),'relay-scheduled-create-'));
+  const directory=join(root,'stores');
   try {
     let githubCalls=0;
     const client={request:async()=>{githubCalls++;throw Error('GitHub forbidden');},
       graphql:async()=>{githubCalls++;throw Error('GitHub forbidden');}};
     const { ensureManagedGitHubJob } = await import('../dist/cli.js');
-    const { SQLiteRelayStore, relayJobStorePath } = await import('../dist/relay-store.js');
+    const { SQLiteRelayStore, relayUnifiedStorePath } = await import('../dist/relay-store.js');
     const result = await ensureManagedGitHubJob(client, 'owner/repo', new Set(), {
       idempotencyKey:'scheduled',executionMode:'autonomous',schedule:schedule(),storeDirectory:directory,
     });
     assert.equal(result.job.prNumber,0);
     assert.equal(result.job.schedule.nextRunAt,'2026-09-21T16:20:00Z');
     assert.equal(githubCalls,0);
-    const sqlite = new SQLiteRelayStore(relayJobStorePath(directory,result.job.id));
+    const sqlite = new SQLiteRelayStore(relayUnifiedStorePath(directory),result.job.id);
     assert.equal((await sqlite.loadJob(result.job.id)).schedule.nextRunAt,'2026-09-21T16:20:00Z');
     sqlite.close();
-  } finally {await rm(directory,{recursive:true,force:true});}
+  } finally {await rm(root,{recursive:true,force:true});}
 });

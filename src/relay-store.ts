@@ -1,15 +1,12 @@
 import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
-import { dirname } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
+import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
 import type { PullRequestState } from './store.js';
 import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
 import { recordPublicationInDatabase, loadPublicationFromDatabase, type PublicationState, type PublicationEvent, listPublicationEventsFromDatabase } from './publication-store.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
 import type { InteractiveDecisionDelivery, InteractiveDecisionOutcome, InteractiveInvocation } from './interactive-invocation.js';
 import { observability } from './observability.js';
-import { createJobIfAbsent } from './relay-create.js';
-import { ensureUnifiedJobRegistry, createUnifiedJobIfAbsent } from './unified-job-registry.js';
+import { createJobIfAbsent } from './relay-create.js'; import { ensureUnifiedJobRegistry, createUnifiedJobIfAbsent } from './unified-job-registry.js'; import { migrateUnifiedRelaySchema } from './unified-relay-schema.js';
 import { saveUnifiedPullRequestFacts } from './unified-pr-facts.js';
 import { migrateLegacyJobPrNumbers, normalizeLegacyJobPrNumber } from './job-pr-number-migration.js';
 import { hostInvocationTablesSql, recordHostInvocationEvent, hasHostInvocationDecision, recordHostInvocationDecision, type HostInvocationReceipt } from './host-invocation-store.js';
@@ -116,8 +113,12 @@ export class SQLiteRelayStore implements RelayStore {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     if (scopeJobId) {
-      const schema = this.db.prepare("SELECT value FROM migration_metadata WHERE key='schema'").get() as { value?: string } | undefined;
-      if (schema?.value !== 'single-sqlite-staging-v1') throw new Error('Unified Relay schema is missing or unsupported');
+      const hasUnifiedSchema = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='migration_metadata'").get();
+      if (!hasUnifiedSchema) migrateUnifiedRelaySchema(this.db);
+      else {
+        const schema = this.db.prepare("SELECT value FROM migration_metadata WHERE key='schema'").get() as { value?: string } | undefined;
+        if (schema?.value !== 'single-sqlite-staging-v1') throw new Error('Unified Relay schema is missing or unsupported');
+      }
     } else this.migrate();
     this.outbox = new ProjectionOutbox(this.db, scopeJobId);
     this.outbox.resetProcessing(new Date().toISOString());
@@ -493,7 +494,6 @@ export class SQLiteRelayStore implements RelayStore {
   close(): void { this.db.close(); }
 }
 
-export { relayJobStorePath, relayStoreDirectory } from './local-job-path.js';
-export { unifiedRelayStoreEnabled, relayUnifiedStorePath, resolveUnifiedJobScope,
-  relayStorePath, discoverLocalRelayStoreSnapshots } from './relay-store-discovery.js';
+export { relayStoreDirectory } from './local-job-path.js';
+export { relayUnifiedStorePath, resolveUnifiedJobScope, discoverLocalRelayStoreSnapshots } from './relay-store-discovery.js';
 export type { LocalRelayStoreSnapshot } from './relay-store-discovery.js';

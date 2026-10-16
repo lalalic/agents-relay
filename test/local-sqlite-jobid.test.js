@@ -15,8 +15,8 @@ const execFileAsync = promisify(execFile);
 
 test('SQLite registry routes no-PR schedule, startup recovery, and targeted worker events by jobId', async () => {
   const root = await mkdtemp(join(tmpdir(), 'relay-local-jobid-'));
-  const dbPath = join(root, 'anonymous-local-job.db');
-  const sqlite = new SQLiteRelayStore(dbPath);
+  const dbPath = join(root, 'relay.sqlite');
+  const sqlite = new SQLiteRelayStore(dbPath, 'local-jobid-sqlite');
   const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
   const at = '2026-10-09T11:00:00.000Z';
   const job = {
@@ -30,10 +30,10 @@ test('SQLite registry routes no-PR schedule, startup recovery, and targeted work
   let githubCalls = 0;
   const client = { request: async () => { githubCalls++; throw new Error('GitHub REST forbidden'); },
     graphql: async () => { githubCalls++; throw new Error('GitHub GraphQL forbidden'); } };
-  const inv = async () => (await discoverLocalRelayStoreSnapshots(root)).flatMap(snapshot =>
+  const inv = async () => (await discoverLocalRelayStoreSnapshots(join(root, 'stores'))).flatMap(snapshot =>
     snapshot.jobs.map(job => ({job, githubState:'UNKNOWN', draft:false, mergedAt:null, closedAt:null})));
   const resolve = async jobId => {
-    const matches = (await discoverLocalRelayStoreSnapshots(root)).flatMap(snapshot =>
+    const matches = (await discoverLocalRelayStoreSnapshots(join(root, 'stores'))).flatMap(snapshot =>
       snapshot.jobs.filter(job => job.id === jobId).map(job => ({job, store})));
     return matches.length === 1 ? matches[0] : null;
   };
@@ -69,8 +69,8 @@ test('SQLite registry routes no-PR schedule, startup recovery, and targeted work
 
 test('two independent processes atomically claim one no-PR SQLite scheduled slot only once', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'relay-local-slot-race-'));
-  const dbPath = join(directory, 'shared-job.db');
-  const relay = new SQLiteRelayStore(dbPath);
+  const dbPath = join(directory, 'relay.sqlite');
+  const relay = new SQLiteRelayStore(dbPath, 'race-job');
   const start = '2026-10-09T12:00:00.000Z';
   const job = {
     id: 'race-job', repository: 'local/work', prNumber: 0, title: 'Concurrent local schedule',
@@ -88,7 +88,7 @@ test('two independent processes atomically claim one no-PR SQLite scheduled slot
       "import { LocalAuthorityDurableStore } from './dist/local-authority-store.js';",
       "import { InMemoryStore } from './dist/store.js';",
       "import { runScheduledBucketFromStore } from './dist/scheduled-jobs.js';",
-      "const sqlite = new SQLiteRelayStore(process.env.RELAY_TEST_DB);",
+      "const sqlite = new SQLiteRelayStore(process.env.RELAY_TEST_DB, 'race-job');",
       "const local = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);",
       "const result = await runScheduledBucketFromStore(local, {jobId:'race-job',bucket:'20261009T1200Z'},",
       "  {reconcile:async()=>{await new Promise(resolve=>setTimeout(resolve,30));},idle:async()=>{}},",
@@ -112,62 +112,65 @@ test('two independent processes atomically claim one no-PR SQLite scheduled slot
   }
 });
 
-test('registry resolves unique ACTIVE Job over archived same-ID terminal snapshot without changing SQLite', async () => {
+test('one unified SQLite registry rejects conflicting identity for an immutable Job ID', async () => {
   const { createJobIdRegistryResolver } = await import('../dist/local-job-registry.js');
-  const root=await mkdtemp(join(tmpdir(),'relay-duplicate-history-'));
-  const stores=[];
+  const root = await mkdtemp(join(tmpdir(),'relay-unique-jobid-'));
+  const sqlite = new SQLiteRelayStore(join(root,'relay.sqlite'),'same-job');
   try {
-    const make=async(name,state)=>{
-      const db=new SQLiteRelayStore(join(root,name+'.db'));stores.push(db);
-      const job={id:'same-job',repository:'local/work',prNumber:0,title:name,state,
-        createdAt:'2026-10-01T00:00:00.000Z',updatedAt:'2026-10-01T00:00:00.000Z',tasks:[]};
-      await db.saveJob(job);
-      return db;
-    };
-    await make('old','COMPLETED');await make('current','ACTIVE');
-    const resolved=await createJobIdRegistryResolver(root,new Map())('same-job');
+    const at='2026-10-01T00:00:00.000Z';
+    const job={id:'same-job',repository:'local/work',prNumber:0,title:'current',state:'ACTIVE',
+      executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+    await sqlite.saveJob(job);
+    const resolve=createJobIdRegistryResolver(join(root,'stores'),new Map(),{noGitHub:true});
+    const resolved=await resolve('same-job');
     assert.equal(resolved?.job.state,'ACTIVE');
     assert.equal(resolved?.job.title,'current');
-    assert.equal((await discoverLocalRelayStoreSnapshots(root)).flatMap(s=>s.jobs).length,2);
-    await make('conflict','DRAFT');
-    assert.equal(await createJobIdRegistryResolver(root,new Map())('same-job'),null);
-  } finally {for(const db of stores)db.close();await rm(root,{recursive:true,force:true});}
+    await assert.rejects(sqlite.saveJob({...job,repository:'other/work'}),/conflicting repository identity/);
+    assert.equal((await discoverLocalRelayStoreSnapshots(join(root,'stores'))).length,1);
+    resolved.relay.close();
+  } finally {sqlite.close();await rm(root,{recursive:true,force:true});}
 });
 
 
-
-test('SQLite startup migrates legacy projected PR binding into prNumber', async () => {
+test('unified SQLite normalizes old PR projection metadata without losing immutable binding', async () => {
   const { storeFor } = await import('../dist/cli-support.js');
   const root=await mkdtemp(join(tmpdir(),'relay-cli-external-binding-'));
-  const path=join(root,'job.db');
-  let relay=new SQLiteRelayStore(path);
-  const at='2026-10-09T12:00:00.000Z';
-  await relay.saveJob({id:'bound-cli-job',repository:'owner/repo',prNumber:0,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]});
-  relay.close();
-  const db=new DatabaseSync(path);
-  const legacy={id:'bound-cli-job',repository:'owner/repo',prNumber:0,title:'bound',state:'ACTIVE',executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
-  legacy['external'+'PrNumber']=88;
-  db.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(legacy),'bound-cli-job'); db.close();
-  relay=new SQLiteRelayStore(path);
-  const migratedJob=await relay.loadJob('bound-cli-job');
-  assert.equal(migratedJob.prNumber,88);
-  relay.close();
-  const raw=new DatabaseSync(path,{readOnly:true}); const stored=JSON.parse(raw.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get('bound-cli-job').json); raw.close();
-  assert.equal(stored.prNumber,88); assert.equal(Object.prototype.hasOwnProperty.call(stored,'external'+'PrNumber'),false);
-  const loaded=await storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','88','--store-dir',root]);
-  assert.equal(loaded.job.prNumber,88);
-  await assert.rejects(()=>storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','89','--store-dir',root]),/Local Job\/PR binding mismatch/);
-  await rm(root,{recursive:true,force:true});
+  const directory=join(root,'stores');
+  const path=join(root,'relay.sqlite');
+  let relay=new SQLiteRelayStore(path,'bound-cli-job');
+  try {
+    const at='2026-10-09T12:00:00.000Z';
+    const job={id:'bound-cli-job',repository:'owner/repo',prNumber:88,title:'bound',state:'ACTIVE',
+      executionMode:'fixed',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+    await relay.saveJob(job); relay.close();
+    const db=new DatabaseSync(path);
+    const legacy={...job,prNumber:0,externalPrNumber:88};
+    db.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify(legacy),'bound-cli-job');
+    db.close();
+    relay=new SQLiteRelayStore(path,'bound-cli-job');
+    const migrated=await relay.loadJob('bound-cli-job');
+    assert.equal(migrated.prNumber,88);
+    await relay.saveJob(migrated);
+    const raw=new DatabaseSync(path,{readOnly:true});
+    const stored=JSON.parse(raw.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get('bound-cli-job').json);
+    raw.close();
+    assert.equal(stored.prNumber,88);
+    assert.equal(Object.prototype.hasOwnProperty.call(stored,'externalPrNumber'),false);
+    const loaded=await storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','88','--store-dir',directory]);
+    assert.equal(loaded.job.prNumber,88);
+    await assert.rejects(()=>storeFor(['--repo','owner/repo','--id','bound-cli-job','--pr','89','--store-dir',directory]),/Local Job\/PR binding mismatch/);
+  } finally {relay.close(); await rm(root,{recursive:true,force:true});}
 });
+
 
 test('registry upgrades a local Job to external GitHub merge capability after PR binding', async () => {
   const { createJobIdRegistryResolver } = await import('../dist/local-job-registry.js');
   const root=await mkdtemp(join(tmpdir(),'relay-external-binding-'));
-  const relay=new SQLiteRelayStore(join(root,'job.db'));
+  const relay=new SQLiteRelayStore(join(root,'relay.sqlite'),'bound-job');
   try {
     const at='2026-10-09T12:00:00.000Z';
     await relay.saveJob({id:'bound-job',repository:'owner/repo',prNumber:77,title:'bound',state:'COMPLETED',executionMode:'autonomous',continuation:null,createdAt:at,updatedAt:at,tasks:[],localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'succeeded',sourceSha:'abcdef1234567890'}});
-    const resolved=await createJobIdRegistryResolver(root,new Map(),{client:{},noGitHub:false})('bound-job');
+    const resolved=await createJobIdRegistryResolver(join(root,'stores'),new Map(),{client:{},noGitHub:false})('bound-job');
     assert.ok(resolved);
     await resolved.store.mergePullRequest('abcdef1234567890');
     assert.equal(await resolved.relay.pendingProjectionCount(),1);

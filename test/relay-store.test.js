@@ -1,6 +1,6 @@
 import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -70,22 +70,34 @@ test('SQLiteRelayStore persists snapshots, event dedupe, and outbox across resta
   await tmp.close(store);
 });
 
+test('missing unified database refuses legacy per-Job files instead of showing no Jobs', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-single-mode-'));
+  const directory=join(root,'stores');
+  try {
+    await mkdir(directory);
+    assert.deepEqual(await discoverLocalRelayStoreSnapshots(directory),[]);
+    await writeFile(join(directory,'old-job.db'),'legacy store placeholder');
+    await assert.rejects(discoverLocalRelayStoreSnapshots(directory), /Unified Relay SQLite database missing/);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
 test('RelayStore discovery rebuilds local operational inventory without GitHub', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agents-relay-store-discovery-'));
-  const a = new SQLiteRelayStore(join(dir, 'a.db'));
+  const directory = join(dir, 'stores');
+  const a = new SQLiteRelayStore(join(dir, 'relay.sqlite'), 'first');
   const first = makeJob();
   first.id = 'first'; first.prNumber = 11; first.repository = 'owner/one';
   await a.saveJob(first);
   await a.savePullRequestFacts({ state: 'OPEN', head: { ref: 'feat/one', sha: 'sha-one' }, observedAt: now() });
   a.close();
-  const b = new SQLiteRelayStore(join(dir, 'b.db'));
+  const b = new SQLiteRelayStore(join(dir, 'relay.sqlite'), 'second');
   const second = makeJob();
   second.id = 'second'; second.prNumber = 22; second.repository = 'owner/two';
   await b.saveJob(second);
   await b.savePullRequestFacts({ state: 'CLOSED', head: null, observedAt: now() });
   b.close();
   await writeFile(join(dir, 'not-a-db.db'), 'invalid');
-  const snapshots = await discoverLocalRelayStoreSnapshots(dir);
+  const snapshots = await discoverLocalRelayStoreSnapshots(directory);
   assert.deepEqual(snapshots.map(item => item.jobs[0]?.id).filter(Boolean).sort(), ['first','second']);
   assert.deepEqual(snapshots.map(item => item.facts?.state).filter(Boolean).sort(), ['CLOSED','OPEN']);
   await rm(dir, { recursive: true, force: true });
@@ -722,9 +734,11 @@ test('UNKNOWN is represented by missing evidence and confirmed PR facts advance 
 
 test('publication success and failure survive restart and webhook replay remains idempotent', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-publication-'));
-  const path = join(dir, 'store.db');
-  let sqlite = new SQLiteRelayStore(path);
+  const path = join(dir, 'relay.sqlite');
+  const directory = join(dir, 'stores');
+  let sqlite = new SQLiteRelayStore(path, 'job-a');
   try {
+    await sqlite.saveJob({...makeJob(), id:'job-a', repository:'owner/test', prNumber:12});
     const published = { package: 'agents-relay', version: '2.0.1', registry: 'https://registry.npmjs.org', sha: 'abc123' };
     assert.equal(await sqlite.recordPublication('job-a', 'delivery-1', published, null), true);
     assert.equal(await sqlite.recordPublication('job-a', 'delivery-1', published, null), false);
@@ -734,14 +748,14 @@ test('publication success and failure survive restart and webhook replay remains
     assert.equal((await sqlite.loadPublication('job-a')).failure.stage, 'npm-publish');
     assert.equal(await sqlite.loadPublication('job-b'), null);
     sqlite.close();
-    sqlite = new SQLiteRelayStore(path);
+    sqlite = new SQLiteRelayStore(path, 'job-a');
     assert.equal((await sqlite.loadPublication('job-a')).latest.version, '2.0.1');
     assert.equal((await sqlite.loadPublication('job-a')).failure.runId, '123');
     await sqlite.recordPublication('job-a', 'delivery-3', { ...published, version: '2.0.2' }, null);
     assert.equal((await sqlite.loadPublication('job-a')).failure, null);
     assert.equal((await sqlite.loadPublication('job-a')).latest.version, '2.0.2');
     const { discoverLocalRelayStoreSnapshots } = await import('../dist/relay-store.js');
-    const snapshots = await discoverLocalRelayStoreSnapshots(dir);
+    const snapshots = await discoverLocalRelayStoreSnapshots(directory);
     assert.equal(snapshots[0].publications['job-a'].latest.version, '2.0.2');
   } finally { sqlite.close(); await rm(dir, { recursive: true, force: true }); }
 });
@@ -767,19 +781,19 @@ test('one GitHub delivery records a publish event for each local Job and stale w
   } finally { sqlite.close(); }
 });
 
-test('read-only inventory discovers older SQLite schema without publication tables', async () => {
+test('read-only inventory fails closed for unsupported legacy SQLite schema', async () => {
   const dir=await mkdtemp(join(tmpdir(),'relay-legacy-schema-inventory-'));
-  const path=join(dir,'old.db');
+  const path=join(dir,'relay.sqlite');
+  const directory=join(dir,'stores');
   try {
     const db=new DatabaseSync(path);
     db.exec('CREATE TABLE job_snapshot (job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
+    db.exec('CREATE TABLE source_registry (job_id TEXT PRIMARY KEY,source_file TEXT NOT NULL UNIQUE,repository TEXT NOT NULL,pr_number INTEGER NOT NULL)');
     db.exec('CREATE TABLE pull_request_facts (id INTEGER PRIMARY KEY,state TEXT,head_ref TEXT,head_sha TEXT,observed_at TEXT)');
     db.prepare('INSERT INTO job_snapshot VALUES (?,?,?)').run('legacy-active',JSON.stringify({...makeJob(),id:'legacy-active',state:'ACTIVE'}),now());
+    db.prepare('INSERT INTO source_registry VALUES (?,?,?,?)').run('legacy-active','legacy-fixture','owner/repo',1);
     db.close();
-    const snapshots=await discoverLocalRelayStoreSnapshots(dir);
-    assert.equal(snapshots.length,1);
-    assert.equal(snapshots[0].jobs[0].id,'legacy-active');
-    assert.deepEqual(snapshots[0].publications,{});
+    await assert.rejects(discoverLocalRelayStoreSnapshots(directory), /Unified Relay SQLite inventory unreadable/);
     const verify=new DatabaseSync(path,{readOnly:true});
     assert.equal(verify.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='publication_state'").get().n,0);
     verify.close();

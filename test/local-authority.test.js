@@ -152,7 +152,7 @@ test('committed lifecycle state survives a listener notification failure', async
 
 test('read-only local discovery cannot reset an in-flight external action claim', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-discover-readonly-'));
-  const sqlite = new SQLiteRelayStore(join(dir, 'state.db'));
+  const sqlite = new SQLiteRelayStore(join(dir, 'relay.sqlite'), 'local');
   await sqlite.saveJob(job());
   await sqlite.enqueueProjection({
     idempotencyKey: 'merge-abc', operation: 'merge_pull_request',
@@ -160,7 +160,7 @@ test('read-only local discovery cannot reset an in-flight external action claim'
   });
   assert.equal((await sqlite.claimDueProjections()).length, 1);
   const { discoverLocalRelayStoreSnapshots } = await import('../dist/relay-store.js');
-  const snapshots = await discoverLocalRelayStoreSnapshots(dir);
+  const snapshots = await discoverLocalRelayStoreSnapshots(join(dir, 'stores'));
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0].jobs[0].id, 'local');
   assert.equal((await sqlite.claimDueProjections()).length, 0);
