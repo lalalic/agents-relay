@@ -1,6 +1,6 @@
 ---
 name: agents-relay
-description: Create and operate durable asynchronous agent jobs through GitHub PR state, agent workers, retries, and authoritative lifecycle events.
+description: Use when work needs durable, multi-agent orchestration across turns or processes: plan and execute Jobs/Tasks, coordinate dependencies and reviews, recover failures, and track authoritative lifecycle events. Also use for content-generation workflows (research, story, production, human review, publication) that need explicit agent roles and handoff boundaries. Not for simple one-shot tasks with no durable coordination.
 ---
 
 # Agents Relay
@@ -12,6 +12,10 @@ Use Agents Relay when an orchestrator needs durable delegated work that survives
 For unified agent terminal events and role-specific results, see `contracts/event-contract.md` and `contracts/task-recovery-flows.md`.
 
 Before creating, planning, reviewing, or managing a job/task, read and follow `contracts/task-job-contract.md`. This is the canonical producer/runtime protocol for story size, lifecycle events, review, and auto-merge.
+
+## Content-generation workflow
+
+For content-generation objectives, read `workflows/content-generation.md` before choosing agents, review boundaries, or durable Tasks. This workflow is a planning guide; the shared task/job contract remains authoritative.
 
 ## Core task contract
 
