@@ -208,12 +208,17 @@ export function serveDashboard(
       const event = parseGitHubWebhook(req.headers, body);
       if (!event) { res.writeHead(202); res.end('Ignored'); return; }
       if (!event.repository || !webhook.repositories.has(event.repository) || (webhook.jobId !== undefined && event.jobId !== undefined && event.jobId !== null && event.jobId !== webhook.jobId) || (webhook.pullRequest !== undefined && event.pullRequest !== null && event.pullRequest !== webhook.pullRequest)) { res.writeHead(202); res.end('Ignored'); return; }
-      if (!webhookDeliveries.accept(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
-      res.writeHead(202); res.end('Accepted');
-      queueMicrotask(() => {
-        void Promise.resolve(webhook.wake(event))
-          .catch(error => process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`));
-      });
+      // A 202 is an acknowledgement of durable handling, not merely receipt of HTTP bytes.
+      // Do not suppress a retry when the SQLite wake fails after webhook authentication.
+      if (webhookDeliveries.has(event.deliveryId)) { res.writeHead(202); res.end('Duplicate'); return; }
+      try {
+        await webhook.wake(event);
+        webhookDeliveries.accept(event.deliveryId);
+        res.writeHead(202); res.end('Accepted');
+      } catch (error) {
+        process.stderr.write(`warning: webhook wake unavailable: ${error instanceof Error ? error.message : String(error)}\n`);
+        res.writeHead(503); res.end('Webhook handling unavailable; redelivery required');
+      }
       return;
     }
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {

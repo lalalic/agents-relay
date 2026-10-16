@@ -130,6 +130,9 @@ export function parseGitHubWebhook(headers: IncomingHttpHeaders, body: Buffer): 
 export class DeliveryDeduper {
   private readonly seen = new Map<string, number>();
   constructor(private readonly ttlMs = 86400000, private readonly maxEntries = 10000) {}
+  has(id: string, now = Date.now()): boolean {
+    return (this.seen.get(id) ?? 0) > now;
+  }
   accept(id: string, now = Date.now()): boolean {
     for (const [key, expires] of this.seen) if (expires <= now) this.seen.delete(key);
     if (this.seen.has(id)) return false;

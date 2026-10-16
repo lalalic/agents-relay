@@ -927,3 +927,45 @@ test('dashboard deduplicates jobs by repository and durable ID while retaining P
   assert.match(dashboardHtml, /jobs=dedupeJobs\(Array.isArray\(discovered\)\?discovered:\[\]\)/);
   assert.match(dashboardHtml, /prNumber:Number\(preferred.prNumber\|\|0\)>0\?preferred.prNumber:other.prNumber/);
 });
+
+test('publication webhook only acknowledges successful durable handling and retries failed delivery IDs', async () => {
+  const job = { id: 'webhook-retry', title: 'Webhook retry', executionMode: 'fixed', prNumber: 0,
+    repository: 'owner/repo', state: 'COMPLETED', continuation: null,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  let attempts = 0;
+  const secret = 'webhook-retry-secret';
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
+    secret, repositories: new Set(['owner/repo']),
+    wake: async event => {
+      assert.equal(event.jobId, '476');
+      attempts++;
+      if (attempts === 1) throw Error('simulated SQLite write failure');
+    },
+  });
+  await once(server, 'listening');
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}`;
+    const body = JSON.stringify({ action: 'created', repository: { full_name: 'owner/repo' },
+      issue: { number: 19 }, comment: { user: { login: 'github-actions[bot]' },
+        body: '<!-- agents-relay:package-published:v1 {"package":"@lalalic/markcut","version":"3.2.16","jobId":"476"} -->' } });
+    const signature = 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
+    const send = () => fetch(`${base}/webhooks/github`, { method: 'POST', headers: {
+      'content-type': 'application/json', 'x-github-delivery': 'same-delivery',
+      'x-github-event': 'issue_comment', 'x-hub-signature-256': signature,
+    }, body });
+    const failed = await send();
+    assert.equal(failed.status, 503);
+    assert.match(await failed.text(), /redelivery required/);
+    const success = await send();
+    assert.equal(success.status, 202);
+    assert.equal(await success.text(), 'Accepted');
+    const duplicate = await send();
+    assert.equal(duplicate.status, 202);
+    assert.equal(await duplicate.text(), 'Duplicate');
+    assert.equal(attempts, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});

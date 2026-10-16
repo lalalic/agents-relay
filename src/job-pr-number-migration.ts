@@ -9,6 +9,9 @@ export function normalizeLegacyJobPrNumber(input: Job): Job {
   if ((!Number.isInteger(input.prNumber) || input.prNumber <= 0) && Number.isInteger(legacy) && Number(legacy) > 0) input.prNumber = Number(legacy);
   delete record[legacyKey];
   for (const task of input.tasks ?? []) {
+    if (task.id.startsWith('final-review-') && task.agentName === 'reviewer' && /^Job ID:\s*\d+$/i.test(task.title?.trim() ?? '')) {
+      task.title = `Final review: ${input.title}`;
+    }
     if (!task.title?.trim()) task.title = deriveTaskTitle(task.input, task.agentName ? `${task.agentName} task` : 'Task');
   }
   return input;
