@@ -259,6 +259,7 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
   }
   const claimed = await withExecutionBoundary(job.id, '__job_execution_slot__', async () => {
     const freshJob = await ports.store.load(job.id);
+    if (freshJob.pause) return null;
     const fresh = (freshJob.plans ?? []).find(item => item.id === plan.id);
     if (!fresh || fresh.status !== 'PLANNING') return null;
     // A Planner is an execution too: no overlapping worker or second Planner.

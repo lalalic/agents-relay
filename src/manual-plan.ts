@@ -13,12 +13,14 @@ export async function executeManualPlan(
 ): Promise<{ job: Job; round: Plan }> {
   let job = await store.load(jobId);
   if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot plan terminal job ${job.id} (${job.state})`);
+  if (job.pause) throw new Error(`Cannot plan paused Job ${job.id}; resume it first`);
   const active = pendingPlan(job);
   if (active && active.executionId) throw new Error(`Planning round ${active.id} is already PLANNING`);
   let round = active ?? createPlanRound(job, { guidance, manual: true, timeoutMs });
   if (store.mutateJob) {
     const committed = await store.mutateJob(jobId, current => {
       if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot plan terminal job ${current.id} (${current.state})`);
+      if (current.pause) throw new Error(`Cannot plan paused Job ${current.id}; resume it first`);
       const concurrent = pendingPlan(current);
       if (concurrent) {
         if (concurrent.executionId) throw new Error(`Planning round ${concurrent.id} is already PLANNING`);

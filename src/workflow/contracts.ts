@@ -19,6 +19,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'pr.merged',
   'queue',
   'plan.requested',
+  'pause',
   'planner.failed',
   'planner.unavailable',
   'reconcile',

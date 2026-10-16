@@ -178,6 +178,7 @@ leaseFailRunningMark --> leaseFailRunningClearLease
 leaseFailRunningClearLease --> leaseFailRunningClearExecution
 leaseFailRunningClearExecution --> failed
 running -->|on: task.cancelled| cancelled
+running -->|on: pause| queued
 running -->|on: cancel| cancelled
 
 autonomousJob["guard: autonomousJob"]

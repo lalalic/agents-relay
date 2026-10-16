@@ -17,6 +17,7 @@ export function completionGateSatisfied(job: Job): boolean {
   return (planSatisfied || legacySatisfied) && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
 }
 export function schedule(job: Job): Job {
+  if (job.pause) return job;
   reconcileTaskDependencies(job);
   const scopedTasks = job.schedule?.currentRunSlot
     ? job.tasks.filter(task => Date.parse(task.createdAt) >= Date.parse(job.schedule?.currentRunSlot ?? ''))

@@ -16,6 +16,7 @@ type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
 export function compareJobPriority(a: Job, b: Job): number { return RANK[a.priority ?? 'P2'] - RANK[b.priority ?? 'P2'] || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 export function runnableManagedJobs(items: ManagedJobOverview[]): Job[] { return items.filter(item => item.job.state === 'ACTIVE').map(item => item.job).sort(compareJobPriority); }
 export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolean {
+  if (job.pause) return job.tasks.some(task => Boolean(task.pausedExecution)) || Boolean(job.plans?.some(plan => Boolean(plan.pausedExecutionId)));
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
   if (job.executionMode === 'autonomous' && unblockNeedsNewPlan(job)) return true;

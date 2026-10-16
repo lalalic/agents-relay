@@ -8,7 +8,7 @@ Usage:
 --no-github: SQLite/Graph-only mode. GitHub auth/API, PR creation, merge and fetch are disabled. Local completion is Graph-owned.
 
 Commands:
-  job create|update|show|list|merge|unblock|cancel  Manage SQLite-authoritative jobs with optional GitHub PRs
+  job create|update|show|list|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
@@ -29,7 +29,7 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage SQLite-authoritative durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|merge|unblock|cancel> [options]
+  npx agents-relay job <create|update|show|list|merge|unblock|cancel|pause|resume> [options]
 
 Actions:
   create  Create a durable Job, optionally binding an existing unmanaged PR
@@ -39,6 +39,8 @@ Actions:
   merge   Queue a retryable external PR merge; Graph completes the Job only after confirmation
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
   cancel  Close the backing PR and cancel the Job
+  pause   Persistently stop dispatch and interrupt active generations; lifecycle state remains unchanged
+  resume  Clear pause metadata and requeue interrupted work
 
 Common options:
   --repo OWNER/REPO       GitHub repository
@@ -94,6 +96,12 @@ Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head S
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,
+  'job pause': `Pause a durable Job without inventing a PAUSED lifecycle state.
+
+Required: --repo OWNER/REPO --id JOB_ID. Optional: --pr NUMBER. Running worker and Planner generations are interrupted durably and resume as uncompleted work.`,
+  'job resume': `Resume a paused durable Job.
+
+Required: --repo OWNER/REPO --id JOB_ID. Optional: --pr NUMBER. Interrupted work is requeued and normal reconciliation continues.`,
   escalation: `Run the canonical escalation workflow for a suspected human/external blocker.\n\nRequired: --intent TEXT|--intent-file PATH and --blocked-on TEXT|--blocked-on-file PATH. Optional: --context/--context-file, --on-needs-user/--on-needs-user-file, --cwd. The executable workflow/escalation.mmd graph invokes Neo escalation, then owns the resolved / failed / needs_user branch. Only needs_user selects the block-for-user path.`,
   status: `Show live aggregate runtime status from the running Agents Relay service.
 

@@ -1,7 +1,5 @@
-import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
-import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js';
-import { executeManualPlan } from './manual-plan.js';
-import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
+import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
+import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js';
 export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, refreshTroubleshooterInput } from './troubleshooter.js';
@@ -27,7 +25,7 @@ export class Reconciler extends ReconcilerReviewBase {
       async context => {
         const job = await this.store.load(context.jobId);
         const task = context.taskId ? job.tasks.find(item => item.id === context.taskId) : undefined;
-        if (!task || task.state !== 'QUEUED' || task.executionId !== null) return;
+        if (!task || job.pause || task.state !== 'QUEUED' || task.executionId !== null) return;
         if (task.kind !== 'planner' && task.adapter !== 'orchestrator') await this.launch(job, task);
       },
       context => `effect.launchTask:${context.jobId}:${context.taskId ?? 'task'}:${String(context.data?.attempt ?? 0)}`,
@@ -44,6 +42,7 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
     const scheduled = schedule(await this.store.load(jobId));
+    if (scheduled.pause) return scheduled;
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
     }
@@ -87,6 +86,7 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
+      if (job.pause) { cancelPausedGenerations(job, (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId), planId => { const live = this.plannerLive.get(planId); if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(planId); } }); return job; }
       if (job.state !== 'ACTIVE') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await repairLegacyOrchestrators(jobId, now, { store: this.store, owner: this.options.owner, emit: event => this.emit(event) });

@@ -9,6 +9,7 @@ import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationComm
 import { workerTaskFromArgs } from './cli-worker-task.js';
 import { taskExecutionContext } from './task-context.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
+import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
@@ -180,7 +181,7 @@ async function runContextCommand(action: string, args: string[]): Promise<void> 
   console.log(JSON.stringify(context, null, 2));
 }
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel'].includes(action)) throw new Error(usage);
+  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -206,6 +207,16 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (action === 'list') { console.log(JSON.stringify(await relayJobList(args), null, 2)); return; }
   const id = arg(args, '--id');
   if (!id && action !== 'create') throw new Error('--id is required for managed local Jobs');
+  if (action === 'pause' || action === 'resume') {
+    const target = await storeFor(args);
+    if (target.job.repository !== repo) throw new Error('Local Job/PR binding mismatch');
+    const prValue = arg(args, '--pr');
+    if (prValue && target.job.prNumber !== Number(prValue)) throw new Error('Local Job/PR binding mismatch');
+    const updated = action === 'pause' ? await pauseJob(target.store, id) : await resumeJob(target.store, id);
+    await saveLocal(target.localFile, updated);
+    await withEventBus(args, bus => publishWake(bus, updated, 'job', `Job ${id} ${action} requested`));
+    console.log(JSON.stringify(updated, null, 2)); return;
+  }
   const prValue = arg(args, '--pr');
   const prNumber = prValue ? Number(prValue) : 0;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');

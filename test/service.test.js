@@ -298,7 +298,7 @@ test('release version selection honors an explicit newer major baseline then inc
 test('CLI and daemon help are successful and do not require job storage', () => {
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
-    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|merge|unblock|cancel>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|merge|unblock|cancel|pause|resume>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
