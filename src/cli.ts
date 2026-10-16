@@ -8,6 +8,7 @@ import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, jobRequiresManagedWor
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
 import { workerTaskFromArgs } from './cli-worker-task.js';
 import { taskExecutionContext } from './task-context.js';
+import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
@@ -30,7 +31,7 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
@@ -43,7 +44,9 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
     if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
-    if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task unblock requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); const response = arg(args, '--response'); if (!reason.trim() && !response.trim()) throw new Error('task unblock requires --reason or --response'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason, ...(response.trim() ? { response } : {}) }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'escalate') { if (!taskId) throw new Error('task escalate requires --task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.escalate', jobId, taskId, requiredAction: arg(args, '--required-action'), resolutionCondition: arg(args, '--resolution-condition'), context: arg(args, '--context') }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'resume-troubleshooter') { if (!taskId) throw new Error('task resume-troubleshooter requires --task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.resume-troubleshooter', jobId, taskId, response: arg(args, '--response') }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'update') {
       const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); const expectedUpdatedAt = task.updatedAt;
       if (['RUNNING', 'SUCCEEDED', 'CANCELLED'].includes(task.state)) throw new Error(`Task ${taskId} is ${task.state}; durable execution fields are immutable in this state`);
@@ -82,6 +85,14 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
+  if (action === 'escalate') {
+    const result = await requestTroubleshooterEscalation(store, job.id, id, { requiredAction: arg(args, '--required-action'), resolutionCondition: arg(args, '--resolution-condition'), context: arg(args, '--context') });
+    await saveLocal(localFile, result.job); console.log(JSON.stringify(result.task, null, 2)); return;
+  }
+  if (action === 'resume-troubleshooter') {
+    const result = await resumeTroubleshooter(store, job.id, id, arg(args, '--response'));
+    await saveLocal(localFile, result.job); console.log(JSON.stringify(result.task, null, 2)); return;
+  }
   if (action === 'retry' || action === 'recover' || action === 'cancel') {
     let outputJob = job;
     let outputTask = task;

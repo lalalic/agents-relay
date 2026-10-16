@@ -66,8 +66,8 @@ ${task.adapter === 'chatgpt' ? `Because ChatGPT execution continues asynchronous
 Before returning or allowing the worker process to exit, you MUST publish exactly one canonical terminal event:
 - task.completed only after the declared output is durable;
 - task.failed for implementation, tool, command, test, patch, commit, push, runtime, or other execution failure that prevents completion;
-- task.blocked only when genuine human/external action is required;
-- task.cancelled only when execution was cancelled.
+- task.completed or task.failed is the only agent terminal result. Relay owns task.blocked/task.unblocked lifecycle transitions; never publish task.blocked for a recovery request;
+- Relay-owned cancellation is not an agent terminal result; if execution cannot continue, publish task.failed.
 
 If any execution step fails and you cannot continue, publish task.failed with the concrete reason BEFORE exiting.
 Never exit after task.started without publishing exactly one terminal task event.

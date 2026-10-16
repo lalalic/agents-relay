@@ -2,10 +2,19 @@ import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
 import { arg, publishTaskUnblocked, publishWake, saveLocal, withEventBus } from './cli-support.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { resumeTroubleshooter } from './task-recovery.js';
 
 export async function runTaskUnblockCommand(args: string[], store: DurableStore, job: Job, task: Task, localFile: string | null): Promise<void> {
   const reason = arg(args, '--reason');
-  if (!reason.trim()) throw new Error('task unblock requires --reason');
+  const response = arg(args, '--response');
+  if (!reason.trim() && !response.trim()) throw new Error('task unblock requires --reason or --response');
+  if (task.agentName === 'troubleshooter' && task.escalation?.status === 'pending' && response.trim()) {
+    const result = await resumeTroubleshooter(store, job.id, task.id, response);
+    await saveLocal(localFile, result.job);
+    await withEventBus(args, async bus => { await publishTaskUnblocked(bus, result.job, task.id, reason || 'Human response recorded'); await publishWake(bus, result.job, task.id, 'Troubleshooter resumed after human response'); });
+    console.log(JSON.stringify({ taskId: task.id, resumed: true, task: result.task }, null, 2));
+    return;
+  }
   const result = await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
   const refreshed = await store.load(job.id);
   await saveLocal(localFile, refreshed);

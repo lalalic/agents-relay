@@ -22,3 +22,6 @@ identity supplied by Relay for every lifecycle event.
 Run the most relevant tests and checks for the change. Do not claim completion
 without durable implementation evidence, validation results, and a concise
 summary of changed files and remaining risks.
+
+Use only `task.completed` or `task.failed` as the terminal agent event;
+block/unblock decisions belong to Relay. See `../contracts/event-contract.md`.

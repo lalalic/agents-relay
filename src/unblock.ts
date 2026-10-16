@@ -3,10 +3,14 @@ import type { BlockedBaseline, Job, PlanTrigger, Task, TaskUnblockRecord } from 
 import { applyTaskUnblockRetrySnapshot } from './task-actions.js';
 import { tryTransitionTaskEvent } from './scheduler.js';
 import { dispatchAuthoritativeUnblock } from './workflow/authoritative-unblock-v2.js';
+import { hasPendingTroubleshooterEscalation } from './task-recovery.js';
 
 export type UnblockSource = { source: 'cli' | 'blocker_job'; reason: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
 
 export function isEffectivelyBlocked(task: Task): boolean { return task.kind !== 'planner' && task.state === 'BLOCKED'; }
+function assertNoPendingHumanEscalation(tasks: Task[]): void {
+  if (tasks.some(task => task.agentName === 'troubleshooter' && task.escalation?.status === 'pending')) throw new Error('Blocked Troubleshooter requires an authorized human response; use task unblock --response');
+}
 
 function baselineFor(task: Task): BlockedBaseline {
   return task.blockedBaseline ?? { blockedAt: task.updatedAt, reason: task.error ?? undefined };
@@ -62,6 +66,7 @@ export async function unblockAutonomousTasks(options: { store: DurableStore; job
   const { store, job, trigger } = options;
   const tasks = options.tasks.filter(isEffectivelyBlocked);
   if (tasks.length === 0) throw new Error('No effective BLOCKED work task is available to unblock');
+  assertNoPendingHumanEscalation(tasks);
   const now = options.now ?? new Date().toISOString();
   const currentHeadSha = await store.headSha?.() ?? job.headSha ?? null;
   const facts = unblockFacts(job, tasks, currentHeadSha, trigger.reason);
@@ -94,6 +99,10 @@ export async function unblockAutonomousTasks(options: { store: DurableStore; job
 
 export async function unblockTask(options: { store: DurableStore; job: Job; task: Task; trigger: UnblockSource; now?: string }): Promise<{ replanning: boolean; planTrigger?: PlanTrigger }> {
   if (!isEffectivelyBlocked(options.task)) throw new Error(`Task ${options.task.id} is not an effective BLOCKED work task`);
+  assertNoPendingHumanEscalation([options.task]);
+  if (options.task.agentName !== 'troubleshooter' && hasPendingTroubleshooterEscalation(options.job, options.task)) {
+    throw new Error(`Task ${options.task.id} cannot be directly unblocked while its Troubleshooter is awaiting human action`);
+  }
   let result: { replanning: boolean; planTrigger?: PlanTrigger } | undefined;
   const decision = await dispatchAuthoritativeUnblock(options.job.executionMode === 'autonomous', async actionId => {
     if (actionId === 'unblock.replan') {

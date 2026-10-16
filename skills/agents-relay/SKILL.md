@@ -9,6 +9,8 @@ Use Agents Relay when an orchestrator needs durable delegated work that survives
 
 ## Required shared contract
 
+For unified agent terminal events and role-specific results, see `contracts/event-contract.md` and `contracts/task-recovery-flows.md`.
+
 Before creating, planning, reviewing, or managing a job/task, read and follow `contracts/task-job-contract.md`. This is the canonical producer/runtime protocol for story size, lifecycle events, review, and auto-merge.
 
 ## Core task contract
@@ -39,7 +41,7 @@ Agents Relay may launch a Codex process or submit a one-shot ChatGPT browser tas
 A running agent MUST use the canonical Neo `events-bus` protocol and publish exactly one correlated terminal event before stopping:
 - `task.completed` after the declared output is durable;
 - `task.failed` when the task cannot complete;
-- `task.blocked` when external or human action is required.
+- Progress is optional; `task.blocked` and `task.unblocked` are Relay-owned lifecycle facts, never agent terminal events.
 
 Event publishing is not an Agents Relay CLI responsibility. Sandboxed Codex and hosted ChatGPT workers use the federated `events__publish` MCP tool from `events-bus`; direct non-sandbox local workers may use the caller-provided `NEO_EVENTS_EMIT`. Agents Relay subscribes to the canonical `neo.events.job.<job_id>.>` stream and maps terminal events into durable task state. Relay resolves its native NATS endpoint and subject prefix from the canonical events-bus runtime configuration (with explicit Relay CLI flags remaining authoritative). The same runtime configuration supplies the events-bus HTTP API used for replay/history. Relay and its dashboard must not read the events-bus private history file or maintain a second event-history backend.
 
@@ -48,7 +50,7 @@ The event must carry the exact durable `job_id` and `task_id`. Progress events a
 Agents Relay maps those terminal events to durable state:
 - `task.completed` → `SUCCEEDED`
 - `task.failed` → `FAILED`
-- `task.blocked` → `BLOCKED`
+Relay may authoritatively move a Task to `BLOCKED` for an external condition and may resume it only through an authorized unblock operation. A human response resumes the blocked Troubleshooter, not the failed original Task.
 
 A model-backed task must not launch without an event bus. If no terminal event arrives before the task timeout, Relay records an explicit timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
 

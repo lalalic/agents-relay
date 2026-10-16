@@ -19,6 +19,9 @@ export function normalizeReviewerTerminalEvent(event: EventRecord): EventRecord 
   const head = [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha,
     data.head_sha, data.headSha]
     .find(value => typeof value === 'string' && value.length > 0);
+  // A unified task.completed review must carry its immutable target explicitly;
+  // native legacy review events may still use the task-bound fallback.
+  if (!head) return null;
   const existingFindings = outcome.blocking_findings ?? outcome.blockingFindings;
   const findings = existingFindings ?? (Array.isArray(data.findings) ? data.findings : undefined);
   return { ...event, type, data: { ...data, outcome: {

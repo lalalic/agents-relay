@@ -100,3 +100,15 @@ test('real SQLite-like mutation consumes approved verdict for a fresh head after
   assert.equal(saved.tasks.find(t=>t.id===id)?.state,'SUCCEEDED');
   await runtime.close();
 });
+
+test('reviewer task.completed without an immutable head is rejected as malformed', async () => {
+  const head = 'immutable-head'; const now = new Date().toISOString();
+  const task = { jobId: 'j', id: 'review-missing-head', kind: 'work', agentName: 'reviewer', adapter: 'chatgpt', priority: 'P1', storySize: 'M', planningDecisionId: 'plan-1', reviewHeadSha: head, parentTaskId: null, dependencies: [], capabilities: [], input: 'review', output: { kind: 'task_pr' }, state: 'RUNNING', attempt: 1, maxAttempts: 3, leaseOwner: 'worker', leaseExpiresAt: now, executionId: 'exec', threadId: null, result: null, error: null, timeoutMs: 900000, createdAt: now, updatedAt: now, executionHistory: [{ id: 'exec', attempt: 1, startedAt: now }] };
+  const store = new InMemoryStore({ id: 'j', title: 'review', repository: 'x/y', prNumber: 0, state: 'ACTIVE', headSha: head, autoMerge: false, reviewEnabled: true, createdAt: now, updatedAt: now, tasks: [task] });
+  const runtime = managedReconciler(store, { owner: 'test', adapters: [], eventBus: new MemoryEventBus(), maxConcurrent: 0 });
+  await runtime.handleEvent(eventFor('j', task.id, null, 'task.completed', 'succeeded', 'missing identity', 'orchestrator', { verdict: 'approved' }, { id: executionEventSource('j', task.id, 'exec') }));
+  const saved = await store.load('j');
+  assert.equal(saved.tasks[0].state, 'RUNNING');
+  assert.equal(saved.review, undefined);
+  await runtime.close();
+});

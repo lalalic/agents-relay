@@ -103,6 +103,20 @@ export type TaskResolution = {
   updatedAt: string;
 };
 export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence'>;
+export type TaskEscalation = {
+  id: string;
+  originalTaskId: string;
+  originalExecutionId?: string;
+  recoveryExecutionId?: string;
+  requiredAction: string;
+  resolutionCondition: string;
+  context: string;
+  status: 'pending' | 'responded' | 'resolved' | 'rejected';
+  requestedAt: string;
+  respondedAt?: string;
+  response?: string;
+  notification?: Record<string, unknown> | null;
+};
 export type JobChangeCycle = { triggeredAt: string; source: 'cli' | 'blocker_job'; reason: string; taskIds: string[]; baselineHeadShas: string[]; currentHeadSha?: string; facts: string[]; consumedByPlannerTaskId?: string }; // legacy read compatibility
 export type PlanTrigger = { source: 'initial' | 'continuation' | 'manual' | 'schedule' | 'unblock'; taskIds?: string[]; reason?: string; facts?: string[]; blockedHeadShas?: string[]; currentHeadSha?: string; unblockSource?: 'cli' | 'blocker_job' };
 export type Plan = { jobId: string; id: string; round: number; source: PlanningDecisionSource; previousPlanId: string | null; trigger: PlanTrigger; status: 'PLANNING' | 'SUCCEEDED' | 'FAILED'; guidance?: string; objectiveStatus?: 'in_progress' | 'satisfied'; plannerResult?: import('./planner.js').PlannerResult; assessment: string; generatedTaskIds: string[]; pendingUnblocks?: import('./planner.js').PlannerUnblockSpec[]; headSha?: string; error?: string; attempt?: number; maxAttempts?: number; leaseOwner?: string | null; leaseExpiresAt?: string | null; executionId?: string | null; pausedExecutionId?: string; retryFeedback?: string; timeoutMs?: number; manualPlanning?: boolean; createdAt: string; updatedAt: string; planUrl?: string };
@@ -149,6 +163,7 @@ export type Task = {
   interactiveInvocation?: import('./interactive-invocation.js').InteractiveInvocation;
   manualStateOverrides?: ManualTaskStateOverride[];
   resolution?: TaskResolution;
+  escalation?: TaskEscalation;
   recoveryForAttempt?: number;
   pausedExecution?: { id: string; state: Extract<TaskState, 'RUNNING' | 'QUEUED'>; attempt: number; at: string };
   failureReason?: string;

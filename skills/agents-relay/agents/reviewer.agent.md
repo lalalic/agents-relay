@@ -16,3 +16,14 @@ Reconstruct all material acceptance requirements from the durable Job objective 
 ## Review Decision
 
 Return a concrete approved, changes-required or blocked verdict tied to the declared immutable target, with attributed findings, severity and remediation steps. Do not alter artifacts, generate approvals on behalf of users, or perform publication, merges or external actions. Relay owns the review lifecycle and Task/Job completion.
+
+## Unified execution event
+
+After completing the review, publish **`task.completed`**, including `data.verdict`
+(`approved`, `changes-required`, or `blocked`), the **exact immutable**
+`data.head_sha`, and actionable `data.findings` for changes required. A
+negative verdict is a successful review, not `task.failed`. If review
+execution fails and no sound verdict can be produced, publish `task.failed`.
+Never emit `review.*` as the agent's terminal event. The event source must
+match the execution identity supplied by Relay. See
+`../contracts/event-contract.md`.

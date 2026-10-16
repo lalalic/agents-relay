@@ -27,10 +27,11 @@ import { DisabledGitHubClient, noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { normalizeThreadId } from './reviewer-thread.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
-import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
+import { eventBusResolutionMessage, publishTaskBlocked, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { registerBlockerDependency } from './blockers.js';
 import { adoptExistingPullRequestJob, ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
@@ -178,9 +179,32 @@ export function createWorkspaceControl(deps: any) {
     if (command === 'task.unblock') {
       const taskId = typeof body.taskId === 'string' ? body.taskId : ''; const reason = typeof body.reason === 'string' ? body.reason : '';
       const task = job.tasks.find((item: {id: string}) => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`);
+      if (task.agentName === 'troubleshooter' && task.escalation?.status === 'pending' && typeof body.response === 'string') {
+        const resumed = await resumeTroubleshooter(store, jobId, taskId, body.response);
+        await publishTaskUnblocked(bus, resumed.job, taskId, reason || 'Human response recorded');
+        await pool.reconcileLocalJob(jobId, 'control.task.unblock.troubleshooter'); return await store.load(jobId);
+      }
       await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
       const refreshed = await store.load(jobId); await publishTaskUnblocked(bus, refreshed, taskId, reason);
       await pool.reconcileLocalJob(jobId, 'control.task.unblock'); return await store.load(jobId);
+    }
+    if (command === 'task.escalate') {
+      const recoveryTaskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const requiredAction = typeof body.requiredAction === 'string' ? body.requiredAction : '';
+      const resolutionCondition = typeof body.resolutionCondition === 'string' ? body.resolutionCondition : '';
+      const context = typeof body.context === 'string' ? body.context : '';
+      const result = await requestTroubleshooterEscalation(store, jobId, recoveryTaskId, { requiredAction, resolutionCondition, context });
+      await publishTaskBlocked(bus, result.job, recoveryTaskId, requiredAction, { escalationId: result.escalation.id, originalTaskId: result.escalation.originalTaskId });
+      await pool.reconcileLocalJob(jobId, 'control.task.escalate');
+      return await store.load(jobId);
+    }
+    if (command === 'task.resume-troubleshooter') {
+      const recoveryTaskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const response = typeof body.response === 'string' ? body.response : '';
+      const resumed = await resumeTroubleshooter(store, jobId, recoveryTaskId, response);
+      await publishTaskUnblocked(bus, resumed.job, recoveryTaskId, 'Human response recorded');
+      await pool.reconcileLocalJob(jobId, 'control.task.resume-troubleshooter');
+      return await store.load(jobId);
     }
     if (command === 'review.request') {
       if (job.state === 'CANCELLED' || job.state === 'COMPLETED') throw new Error('Cannot request review for terminal Job');
