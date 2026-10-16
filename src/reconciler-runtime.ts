@@ -12,7 +12,6 @@ import type { DecisionEngine, DecisionMode } from './decision.js';
 import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
-
 import { ReconcileCoordinator } from './reconcile-coordinator.js';
 import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
@@ -90,8 +89,7 @@ export abstract class ReconcilerRuntimeBase {
     await applyTaskEffectOutcomes(this.store, event => this.emit(event), job, task, outcomes);
   }
   async applyEvent(event: EventRecord): Promise<EventHandlingResult> {
-    const sourceId = eventSourceId(event);
-    const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
+    const sourceId = eventSourceId(event); const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
     if (event.type === 'task.completed') {
@@ -401,7 +399,7 @@ export abstract class ReconcilerRuntimeBase {
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
-        if (event.type === 'task.blocked' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
+        if (event.type === 'task.blocked' && (!trustedInternal || task.agentName !== 'troubleshooter') && task.interactiveInvocation?.status !== 'awaiting_decision') return false;
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';

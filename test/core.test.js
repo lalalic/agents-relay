@@ -1625,8 +1625,8 @@ test('terminal event published during launch cannot be overwritten back to runni
   await stop();
 });
 
-test('correlated failed and blocked events set terminal durable states', async () => {
-  for (const [type,state] of [['task.failed','FAILED'],['task.blocked','BLOCKED']]) {
+test('correlated failed events set terminal durable states', async () => {
+  for (const [type,state] of [['task.failed','FAILED']]) {
     const t=task(type); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
     const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
     const stop=await reconciler.watch('j');
@@ -1638,6 +1638,18 @@ test('correlated failed and blocked events set terminal durable states', async (
     await reconciler.close();
     await stop();
   }
+});
+
+test('ordinary Worker cannot set its own Task to BLOCKED', async () => {
+  const t=task('cannot-block'); const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus()});
+  await reconciler.reconcile('j');
+  const source=await activeEventSource(store,t.id);
+  assert.equal((await reconciler.applyEvent(eventFor('j',t.id,null,'task.started','running','worker started','user',{},source))).applied,true);
+  const result=await reconciler.applyEvent(eventFor('j',t.id,null,'task.blocked','blocked','worker wants to wait','user',{},source));
+  assert.equal(result.applied,false);
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  await reconciler.close();
 });
 
 test('terminal event for another task cannot complete running work', async () => {
@@ -2302,18 +2314,22 @@ test('review outcomes persist durably and old SHA evidence is ignored after head
 });
 
 
-test('blocked review transitions reviewer task to BLOCKED', async () => {
+test('legacy blocked review becomes failed Reviewer with Troubleshooter recovery', async () => {
   const reviewJob={...job([task('work','SUCCEEDED')]),headSha:'sha-blocked'};
   const store=new InMemoryStore(reviewJob);
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:1});
   await reconciler.reconcile('j');
   const reviewer=(await store.load('j')).tasks.find(item=>item.agentName==='reviewer');
   assert.ok(reviewer);
-  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.started','running','started','orchestrator',{review:{headSha:'sha-blocked'}}));
-  await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.blocked','blocked','external blocker','orchestrator',{review:{headSha:'sha-blocked'}}));
+  const source=await activeEventSource(store,reviewer.id);
+  assert.equal((await reconciler.applyEvent(eventFor('j',reviewer.id,null,'task.started','running','review started','user',{},source))).applied,true);
+  const result=await reconciler.applyEvent(eventFor('j',reviewer.id,null,'review.blocked','blocked','missing build toolchain','user',{review:{headSha:'sha-blocked'}},source));
+  assert.equal(result.applied,true);
   const saved=await store.load('j');
-  assert.equal(saved.review?.outcome,'blocked');
-  assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'BLOCKED');
+  assert.equal(saved.tasks.find(item=>item.id===reviewer.id)?.state,'FAILED');
+  const {pendingTroubleshooterTasks}=await import('../dist/troubleshooter.js');
+  assert.equal(pendingTroubleshooterTasks(saved).some(item=>item.parentTaskId===reviewer.id),true);
+  await reconciler.close();
 });
 
 test('projected PR stale head delays final review until projection catches up', async () => {

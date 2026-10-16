@@ -30,3 +30,5 @@ When the human responds, the **Troubleshooter Task** is authoritatively unblocke
 See [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, overall flow, failure recovery, and post-blocked resumption.
 
 Reviewer unavailable evidence is an execution failure (`task.failed`), not a blocked Task. Legacy Reviewer verdict `blocked` is normalized to failure and must dispatch Troubleshooter. Only Relay blocks a Troubleshooter during human escalation.
+
+A host-mediated interactive invocation is a separate Relay-controlled wait. It requires an already-bound `interactiveInvocation` with status `awaiting_decision`. It is not permission for a Worker or Reviewer to choose a blocked terminal outcome.
