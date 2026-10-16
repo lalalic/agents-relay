@@ -2,6 +2,7 @@
   "name": "agents-relay",
   "version": "2.0.1-e2e.20261010.43",
   "description": "Durable async agent jobs coordinated through GitHub pull requests",
+  "repository": { "type": "git", "url": "git+https://github.com/lalalic/agents-relay.git" },
   "type": "module",
   "bin": {
     "agents-relay": "dist/cli.js",
