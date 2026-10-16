@@ -34,3 +34,7 @@ Reviewer unavailable evidence is an execution failure (`task.failed`), not a blo
 A host-mediated interactive invocation is a separate Relay-controlled wait. It requires an already-bound `interactiveInvocation` with status `awaiting_decision`. It is not permission for a Worker or Reviewer to choose a blocked terminal outcome.
 
 A legacy Job-level `review: blocked` gate is reset to `pending` only after authoritative `task.unblocked` metadata exists on its bound Reviewer Task and the immutable review head still matches. The same Reviewer Task then resumes without creating a duplicate.
+
+## Local Git merge delivery history
+
+The Relay-owned merge effect persists the current `job.localMerge` receipt in SQLite. Every attempted delivery also emits `job.merge.failed` or `job.merge.succeeded` to the canonical events-bus, keyed by the Job and merge attempt. Failure `data` contains `reason`, exact `message`, `attempts`, `retryable`, and `nextAttemptAt`; success contains `mergedCommitSha` and `sourceSha`. A dirty checked-out target is `reason: dirty_target_worktree`. The dashboard displays the durable failure reason while `localMerge.status=failed`. After the retry deadline, periodic reconciliation must select ACTIVE Jobs with failed local merges even when all Tasks have succeeded. Historical failure events remain visible after successful recovery.

@@ -528,3 +528,32 @@ test('external merge enqueue failure cannot roll back authoritative local comple
     assert.equal((await base.load('local-job')).localMerge.status,'succeeded');
   } finally {await reconciler.close();repo.close();}
 });
+
+test('local merge failure records reason and retry, then emits a successful recovery', async()=>{
+  const {reconcileLocalGitCompletion}=await import('../dist/local-merge-delivery.js');
+  const repo=localRepository(); const {db,store}=fixture(); const events=[];
+  try {
+    repo.git('checkout','main');
+    writeFileSync(join(repo.path,'base.txt'),'dirty tracked main');
+    await store.saveJob({...job(),headSha:repo.head,localMerge:{...mergeRefs,sourceSha:repo.head}});
+    const emit=async event=>{events.push(event)};
+    let state=await store.load('local-job');
+    assert.equal(await reconcileLocalGitCompletion(store,state,repo.head,true,()=>repo.path,emit),false);
+    state=await store.load('local-job');
+    assert.equal(state.localMerge.status,'failed');
+    assert.match(state.localMerge.error,/tracked or index changes/);
+    assert.ok(state.localMerge.nextAttemptAt);
+    assert.equal(events.length,1);
+    assert.equal(events[0].type,'job.merge.failed');
+    assert.equal(events[0].data.reason,'dirty_target_worktree');
+    assert.equal(events[0].data.retryable,true);
+    assert.equal(events[0].data.nextAttemptAt,state.localMerge.nextAttemptAt);
+    repo.git('checkout','--','base.txt');
+    await new Promise(resolve=>setTimeout(resolve,2200));
+    state=await store.load('local-job');
+    const recovered=await reconcileLocalGitCompletion(store,state,repo.head,true,()=>repo.path,emit);
+    assert.equal(recovered,true,JSON.stringify((await store.load('local-job')).localMerge));
+    assert.equal(events[1].type,'job.merge.succeeded');
+    assert.equal((await store.load('local-job')).state,'COMPLETED');
+  } finally {db.close();repo.close()}
+});

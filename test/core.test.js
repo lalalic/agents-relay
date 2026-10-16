@@ -2744,3 +2744,10 @@ test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
   value.plans=[{id:'plan-4',status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']}}];
   assert.equal(needsLifecycleReconciliation(value),false);
 });
+
+test('failed local merge is scheduled for reconciliation when retry is due', () => {
+  const now=Date.parse('2026-10-16T21:00:00Z');
+  const base={...job([task('work','SUCCEEDED')]),state:'ACTIVE',localMerge:{sourceRef:'refs/heads/task',targetRef:'refs/heads/main',status:'failed',nextAttemptAt:'2026-10-16T20:59:00Z'}};
+  assert.equal(needsLifecycleReconciliation(base,now),true);
+  assert.equal(needsLifecycleReconciliation({...base,localMerge:{...base.localMerge,nextAttemptAt:'2026-10-16T21:01:00Z'}},now),false);
+});

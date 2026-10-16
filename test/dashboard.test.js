@@ -981,3 +981,9 @@ test('publication webhook only acknowledges successful durable handling and retr
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+test('job list displays durable local merge failure reason', () => {
+  assert.match(dashboardHtml, /job\.localMerge\?\.status==='failed'/);
+  assert.match(dashboardHtml, /MERGE FAILED: /);
+  assert.match(dashboardHtml, /job\.localMerge\.error/);
+});

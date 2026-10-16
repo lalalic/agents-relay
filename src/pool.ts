@@ -19,6 +19,8 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
   if (job.pause) return job.tasks.some(task => Boolean(task.pausedExecution)) || Boolean(job.plans?.some(plan => Boolean(plan.pausedExecutionId)));
   // DRAFT create-only Jobs stay dormant until a caller explicitly creates work.
   if (job.tasks.length === 0) return false;
+  if (job.state === 'ACTIVE' && job.localMerge?.status === 'failed' &&
+      (!job.localMerge.nextAttemptAt || Date.parse(job.localMerge.nextAttemptAt) <= now)) return true;
   if (job.executionMode === 'autonomous' && unblockNeedsNewPlan(job)) return true;
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)

@@ -1,4 +1,5 @@
-import type { Job } from './types.js';
+import type { Job, EventRecord } from './types.js';
+import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
 import { transitionJobEvent } from './scheduler.js';
 import { deliverLocalMerge, localMergeEligible, requiresLocalGitMerge } from './local-git-merge.js';
@@ -12,6 +13,7 @@ export async function reconcileLocalGitCompletion(
   headSha: string | null,
   noGitHub: boolean,
   projectPathForJob?: (job: Job) => string | Promise<string>,
+  emit?: (event: EventRecord) => Promise<void>,
 ): Promise<boolean> {
   if (localMergeEligible(finalState) && !requiresLocalGitMerge(finalState)) {
         await transitionJobEvent(finalState, 'local.completed', { localCompletionAllowed: true });
@@ -48,6 +50,18 @@ export async function reconcileLocalGitCompletion(
           }
           finalState.updatedAt = new Date().toISOString();
           await store.saveJob(finalState);
+          const merge = finalState.localMerge;
+          if (merge && emit) {
+            const succeeded = merge.status === 'succeeded';
+            const reason = merge.error?.includes('tracked or index changes') ? 'dirty_target_worktree' : 'merge_delivery_failed';
+            await emit(eventFor(finalState.id, 'merge', null,
+              succeeded ? 'job.merge.succeeded' : 'job.merge.failed',
+              succeeded ? 'succeeded' : 'failed',
+              succeeded ? 'Local merge succeeded' : (merge.error ?? 'Local merge failed'),
+              'user', succeeded ? { mergedCommitSha: merge.mergedCommitSha, sourceSha: merge.sourceSha }
+                : { reason, message: merge.error, attempts: merge.attempts, retryable: true, nextAttemptAt: merge.nextAttemptAt },
+              { id: `job/${finalState.id}/task/merge/execution/attempt-${merge.attempts ?? 0}`, agent: 'relay' }));
+          }
           });
         }
         if (finalState.localMerge?.status === 'succeeded') {
