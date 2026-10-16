@@ -86,6 +86,13 @@ test('task tree rows stay within the mobile viewport and ellipsize long ids', ()
   assert.match(dashboardHtml, /\.task-id \{ min-width:0; max-width:100%; flex:1 1 0; overflow:hidden; text-overflow:ellipsis;/);
 });
 
+test('compact labels preserve original titles and tooltips', () => {
+  assert.match(dashboardHtml, /text\(value\(task\.id\)\+': '\+value\(task\.title\|\|task\.input/);
+  assert.match(dashboardHtml, /row\.title=task\.id/);
+  assert.match(dashboardHtml, /select\.title=job\.title\|\|job\.id/);
+  assert.match(dashboardHtml, /field\('Title',task\.title\|\|'—'\)/);
+});
+
 test('primary task tree excludes planner-history records', () => {
   assert.match(dashboardHtml, /const work=tasks\.filter\(task=>task\.kind!=='planner'\)/);
   assert.match(dashboardHtml, /No work tasks in durable state/);
@@ -537,10 +544,15 @@ test('credit providers render one balance value per provider row', () => {
   assert.doesNotMatch(dashboardHtml, /balance\.used!==null/);
 });
 
-test('job list uses repo-prefixed PR title and keeps time on the final line', () => {
+test('job list omits PR suffix when PR number is absent', () => {
+  assert.match(dashboardHtml, /Number\(job\.prNumber\|\|0\)>0\?'\/PR#'\+value\(job\.prNumber\):''/);
+  assert.match(dashboardHtml, /select\.title=job\.title\|\|job\.id/);
+});
+
+test('job list uses repo/jobid/PR#number and keeps time on the final line', () => {
   assert.match(dashboardHtml, /function repoName\(repository\)/);
   assert.match(dashboardHtml, /Number\(job\.prNumber\|\|0\)>0/);
-  assert.match(dashboardHtml, /'Job '\+shortManagedId\(job\.id,job\.repository,'j'\)/);
+  assert.match(dashboardHtml, /repoName\(job\.repository\)\+'\/'\+value\(job\.id\)\+\(Number\(job\.prNumber\|\|0\)>0\?'\/PR#'\+value\(job\.prNumber\):''\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
