@@ -1,0 +1,24 @@
+name: Run bounded tests
+description: Terminate stalled test process groups and report failure.
+inputs:
+  command:
+    description: Shell command to execute.
+    required: true
+  timeout-ms:
+    description: Maximum test duration in milliseconds.
+    required: false
+    default: '480000'
+  kill-grace-ms:
+    description: Termination grace period in milliseconds.
+    required: false
+    default: '5000'
+runs:
+  using: composite
+  steps:
+    - name: Run bounded tests
+      shell: bash
+      env:
+        TEST_COMMAND: ${{ inputs.command }}
+        RELAY_TEST_TIMEOUT_MS: ${{ inputs.timeout-ms }}
+        RELAY_TEST_KILL_GRACE_MS: ${{ inputs.kill-grace-ms }}
+      run: node "$GITHUB_ACTION_PATH/runner.mjs" bash -euo pipefail -c "$TEST_COMMAND"

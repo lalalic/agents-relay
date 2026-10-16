@@ -32,7 +32,9 @@ jobs:
       - run: npm ci
       - name: Run test suite
         timeout-minutes: 10
-        run: npm run test:publish
+        uses: ./.github/actions/run-bounded-tests
+        with:
+          command: npm run test:publish
       - run: chmod +x dist/cli.js dist/relayd.js
       - name: Select next package version
         id: version
