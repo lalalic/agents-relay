@@ -11,7 +11,7 @@ export function normalizeReviewerTerminalEvent(event: EventRecord): EventRecord 
   const raw = data.verdict;
   const type = raw === 'approved' || raw === 'pass' ? 'review.approved'
     : raw === 'changes-required' || raw === 'changes_required' ? 'review.changes_required'
-    : raw === 'blocked' ? 'review.blocked' : null;
+    : raw === 'blocked' ? 'task.failed' : null;
   if (!type) return null;
   const outcome = record(data.outcome);
   const review = record(data.review);
@@ -24,6 +24,7 @@ export function normalizeReviewerTerminalEvent(event: EventRecord): EventRecord 
   if (!head) return null;
   const existingFindings = outcome.blocking_findings ?? outcome.blockingFindings;
   const findings = existingFindings ?? (Array.isArray(data.findings) ? data.findings : undefined);
+  if (type === 'task.failed') return { ...event, type, message: event.message || 'Reviewer validation unavailable', data: { ...data, reason: 'review_evidence_unavailable' } };
   return { ...event, type, data: { ...data, outcome: {
     ...outcome, ...(head ? { head_sha: head } : {}),
     ...(findings !== undefined && existingFindings === undefined ? { blocking_findings: findings } : {}),

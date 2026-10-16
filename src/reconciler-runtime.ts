@@ -97,7 +97,7 @@ export abstract class ReconcilerRuntimeBase {
     if (event.type === 'task.completed') {
       const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
       const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
-      if (normalized) return this.applyReviewEvent(normalized);
+      if (normalized) return normalized.type === 'task.failed' ? this.applyTerminalEvent(normalized) : this.applyReviewEvent(normalized);
     }
     if (['task.completed', 'task.failed', 'task.blocked', 'task.cancelled'].includes(event.type)) {
       const result = await this.applyTerminalEvent(event);
@@ -106,7 +106,8 @@ export abstract class ReconcilerRuntimeBase {
       return durable?.state === 'FAILED' && durable.executionHistory?.some(history => history.id === event.data?.executionId)
         ? { applied: true, reconcile: true, reason: 'watchdog.failure-fact' } : result;
     }
-    if (['review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type)) return this.applyReviewEvent(event);
+    if (event.type === 'review.blocked') return this.applyTerminalEvent({ ...event, type: 'task.failed', data: { ...event.data, reason: 'review_evidence_unavailable' } });
+    if (['review.started', 'review.approved', 'review.changes_required'].includes(event.type)) return this.applyReviewEvent(event);
     if (event.type === 'task.interactive_decision') return this.applyHostInvocationEvent(event);
     if (event.type === 'github.webhook') return { applied: true, reconcile: false, reason: 'github.audit_only' };
     if (event.type === 'job.wake') return { applied: true, reconcile: true, reason: event.type };
@@ -400,6 +401,7 @@ export abstract class ReconcilerRuntimeBase {
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, event.type, {
       eligible: (_job, task) => {
         if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
+        if (event.type === 'task.blocked' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
@@ -462,7 +464,7 @@ export abstract class ReconcilerRuntimeBase {
     if (transition.task.adapter === 'codex' && liveAtTerminal && !liveAtTerminal.processSettled && liveAtTerminal.jobId === event.job_id && (!terminalEventExecutionId || liveAtTerminal.executionId === terminalEventExecutionId)) { liveAtTerminal.controller.abort(); liveAtTerminal.execution.cancel(); }
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
     const reviewWorker = transition.task.agentName === 'reviewer';
-    return { applied: true, reconcile: !reviewWorker, reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker ? undefined : 'detached' };
+    return { applied: true, reconcile: !reviewWorker || event.type === 'task.failed', reason: reviewWorker ? `${event.type}.review-worker` : event.type, reconcileMode: reviewWorker ? undefined : 'detached' };
   }
   protected terminalWait(taskId: string, executionId: string, launchBarrier: number): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;

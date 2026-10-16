@@ -16,7 +16,7 @@ Every Implementation, Reviewer, and Troubleshooter execution publishes `task.sta
 | Role | `task.completed.data` | Relay action |
 | --- | --- | --- |
 | Implementation | Evidence of output/artifact, validation, and summary as required by the Task | Persist Task success and continue dependencies/review |
-| Reviewer | `verdict` (`approved`, `changes-required`, or `blocked`), exact immutable `head_sha`, actionable `findings` as necessary | Validate current immutable review target and apply verdict; defects are a successful Reviewer execution, not `task.failed` |
+| Reviewer | `verdict` (`approved` or `changes-required`), exact immutable `head_sha`, actionable `findings` as necessary | Validate current immutable review target and apply verdict; defects are a successful Reviewer execution, not `task.failed` |
 | Troubleshooter | Recovery action and durable evidence of verified original Task retry, blocker-Job handoff, or other authorized recovery | Complete recovery Task only; original Task state changes through separately authorized Relay operations |
 
 A Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay normalizes an authenticated structured Reviewer terminal event into its internal Review decision; native `review.*` events may be accepted for backward compatibility.
@@ -28,3 +28,5 @@ Only a real user action merits escalation. Troubleshooter invokes the Relay esca
 When the human responds, the **Troubleshooter Task** is authoritatively unblocked and resumed with its prior context plus the response. Troubleshooter independently verifies resolution, requests an authorized original Task recovery, and only then publishes its own `task.completed`. If unresolved, it continues diagnosis or escalates again; human assertion alone is not technical verification.
 
 See [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, overall flow, failure recovery, and post-blocked resumption.
+
+Reviewer unavailable evidence is an execution failure (`task.failed`), not a blocked Task. Legacy Reviewer verdict `blocked` is normalized to failure and must dispatch Troubleshooter. Only Relay blocks a Troubleshooter during human escalation.
