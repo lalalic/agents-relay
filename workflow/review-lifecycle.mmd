@@ -37,6 +37,7 @@ cancelStarted["action: review.cancelStale"]
 cancelApproved["action: review.cancelStale"]
 cancelChanges["action: review.cancelStale"]
 cancelBlocked["action: review.cancelStale"]
+reviewUnblocked["guard: reviewUnblocked"]
 fixPending["action: review.createFix"]
 fixStarted["action: review.createFix"]
 fixChanges["action: review.createFix"]
@@ -117,5 +118,8 @@ approved -->|on: head.changed| cancelApproved
 cancelApproved --> stale
 changes -->|on: head.changed| cancelChanges
 cancelChanges --> stale
+blocked -->|on: review.retry| reviewUnblocked
+reviewUnblocked -->|true| pending
+reviewUnblocked -->|false| blocked
 blocked -->|on: head.changed| cancelBlocked
 cancelBlocked --> stale

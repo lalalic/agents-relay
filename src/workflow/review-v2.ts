@@ -23,9 +23,10 @@ export const reviewLifecycleV2 = new GraphRuntime(source, {
     currentReviewCancelled: boolGuard('currentReviewCancelled'),
     noApprovedCurrentReview: boolGuard('noApprovedCurrentReview'),
     autoMerge: boolGuard('autoMerge'),
+    reviewUnblocked: boolGuard('reviewUnblocked'),
   },
   actions: Object.fromEntries((['review.create','review.cancelStale','review.createFix','review.requestMerge'] as ReviewGraphAction[]).map(id => [id,{id}])),
-  events: Object.fromEntries(['reconcile','review.started','review.approved','review.changes_required','review.blocked','head.changed'].map(id => [id,{id}])),
+  events: Object.fromEntries(['reconcile','review.started','review.approved','review.changes_required','review.blocked','review.retry','head.changed'].map(id => [id,{id}])),
 });
 
 export function reviewGraphState(outcome: ReviewOutcome | undefined): ReviewGraphState {

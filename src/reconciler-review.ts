@@ -175,6 +175,17 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
   protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
     if (headSha && !(await this.projectedReviewHeadReady(job, headSha))) return;
+    // Restore the review gate only after an authoritative unblock of the original reviewer.
+    const priorReviewTask = job.tasks.find(task => task.id === job.review?.taskId);
+    if (job.review?.outcome === 'blocked' && job.review.headSha === headSha
+      && priorReviewTask?.agentName === 'reviewer' && priorReviewTask.unblock?.event === 'task.unblocked'
+      && ['QUEUED', 'RUNNING', 'FAILED'].includes(priorReviewTask.state)) {
+      const recovered = await dispatchReviewLifecycle('blocked', 'review.retry', { reviewUnblocked: true });
+      if (recovered.accepted && recovered.target === 'PENDING') {
+        job.review = { ...job.review, outcome: 'pending', updatedAt: new Date().toISOString() };
+        await this.store.saveJob(job);
+      }
+    }
     let reviewTaskId: string | null = null;
     const decision = await dispatchReviewLifecycle(job.review?.outcome, 'reconcile', this.reviewFacts(job, headSha), async actionId => {
       if (actionId !== 'review.create') throw new Error('Unsupported review reconcile action ' + actionId);

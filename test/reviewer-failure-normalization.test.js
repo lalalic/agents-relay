@@ -1,5 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { decideReviewLifecycle } from '../dist/workflow/review-v2.js';
 import { normalizeReviewerTerminalEvent } from '../dist/review-terminal-normalization.js';
 
 const original = (verdict) => ({
@@ -19,4 +20,9 @@ test('legacy blocked Reviewer outcome becomes failed execution for Troubleshoote
 test('actual review findings keep successful review lifecycle', () => {
   assert.equal(normalizeReviewerTerminalEvent(original('changes-required')).type, 'review.changes_required');
   assert.equal(normalizeReviewerTerminalEvent(original('approved')).type, 'review.approved');
+});
+
+test('legacy review retry requires authoritative unblock', () => {
+  assert.equal(decideReviewLifecycle('blocked', 'review.retry', {reviewUnblocked:true}).target, 'PENDING');
+  assert.equal(decideReviewLifecycle('blocked', 'review.retry', {reviewUnblocked:false}).target, 'BLOCKED');
 });
