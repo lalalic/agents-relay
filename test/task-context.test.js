@@ -30,8 +30,10 @@ test('reference prompt preserves canonical event contract and excludes task body
   const source='LONG_PRIVATE_TASK_BODY\n[Execution event contract — mandatory]\nsource.id=job/j1/task/build/execution/exec-1\ntask.started\ntask.completed';
   const prompt=taskReferencePrompt('owner/repo','j1','build','exec-1',source);
   assert.doesNotMatch(prompt,/LONG_PRIVATE_TASK_BODY/);
-  assert.match(prompt,/source.id=job\/j1\/task\/build\/execution\/exec-1/);
+  assert.match(prompt,/source.id: job\/j1\/task\/build\/execution\/exec-1/);
   assert.match(prompt,/task.started/);
   assert.match(prompt,/task.completed/);
+  assert.doesNotMatch(prompt,/LONG_PRIVATE_TASK_BODY|\[Execution event contract — mandatory\]/);
+  assert.ok(prompt.length < 1600);
   assert.throws(()=>taskReferencePrompt('owner/repo','j1','build','exec-1','missing'),/Missing managed execution event contract/);
 });

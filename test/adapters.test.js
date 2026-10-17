@@ -447,6 +447,8 @@ test('implementation-thread delivery sends reference plus canonical execution ev
   assert.equal(requests.length, 1);
   assert.match(requests[0].prompt,/task context --repo owner\/repo --id job-1 --task-id chat-task --execution-id exec-1/);
   assert.doesNotMatch(requests[0].prompt,/SECRET_LONG_TASK_INSTRUCTIONS/);
-  assert.match(requests[0].prompt,/source.id=job\/job-1\/task\/chat-task\/execution\/exec-1/);
-  assert.match(requests[0].prompt,/task.started task.heartbeat task.completed/);
+  assert.match(requests[0].prompt,/source.id: job\/job-1\/task\/chat-task\/execution\/exec-1/);
+  assert.match(requests[0].prompt,/task.started/);
+  assert.match(requests[0].prompt,/task.completed/);
+  assert.ok(requests[0].prompt.length < 1600);
 });

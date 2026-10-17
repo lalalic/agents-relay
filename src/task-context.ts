@@ -12,10 +12,22 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
     plan: job.plans?.find(plan => plan.id === task.planningDecisionId) ?? null };
 }
 
+/** Browser new-turn envelope: the local Contract and durable Task Context are authoritative. */
 export function taskReferencePrompt(repository: string, jobId: string, taskId: string, executionId: string, managedInput?: string): string {
-  const marker = '[Execution event contract — mandatory]';
-  const index = managedInput?.indexOf(marker) ?? -1;
-  if (managedInput !== undefined && index < 0) throw new Error(`Missing managed execution event contract for ${jobId}/${taskId}/${executionId}`);
-  const eventContract = index >= 0 ? `\n\n${managedInput!.slice(index)}` : '';
-  return `[Agents Relay managed task]\nRepository: ${repository}\nJob ID: ${jobId}\nTask ID: ${taskId}\nExecution ID: ${executionId}\n\nRetrieve the authoritative task contract using the connected NeoY shell/Agents Relay CLI:\n  agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}\nRead the returned Task input, dependencies, Plan, project context, and output requirements before execution. Check that the execution ID matches. If the CLI or context is unavailable, report blocked; never guess or execute from this envelope. Continue in this thread; Relay owns completion and review. Do not create another Job.${eventContract}`;
+  if (managedInput !== undefined && !managedInput.includes('[Execution event contract — mandatory]'))
+    throw new Error(`Missing managed execution event contract for ${jobId}/${taskId}/${executionId}`);
+  const source = `job/${jobId}/task/${taskId}/execution/${executionId}`;
+  return `[Agents Relay managed task]
+Repository: ${repository}
+Job ID: ${jobId}
+Task ID: ${taskId}
+Execution ID: ${executionId}
+Exact event source.id: ${source}
+
+FIRST publish exactly one task.started through the canonical Neo events-bus with this exact source.id.
+THEN read the entire authoritative event contract from /Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md before any task work. If unavailable publish task.failed and stop.
+THEN retrieve the authoritative Task Context:
+  agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}
+Verify the execution ID. Read Task input, dependencies, Plan, project context, and output requirements from that response. Never guess or create a new Job. Continue in this thread; Relay owns completion and review.
+Follow the file's lifecycle contract, including progress/heartbeat and exactly one task.completed or task.failed before exiting. If context is unavailable publish task.failed with the blocker.`;
 }
