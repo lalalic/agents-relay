@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "results": [
+    {
+      "schemaVersion": 1,
+      "scenarioId": "broken-terminal-trace",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "FAIL",
+      "expectedTerminal": "COMPLETED",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "forged.job.completed"
+      ],
+      "failureEdge": "task.completed",
+      "reason": "required causal event missing or out of order"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "duplicate-stale-restart",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "task.completed",
+        "task.failed",
+        "task.failed",
+        "restart.recovered"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "merge-failure-retry",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "COMPLETED",
+      "actualTerminal": "COMPLETED",
+      "trace": [
+        "task.completed",
+        "effect.deliverLocalMerge.failed",
+        "local.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "normal-completion",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "COMPLETED",
+      "actualTerminal": "COMPLETED",
+      "trace": [
+        "task.completed",
+        "local.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "parallel-dependencies",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "task.completed",
+        "parallel.dependencies.released"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "planner-multi-batch",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "COMPLETED",
+      "actualTerminal": "COMPLETED",
+      "trace": [
+        "planner.batch.completed",
+        "planner.batch.continued",
+        "local.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "reviewer-failure-recovery",
+      "category": "L3",
+      "role": "reviewer",
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "task.failed",
+        "task.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "reviewer-revision-rereview",
+      "category": "L3",
+      "role": "reviewer",
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "COMPLETED",
+      "actualTerminal": "COMPLETED",
+      "trace": [
+        "task.completed",
+        "review.changes_required",
+        "task.completed",
+        "review.approved",
+        "local.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "stalled-review",
+      "category": "L3",
+      "role": "reviewer",
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "review.started"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "troubleshooter-escalation-unblock",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "task.blocked",
+        "task.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    },
+    {
+      "schemaVersion": 1,
+      "scenarioId": "worker-failure-recovery",
+      "category": "L3",
+      "role": null,
+      "provider": null,
+      "outcome": "UNSUPPORTED",
+      "expectedTerminal": "ACTIVE",
+      "actualTerminal": "ACTIVE",
+      "trace": [
+        "task.failed",
+        "task.completed"
+      ],
+      "failureEdge": null,
+      "reason": "SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised"
+    }
+  ]
+}
