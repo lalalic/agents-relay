@@ -220,7 +220,18 @@ function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly str
       signal?.removeEventListener('abort', abort);
       if (code === 0) resolve(stdout.trim());
       else if (signal?.aborted) reject(new Error('browser-worker execution aborted'));
-      else reject(new Error(stderr.trim() || stdout.trim() || `browser-workspace exited ${code}`));
+      else {
+        // Browser Workspace reports a compact code/message JSON on nonzero exit.
+        // Preserve existing Relay failure behavior; only simplify the error text.
+        let reason = stderr.trim() || stdout.trim() || `browser-workspace exited ${code}`;
+        try {
+          const envelope = parseWorkspaceJson(stdout);
+          const result = envelope.result as Record<string, unknown> | undefined;
+          if (result?.ok === false && typeof result.code === 'string' && typeof result.message === 'string')
+            reason = `${result.code}: ${result.message}`;
+        } catch { /* Preserve legacy error handling for other CLI failures. */ }
+        reject(new Error(reason));
+      }
     });
     if (signal?.aborted) abort();
     else signal?.addEventListener('abort', abort, { once: true });
