@@ -35,3 +35,16 @@ test('reviewer failure is not approval',()=>{
   const normalized=normalizeReviewerTerminalEvent(event({verdict:'blocked',head_sha:'aabbcc'}));
   assert.equal(normalized.type,'task.failed');
 });
+
+test('managed agent prompt requires canonical absolute contract read after start', async () => {
+  const { taskReferencePrompt } = await import('../../dist/task-context.js');
+  const path='/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md';
+  const managed='[Execution event contract — mandatory]\nAs your FIRST execution action, publish task.started';
+  const prompt=taskReferencePrompt('lalalic/agents-relay','481','46','exec',managed);
+  const source=read('src/managed-worker-input.ts');
+  assert.ok(prompt.includes(path));
+  assert.ok(prompt.includes('After the mandatory task.started event'));
+  assert.ok(source.includes('Immediately after task.started'));
+  assert.ok(source.includes(path));
+  assert.ok(source.includes('publish task.failed'));
+});
