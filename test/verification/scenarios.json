@@ -1,0 +1,5 @@
+[
+{"id":"normal-merge","category":"L3","expectedTrace":["task.completed","review.approved"],"expectedTerminal":"COMPLETED"},
+{"id":"reviewer-contract","category":"L1","role":"reviewer","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"},
+{"id":"real-worker","category":"L2","role":"implementation","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"}
+]
