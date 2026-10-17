@@ -13,3 +13,10 @@ test('L2 live provider calls are NOT_RUN without opt-in',async()=>{
   const results=await runLiveMatrix({cases:[{role:'implementation',provider:'test'}]});
   assert.equal(results[0].outcome,'NOT_RUN');
 });
+
+test('L2 evaluator separates adapter failure from model contract failure',()=>{
+  const adapter=evaluateEmissions({role:'reviewer',executionId:'abc',source,events:good,exitCode:2});
+  assert.equal(adapter.failureClass,'ADAPTER_OR_PROVIDER');
+  const model=evaluateEmissions({role:'reviewer',executionId:'abc',source,events:[good[0],{...good[1],source:'wrong'}]});
+  assert.equal(model.failureClass,'MODEL_CONTRACT');
+});
