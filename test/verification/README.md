@@ -13,3 +13,12 @@ Foundation extension points:
 Create an isolated store with `createIsolatedEnvironment`; pass its returned `env` to spawned Relay processes. Do not use the canonical user store. The included scenarios are starting contracts only, not claims of passing integration coverage.
 
 The `classifyObservedTrace` helper requires a trusted isolated-store reader. Synthetic trace checks alone cannot establish L3 PASS.
+
+## SQLite event ingress smoke path
+
+Run `npm run test:verification-foundation` to execute isolated SQLite event-ingress coverage.
+`sqlite-ingress.test.mjs` publishes a stale terminal event, a valid terminal event,
+and a duplicate through the production Reconciler, checks durable SQLite state,
+closes/reopens the store, and verifies persistence. This is **not** the complete
+L3 event-loop simulator; Planner, reviewer, merge, and recovery workflows remain
+NOT_RUN until a scheduler-driven scenario runner executes those full paths.
