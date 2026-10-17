@@ -1,0 +1,14 @@
+{
+  "id": "stale-duplicate", "category": "L3",
+  "steps": [
+    {"type": "task.completed", "executionId": "old-generation"},
+    {"type": "task.completed"},
+    {"type": "task.completed"}
+  ],
+  "assertions": [
+    {"step": 0, "taskId": "a", "before": "RUNNING", "after": "RUNNING", "progress": false},
+    {"step": 1, "taskId": "a", "before": "RUNNING", "after": "SUCCEEDED", "progress": true},
+    {"step": 2, "taskId": "a", "after": "SUCCEEDED", "progress": false}
+  ],
+  "expected": {"jobState": "ACTIVE", "tasks": {"a": "SUCCEEDED", "b": "QUEUED"}}
+}

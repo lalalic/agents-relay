@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "scenarioId": "broken-premature-completion",
+  "category": "L3",
+  "outcome": "FAIL",
+  "actual": {
+    "jobState": "ACTIVE",
+    "tasks": {
+      "a": "SUCCEEDED",
+      "b": "QUEUED"
+    },
+    "localMerge": null
+  },
+  "trace": [
+    {
+      "index": 0,
+      "event": "task.completed",
+      "source": "exec-a",
+      "before": [
+        {
+          "id": "a",
+          "state": "RUNNING",
+          "executionId": "exec-a"
+        },
+        {
+          "id": "b",
+          "state": "DRAFT",
+          "executionId": null
+        }
+      ],
+      "after": [
+        {
+          "id": "a",
+          "state": "SUCCEEDED",
+          "executionId": null
+        },
+        {
+          "id": "b",
+          "state": "QUEUED",
+          "executionId": null
+        }
+      ],
+      "jobState": "ACTIVE",
+      "mergeStatus": null,
+      "progress": true
+    }
+  ],
+  "errors": [
+    "job expected COMPLETED, got ACTIVE",
+    "b expected SUCCEEDED, got QUEUED"
+  ],
+  "authority": "isolated SQLite via production event bus and reconciler"
+}

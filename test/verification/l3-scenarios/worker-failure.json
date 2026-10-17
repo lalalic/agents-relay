@@ -1,0 +1,6 @@
+{
+  "id": "worker-failure", "category": "L3",
+  "steps": [{"type": "task.failed", "data": {"phase": "implementation", "reason": "injected failure"}}, {"type": "reconcile"}],
+  "assertions": [{"step": 0, "taskId": "a", "before": "RUNNING", "after": "FAILED"}],
+  "expected": {"jobState": "ACTIVE", "tasks": {"a": "FAILED", "b": "DRAFT"}}
+}

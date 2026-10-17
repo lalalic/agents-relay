@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 2,
+  "scenarioId": "stale-duplicate",
+  "category": "L3",
+  "outcome": "PASS",
+  "actual": {
+    "jobState": "ACTIVE",
+    "tasks": {
+      "a": "SUCCEEDED",
+      "b": "QUEUED"
+    },
+    "localMerge": null
+  },
+  "trace": [
+    {
+      "index": 0,
+      "event": "task.completed",
+      "source": "old-generation",
+      "before": [
+        {
+          "id": "a",
+          "state": "RUNNING",
+          "executionId": "exec-a"
+        },
+        {
+          "id": "b",
+          "state": "DRAFT",
+          "executionId": null
+        }
+      ],
+      "after": [
+        {
+          "id": "a",
+          "state": "RUNNING",
+          "executionId": "exec-a"
+        },
+        {
+          "id": "b",
+          "state": "DRAFT",
+          "executionId": null
+        }
+      ],
+      "jobState": "ACTIVE",
+      "mergeStatus": null,
+      "progress": false
+    },
+    {
+      "index": 1,
+      "event": "task.completed",
+      "source": "exec-a",
+      "before": [
+        {
+          "id": "a",
+          "state": "RUNNING",
+          "executionId": "exec-a"
+        },
+        {
+          "id": "b",
+          "state": "DRAFT",
+          "executionId": null
+        }
+      ],
+      "after": [
+        {
+          "id": "a",
+          "state": "SUCCEEDED",
+          "executionId": null
+        },
+        {
+          "id": "b",
+          "state": "QUEUED",
+          "executionId": null
+        }
+      ],
+      "jobState": "ACTIVE",
+      "mergeStatus": null,
+      "progress": true
+    },
+    {
+      "index": 2,
+      "event": "task.completed",
+      "source": "exec-a",
+      "before": [
+        {
+          "id": "a",
+          "state": "SUCCEEDED",
+          "executionId": null
+        },
+        {
+          "id": "b",
+          "state": "QUEUED",
+          "executionId": null
+        }
+      ],
+      "after": [
+        {
+          "id": "a",
+          "state": "SUCCEEDED",
+          "executionId": null
+        },
+        {
+          "id": "b",
+          "state": "QUEUED",
+          "executionId": null
+        }
+      ],
+      "jobState": "ACTIVE",
+      "mergeStatus": null,
+      "progress": false
+    }
+  ],
+  "errors": [],
+  "authority": "isolated SQLite via production event bus and reconciler"
+}
