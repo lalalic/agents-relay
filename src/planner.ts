@@ -489,11 +489,12 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
       });
     });
     const parseAndCheck = (raw: string): PlannerResult => { const result = parsePlannerOutput(raw); validatePlannerResolutionMaterialization(context.tasks, result.next_tasks); return result; };
-    const first = await runAgent(prompt); try { return parseAndCheck(first); }
-    catch (error) {
-      if (signal.aborted) throw error; const correction = `${prompt}\n\n## Format correction (one retry only)\nYour previous final response was not valid Planner JSON. Error: ${error instanceof Error ? error.message : String(error)}\nPrevious response (possibly truncated):\n${first.slice(0, 12000)}\nReturn exactly one valid JSON object conforming to the Planner contract. No prose, no second JSON object.`;
-      try { return parseAndCheck(await runAgent(correction)); }
-      catch (retryError) { throw new Error(`Planner JSON correction failed after one retry: ${retryError instanceof Error ? retryError.message : String(retryError)}`); }
-    }
+    let response = await runAgent(prompt); for (let retry = 0; retry <= 3; retry++) {
+      try { return parseAndCheck(response); }
+      catch (error) {
+        if (signal.aborted || retry === 3) throw new Error(`Planner validation failed after ${retry} corrections: ${error instanceof Error ? error.message : String(error)}`);
+        response = await runAgent(`${prompt}\n\n## Fix validation error (correction ${retry + 1} of 3)\n${error instanceof Error ? error.message : String(error)}\nPrevious JSON:\n${response.slice(0, 12000)}\nReturn exactly one complete Planner JSON object. Correct all schema, title, resolution, and dependency requirements; do not remove valid work or bypass safeguards.`);
+      }
+    } throw new Error('Planner correction exhausted');
   }
 }
