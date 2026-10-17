@@ -56,7 +56,17 @@ async function runScenario(scenario) {
     else if (scenario.id === 'broken-terminal-trace') ctx.trace.push('forged.job.completed');
     else throw new Error(`unknown scenario ${scenario.id}`);
     const snapshot = await ctx.store.load('workflow-replay'); const observed = await classifyObservedTrace(scenario, ctx.trace, { loadDurableState: () => ctx.store.load('workflow-replay') });
-    return newEvidence(scenario, { ...observed, actualTerminal: snapshot.state, trace: ctx.trace, outcome: scenario.negative ? 'FAIL' : (observed.outcome === 'PASS' ? 'PASS' : 'FAIL') });
+    // A matching durable snapshot does not prove the transitions that produced it.
+    // Current mock-only scenarios directly mutate state for merge, retry, review,
+    // escalation, planner, or restart rather than drive production effects.
+    // Preserve the observed SQLite outcome, but never certify these as full L3.
+    const causalPathVerified = false;
+    return newEvidence(scenario, {
+      ...observed, actualTerminal: snapshot.state, trace: ctx.trace,
+      outcome: scenario.negative ? 'FAIL' : observed.outcome !== 'PASS' ? 'FAIL' : causalPathVerified ? 'PASS' : 'UNSUPPORTED',
+      reason: scenario.negative ? observed.reason : observed.outcome !== 'PASS' ? observed.reason
+        : 'SQLite state was observed, but full production scheduler/worker/effect causal path was not exercised',
+    });
   } finally { await ctx.close(); }
 }
 export async function runWorkflowReplay(scenarios) { const results = []; for (const scenario of scenarios) results.push(await runScenario(scenario)); return results; }

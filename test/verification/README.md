@@ -90,3 +90,13 @@ troubleshooter escalation/unblock, merge failure/retry, or planner
 multi-batch effects to convergence. No positive claim for those L3
 cases is justified solely by these probes. The existing trace-only
 check must not be used as proof of successful production execution.
+
+## Strict evidence gate for full-path claims (Task 56)
+
+The mock-only workflow replay can reach plausible durable snapshots without executing
+production merge, escalation, reviewer-revision, or restart effects. A SQLite
+terminal snapshot alone is insufficient causal proof. Thus these scenarios
+report `UNSUPPORTED`, not `PASS`; the `l3` CLI exits nonzero until a genuinely
+scheduler-driven fixture replaces each stub. The negative forged-terminal
+scenario must remain `FAIL`. Existing production-ingress tests retain their
+independent PASS results and must not be promoted to full-workflow evidence.
