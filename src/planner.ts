@@ -488,9 +488,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         resolve(finalMessage);
       });
     });
-    const parseAndCheck = (raw: string): PlannerResult => {
-      const result = parsePlannerOutput(raw); validatePlannerResolutionMaterialization(context.tasks, result.next_tasks); return result;
-    };
+    const parseAndCheck = (raw: string): PlannerResult => { const result = parsePlannerOutput(raw); validatePlannerResolutionMaterialization(context.tasks, result.next_tasks); return result; };
     const first = await runAgent(prompt); try { return parseAndCheck(first); }
     catch (error) {
       if (signal.aborted) throw error; const correction = `${prompt}\n\n## Format correction (one retry only)\nYour previous final response was not valid Planner JSON. Error: ${error instanceof Error ? error.message : String(error)}\nPrevious response (possibly truncated):\n${first.slice(0, 12000)}\nReturn exactly one valid JSON object conforming to the Planner contract. No prose, no second JSON object.`;
