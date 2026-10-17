@@ -39,6 +39,14 @@ if (command === 'list') {
   const result=await replayIngress(JSON.parse(readFileSync(resolve(file),'utf8')));
   console.log(JSON.stringify(result,null,2));
   if (result.outcome!=='PASS') process.exitCode=1;
+} else if (command === 'l3') {
+  const { runWorkflowReplay } = await import('./workflow-replay.mjs');
+  const l3 = scenarios.filter(item => item.category === 'L3');
+  const results = await runWorkflowReplay(l3);
+  const dir = resolve(process.argv[3] ?? join(process.cwd(), '.verification-reports'));
+  const report = writeReport(results, dir);
+  console.log(JSON.stringify({ results, report }, null, 2));
+  if (results.some((result, index) => !l3[index].negative && result.outcome !== 'PASS')) process.exitCode = 1;
 } else {
   throw new Error('Unknown command: '+command);
 }

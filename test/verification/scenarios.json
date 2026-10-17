@@ -1,5 +1,13 @@
 [
-{"id":"normal-merge","category":"L3","expectedTrace":["task.completed","review.approved"],"expectedTerminal":"COMPLETED"},
-{"id":"reviewer-contract","category":"L1","role":"reviewer","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"},
-{"id":"real-worker","category":"L2","role":"implementation","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"}
+{"id":"normal-completion","category":"L3","expectedTrace":["task.completed","local.completed"],"expectedTerminal":"COMPLETED","effects":["event-ingress","reconcile","local-merge"],"assertions":["sqlite-terminal","merge-receipt"]},
+{"id":"reviewer-revision-rereview","category":"L3","role":"reviewer","expectedTrace":["task.completed","review.changes_required","task.completed","review.approved","local.completed"],"expectedTerminal":"COMPLETED","effects":["review-revision","re-review","local-merge"],"assertions":["immutable-head","causal-order"]},
+{"id":"worker-failure-recovery","category":"L3","expectedTrace":["task.failed","task.completed"],"expectedTerminal":"ACTIVE","effects":["retry"],"assertions":["failure-receipt","new-execution"]},
+{"id":"reviewer-failure-recovery","category":"L3","role":"reviewer","expectedTrace":["task.failed","task.completed"],"expectedTerminal":"ACTIVE","effects":["review-retry"],"assertions":["recovery"]},
+{"id":"troubleshooter-escalation-unblock","category":"L3","expectedTrace":["task.blocked","task.completed"],"expectedTerminal":"ACTIVE","effects":["escalation","unblock"],"assertions":["no-agent-owned-block"]},
+{"id":"merge-failure-retry","category":"L3","expectedTrace":["task.completed","effect.deliverLocalMerge.failed","local.completed"],"expectedTerminal":"COMPLETED","effects":["merge-failure","merge-retry"],"assertions":["failure-reason","merge-receipt"]},
+{"id":"planner-multi-batch","category":"L3","expectedTrace":["planner.batch.completed","planner.batch.continued","local.completed"],"expectedTerminal":"COMPLETED","effects":["planner-batch","planner-continuation"],"assertions":["not-prematurely-complete"]},
+{"id":"stalled-review","category":"L3","role":"reviewer","expectedTrace":["review.started"],"expectedTerminal":"ACTIVE","effects":["review-stall"],"assertions":["deadlock-observed"]},
+{"id":"parallel-dependencies","category":"L3","expectedTrace":["task.completed","parallel.dependencies.released"],"expectedTerminal":"ACTIVE","effects":["dependency-release"],"assertions":["causal-release"]},
+{"id":"duplicate-stale-restart","category":"L3","expectedTrace":["task.completed","restart.recovered"],"expectedTerminal":"ACTIVE","effects":["duplicate-event","stale-event","restart"],"assertions":["terminal-unique","stale-ignored"]},
+{"id":"broken-terminal-trace","category":"L3","expectedTrace":["task.completed"],"expectedTerminal":"COMPLETED","negative":true,"assertions":["must-fail-without-observed-terminal"]}
 ]

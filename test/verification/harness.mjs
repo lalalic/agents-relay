@@ -14,6 +14,7 @@ export function validateScenario(scenario) {
   if (scenario.externalOutcomes !== undefined && (!Array.isArray(scenario.externalOutcomes) || !scenario.externalOutcomes.every(x => x && typeof x === 'object' && typeof x.event === 'string'))) throw new Error('invalid externalOutcomes');
   if (scenario.expectedTransitions !== undefined && (!Array.isArray(scenario.expectedTransitions) || !scenario.expectedTransitions.every(x => typeof x === 'string'))) throw new Error('invalid expectedTransitions');
   if (scenario.faults !== undefined && !Array.isArray(scenario.faults)) throw new Error('invalid faults');
+  for (const key of ['effects', 'assertions']) if (scenario[key] !== undefined && (!Array.isArray(scenario[key]) || !scenario[key].every(x => typeof x === 'string'))) throw new Error(`invalid ${key}`);
   if (typeof scenario.expectedTerminal !== 'string') throw new Error('invalid expectedTerminal');
   return Object.freeze({ ...scenario, expectedTrace: Object.freeze([...scenario.expectedTrace]) });
 }

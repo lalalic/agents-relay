@@ -1,4 +1,4 @@
-# Relay verification foundation (Job 480 / Task 45)
+# Relay verification (Job 481 / Task 56)
 
 Use `node test/verification/cli.mjs list` to see registered scenarios. Use `node test/verification/cli.mjs foundation /tmp/relay-verification-output` to validate corpus and produce `report.json` and `report.md`. **Foundation mode reports NOT_RUN for every scenario. It does not execute agent contracts, live models, or workflow events.**
 
@@ -45,10 +45,22 @@ is not itself an installed Relay provider launcher. By default cases are
 review external usage/cost before invocation. A fake adapter result cannot
 substitute for genuine model tests.
 
-The remaining **L3 scheduler/graph-driven** cases (review, retry, recovery,
-escalation, merge, concurrency and premature completion) still require a
-separate full workflow runner; the current replay covers production ingress
-and SQLite restart only. No report should claim those cases are PASS.
+## Full L3 workflow replay
+
+`node test/verification/cli.mjs l3 /tmp/relay-verification-output` runs the
+scenario corpus through the production `Reconciler` ingress, canonical Graph
+transitions, scheduler dependency release, and isolated SQLite persistence.
+It covers normal completion, reviewer changes/re-review, worker and reviewer
+recovery, troubleshooter unblock, merge failure/retry with a reason receipt,
+planner multi-batch continuation, stalled review, parallel dependencies, and
+duplicate/stale events across restart. External agent/provider/Git effects are
+represented by injected effects; lifecycle state is always read back from the
+isolated durable store. The `broken-terminal-trace` scenario is intentionally
+reported `FAIL` to prove forged caller traces cannot establish completion.
+
+`npm run test:verification:l1` runs contract checks and `npm run
+test:verification:l3` runs the complete L3 suite. `npm run test:verification`
+runs both and is included by the repository verification workflow.
 
 ## Dependency graph regression
 
