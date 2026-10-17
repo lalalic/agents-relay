@@ -23,8 +23,22 @@ if (command === 'list') {
   const report = newEvidence(scenario,{...result,trace:fixture.trace,actualTerminal:fixture.terminal});
   console.log(JSON.stringify(report,null,2));
   if (result.outcome !== 'PASS') process.exitCode = 1;
+} else if (command === 'l2-live') {
+  const {readFileSync}=await import('node:fs');
+  const {runLiveMatrix}=await import('./live-compliance.mjs');
+  const path=process.argv[3];
+  if(!path) throw new Error('l2-live needs provider matrix JSON path');
+  const results=await runLiveMatrix(JSON.parse(readFileSync(resolve(path),'utf8')));
+  console.log(JSON.stringify(results,null,2));
+  if(results.some(x=>x.outcome==='FAIL')) process.exitCode=1;
 } else if (command === 'replay') {
-  throw new Error('replay is reserved for the real event ingress runner; use trace-check to validate fixture traces');
+  const file=process.argv[3];
+  if (!file) throw new Error('replay requires canonical external-events JSON path');
+  const {readFileSync}=await import('node:fs');
+  const {replayIngress}=await import('./real-ingress-replay.mjs');
+  const result=await replayIngress(JSON.parse(readFileSync(resolve(file),'utf8')));
+  console.log(JSON.stringify(result,null,2));
+  if (result.outcome!=='PASS') process.exitCode=1;
 } else {
   throw new Error('Unknown command: '+command);
 }

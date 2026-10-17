@@ -22,3 +22,30 @@ and a duplicate through the production Reconciler, checks durable SQLite state,
 closes/reopens the store, and verifies persistence. This is **not** the complete
 L3 event-loop simulator; Planner, reviewer, merge, and recovery workflows remain
 NOT_RUN until a scheduler-driven scenario runner executes those full paths.
+
+## Review-fix extensions
+
+`node test/verification/cli.mjs replay fixture.json` injects a list of external
+worker event objects through the production Reconciler ingress and reads a fresh
+isolated SQLite store after reopening. Fixture keys: `scenarioId`, optional
+`jobId`, `taskId`, `executionId`, `expectedTaskState`, and `events` (each with
+`type`, optional `executionId`, `eventId`, `data`). Replay can prove only this
+worker-event ingress path; it is **not** a full graph/scheduler/merge simulator.
+An intentionally wrong `expectedTaskState` produces a FAIL.
+
+`node test/verification/cli.mjs l2-live provider-matrix.json` evaluates actual
+adapter output. The JSON contains `cases` with `role`, `provider`, `skillPath`,
+`command` (executable + arguments), `task`, `source` and `executionId`.
+Each configured adapter consumes a JSON request from stdin with the **actual
+skill contents** and must emit JSON `{events:[{type,source,data}],transportAccepted:true}`
+to stdout. The evaluator reports provider/model contract, adapter/transport
+failure separately. This is a generic opt-in external adapter protocol; it
+is not itself an installed Relay provider launcher. By default cases are
+`NOT_RUN`. Set `BW_L2_LIVE=1` only with an authenticated real adapter, and
+review external usage/cost before invocation. A fake adapter result cannot
+substitute for genuine model tests.
+
+The remaining **L3 scheduler/graph-driven** cases (review, retry, recovery,
+escalation, merge, concurrency and premature completion) still require a
+separate full workflow runner; the current replay covers production ingress
+and SQLite restart only. No report should claim those cases are PASS.
