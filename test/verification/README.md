@@ -57,3 +57,24 @@ production `Reconciler.handleEvent`, then verifies the production scheduler's
 Graph-owned dependency release; failed prerequisites remain unsatisfied.
 This adds dependency eligibility evidence, **not** complete end-to-end
 Planner, actual Reviewer, Troubleshooter, Escalation, or merge execution.
+
+## Production-path L3 regression probes (Job 481 / Task 56)
+
+Run `npm run test:verification:l3`. The additional
+`production-path.test.mjs` drives the real `Reconciler.handleEvent`
+and production Graph-backed scheduler against an isolated SQLite store.
+It verifies durable success, rejection of duplicate and stale terminal
+events, timestamp-changing duplicates, worker failure persistence
+across restart, dependency fan-out eligibility, premature autonomous
+completion gating, cycle rejection, and a deliberate forged terminal
+that cannot change SQLite authority. External Git/provider effects
+are not invoked. The tests clean the temporary database and never
+modify a daemon or a user Job.
+
+**Evidence boundary:** These are production-ingress and scheduler
+regressions, not a complete scheduler-driven simulator. Specifically,
+this runner does not yet execute the full reviewer revision/re-review,
+troubleshooter escalation/unblock, merge failure/retry, or planner
+multi-batch effects to convergence. No positive claim for those L3
+cases is justified solely by these probes. The existing trace-only
+check must not be used as proof of successful production execution.
