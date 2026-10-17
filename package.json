@@ -2,7 +2,10 @@
   "name": "agents-relay",
   "version": "2.0.1-e2e.20261010.43",
   "description": "Durable async agent jobs coordinated through GitHub pull requests",
-  "repository": { "type": "git", "url": "git+https://github.com/lalalic/agents-relay.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lalalic/agents-relay.git"
+  },
   "type": "module",
   "bin": {
     "agents-relay": "dist/cli.js",
@@ -15,9 +18,9 @@
     "dev": "tsx src/cli.ts",
     "test:publish": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 --test-force-exit test/*.test.js",
     "test:fast": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=2 test/workflow-lifecycle.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-effects.test.js test/relay-store.test.js test/local-authority.test.js test/local-jobid-routing.test.js test/local-sqlite-jobid.test.js test/no-github.test.js test/scheduled-jobs.test.js test/reconcile-coordinator.test.js test/service-publication.test.js test/github-webhook.test.js",
-    "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js",
+    "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js && npm run test:verification:l3",
     "test:verification:l1": "node --test test/verification/harness.test.mjs",
-    "test:verification:l3": "node --test test/verification/harness.test.mjs",
+    "test:verification:l3": "npm run build && node --test test/verification/harness.test.mjs test/verification/l3-sqlite.test.mjs",
     "test:verification": "npm run test:verification:l1 && npm run test:verification:l3",
     "e2e": "node e2e/runner/run.mjs"
   },
