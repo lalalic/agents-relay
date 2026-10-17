@@ -1,0 +1,59 @@
+# Relay verification foundation (Job 480 / Task 45)
+
+Use `node test/verification/cli.mjs list` to see registered scenarios. Use `node test/verification/cli.mjs foundation /tmp/relay-verification-output` to validate corpus and produce `report.json` and `report.md`. **Foundation mode reports NOT_RUN for every scenario. It does not execute agent contracts, live models, or workflow events.**
+
+Use `node test/verification/cli.mjs trace-check path/to/trace.json` for trace-only validation. This is NOT an event replay or runtime verification. `replay` refuses to run until the real event ingress runner is implemented. Trace JSON contains `scenarioId`, `trace` (array of ordered event names or `{event, progress}` objects) and `terminal`. A failing replay exits nonzero. Run foundation unit tests with `node --test test/verification/harness.test.mjs`.
+
+Foundation extension points:
+
+- L1: load scenarios with category L1; use production validators/agent skill contracts, record actual events and failures with `newEvidence`.
+- L2: opt-in live installed adapter/provider execution; collect genuine emissions, distinguish provider from transport failures. Keep NOT_RUN otherwise.
+- L3: connect mock external effects to the real production ingress/reconciler/SQLite, append observed events to traces, then call `classifyTrace`. Never force lifecycle transitions inside the harness.
+
+Create an isolated store with `createIsolatedEnvironment`; pass its returned `env` to spawned Relay processes. Do not use the canonical user store. The included scenarios are starting contracts only, not claims of passing integration coverage.
+
+The `classifyObservedTrace` helper requires a trusted isolated-store reader. Synthetic trace checks alone cannot establish L3 PASS.
+
+## SQLite event ingress smoke path
+
+Run `npm run test:verification-foundation` to execute isolated SQLite event-ingress coverage.
+`sqlite-ingress.test.mjs` publishes a stale terminal event, a valid terminal event,
+and a duplicate through the production Reconciler, checks durable SQLite state,
+closes/reopens the store, and verifies persistence. This is **not** the complete
+L3 event-loop simulator; Planner, reviewer, merge, and recovery workflows remain
+NOT_RUN until a scheduler-driven scenario runner executes those full paths.
+
+## Review-fix extensions
+
+`node test/verification/cli.mjs replay fixture.json` injects a list of external
+worker event objects through the production Reconciler ingress and reads a fresh
+isolated SQLite store after reopening. Fixture keys: `scenarioId`, optional
+`jobId`, `taskId`, `executionId`, `expectedTaskState`, and `events` (each with
+`type`, optional `executionId`, `eventId`, `data`). Replay can prove only this
+worker-event ingress path; it is **not** a full graph/scheduler/merge simulator.
+An intentionally wrong `expectedTaskState` produces a FAIL.
+
+`node test/verification/cli.mjs l2-live provider-matrix.json` evaluates actual
+adapter output. The JSON contains `cases` with `role`, `provider`, `skillPath`,
+`command` (executable + arguments), `task`, `source` and `executionId`.
+Each configured adapter consumes a JSON request from stdin with the **actual
+skill contents** and must emit JSON `{events:[{type,source,data}],transportAccepted:true}`
+to stdout. The evaluator reports provider/model contract, adapter/transport
+failure separately. This is a generic opt-in external adapter protocol; it
+is not itself an installed Relay provider launcher. By default cases are
+`NOT_RUN`. Set `BW_L2_LIVE=1` only with an authenticated real adapter, and
+review external usage/cost before invocation. A fake adapter result cannot
+substitute for genuine model tests.
+
+The remaining **L3 scheduler/graph-driven** cases (review, retry, recovery,
+escalation, merge, concurrency and premature completion) still require a
+separate full workflow runner; the current replay covers production ingress
+and SQLite restart only. No report should claim those cases are PASS.
+
+## Dependency graph regression
+
+`dependency-graph.test.mjs` passes a genuine `task.completed` through the
+production `Reconciler.handleEvent`, then verifies the production scheduler's
+Graph-owned dependency release; failed prerequisites remain unsatisfied.
+This adds dependency eligibility evidence, **not** complete end-to-end
+Planner, actual Reviewer, Troubleshooter, Escalation, or merge execution.
