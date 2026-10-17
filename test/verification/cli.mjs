@@ -19,8 +19,9 @@ if (command === 'list') {
   const fixture = JSON.parse(readFileSync(resolve(file),'utf8'));
   const scenario = scenarios.find(x=>x.id===fixture.scenarioId);
   if (!scenario) throw new Error('scenario not found');
-  const result = classifyTrace(scenario, fixture.trace, { terminal: fixture.terminal });
-  const report = newEvidence(scenario,{...result,trace:fixture.trace,actualTerminal:fixture.terminal});
+  const result = classifyTrace(scenario, fixture.trace);
+  const actualTerminal = [...fixture.trace].reverse().find(step => step && typeof step === 'object' && typeof step.terminal === 'string')?.terminal ?? null;
+  const report = newEvidence(scenario,{...result,trace:fixture.trace,actualTerminal});
   console.log(JSON.stringify(report,null,2));
   if (result.outcome !== 'PASS') process.exitCode = 1;
 } else {

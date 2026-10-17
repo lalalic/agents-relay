@@ -12,7 +12,9 @@ export function validateScenario(scenario) {
   if (!CATEGORIES.includes(scenario.category)) throw new Error('invalid scenario category');
   if (!Array.isArray(scenario.expectedTrace) || !scenario.expectedTrace.every(x => typeof x === 'string')) throw new Error('invalid expectedTrace');
   if (typeof scenario.expectedTerminal !== 'string') throw new Error('invalid expectedTerminal');
-  return Object.freeze({ ...scenario, expectedTrace: Object.freeze([...scenario.expectedTrace]) });
+  if (scenario.effects !== undefined && (!Array.isArray(scenario.effects) || !scenario.effects.every(x => typeof x === 'string'))) throw new Error('invalid effects');
+  if (scenario.assertions !== undefined && (!Array.isArray(scenario.assertions) || !scenario.assertions.every(x => typeof x === 'string'))) throw new Error('invalid assertions');
+  return Object.freeze({ ...scenario, expectedTrace: Object.freeze([...scenario.expectedTrace]), effects: Object.freeze([...(scenario.effects ?? [])]), assertions: Object.freeze([...(scenario.assertions ?? [])]) });
 }
 
 export function loadScenarios(file) {
@@ -41,18 +43,24 @@ export function newEvidence(scenario, details = {}) {
   };
 }
 
-export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100, fingerprint = step => JSON.stringify(step) } = {}) {
+export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100, fingerprint } = {}) {
   validateScenario(scenario);
   if (trace.length > maxSteps) return { outcome: 'FAIL', failureEdge: 'STEP_LIMIT', reason: 'maximum event steps exceeded' };
   const seen = new Set();
+  const stableFingerprint = fingerprint ?? (step => {
+    if (!step || typeof step !== 'object') return JSON.stringify(step);
+    const { timestamp: _timestamp, time: _time, ...stable } = step;
+    return JSON.stringify(stable);
+  });
   for (const step of trace) {
     if (step?.progress === false) {
-      const key = fingerprint(step);
+      const key = stableFingerprint(step);
       if (seen.has(key)) return { outcome: 'FAIL', failureEdge: 'NO_PROGRESS_LOOP', reason: 'repeated no-progress state' };
       seen.add(key);
     }
   }
-  if (terminal === null) return { outcome: 'FAIL', failureEdge: 'DEADLOCK', reason: 'no next effect or terminal outcome' };
+  const observedTerminal = [...trace].reverse().find(step => step && typeof step === 'object' && typeof step.terminal === 'string')?.terminal ?? null;
+  if (observedTerminal === null) return { outcome: 'FAIL', failureEdge: 'DEADLOCK', reason: 'no observed terminal outcome in production trace' };
   const actual = trace.map(step => typeof step === 'string' ? step : step.event).filter(Boolean);
   let cursor = 0;
   for (const required of scenario.expectedTrace) {
@@ -60,7 +68,7 @@ export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100
     if (offset < 0) return { outcome: 'FAIL', failureEdge: required, reason: 'required causal event missing or out of order' };
     cursor = offset + 1;
   }
-  if (terminal !== scenario.expectedTerminal) return { outcome: 'FAIL', failureEdge: 'TERMINAL_MISMATCH', reason: 'unexpected terminal outcome' };
+  if (observedTerminal !== scenario.expectedTerminal) return { outcome: 'FAIL', failureEdge: 'TERMINAL_MISMATCH', reason: 'unexpected observed terminal outcome' };
   return { outcome: 'PASS', failureEdge: null, reason: null };
 }
 

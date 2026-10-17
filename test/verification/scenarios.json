@@ -1,5 +1,7 @@
 [
-{"id":"normal-merge","category":"L3","expectedTrace":["task.completed","review.approved"],"expectedTerminal":"COMPLETED"},
-{"id":"reviewer-contract","category":"L1","role":"reviewer","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"},
-{"id":"real-worker","category":"L2","role":"implementation","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED"}
+{"id":"normal-merge","category":"L3","expectedTrace":["task.completed","review.approved"],"expectedTerminal":"COMPLETED","effects":["event-ingress","reconcile","local-merge"],"assertions":["sqlite-terminal","merge-receipt"]},
+{"id":"reviewer-contract","category":"L1","role":"reviewer","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED","assertions":["immutable-head","verdict"]},
+{"id":"real-worker","category":"L2","role":"implementation","expectedTrace":["task.started","task.completed"],"expectedTerminal":"SUCCEEDED","assertions":["provider-emission","relay-acceptance"]},
+{"id":"duplicate-stale-completion","category":"L3","expectedTrace":["task.completed"],"expectedTerminal":"SUCCEEDED","effects":["duplicate-event","stale-event"],"assertions":["terminal-unique","stale-ignored"]},
+{"id":"broken-terminal-trace","category":"L3","expectedTrace":["task.completed"],"expectedTerminal":"SUCCEEDED","assertions":["must-fail-without-observed-terminal"]}
 ]
