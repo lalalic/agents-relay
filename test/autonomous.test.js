@@ -378,7 +378,7 @@ test('default planner agent loads markdown instructions and returns typed planni
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('agent planner retries invalid JSON exactly once with validation feedback', async () => {
+test('agent planner retries invalid JSON with bounded validation feedback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-json-retry-'));
   try {
     const command = join(root, 'model-runtime');
@@ -389,7 +389,7 @@ const fs = require('node:fs');
 const marker = ${'`'}${root}/once${'`'};
 const first = !fs.existsSync(marker);
 if (first) fs.writeFileSync(marker, '1');
-else if (!process.argv.join(' ').includes('Format correction (one retry only)')) process.exit(4);
+else if (!process.argv.join(' ').includes('Fix validation error (correction 1 of 3)')) process.exit(4);
 const payload = first ? '{} {}' : JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]});
 process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:payload}}) + String.fromCharCode(10));
 `, {mode:0o700});
