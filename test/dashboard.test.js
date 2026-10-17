@@ -290,6 +290,7 @@ test('GitHub PR links accept only validated durable repository and PR values', (
 });
 
 test('job list uses status badges with distinct state classes', () => {
+  assert.match(dashboardHtml, /\+': '\+value\(job\.title\|\|job\.id\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /\.badge\.COMPLETED/);
   assert.match(dashboardHtml, /\.badge\.OPEN/);
@@ -454,7 +455,7 @@ test('dashboard task state override invokes the supplied runtime handler', async
 });
 
 test('dashboard renders job clipboard, publication, merge-review, and commit-link contracts', () => {
-  assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(jobChatRef\(job\)\)/);
+  assert.match(dashboardHtml, /navigator\.clipboard\.writeText\(repoName\(job\.repository\)\+'\/'\+value\(job\.id\)\)/);
   assert.match(dashboardHtml, /if\(job\.publication\?\.version\)/);
   assert.match(dashboardHtml, /job\.publicationFailure/);
   assert.match(dashboardHtml, /text\('v'\+job\.publication\.version\)/);
@@ -553,6 +554,7 @@ test('job list uses repo/jobid/PR#number and keeps time on the final line', () =
   assert.match(dashboardHtml, /function repoName\(repository\)/);
   assert.match(dashboardHtml, /Number\(job\.prNumber\|\|0\)>0/);
   assert.match(dashboardHtml, /repoName\(job\.repository\)\+'\/'\+value\(job\.id\)\+\(Number\(job\.prNumber\|\|0\)>0\?'\/PR#'\+value\(job\.prNumber\):''\)/);
+  assert.match(dashboardHtml, /\+': '\+value\(job\.title\|\|job\.id\)/);
   assert.match(dashboardHtml, /'badge '\+value\(job\.state\)/);
   assert.match(dashboardHtml, /element\('div','job-last-line'\)/);
   assert.match(dashboardHtml, /lastLine\.append\(element\('span','subtle',text\(compactCounts\(counts\(job\.tasks\)\)\)\),element\('span','subtle',text\(relativeTime\(job\.updatedAt\)\)\)\)/);
@@ -894,15 +896,15 @@ test('dashboard highlights failed/error events red and blocked/warn events amber
   assert.match(dashboardHtml, /\.event-item\.event-error/);
 });
 
-test('clipboard and shortcut include job ID PR and title', () => {
-  assert.match(dashboardHtml, /clipboard\.writeText\(jobChatRef\(job\)\)/);
+test('clipboard copies only repo/jobid and shortcut retains full reference', () => {
+  assert.match(dashboardHtml, /clipboard\.writeText\(repoName\(job\.repository\)\+'\/'\+value\(job\.id\)\)/);
   assert.match(dashboardHtml, /function jobChatRef\(job\)/);
   assert.match(dashboardHtml, /value\(job\?\.id\)/);
   assert.match(dashboardHtml, /value\(job\?\.title\|\|job\?\.id\)/);
   assert.match(dashboardHtml, /replaceAll\('%1',jobChatRef\(job\)\)/);
 });
 
-test('selectJob copies the complete actual title for local and GitHub Jobs', () => {
+test('selectJob copies repo/jobid for local and GitHub Jobs', () => {
   const functions = ['jobChatRef', 'copySelectedJobIdentity', 'selectJob'];
   const source = functions.map(name => {
     const line = dashboardHtml.split('\n').find(line => line.startsWith(`function ${name}(`));
@@ -927,10 +929,10 @@ test('selectJob copies the complete actual title for local and GitHub Jobs', () 
   };
   new Script(source + '\nthis.runSelection=selectJob;').runInNewContext(sandbox);
   sandbox.runSelection({ id: 'local-7', repository: 'lalalic/agents-relay', prNumber: 0, title: 'Full local Job title' });
-  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-7: Full local Job title');
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/local-7');
   assert.doesNotMatch(copied.at(-1), /pr#0/);
   sandbox.runSelection({ id: 'local-8', repository: 'lalalic/agents-relay', prNumber: 280, localMerge: { sourceRef: 'refs/heads/local-8' }, title: 'Full GitHub Job title' });
-  assert.equal(copied.at(-1), 'lalalic/agents-relay/job:local-8/pr#280: Full GitHub Job title');
+  assert.equal(copied.at(-1), 'lalalic/agents-relay/local-8');
 });
 
 
