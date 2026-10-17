@@ -13,9 +13,10 @@
     "test": "npm run test:full",
     "test:chatgpt-temp-quality": "AGENTS_RELAY_RUN_CHATGPT_TEMP_QUALITY=1 sh -c \"npm run build && node test/quality/run-temporary-chat.mjs\"",
     "dev": "tsx src/cli.ts",
+    "test:verification-foundation": "npm run build && node --test test/verification/*.test.mjs",
     "test:publish": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 --test-force-exit test/*.test.js",
     "test:fast": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=2 test/workflow-lifecycle.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-effects.test.js test/relay-store.test.js test/local-authority.test.js test/local-jobid-routing.test.js test/local-sqlite-jobid.test.js test/no-github.test.js test/scheduled-jobs.test.js test/reconcile-coordinator.test.js test/service-publication.test.js test/github-webhook.test.js",
-    "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js",
+    "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js && npm run test:verification-foundation",
     "e2e": "node e2e/runner/run.mjs"
   },
   "devDependencies": {

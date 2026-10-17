@@ -11,6 +11,9 @@ export function validateScenario(scenario) {
   if (!/^[a-z][a-z0-9-]+$/.test(scenario.id ?? '')) throw new Error('invalid scenario id');
   if (!CATEGORIES.includes(scenario.category)) throw new Error('invalid scenario category');
   if (!Array.isArray(scenario.expectedTrace) || !scenario.expectedTrace.every(x => typeof x === 'string')) throw new Error('invalid expectedTrace');
+  if (scenario.externalOutcomes !== undefined && (!Array.isArray(scenario.externalOutcomes) || !scenario.externalOutcomes.every(x => x && typeof x === 'object' && typeof x.event === 'string'))) throw new Error('invalid externalOutcomes');
+  if (scenario.expectedTransitions !== undefined && (!Array.isArray(scenario.expectedTransitions) || !scenario.expectedTransitions.every(x => typeof x === 'string'))) throw new Error('invalid expectedTransitions');
+  if (scenario.faults !== undefined && !Array.isArray(scenario.faults)) throw new Error('invalid faults');
   if (typeof scenario.expectedTerminal !== 'string') throw new Error('invalid expectedTerminal');
   return Object.freeze({ ...scenario, expectedTrace: Object.freeze([...scenario.expectedTrace]) });
 }
@@ -41,7 +44,7 @@ export function newEvidence(scenario, details = {}) {
   };
 }
 
-export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100, fingerprint = step => JSON.stringify(step) } = {}) {
+export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100, fingerprint = step => JSON.stringify({event:step.event, state:step.state, pending:step.pending, effect:step.effect}) } = {}) {
   validateScenario(scenario);
   if (trace.length > maxSteps) return { outcome: 'FAIL', failureEdge: 'STEP_LIMIT', reason: 'maximum event steps exceeded' };
   const seen = new Set();
@@ -52,6 +55,8 @@ export function classifyTrace(scenario, trace, { terminal = null, maxSteps = 100
       seen.add(key);
     }
   }
+  // Trace validation is NOT proof of Relay execution. Only an authenticated runtime
+  // runner may mark a workflow PASS after reading the isolated durable store.
   if (terminal === null) return { outcome: 'FAIL', failureEdge: 'DEADLOCK', reason: 'no next effect or terminal outcome' };
   const actual = trace.map(step => typeof step === 'string' ? step : step.event).filter(Boolean);
   let cursor = 0;
@@ -83,4 +88,12 @@ export function writeReport(report, dir) {
   writeFileSync(join(dir, 'report.json'), json);
   writeFileSync(join(dir, 'report.md'), lines.join('\n') + '\n');
   return { json: resolve(dir, 'report.json'), markdown: resolve(dir, 'report.md'), digest: createHash('sha256').update(json).digest('hex') };
+}
+
+/** Verify an observed scenario against a trusted read from the runner's isolated store. */
+export async function classifyObservedTrace(scenario, trace, { loadDurableState, ...options } = {}) {
+  if (typeof loadDurableState !== 'function') throw new Error('durable state reader required');
+  const snapshot = await loadDurableState();
+  if (!snapshot || typeof snapshot.state !== 'string') throw new Error('invalid durable state');
+  return classifyTrace(scenario, trace, { ...options, terminal: snapshot.state });
 }

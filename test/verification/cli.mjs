@@ -12,9 +12,9 @@ if (command === 'list') {
   const dir = resolve(process.argv[3] ?? join(process.cwd(), '.verification-reports'));
   const report = writeReport(results, dir);
   console.log(JSON.stringify({scenarios:results.length, results:results.map(({scenarioId,outcome})=>({scenarioId,outcome})),report},null,2));
-} else if (command === 'replay') {
+} else if (command === 'trace-check') {
   const file = process.argv[3];
-  if (!file) throw new Error('replay requires trace JSON path');
+  if (!file) throw new Error('trace-check requires trace JSON path');
   const { readFileSync } = await import('node:fs');
   const fixture = JSON.parse(readFileSync(resolve(file),'utf8'));
   const scenario = scenarios.find(x=>x.id===fixture.scenarioId);
@@ -23,6 +23,8 @@ if (command === 'list') {
   const report = newEvidence(scenario,{...result,trace:fixture.trace,actualTerminal:fixture.terminal});
   console.log(JSON.stringify(report,null,2));
   if (result.outcome !== 'PASS') process.exitCode = 1;
+} else if (command === 'replay') {
+  throw new Error('replay is reserved for the real event ingress runner; use trace-check to validate fixture traces');
 } else {
   throw new Error('Unknown command: '+command);
 }
