@@ -1,0 +1,1 @@
+{"id":"dependency-release","steps":[{"type":"task.completed"},{"type":"task.completed"}],"expected":{"jobState":"ACTIVE","tasks":{"a":"SUCCEEDED","b":"QUEUED"}}}

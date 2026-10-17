@@ -1,0 +1,1 @@
+{"id":"broken-premature-completion","steps":[{"type":"task.completed"}],"expected":{"jobState":"COMPLETED","tasks":{"a":"SUCCEEDED","b":"SUCCEEDED"}}}
