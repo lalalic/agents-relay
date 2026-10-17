@@ -49,3 +49,11 @@ The remaining **L3 scheduler/graph-driven** cases (review, retry, recovery,
 escalation, merge, concurrency and premature completion) still require a
 separate full workflow runner; the current replay covers production ingress
 and SQLite restart only. No report should claim those cases are PASS.
+
+## Dependency graph regression
+
+`dependency-graph.test.mjs` passes a genuine `task.completed` through the
+production `Reconciler.handleEvent`, then verifies the production scheduler's
+Graph-owned dependency release; failed prerequisites remain unsatisfied.
+This adds dependency eligibility evidence, **not** complete end-to-end
+Planner, actual Reviewer, Troubleshooter, Escalation, or merge execution.
