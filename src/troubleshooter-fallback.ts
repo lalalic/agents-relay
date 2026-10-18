@@ -11,7 +11,7 @@ export async function fallbackFailedTroubleshooters(store: DurableStore, jobId: 
   const queued: string[] = [];
   for (const recovery of job.tasks.filter(task => task.agentName === 'troubleshooter' && task.state === 'FAILED' && task.attempt >= task.maxAttempts && !task.input.includes(MARKER))) {
     const original = job.tasks.find(task => task.id === recovery.parentTaskId);
-    if (!original || original.state !== 'FAILED' || !RUNTIME_FAILURE.test(`${recovery.failureReason ?? ''} ${recovery.error ?? ''}`)) continue;
+    if (!original || original.state !== 'FAILED' || (original.resolution?.path === 'same_job_dependency' && ['waiting','active'].includes(original.resolution.state)) || !RUNTIME_FAILURE.test(`${recovery.failureReason ?? ''} ${recovery.error ?? ''}`)) continue;
     const update = (task: (typeof job.tasks)[number]): boolean => {
       if (task.state !== 'FAILED' || task.input.includes(MARKER)) return false;
       if (!tryTransitionTaskEvent(task, 'retry').accepted) throw new Error(`Fallback retry rejected for ${task.id}`);
@@ -41,7 +41,7 @@ export async function escalateExhaustedTroubleshooters(store: DurableStore, jobI
   const escalated: string[] = [];
   for (const recovery of job.tasks.filter(task => task.agentName === 'troubleshooter' && task.state === 'FAILED' && task.attempt >= task.maxAttempts && !task.escalation)) {
     const original = job.tasks.find(task => task.id === recovery.parentTaskId);
-    if (!original || original.state !== 'FAILED') continue;
+    if (!original || original.state !== 'FAILED' || (original.resolution?.path === 'same_job_dependency' && ['waiting','active'].includes(original.resolution.state))) continue;
     const context = `Automatic Troubleshooter ${recovery.id} could not produce a verified resolution after ${recovery.attempt} attempts. Last failure: ${recovery.error ?? recovery.failureReason ?? 'unknown'}. Original Task ${original.id}: ${original.error ?? original.failureReason ?? 'failed'}.`;
     const result = await requestTroubleshooterEscalation(store, jobId, recovery.id, {
       requiredAction: `Inspect Task ${original.id} and Troubleshooter ${recovery.id}; correct provider/runtime or supply a concrete recovery decision and supporting evidence.`,
