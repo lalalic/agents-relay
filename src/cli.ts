@@ -386,6 +386,22 @@ async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2).filter(value => value !== '--no-github');
   if (!command || command === '--help' || command === '-h') { console.log(helpText()); return; }
   if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' || command === 'context' || command === 'review' ? args[0] : undefined)); return; }
+  if (command === 'plan' && args[0] === 'apply') {
+    const options = args.slice(1); const jobId = arg(options, '--id');
+    const planId = arg(options, '--plan-id'); const executionId = arg(options, '--execution-id');
+    const path = arg(options, '--file');
+    if (!jobId || !planId || !executionId || !path) throw new Error('plan apply requires --id --plan-id --execution-id --file');
+    const proposal = JSON.parse(path === '-' ? await new Promise<string>((resolve,reject)=>{let value='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>value+=chunk);process.stdin.on('end',()=>resolve(value));process.stdin.on('error',reject);}) : await readFile(path,'utf8'));
+    const storageArgs = options.filter((value,index)=>value!=='--file' && options[index-1]!=='--file');
+    const { store } = await storeFor(storageArgs);
+    await withEventBus(storageArgs, async bus => {
+      const reconciler = runtime(store, storageArgs, bus);
+      try { console.log(JSON.stringify(await reconciler.applyPlannerTree(jobId,planId,executionId,proposal),null,2)); }
+      catch (error) { console.error(JSON.stringify({ok:false,code:'PLAN_APPLY_REJECTED',message:error instanceof Error?error.message:String(error)})); process.exitCode=1; }
+      finally { await reconciler.close(); }
+    });
+    return;
+  }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'review') { const [action, ...reviewArgs] = args; await runReviewCommand(action ?? '', reviewArgs); return; }

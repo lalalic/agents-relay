@@ -34,8 +34,9 @@ export type PlannerRuntimePorts = {
 export async function drainPlannerUnblocks(ports: PlannerRuntimePorts, jobId: string, planId: string): Promise<string[]> {
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
-  if (!ports.store.registerBlockerDependent) throw new Error("Blocker registration unavailable");
   const pending = [...(plan?.pendingUnblocks ?? [])];
+  if (!pending.length) return [];
+  if (!ports.store.registerBlockerDependent) throw new Error("Blocker registration unavailable");
   // Persist only acknowledgments observed by this invocation. Subtract from
   // the latest transactional snapshot, never replace another drain's intents.
   const acknowledged = new Set<string>();
@@ -71,20 +72,21 @@ export async function retryPendingPlannerUnblocks(ports: PlannerRuntimePorts, jo
   }
 }
 
-async function finishPlanner(
+export async function finishPlanner(
   ports: PlannerRuntimePorts,
   jobId: string,
   planId: string,
   executionId: string | null,
   error: Error | null,
   raw?: import('./planner.js').PlannerResult,
+  cliApply = false,
 ): Promise<void> {
   const live = ports.live.get(planId);
   if (live?.executionId === executionId) clearTimeout(live.timer);
   const releaseLive = () => { if (ports.live.get(planId)?.executionId === executionId) ports.live.delete(planId); };
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
-  if (!plan || plan.status !== "PLANNING" || plan.executionId !== executionId) { releaseLive(); return; }
+  if (!plan || plan.status !== "PLANNING" || plan.executionId !== executionId) { releaseLive(); if (cliApply) throw new Error(`Plan ${planId} is not owned by this active execution`); return; }
 
   const failOrRetry = async (message: string): Promise<void> => {
     let retry = false;
@@ -122,7 +124,7 @@ async function finishPlanner(
     if (retry && !plan.manualPlanning) ports.detach(ports.reconcile(jobId), jobId, planId, 'planner retry reconciliation');
   };
 
-  if (error) { await failOrRetry(error.message); releaseLive(); return; }
+  if (error) { if (cliApply) throw error; await failOrRetry(error.message); releaseLive(); return; }
   let planCommitted = false;
   try {
     const parsed = parsePlannerResult(raw);
@@ -224,6 +226,7 @@ async function finishPlanner(
     await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status, pendingUnblocks }));
   } catch (caught) {
     if (planCommitted) { releaseLive(); throw caught; }
+    if (cliApply) throw caught;
     await failOrRetry(caught instanceof Error ? caught.message : String(caught));
     releaseLive();
     return;
@@ -290,7 +293,7 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
   let promise: Promise<import('./planner.js').PlannerResult>;
   try {
     const executionContext = await ports.plannerContext(job, plan);
-    const context = { job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
+    const context = { planExecution: { planId: plan.id, executionId }, job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
     promise = planner.plan(context, controller.signal);
   } catch (error) {
     await finishPlanner(ports, job.id, plan.id, executionId, error instanceof Error ? error : new Error(String(error)));

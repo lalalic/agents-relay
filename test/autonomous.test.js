@@ -505,3 +505,29 @@ test('Planner validation feedback identifies missing Resolution and a corrected 
   const corrected={...child,resolution:{path:'same_job_dependency',targetTaskId:'34',rootCause:'worker failure',solution:'retry via a recovery child'}};
   assert.doesNotThrow(()=>validatePlannerResolutionMaterialization([original],[corrected]));
 });
+
+
+test('plan apply rejects invalid tree and corrects inside same durable Plan', async () => {
+  const root = job([], 'fixed');
+  const round = createPlanRound(root, { manual: true });
+  round.executionId = 'execution-1'; round.leaseOwner = 'planner-test';
+  root.plans = [round];
+  const store = new InMemoryStore(root);
+  const reconciler = managedReconciler(store, { owner: 'planner-test', adapters: [], maxConcurrent: 0 });
+  const invalid = { objective_status: 'in_progress', assessment: 'Implement missing acceptance', next_tasks: [{ id: 'one', title: 'Implement and verify durable task outputs', input: 'real workflow tests', storySize: 'M' }] };
+  await assert.rejects(() => reconciler.applyPlannerTree('auto', round.id, 'execution-1', invalid), /output is required/);
+  let saved = await store.load('auto');
+  assert.equal(saved.plans[0].status, 'PLANNING');
+  assert.equal(saved.plans[0].attempt, 0);
+  assert.equal(saved.tasks.length, 0);
+  const accepted = { ...invalid, next_tasks: [{ ...invalid.next_tasks[0], output: { kind: 'task_pr' } }] };
+  const committed = await reconciler.applyPlannerTree('auto', round.id, 'execution-1', accepted);
+  saved = await store.load('auto');
+  assert.equal(committed.status, 'SUCCEEDED');
+  assert.equal(saved.plans.length, 1);
+  assert.equal(saved.tasks.length, 1);
+  assert.deepEqual(saved.plans[0].generatedTaskIds, [saved.tasks[0].id]);
+  await assert.rejects(() => reconciler.applyPlannerTree('auto', round.id, 'execution-1', accepted), /not owned by this active execution/);
+  assert.equal((await store.load('auto')).tasks.length, 1);
+  await reconciler.close();
+});

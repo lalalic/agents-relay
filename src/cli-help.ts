@@ -12,6 +12,7 @@ Commands:
   task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
+  plan apply               Submit a validated Task Tree within one active Plan
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
   escalation               Run the canonical escalation graph and Neo escalation executor
@@ -167,6 +168,8 @@ Required: --task-id ID and the normal Job storage options.`,
 
 Required: --task-id ID, --reason TEXT, and the normal managed Job storage options. This does not change Task state and cannot supersede FAILED/BLOCKED/runnable work.`,
   plan: `Invoke the Planner against the current durable Job state.
+
+Agent submit: agents-relay plan apply --repo OWNER/REPO --pr PR_NUMBER --id JOB_ID --plan-id PLAN_ID --execution-id EXECUTION_ID --file plan.json. Validation errors reject without partial task writes and can be corrected inside the same Planner execution.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
 Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt is additional guidance for this planning round and never replaces the durable Job objective.

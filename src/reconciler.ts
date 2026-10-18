@@ -485,15 +485,15 @@ export class Reconciler extends ReconcilerReviewBase {
       'worker runtime completion',
     );
   }
+  async applyPlannerTree(jobId: string, planId: string, executionId: string, proposal: unknown): Promise<Plan> { const { finishPlanner } = await import('./planner-runtime.js'); const { parsePlannerResult } = await import('./planner.js'); const ports = { store:this.store, options:this.options, live:this.plannerLive, plannerContext:(job:Job,plan:Plan)=>this.plannerContext(job,plan), emit:(event:EventRecord)=>this.emit(event), detach:(promise:Promise<unknown>,id:string,task:string,label:string)=>this.detach(promise,id,task,label), reconcile:(id:string)=>this.reconcile(id) };
+    await finishPlanner(ports, jobId, planId, executionId, null, parsePlannerResult(proposal), true); const updated = (await this.store.load(jobId)).plans?.find(plan => plan.id === planId); if (!updated || updated.status !== 'SUCCEEDED') throw new Error(`Plan ${planId} was not committed`); return updated;  }
   private async launchPlanner(job: Job, plan: Plan): Promise<void> {
     return launchPlanExecution({
       store: this.store,
       options: this.options,
       live: this.plannerLive,
-      plannerContext: (currentJob, currentPlan) => this.plannerContext(currentJob, currentPlan),
-      emit: event => this.emit(event),
-      detach: (promise, jobId, planId, context) => this.detach(promise, jobId, planId, context),
-      reconcile: jobId => this.reconcile(jobId),
+      plannerContext: (currentJob, currentPlan) => this.plannerContext(currentJob, currentPlan), emit: event => this.emit(event),
+      detach: (promise, jobId, planId, context) => this.detach(promise, jobId, planId, context), reconcile: jobId => this.reconcile(jobId),
     }, job, plan);
   }
 }

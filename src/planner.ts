@@ -38,7 +38,7 @@ export type PlannerTaskSpec = {
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
-export type PlannerContext = { job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
+export type PlannerContext = { planExecution?: { planId: string; executionId: string }; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
 
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
@@ -392,7 +392,7 @@ export function plannerInput(context: PlannerContext): string {
   const project = context.executionContext?.project;
   return JSON.stringify({
     objective: context.objective,
-    retry_feedback: context.retryFeedback,
+    plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
