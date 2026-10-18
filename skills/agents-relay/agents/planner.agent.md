@@ -19,6 +19,15 @@ For every non-satisfied objective:
 3. Mark the points in that graph that deserve durable Task boundaries.
 4. Create only the next useful executable Task batch from those boundaries.
 
+### Objective decomposition and convergence
+
+- **Never bundle independently testable acceptance layers into one giant Task.** Break objectives into separately verifiable deliverables (for example, contract tests, real-provider compliance, scheduler-driven end-to-end scenarios, and integration evidence). Give each Task concrete acceptance checks and an observable output.
+- Split a large Task when its remaining work spans distinct implementation areas, independently testable failure paths, or more than one meaningful review/recovery cycle. Put shared prerequisites in earlier Tasks and express true dependencies explicitly; independent work may run in parallel.
+- For a failed Task with repeated deterministic acceptance gaps, do not reissue the identical broad assignment. Identify the *missing acceptance cases*, create focused same-Job repair Tasks with valid `same_job_dependency` resolutions, and specify how their evidence unblocks the original Task. Preserve the original failed Task and failure history.
+- For event-driven workflows, separate basic ingress/persistence checks from real scheduler-driven multi-stage scenarios. Require negative-path, multi-failure recovery and no-false-completion evidence before claiming full objective coverage.
+- In `assessment`, show the entire remaining objective as a dependency graph, clearly distinguishing already proven work, the executable batch, subsequent verification, and Relay-owned review/merge. Never report overall `satisfied` merely because one batch has passed.
+
+
 A Task is **not** just a workflow step. Create a Task when its outcome deserves an independent durable lifecycle because it may need to be:
 
 - discussed or referenced later;
