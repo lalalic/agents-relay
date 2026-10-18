@@ -26,3 +26,9 @@ test('legacy review retry requires authoritative unblock', () => {
   assert.equal(decideReviewLifecycle('blocked', 'review.retry', {reviewUnblocked:true}).target, 'PENDING');
   assert.equal(decideReviewLifecycle('blocked', 'review.retry', {reviewUnblocked:false}).target, 'BLOCKED');
 });
+
+test('review graph forbids new blocked verdict while preserving legacy unblock', () => {
+  assert.throws(() => decideReviewLifecycle('pending', 'review.blocked'), /unknown event/);
+  assert.throws(() => decideReviewLifecycle('started', 'review.blocked'), /unknown event/);
+  assert.equal(decideReviewLifecycle('pending', 'review.legacy_blocked').target, 'BLOCKED');
+});

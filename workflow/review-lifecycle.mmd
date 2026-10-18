@@ -5,6 +5,7 @@ pending["state: PENDING"]
 started["state: STARTED"]
 approved["state: APPROVED"]
 changes["state: CHANGES_REQUIRED"]
+%% BLOCKED is only for legacy records awaiting authoritative unblock.
 blocked["state: BLOCKED"]
 stale["state: STALE"]
 
@@ -91,6 +92,7 @@ pendingUnapproved -->|true| createPendingRetry
 pendingUnapproved -->|false| pending
 createPendingRetry --> pending
 
+pending -->|on: review.legacy_blocked| blocked
 pending -->|on: review.started| started
 pending -->|on: review.approved| autoMergePending
 autoMergePending -->|true| mergePending
@@ -98,7 +100,6 @@ mergePending --> approved
 autoMergePending -->|false| approved
 pending -->|on: review.changes_required| fixPending
 fixPending --> changes
-pending -->|on: review.blocked| blocked
 
 started -->|on: review.approved| autoMergeStarted
 autoMergeStarted -->|true| mergeStarted
@@ -106,7 +107,6 @@ mergeStarted --> approved
 autoMergeStarted -->|false| approved
 started -->|on: review.changes_required| fixStarted
 fixStarted --> changes
-started -->|on: review.blocked| blocked
 changes -->|on: review.changes_required| fixChanges
 fixChanges --> changes
 
