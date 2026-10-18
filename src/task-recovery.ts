@@ -45,13 +45,13 @@ export async function requestTroubleshooterEscalation(
       result = { task: structuredClone(recovery), escalation: structuredClone(recovery.escalation), duplicate: true };
       return job;
     }
-    if (!['QUEUED', 'RUNNING'].includes(recovery.state)) throw new Error(`Troubleshooter ${recoveryTaskId} cannot escalate from ${recovery.state}`);
+    if (!['QUEUED', 'RUNNING', 'FAILED'].includes(recovery.state)) throw new Error(`Troubleshooter ${recoveryTaskId} cannot escalate from ${recovery.state}`);
     const proposal = { path: 'escalation_gate' as const, targetTaskId: original.id, rootCause: request.context.trim(), solution: request.requiredAction.trim() };
     const decision = dispatchTaskResolutionSync(original, proposal, 'troubleshooter', {
       createEscalationGate: () => { original.resolution = materializeResolution(original, proposal, 'troubleshooter', now); },
     });
     if (!decision.accepted) throw new Error(`Task resolution graph rejected escalation for ${original.id}`);
-    if (!tryTransitionTaskEvent(recovery, 'task.blocked').accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
+    if (!tryTransitionTaskEvent(recovery, 'task.blocked', { recoverableExecution: true }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
     const escalation: TaskEscalation = {
       id: randomUUID(), originalTaskId: original.id, originalExecutionId: original.executionId ?? undefined,
       recoveryExecutionId: recovery.executionId ?? undefined, requiredAction: request.requiredAction.trim(),

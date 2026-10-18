@@ -292,11 +292,11 @@ test('failed Troubleshooter records one durable recovery.exhausted fact without 
 
   const durable = await store.load(root.id);
   assert.equal(durable.tasks.filter(task => task.agentName === 'troubleshooter').length, 1, 'must not recursively create a Troubleshooter for a Troubleshooter');
-  assert.equal(durable.recoveryFailures?.length, 1);
-  assert.equal(durable.recoveryFailures?.[0].taskId, failed.id);
-  assert.equal(durable.recoveryFailures?.[0].recoveryTaskId, recovery.id);
-  assert.match(durable.recoveryFailures?.[0].reason ?? '', /runtime failed/);
-  assert.equal(events.filter(event => event.type === 'recovery.exhausted').length, 1, 'reconcile must emit exhaustion once');
+  const escalated = durable.tasks.find(task => task.id === recovery.id);
+  assert.equal(escalated.state, 'BLOCKED');
+  assert.equal(escalated.escalation?.status, 'pending');
+  assert.match(escalated.escalation?.context ?? '', /runtime failed/);
+  assert.equal(events.filter(event => event.type === 'task.blocked').length, 1, 'Core must escalate exactly once');
   assert.deepEqual(pendingTroubleshooterTasks(durable), []);
 });
 
@@ -318,4 +318,31 @@ test('failed Troubleshooter within retry budget requeues same recovery Task with
   assert.equal(durable.tasks.filter(task=>task.agentName==='troubleshooter').length,1);
   assert.equal(durable.recoveryFailures?.length??0,0);
   assert.equal(events.filter(e=>e.type==='troubleshooter.retry_queued').length,1);
+});
+
+test('exhausted runtime Troubleshooter uses Codex configured default then escalates if it fails', async () => {
+  const original = failedReview();
+  const [recovery] = pendingTroubleshooterTasks(job([original]));
+  recovery.state = 'FAILED'; recovery.attempt = recovery.maxAttempts;
+  recovery.failureReason = 'terminal_event_timeout';
+  recovery.error = 'terminal_event_timeout';
+  recovery.routing = { provider: 'openai', model: 'gpt-6-luna', decidedBy: 'execution-router:laya', decidedAt: now(), decisionEvidence: { probabilities: { 'worker=codex provider=openai model=gpt-6-luna reasoning=high default=true': 0.61, 'worker=codex provider=openai model=gpt-5.6-terra reasoning=medium default=false': 0.39 } } };
+  const store = new InMemoryStore(job([original, recovery]));
+  const events = [];
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, eventBus: new MemoryEventBus(), emit: e => events.push(e) });
+  await reconciler.reconcile('neo-pr40');
+  let task = (await store.load('neo-pr40')).tasks.find(item => item.id === recovery.id);
+  assert.equal(task.state, 'QUEUED');
+  assert.equal(task.routing.model, '', 'fallback must omit -m and use Codex configured default');
+  assert.equal(task.maxAttempts, recovery.maxAttempts + 1);
+  assert.equal(events.filter(e => e.type === 'troubleshooter.retry_queued').length, 1);
+  task.state = 'FAILED'; task.attempt = task.maxAttempts; task.error = 'terminal_event_timeout';
+  await store.saveTask(task);
+  await reconciler.reconcile('neo-pr40');
+  await reconciler.reconcile('neo-pr40');
+  task = (await store.load('neo-pr40')).tasks.find(item => item.id === recovery.id);
+  assert.equal(task.state, 'BLOCKED');
+  assert.equal(task.escalation.status, 'pending');
+  assert.equal(events.filter(e => e.type === 'task.blocked').length, 1);
+  await reconciler.close();
 });

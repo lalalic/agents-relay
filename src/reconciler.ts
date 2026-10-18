@@ -2,7 +2,7 @@ import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCo
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, refreshTroubleshooterInput } from './troubleshooter.js';
-import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
+import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import { managedWorkerInput } from './managed-worker-input.js';
@@ -124,6 +124,7 @@ export class Reconciler extends ReconcilerReviewBase {
             `Retrying failed Troubleshooter ${recovery.id} (attempt ${recovery.attempt + 1}/${recovery.maxAttempts})`,
             'orchestrator', { originalTaskId: original.id, attempt: recovery.attempt + 1, maxAttempts: recovery.maxAttempts }));
         }
+        for (const id of await fallbackFailedTroubleshooters(this.store, jobId)) await this.emit(eventFor(job.id, id, null, 'troubleshooter.retry_queued', 'queued', `Alternate model fallback scheduled for ${id}`, 'orchestrator')); for (const id of await escalateExhaustedTroubleshooters(this.store, jobId)) await this.emit(eventFor(job.id, id, null, 'task.blocked', 'blocked', `Fallback exhausted: human action required for ${id}`, 'orchestrator'));
         const exhaustedJob = await this.store.load(jobId);
         for (const exhausted of exhaustedTroubleshooterRecoveries(exhaustedJob)) {
           const at = new Date().toISOString();
@@ -487,8 +488,7 @@ export class Reconciler extends ReconcilerReviewBase {
   }
   async applyPlannerTree(jobId: string, planId: string, executionId: string, proposal: unknown): Promise<Plan> { const { finishPlanner } = await import('./planner-runtime.js'); const { parsePlannerResult } = await import('./planner.js'); const ports = { store:this.store, options:this.options, live:this.plannerLive, plannerContext:(job:Job,plan:Plan)=>this.plannerContext(job,plan), emit:(event:EventRecord)=>this.emit(event), detach:(promise:Promise<unknown>,id:string,task:string,label:string)=>this.detach(promise,id,task,label), reconcile:(id:string)=>this.reconcile(id) };
     await finishPlanner(ports, jobId, planId, executionId, null, parsePlannerResult(proposal), true); const updated = (await this.store.load(jobId)).plans?.find(plan => plan.id === planId); if (!updated || updated.status !== 'SUCCEEDED') throw new Error(`Plan ${planId} was not committed`); return updated;  }
-  private async launchPlanner(job: Job, plan: Plan): Promise<void> {
-    return launchPlanExecution({
+  private async launchPlanner(job: Job, plan: Plan): Promise<void> { return launchPlanExecution({
       store: this.store,
       options: this.options,
       live: this.plannerLive,

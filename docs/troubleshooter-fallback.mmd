@@ -1,0 +1,12 @@
+flowchart TD
+  failed["Troubleshooter process FAILED"] --> available{"Normal retry budget available?"}
+  available -->|yes| retry["Retry with cleared routing"]
+  available -->|no| alternate{"Fallback unused?"}
+  alternate -->|yes| fallback["One bounded Codex config default attempt"]
+  fallback --> resolved{"Valid resolution?"}
+  resolved -->|yes| outcome["exact_original_retry / same_job_dependency / escalation_gate"]
+  resolved -->|no| human["Core: durable Human Escalation"]
+  alternate -->|no| human
+  human --> blocked["Troubleshooter BLOCKED; await user"]
+  blocked -->|user responds| resume["Resume same Troubleshooter"]
+  resume --> resolved

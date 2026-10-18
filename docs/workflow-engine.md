@@ -128,3 +128,7 @@ flowchart TD
 ```
 
 This keeps three boundaries distinct: the Job's durable Task dependency graph, the Agent Graph inside one Task, and worker/model routing used to execute that Task.
+
+## Troubleshooter execution fallback
+
+See `docs/troubleshooter-fallback.mmd`. A failed Troubleshooter process is not a diagnostic verdict. Relay first uses its bounded normal retries, tries Codex configured default model (no CLI model/provider override) once for recognized runtime errors, and **must** create a Core-owned human escalation when no valid resolution can be produced. Escalation blocks the recovery Task until a real human response. Only a verified resolution may retry original work or establish a same-Job dependency. No recursive Troubleshooter, invented resolution, or auto-completion.
