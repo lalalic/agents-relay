@@ -2,6 +2,8 @@
 import { buildWorkflowUsageIndex, defaultWorkflowDirectory, executableGraphs, whereWorkflowSymbol } from './workflow/usage-index.js';
 import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { GraphRuntime } from './workflow/graph-v2.js';
+import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
 import { WORKFLOW_EVENT_NAMES, WORKFLOW_EFFECT_NAMES, WORKFLOW_MUTATION_NAMES } from './workflow/contracts.js';
 
 export function workflowCliResult(args: readonly string[]): unknown {
@@ -41,6 +43,18 @@ export function workflowCliResult(args: readonly string[]): unknown {
     });
     return { mode: 'dry-run', decision: runtime.evaluateSync({ currentState: state, input: { transport: 'event', id: inputId, payload: {} }, durableFacts: record }) };
   }
-  if (verb === 'action' || verb === 'trace') throw new Error('durable graph authorization and execution trace backend required; unsafe action/trace request refused');
+  if (verb === 'trace') {
+    const path = value('--sqlite');
+    const key = value('--attempt-key');
+    if (!path || !key || !existsSync(path)) throw new Error('trace requires existing --sqlite path and --attempt-key');
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_action_trace'").get();
+      if (!table) return { attemptKey: key, trace: null };
+      const record = db.prepare('SELECT attempt_key,execution_id,generation,graph,action_id,condition_id,outcome,observed_at FROM workflow_action_trace WHERE attempt_key=?').get(key) ?? null;
+      return { attemptKey: key, trace: record };
+    } finally { db.close(); }
+  }
+  if (verb === 'action') throw new Error('durable graph authorization required; unsafe action request refused');
   throw new Error('workflow supports discover, inspect, where, evaluate; action/trace require durable authorization');
 }
