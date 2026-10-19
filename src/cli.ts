@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { workflowCliResult } from './cli-workflow.js';
 import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
@@ -411,6 +412,7 @@ async function main(): Promise<void> {
     });
     return;
   }
+  if (command === 'workflow') { console.log(JSON.stringify(workflowCliResult(args), null, 2)); return; }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'review') { const [action, ...reviewArgs] = args; await runReviewCommand(action ?? '', reviewArgs); return; }

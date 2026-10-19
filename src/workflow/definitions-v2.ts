@@ -1,3 +1,4 @@
+import { ConditionRegistry, booleanCondition } from './conditions.js';
 import { readFileSync } from 'node:fs';
 import { GraphRuntime, type Graph, type GraphRegistries } from './graph-v2.js';
 import {
@@ -9,8 +10,11 @@ import {
 const TASK_STATES = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','CANCELLED'] as const;
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
-const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean =>
-  facts.durableFacts[name] === true;
+const conditionRegistry = new ConditionRegistry([
+  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','retryAvailable','autonomousJob','platformFallbackSafe','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady'])
+].map(booleanCondition));
+const boolGuard = (name: string) => conditionRegistry.guard(name);
+export const lifecycleConditions = conditionRegistry;
 
 function eventRegistry(): GraphRegistries['events'] {
   return Object.fromEntries(WORKFLOW_EVENT_NAMES.map(id => [id, { id }]));
