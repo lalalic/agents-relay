@@ -1,0 +1,181 @@
+{
+  "base": "http://127.0.0.1:18983/",
+  "checks": [
+    {
+      "name": "initial Entry controls",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/entry",
+        "back": true,
+        "forward": true,
+        "index": 0,
+        "path": [
+          "entry"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "source reference is exact 40-char commit",
+      "passed": true,
+      "detail": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+    },
+    {
+      "name": "Forward disabled at navigation end",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/task-lifecycle",
+        "back": false,
+        "forward": true,
+        "index": 2,
+        "path": [
+          "entry",
+          "planner-orchestration",
+          "task-lifecycle"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Back Worker to Planner enables Forward",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/planner-orchestration",
+        "back": false,
+        "forward": false,
+        "index": 1,
+        "path": [
+          "entry",
+          "planner-orchestration"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Back Planner to Entry keeps Forward enabled",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/entry",
+        "back": true,
+        "forward": false,
+        "index": 0,
+        "path": [
+          "entry"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Forward from Entry returns Planner",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/planner-orchestration",
+        "back": false,
+        "forward": false,
+        "index": 1,
+        "path": [
+          "entry",
+          "planner-orchestration"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Forward to end disables Forward",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/task-lifecycle",
+        "back": false,
+        "forward": true,
+        "index": 2,
+        "path": [
+          "entry",
+          "planner-orchestration",
+          "task-lifecycle"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Other tab is Usage",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "Returning from another tab has coherent Entry reset",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/entry",
+        "back": true,
+        "forward": true,
+        "index": 0,
+        "path": [
+          "entry"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Fresh direct deep link initializes controls",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/escalation",
+        "back": true,
+        "forward": true,
+        "index": 0,
+        "path": [
+          "entry",
+          "escalation"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Entry control returns from direct link",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/entry",
+        "back": false,
+        "forward": true,
+        "index": 1,
+        "path": [
+          "entry"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Reload maintains URL and history state",
+      "passed": true,
+      "detail": {
+        "hash": "#/graphs/entry",
+        "back": false,
+        "forward": true,
+        "index": 1,
+        "path": [
+          "entry"
+        ],
+        "ref": "b62f189e9c027dac7acc2a394c9abda70eeb4c00"
+      }
+    },
+    {
+      "name": "Graph evidence links pinned to running checkout SHA",
+      "passed": true,
+      "detail": [
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/workflow/escalation.mmd#L9",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/src/workflow/escalation.ts#L48",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/src/workflow/escalation.ts#L74",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/test/dashboard.test.js#L1035",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/test/dashboard.test.js#L1051",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/test/dashboard.test.js#L1055",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/test/dashboard.test.js#L1069",
+        "https://github.com/lalalic/agents-relay/blob/b62f189e9c027dac7acc2a394c9abda70eeb4c00/test/escalation.test.js#L24"
+      ]
+    },
+    {
+      "name": "Search-suggestion evidence marked distinct from exact graph token",
+      "passed": true,
+      "detail": "Action: escalation.invokeGraphworkflow/escalation.mmd:9 [verified graph token]  Canonical contractNo exact symbol reference found.Implementationsrc/workflow/escalation.ts:48 [text-search suggestion]  src/workflow/escalation.ts:74 [text-search suggestion]  Teststest/dashboard.test.js:1035 [text-search suggestion]  test/dashboard.test.js:1051 [text-search sugg"
+    }
+  ]
+}

@@ -4,8 +4,10 @@ import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
+import { dashboardHtml, dashboardVersion, dashboardSourceRevision, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
+import { workflowPresentation } from '../dist/dashboard-workflow-presentation.js';
+import { inspectWorkflowSymbol } from '../dist/dashboard-workflow-inspection.js';
 
 
 
@@ -120,13 +122,13 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
 });
 
 test('dashboard exposes a top-level Graphs browser backed by the workflow graph API', () => {
-  assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Graphs<\/button>/);
-  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Graphs<\/button>/);
+  assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Workflow<\/button>/);
+  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Workflow<\/button>/);
   assert.match(dashboardHtml, /id="graphs-view"/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
   assert.match(dashboardHtml, /window\.mermaid\.render/);
-  assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(rendered\.svg,'image\/svg\+xml'\)/);
+  assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(markup,'image\/svg\+xml'\)/);
   assert.match(dashboardHtml, /id="graph-source"/);
 });
 
@@ -989,4 +991,85 @@ test('job list displays durable local merge failure reason', () => {
   assert.match(dashboardHtml, /job\.localMerge\?\.status==='failed'/);
   assert.match(dashboardHtml, /MERGE FAILED: /);
   assert.match(dashboardHtml, /job\.localMerge\.error/);
+});
+
+
+test('Workflow entry drill-down is presentation-only and links canonical graphs', async () => {
+  const graphs = await dashboardWorkflowGraphs();
+  const ids = new Set(graphs.map(graph => graph.id));
+  const mapping = dashboardHtml.match(/const GRAPH_NAV=(\{[^;]+\});/);
+  assert.ok(mapping, 'single graph navigation map');
+  const navigation = JSON.parse(mapping[1].replace(/([a-z]+):\[/g, '\"$1\":[').replace(/'/g, '\"'));
+  for (const targets of Object.values(navigation)) {
+    for (const id of targets) assert.ok(ids.has(id), 'broken drill-down: ' + id);
+  }
+  assert.match(dashboardHtml, /GRAPH_ENTRY_SOURCE/);
+  assert.match(dashboardHtml, /Changes Required/);
+  assert.match(dashboardHtml, /Escalator workflow/);
+  assert.match(dashboardHtml, /id=\"graph-back\"/);
+  assert.match(dashboardHtml, /id=\"graph-forward\"/);
+  assert.match(dashboardHtml, /id=\"graph-entry\"/);
+  assert.match(dashboardHtml, /securityLevel:'strict'/);
+  assert.match(dashboardHtml, /function sanitizeGraphSvg/);
+});
+
+
+test('canonical presentation navigation has no dead child graph targets', async () => {
+  const graphs = await dashboardWorkflowGraphs();
+  const ids = new Set(graphs.map(graph => graph.id));
+  for (const targets of Object.values(workflowPresentation.navigation)) {
+    assert.ok(targets.length > 0);
+    for (const id of targets) assert.ok(ids.has(id), 'unresolved graph: ' + id);
+  }
+  assert.match(workflowPresentation.entrySource, /START: Job Objective/);
+  assert.match(workflowPresentation.entrySource, /Changes Required/);
+  assert.match(workflowPresentation.entrySource, /linkStyle 8,9,10/);
+  assert.match(dashboardHtml, /Entry \(conceptual\)/);
+});
+
+test('graph detail resolves only symbols present in canonical executable graph', async () => {
+  const event = await inspectWorkflowSymbol('planner-orchestration', 'Event', 'planner.reconcile');
+  assert.ok(event);
+  assert.equal(event.graph.path, 'workflow/planner-orchestration.mmd');
+  assert.ok(event.implementation.some(ref => ref.path === 'src/workflow/planner-orchestration-v2.ts' && ref.line > 0));
+  const action = await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invoke');
+  assert.ok(action?.implementation.some(ref => ref.path === 'src/workflow/escalation.ts'));
+  assert.ok(action?.tests.some(ref => ref.path === 'test/escalation.test.js'));
+  assert.equal(await inspectWorkflowSymbol('../package.json', 'Event', 'planner.reconcile'), null);
+  assert.equal(await inspectWorkflowSymbol('planner-orchestration', 'Event', 'not.a.real.event'), null);
+  assert.equal(await inspectWorkflowSymbol('planner-orchestration', 'Guard', '<img>'), null);
+});
+
+test('graph-symbol API returns real references and rejects missing or malformed graph symbols', async () => {
+  const job = { id: 'graph-symbol-test', title: 'Graph API smoke', executionMode: 'fixed', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
+  await once(server, 'listening');
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const base = `http://127.0.0.1:${address.port}/api/graph-symbol?`;
+    const ok = await fetch(base + new URLSearchParams({ graph: 'escalation', kind: 'Action', name: 'escalation.invoke' }));
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('cache-control'), 'no-store');
+    assert.equal((await ok.json()).graph.path, 'workflow/escalation.mmd');
+    for (const query of [{ graph: 'missing', kind: 'Action', name: 'escalation.invoke' }, { graph: '../src', kind: 'Action', name: 'escalation.invoke' }]) {
+      const response = await fetch(base + new URLSearchParams(query));
+      assert.equal(response.status, 404);
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('workflow code references pin to review branch and label text matches as suggestions only', async () => {
+  assert.match(dashboardHtml, /WORKFLOW_SOURCE_REF/);
+  assert.match(dashboardSourceRevision(), /^[0-9a-f]{40}$/);
+  assert.ok(dashboardHtml.includes(dashboardSourceRevision()));
+  assert.doesNotMatch(dashboardHtml, /blob\/main\/.*ref\.path/);
+  const action = await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invoke');
+  assert.equal(action?.graph.evidence, 'exact-token');
+  assert.ok(action?.implementation.every(ref => ref.evidence === 'text-search'));
+  assert.ok(action?.contracts.every(ref => ref.line > 0));
+  assert.equal(await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invokeExtra'), null);
+  assert.equal(await inspectWorkflowSymbol('escalation', 'State', 'invoke'), null);
 });

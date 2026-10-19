@@ -1,0 +1,213 @@
+{
+  "url": "http://127.0.0.1:18983/",
+  "checks": [
+    {
+      "test": "Entry rendered with clickable nodes",
+      "detail": 11,
+      "passed": true
+    },
+    {
+      "test": "Entry happy and review paths",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Click Planner",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Planner graph and breadcrumb",
+      "detail": {
+        "hash": "#/graphs/planner-orchestration",
+        "buttons": 25,
+        "label": "state: idle",
+        "crumb": "Entry (conceptual) / Planner Orchestration"
+      },
+      "passed": true
+    },
+    {
+      "test": "Event detail exact source",
+      "detail": [
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/workflow/planner-orchestration.mmd#L31",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/src/workflow/planner-orchestration-v2.ts#L36",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/src/workflow/planner-orchestration-v2.ts#L40",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/src/workflow/planner-orchestration-v2.ts#L43",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1031",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1038"
+      ],
+      "passed": true
+    },
+    {
+      "test": "Node detail contract",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Browser Back",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Browser Forward",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Return Entry",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Click worker",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "worker child graph",
+      "detail": {
+        "hash": "#/graphs/task-lifecycle",
+        "n": 81
+      },
+      "passed": true
+    },
+    {
+      "test": "Return Entry",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Click troubleshooter",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "troubleshooter child graph",
+      "detail": {
+        "hash": "#/graphs/troubleshooter",
+        "n": 15
+      },
+      "passed": true
+    },
+    {
+      "test": "Return Entry",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Click escalator",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "escalator child graph",
+      "detail": {
+        "hash": "#/graphs/escalation",
+        "n": 12
+      },
+      "passed": true
+    },
+    {
+      "test": "Escalation action interactive",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Escalation real implementation and test",
+      "detail": [
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/workflow/escalation.mmd#L9",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/src/workflow/escalation.ts#L48",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/src/workflow/escalation.ts#L74",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1035",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1051",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1055",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/dashboard.test.js#L1068",
+        "https://github.com/lalalic/agents-relay/blob/feat%2Fdashboard-workflow-drilldown/test/escalation.test.js#L24"
+      ],
+      "passed": true
+    },
+    {
+      "test": "Return Entry",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Keyboard Enter",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Direct deep link",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Reload deep link",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "Missing graph error",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "390px responsive",
+      "detail": {
+        "width": 390,
+        "mobile": true,
+        "view": true,
+        "controls": 11
+      },
+      "passed": true
+    },
+    {
+      "test": "Mermaid unavailable fallback",
+      "detail": null,
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 1",
+      "detail": {
+        "html": "<svg><rect></rect></svg>"
+      },
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 2",
+      "detail": {
+        "html": "<svg></svg>"
+      },
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 3",
+      "detail": {
+        "html": "<svg><rect></rect></svg>"
+      },
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 4",
+      "detail": {
+        "html": "<svg><g><path d=\"M0 0\"></path></g></svg>"
+      },
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 5",
+      "detail": {
+        "html": "<svg></svg>"
+      },
+      "passed": true
+    },
+    {
+      "test": "XSS adversarial 6",
+      "detail": {
+        "rejected": true,
+        "error": "Invalid SVG"
+      },
+      "passed": true
+    }
+  ]
+}
