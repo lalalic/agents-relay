@@ -1073,3 +1073,9 @@ test('Workflow graph centers labels and offers dialog pan/zoom controls', () => 
   assert.match(dashboardHtml, /textNode\.setAttribute\('x','0'\)/);
   assert.match(dashboardHtml, /graphViewport\.addEventListener\('pointermove'/);
 });
+
+
+test('linked graph node labels have blue text styling', async () => {
+  const { dashboardStyles } = await import('../dist/dashboard-style.js');
+  assert.match(dashboardStyles, /\.graph-canvas \.node\.drillable text.*fill:#2367b1/);
+});

@@ -102,6 +102,7 @@ export const dashboardStyles = `  <style>
     .graph-canvas svg rect.background { display:none; }
     .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
     .graph-canvas .node.drillable { cursor:pointer; }
+    .graph-canvas .node.drillable text, .graph-canvas .node.drillable tspan { fill:#2367b1; }
     .graph-dialog { width:96vw; height:94vh; max-width:none; max-height:none; padding:.7rem; border:1px solid var(--border); border-radius:.5rem; background:var(--surface); color:var(--text); }
     .graph-dialog::backdrop { background:#17202b99; }
     .graph-dialog-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.7rem; padding:.3rem .5rem; }
