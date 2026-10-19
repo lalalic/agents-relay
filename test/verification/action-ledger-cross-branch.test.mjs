@@ -13,7 +13,7 @@ const fixture=async run=>{
  const root=mkdtempSync(join(tmpdir(),'relay-ledger-cross-'));
  const db=new DatabaseSync(join(root,'store.sqlite'));
  db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
- const snapshot=(generation=2,patch={})=>db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES(?,?,?)').run('job-1',JSON.stringify({tasks:[{id:'task-1',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner-1',attempt:2,leaseExpiresAt:'2099-01-01T00:00:00.000Z',...patch}]}),new Date().toISOString());
+ const snapshot=(generation=2,patch={})=>db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES(?,?,?)').run('job-1',JSON.stringify({tasks:[{id:'task-1',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner-1',attempt:2,leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionHistory:[{id:'exec-1',attempt:2}],...patch}]}),new Date().toISOString());
  snapshot();
  try{await run({db,snapshot,root});}finally{db.close();rmSync(root,{recursive:true,force:true});}
 };
@@ -51,7 +51,7 @@ test('A ledger: crash/reopen preserves Unknown and prevents duplicate effect exe
  let db=new DatabaseSync(filename);
  try{
   db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
-  db.prepare('INSERT INTO job_snapshot VALUES(?,?,?)').run(id.jobId,JSON.stringify({tasks:[{id:id.taskId,state:'RUNNING',executionId:id.executionId,leaseOwner:id.leaseOwner,attempt:id.attempt,leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}),new Date().toISOString());
+  db.prepare('INSERT INTO job_snapshot VALUES(?,?,?)').run(id.jobId,JSON.stringify({tasks:[{id:id.taskId,state:'RUNNING',executionId:id.executionId,leaseOwner:id.leaseOwner,attempt:id.attempt,leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionHistory:[{id:id.executionId,attempt:id.attempt}]}]}),new Date().toISOString());
   let ledger=new WorkflowActionLedger(db);
   assert.equal(ledger.reserveForRunningTask(id,authorized,'merged'),true);
   db.close();db=new DatabaseSync(filename);ledger=new WorkflowActionLedger(db);
@@ -104,5 +104,32 @@ test('A dispatcher: unknown postcondition prevents state persist and event publi
   assert.equal(actions,1);
   assert.deepEqual(transitions,[]);
   assert.deepEqual(emitted,[]);
+ });
+});
+
+test('A ledger: missing and mismatched executionHistory are fenced', {skip:!dist},async()=>{
+ const {WorkflowActionLedger}=await load();
+ await fixture(async({db,snapshot})=>{
+  const ledger=new WorkflowActionLedger(db);
+  snapshot(2,{executionHistory:[]});
+  assert.throws(()=>ledger.reserveForRunningTask(id,authorized,'merged'),/fenced/);
+  snapshot(2,{executionHistory:[{id:'older-exec',attempt:1}]});
+  assert.throws(()=>ledger.reserveForRunningTask(id,authorized,'merged'),/fenced/);
+  snapshot(2,{executionHistory:[{id:'exec-1',attempt:1}]});
+  assert.throws(()=>ledger.reserveForRunningTask(id,authorized,'merged'),/fenced/);
+  snapshot(2,{executionHistory:[{id:'exec-1',attempt:2}]});
+  assert.equal(ledger.reserveForRunningTask(id,authorized,'merged'),true);
+ });
+});
+
+test('A ledger: active pause rejects reserve, resumed lease permits fresh attempt', {skip:!dist},async()=>{
+ const {WorkflowActionLedger}=await load();
+ await fixture(async({db,snapshot})=>{
+  const ledger=new WorkflowActionLedger(db);
+  const save=(pause,attempt=2)=>db.prepare('UPDATE job_snapshot SET json=? WHERE job_id=?').run(JSON.stringify({...(pause?{pause}:{}),tasks:[{id:id.taskId,state:'RUNNING',executionId:id.executionId,leaseOwner:id.leaseOwner,attempt,leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionHistory:[{id:id.executionId,attempt}]}]}),id.jobId);
+  save({generation:1,reason:'maintenance'});
+  assert.throws(()=>ledger.reserveForRunningTask(id,authorized,'merged'),/fenced/);
+  save(null);
+  assert.equal(ledger.reserveForRunningTask(id,authorized,'merged'),true);
  });
 });
