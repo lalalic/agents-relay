@@ -15,13 +15,10 @@ import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import { eventsBusHistory } from './events-bus-runtime.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
-
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
-
 export type DashboardWorkflowGraph = { id: string; name: string; path: string; source: string };
-
 export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
   const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort();
   return Promise.all(names.map(async name => ({
@@ -33,7 +30,6 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
-
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
 
 function effectiveGitHubUsage(snapshot: GitHubRateLimitSnapshot | null, runtime: GitHubRuntimeRateUsage | null): EffectiveGitHubUsage | null {
@@ -64,7 +60,6 @@ export function githubPrUrl(repository: unknown, prNumber: unknown): string | nu
   if (!isSafeRepositorySegment(owner) || !isSafeRepositorySegment(repo)) return null;
   return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
 }
-
 
 async function eventHistory(jobId: string, taskId: string | null, limit: number): Promise<import('./types.js').EventRecord[]> {
   try { return await eventsBusHistory(jobId, taskId, limit); } catch { return []; }
