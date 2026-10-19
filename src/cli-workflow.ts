@@ -4,6 +4,7 @@ import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { GraphRuntime } from './workflow/graph-v2.js';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
+import { verifyAuthoritativeCondition, type AuthoritativePredicate } from './workflow/authoritative-conditions.js';
 import { WORKFLOW_EVENT_NAMES, WORKFLOW_EFFECT_NAMES, WORKFLOW_MUTATION_NAMES } from './workflow/contracts.js';
 
 export function workflowCliResult(args: readonly string[]): unknown {
@@ -42,6 +43,16 @@ export function workflowCliResult(args: readonly string[]): unknown {
       events: Object.fromEntries([...new Set([...WORKFLOW_EVENT_NAMES, inputId, ...graph.edges.filter(e => e.kind === 'on' || e.kind === 'emit').map(e => e.semanticId).filter((id): id is string => !!id)])].map(id => [id, { id }])),
     });
     return { mode: 'dry-run', decision: runtime.evaluateSync({ currentState: state, input: { transport: 'event', id: inputId, payload: {} }, durableFacts: record }) };
+  }
+  if (verb === 'verify') {
+    const path = value('--sqlite');
+    const jobId = value('--job');
+    const predicate = value('--condition');
+    const allowed = new Set(['task.queued','task.succeeded','task.failed','task.routing-cleared','task.execution-stopped','job.objective-verified','job.completed']);
+    if (!path || !existsSync(path) || !jobId || !allowed.has(predicate)) throw new Error('verify requires existing --sqlite, --job and supported --condition');
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {return {condition:predicate,jobId,taskId:value('--task')||null,outcome:verifyAuthoritativeCondition(db,jobId,predicate as AuthoritativePredicate,value('--task'),value('--execution'))};}
+    finally {db.close();}
   }
   if (verb === 'trace') {
     const path = value('--sqlite');
