@@ -101,6 +101,13 @@ export const dashboardStyles = `  <style>
     .graph-canvas svg { max-width:none; height:auto; }
     .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
     .graph-canvas .node.drillable { cursor:pointer; }
+    .graph-dialog { width:96vw; height:94vh; max-width:none; max-height:none; padding:.7rem; border:1px solid var(--border); border-radius:.5rem; background:var(--surface); color:var(--text); }
+    .graph-dialog::backdrop { background:#17202b99; }
+    .graph-dialog-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.7rem; padding:.3rem .5rem; }
+    .graph-dialog-viewport { height:calc(94vh - 5rem); overflow:auto; cursor:grab; background:var(--surface2); border:1px solid var(--border); border-radius:.4rem; }
+    .graph-dialog-viewport:active { cursor:grabbing; }
+    .graph-dialog-viewport .graph-canvas { display:block; width:max-content; min-width:100%; min-height:100%; overflow:visible; }
+    .graph-canvas .node text { pointer-events:none; }
     .graph-source { margin:0; max-height:22rem; overflow:auto; padding:.7rem; border:1px solid var(--border); border-radius:.4rem; background:var(--surface2); color:var(--muted); font:.72rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre; }
     .graph-source-details summary { cursor:pointer; color:var(--muted); font-size:.74rem; font-weight:700; }
     .rules-editor { display:grid; gap:.65rem; }

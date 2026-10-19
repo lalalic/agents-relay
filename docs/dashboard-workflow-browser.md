@@ -25,3 +25,7 @@ Security scope: rendered Mermaid SVG is recreated using an explicit SVG element/
 - Graph Back/Forward uses browser history with a session-scoped graph path array and `workflowIndex` in history state. Direct Entry or deep-link entry initializes index 0. Reentering from another tab resets graph-specific history; browser Back/Forward restores visited graphs without consulting unrelated browser history.
 - Graph `.mmd` symbol tokens are checked exactly. Source/contract/test matches are explicitly labelled **text-search suggestions**, not verified call-site contracts or test coverage. Missing symbol references are reported as absent; do not interpret them as proof of mapping.
 - Targeted Browser Workspace regression: `test/workflow-dashboard-history-e2e.py`. Evidence `docs/evidence/dashboard-workflow-fourth-review/evidence.json` contains 14 checks; `action-detail.png` shows evidence labels and links. Existing 32-check visual/E2E suite remains in `test/workflow-dashboard-browser-e2e.py`.
+
+## Viewer display controls
+
+The Workflow graph can be opened in a modal viewer using **Maximize graph**. The viewer has Zoom in, Zoom out, Fit (100%), pointer drag to pan and Ctrl/Cmd + wheel zoom; Close and Escape return the same interactive graph to the original Dashboard location. SVG node labels are anchored to the node's local `(0, 0)` center and wrapped based on the node rectangle's width. The Mermaid presentation remains read-only.

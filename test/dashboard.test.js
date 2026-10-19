@@ -1073,3 +1073,14 @@ test('workflow code references pin to review branch and label text matches as su
   assert.equal(await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invokeExtra'), null);
   assert.equal(await inspectWorkflowSymbol('escalation', 'State', 'invoke'), null);
 });
+
+test('Workflow graph centers labels and offers dialog pan/zoom controls', () => {
+  assert.match(dashboardHtml, /id="graph-maximize"/);
+  assert.match(dashboardHtml, /id="graph-dialog"/);
+  assert.match(dashboardHtml, /id="graph-zoom-in"/);
+  assert.match(dashboardHtml, /id="graph-zoom-out"/);
+  assert.match(dashboardHtml, /id="graph-zoom-reset"/);
+  assert.match(dashboardHtml, /textNode\.setAttribute\('text-anchor','middle'\)/);
+  assert.match(dashboardHtml, /textNode\.setAttribute\('x','0'\)/);
+  assert.match(dashboardHtml, /graphViewport\.addEventListener\('pointermove'/);
+});
