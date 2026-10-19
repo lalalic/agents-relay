@@ -27,3 +27,11 @@ Create an isolated store with `createIsolatedEnvironment`; pass its returned `en
 ### Bounded production ingress replay
 
 Run `node test/verification/l3-replay.mjs test/verification/l3-scenarios/dependency-release.json /tmp/l3-evidence`. This runs a fresh MemoryEventBus → Reconciler.watch → production Graph/scheduler → isolated SQLite, and generates `report.json` and `report.md`. The deliberately invalid `broken-premature-completion.json` exits nonzero; terminal assertions read the saved SQLite state, not input trace terminal markers. `npm run test:verification:l3` runs its positive and negative replay regression tests. This is a bounded two-task replay, **not** all required Job 481 L3 workflows; escalation/re-review/merge/restart and full worker dispatch remain unverified.
+
+## Independent B verification (2026-10-19)
+
+`npm run test:verification:l1` includes production reviewer terminal normalization, event-source identity, agent contract assertions, graph-link resolution, Dashboard safe SVG/navigation controls and the strict evidence gate. `npm run test:verification:l3` runs the existing 17 isolated SQLite/Graph/ingress regressions. This is **not** proof that the complete Job 481 L3 objective has passed.
+
+`node test/verification/evidence-matrix.mjs /tmp/agents-relay-verification-b` emits JSON and Markdown status for the original scenario corpus, conservatively `NOT_RUN` until a trusted production runner supplies causal evidence. It does not accept an arbitrary JSON file as PASS authority. L2 may be PASS only when real installed role skills, actual providers/adapters, Relay acceptance, and the emitted events have been verified. Simulated adapter outputs do not count.
+
+Dashboard graph `workflow/main.mmd` is presentation-only. Canonical nested Mermaid graphs remain the only workflow-policy authority. Browser tests and screenshots are **NOT_RUN** in this independent B slice; static UI tests alone do not satisfy real-browser E2E.
