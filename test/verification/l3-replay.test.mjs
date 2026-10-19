@@ -48,3 +48,37 @@ test('incorrect causal transition expectation cannot be supplied as proof',async
  assert.equal(result.outcome,'FAIL');
  assert.ok(result.errors.some(e=>e.includes('after expected')));
 });
+
+test('sequential worker, reviewer and merge failures never forge objective completion',async()=>{
+ const result=await runReplay({id:'sequential-multi-stage-failure',tasks:[{id:'planner'},{id:'worker',dependencies:['planner']},{id:'reviewer',dependencies:['worker']},{id:'merge',dependencies:['reviewer']}],steps:[
+  {type:'task.failed',taskId:'planner',data:{phase:'planner',reason:'injected planner failure'}},
+  {type:'restart'},
+  {type:'task.completed',taskId:'planner'},
+  {type:'task.failed',taskId:'worker',data:{phase:'worker',reason:'injected worker failure'}},
+  {type:'task.completed',taskId:'reviewer'},
+  {type:'job.merge.failed',message:'simulated merge error'},
+  {type:'restart'},
+  {type:'reconcile'}
+ ],expected:{jobState:'ACTIVE',tasks:{planner:'FAILED',worker:'DRAFT',reviewer:'DRAFT',merge:'DRAFT'},localMergeStatus:'failed'},assertions:[
+  {step:0,taskId:'planner',after:'FAILED',progress:true},
+  {step:2,taskId:'planner',after:'FAILED',progress:false},
+  {step:3,taskId:'worker',after:'DRAFT',progress:false},
+  {step:4,taskId:'reviewer',after:'DRAFT',progress:false}
+ ]});
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+ assert.notEqual(result.actual.jobState,'COMPLETED');
+});
+test('unknown or stale effect and restart do not duplicate durable terminal state',async()=>{
+ const result=await runReplay({id:'unknown-stale-effect',steps:[
+  {type:'task.completed',executionId:'unknown-generation'},
+  {type:'restart'},
+  {type:'task.completed'},
+  {type:'restart'},
+  {type:'task.completed',executionId:'exec-a'}
+ ],expected:{jobState:'ACTIVE',tasks:{a:'SUCCEEDED',b:'QUEUED'}},assertions:[
+  {step:0,taskId:'a',after:'RUNNING',progress:false},
+  {step:2,taskId:'a',after:'SUCCEEDED',progress:true},
+  {step:4,taskId:'a',after:'SUCCEEDED',progress:false}
+ ]});
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+});

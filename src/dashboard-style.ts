@@ -100,6 +100,7 @@ export const dashboardStyles = `  <style>
     .graph-canvas { min-height:24rem; display:grid; place-items:center; overflow:auto; padding:1rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
     .graph-canvas svg { max-width:none; height:auto; }
     .graph-canvas svg rect.background { display:none; }
+    .graph-canvas svg .edgeLabel rect, .graph-canvas svg .edgeLabel .labelBkg, .graph-canvas svg .edgeLabel .background { fill:transparent !important; opacity:0 !important; }
     .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
     .graph-canvas .node.drillable { cursor:pointer; }
     .graph-canvas .node.drillable text, .graph-canvas .node.drillable tspan { fill:#2367b1; }
