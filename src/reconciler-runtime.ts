@@ -35,7 +35,7 @@ export abstract class ReconcilerRuntimeBase {
   protected readonly continuationLive = new Set<string>();
   protected readonly launchFailureClaims = new Set<string>();
   protected readonly terminalWaiters = new Map<string, TerminalWaiter>(); private readonly startAckCleanups = new Set<() => Promise<void>>();
-  private readonly taskTransitions: DurableTaskTransitionRuntime; private readonly eventCoordinator: ReconcileCoordinator; protected readonly hostInvocations: HostInteractiveInvocationCoordinator;
+  protected readonly taskTransitions: DurableTaskTransitionRuntime; private readonly eventCoordinator: ReconcileCoordinator; protected readonly hostInvocations: HostInteractiveInvocationCoordinator;
   private readonly detachedReconciles = new Set<Promise<unknown>>();
   protected readonly workflowEffects = new WorkflowEffectExecutor();
   protected reconciling = false;

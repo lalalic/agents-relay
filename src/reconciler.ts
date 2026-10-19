@@ -325,7 +325,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if (freshTask.agentName === 'reviewer' && freshTask.planningDecisionId && freshTask.dependencies.length) await bindPlannedReviewHead(this.store, freshTask, await this.currentHeadSha(freshJob));
       const implementationThread = resolveImplementationTaskThreadDestination(freshJob, freshTask);
       if ((!freshTask.routing || ((implementationThread || (freshTask.agentName === 'reviewer' && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
-        freshTask = (await this.routeTaskForExecution(freshJob, freshTask)).task;
+        const routed = await this.routeTaskForExecutionFailClosed(freshJob, freshTask); if (!routed) return; freshTask = routed.task;
       }
       if (['codex', 'chatgpt'].includes(freshTask.adapter) && !freshTask.routing) {
         throw new Error('Task ' + freshTask.id + ' requires routing metadata before execution claim');
