@@ -18,7 +18,7 @@ const identity = {jobId:'j',taskId:'t',leaseOwner:'owner',attempt:1,attemptKey:'
 test('production dispatcher action loop is fenced and Unknown stops repeated external effect', async () => {
   const db = new DatabaseSync(':memory:');
  db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL)');
- db.prepare('INSERT INTO job_snapshot VALUES (?,?)').run('j',JSON.stringify({tasks:[{id:'t',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner',attempt:1,leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}));
+ db.prepare('INSERT INTO job_snapshot VALUES (?,?)').run('j',JSON.stringify({tasks:[{id:'t',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner',attempt:1,executionHistory:[{id:'exec-1',attempt:1,startedAt:'2026-10-19T10:00:00.000Z'}],leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}));
  const ledger = new WorkflowActionLedger(db);
   const conditions = new ConditionRegistry([booleanCondition('merged')]);
   let calls = 0;

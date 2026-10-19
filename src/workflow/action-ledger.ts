@@ -38,7 +38,7 @@ export class WorkflowActionLedger {
       if (!row?.json) throw new Error('authoritative job snapshot unavailable');
       const job = JSON.parse(row.json) as { pause?: {generation: number}; tasks?: Array<{id: string; state: string; executionId: string | null; leaseOwner: string | null; leaseExpiresAt: string | null; attempt: number; executionHistory?: Array<{id: string; attempt: number; startedAt: string}>}> };
       const task = job.tasks?.find(item => item.id === identity.taskId);
-      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || task.attempt !== identity.generation || (task.executionHistory?.length ? !task.executionHistory.some(entry => entry.id === identity.executionId && entry.attempt === identity.generation) : false) || Boolean(job.pause) || !task.leaseExpiresAt || !Number.isFinite(Date.parse(task.leaseExpiresAt)) || !Number.isFinite(Date.parse(now)) || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
+      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || task.attempt !== identity.generation || !task.executionHistory?.some(entry => entry.id === identity.executionId && entry.attempt === identity.generation) || Boolean(job.pause) || !task.leaseExpiresAt || !Number.isFinite(Date.parse(task.leaseExpiresAt)) || !Number.isFinite(Date.parse(now)) || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
         throw new Error('stale execution, owner, attempt or lease: action fenced');
       }
       const created = this.reserve(identity, decision, conditionId);

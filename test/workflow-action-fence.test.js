@@ -12,6 +12,8 @@ test('authoritative sqlite snapshot fences execution, lease, attempt and duplica
  const store=db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES (?,?)');
  store.run('j',JSON.stringify(job));
  const ledger=new WorkflowActionLedger(db);
+ assert.throws(()=>ledger.reserveForRunningTask(identity,decision,'done',now),/fenced/);
+ job.tasks[0].executionHistory=[{id:'e',attempt:2,startedAt:now}]; store.run('j',JSON.stringify(job));
  assert.throws(()=>ledger.reserveForRunningTask({...identity,executionId:'old'},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,leaseOwner:'old'},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,attempt:1},decision,'done',now),/fenced/);
@@ -21,6 +23,9 @@ test('authoritative sqlite snapshot fences execution, lease, attempt and duplica
  job.tasks[0].executionHistory=[{id:'e',attempt:2,startedAt:now}]; store.run('j',JSON.stringify(job));
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),true);
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),false);
+ job.pause={generation:1,requestedAt:now}; store.run('j',JSON.stringify(job));
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,attemptKey:'paused'},decision,'done',now),/fenced/);
+ delete job.pause; store.run('j',JSON.stringify(job));
  assert.throws(()=>ledger.reserveForRunningTask({...identity,actionId:'other'}, { ...decision, actions:[{id:'other'}]},'done',now),/collision/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,attemptKey:'invalid-date'},decision,'done','invalid'),/fenced/);
  job.tasks[0].leaseExpiresAt='2026-10-19T18:00:00.000Z'; store.run('j',JSON.stringify(job));
