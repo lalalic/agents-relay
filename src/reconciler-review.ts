@@ -293,7 +293,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const routed = await routeExecution(candidates, requirements, {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
-      taskFacts: { ...taskFacts, recovery_parent_failed_route: excludedRoutes[0] ?? null },
+      taskFacts: { ...taskFacts, recovery: task.recoveryContext ?? null, recovery_parent_failed_route: excludedRoutes[0] ?? null },
       usage,
       registered,
       chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,

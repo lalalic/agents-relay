@@ -155,6 +155,32 @@ test('troubleshooter task.recover retries original task without cancelling itsel
   assert.equal(activeRecovery.executionId,'recovery-exec');
 });
 
+test('troubleshooter recovery retains diagnostic evidence and triggers a fresh route', async () => {
+  const oldRouting={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+  const failed={...task('root','FAILED'),attempt:1,maxAttempts:3,routing:oldRouting,error:'worker_start_timeout'};
+  const recovery={...task('troubleshoot-root','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec'};
+  const store=new InMemoryStore(job([failed,recovery]));
+  await dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:'root',recoveryTaskId:'troubleshoot-root',recoveryDiagnosis:{failureKind:'adapter_failure',reason:'worker_start_timeout',evidence:'adapter never emitted task.started',reroute:true,excludeCurrentRoute:true}});
+  const current=(await store.load('j')).tasks.find(x=>x.id==='root');
+  assert.equal(current.state,'QUEUED');
+  assert.equal(current.routing,undefined);
+  assert.equal(current.workerSelection,undefined);
+  assert.equal(current.recoveryContext.failureKind,'adapter_failure');
+  assert.match(current.recoveryContext.evidence,/task.started/);
+  assert.equal(current.routingExclusions[0].model,'account-defaults');
+});
+
+test('semantic failure recovery preserves the original routing', async () => {
+  const failed={...task('root','FAILED'),attempt:1,maxAttempts:3,error:'test failure'};
+  const recovery={...task('troubleshoot-root','RUNNING'),agentName:'troubleshooter',parentTaskId:'root',executionId:'recovery-exec'};
+  const store=new InMemoryStore(job([failed,recovery]));
+  await dispatchTaskAction(store,{id:'task.recover',jobId:'j',taskId:'root',recoveryTaskId:'troubleshoot-root',recoveryDiagnosis:{failureKind:'task_failure',reason:'validation failed',reroute:false,excludeCurrentRoute:false}});
+  const current=(await store.load('j')).tasks.find(x=>x.id==='root');
+  assert.equal(current.routing.model,'gpt-test');
+  assert.equal(current.recoveryContext.reason,'validation failed');
+  assert.equal(current.routingExclusions,undefined);
+});
+
 test('task.recover rejects unrelated or inactive recovery tasks', async () => {
   const failed={...task('root','FAILED'),error:'recoverable blocker',attempt:1,maxAttempts:3};
   const unrelated={...task('troubleshoot-other-a1','RUNNING'),agentName:'troubleshooter',parentTaskId:'other',executionId:'recovery-exec',leaseOwner:'relay',error:null};

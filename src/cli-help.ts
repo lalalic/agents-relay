@@ -160,7 +160,8 @@ Required: the normal Job storage options.`,
 Required: --task-id ID and the normal Job storage options.`,
   'task recover': `Retry one failed/blocked durable Task from its active automatic Troubleshooter without cancelling that recovery Task.
 
-Required: --task-id ID, --recovery-task-id TROUBLESHOOTER_ID, and the normal Job storage options. The recovery Task must be an active Troubleshooter whose parentTaskId is the original Task.`,
+Required: --task-id ID, --recovery-task-id TROUBLESHOOTER_ID, and the normal Job storage options.
+Optional: --failure-kind adapter_failure|model_failure|provider_failure|task_failure|unknown --reason TEXT [--evidence TEXT] [--reroute] [--exclude-current-route]. Routing changes are atomic with recovery. The recovery Task must be an active Troubleshooter whose parentTaskId is the original Task.`,
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

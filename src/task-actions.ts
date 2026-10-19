@@ -18,6 +18,7 @@ export type TaskActionRequest = {
   jobId: string;
   taskId: string;
   recoveryTaskId?: string;
+  recoveryDiagnosis?: { failureKind: string; reason: string; evidence?: string; reroute: boolean; excludeCurrentRoute: boolean };
 };
 
 export type TaskActionResult = { job: Job; task: Task };
@@ -167,6 +168,22 @@ export async function supersedeCancelledTask(store: DurableStore, jobId: string,
   return { job: await store.load(jobId), task };
 }
 
+function recordRecoveryRouting(task: Task, request: TaskActionRequest): void {
+  const diagnosis = request.recoveryDiagnosis;
+  if (!diagnosis) return;
+  if (!['adapter_failure', 'model_failure', 'provider_failure', 'task_failure', 'unknown'].includes(diagnosis.failureKind)) throw new Error('Invalid recovery failureKind');
+  if (!diagnosis.reason.trim()) throw new Error('Recovery diagnosis requires reason');
+  if (diagnosis.excludeCurrentRoute && !diagnosis.reroute) throw new Error('Cannot exclude route without reroute');
+  if (diagnosis.excludeCurrentRoute && task.routing) {
+    const route = task.routing;
+    if (!task.routingExclusions?.some(item => item.provider === route.provider && item.model === route.model && item.profile === route.profile)) {
+      task.routingExclusions = [...(task.routingExclusions ?? []), { provider: route.provider, model: route.model, ...(route.profile ? { profile: route.profile } : {}), reason: diagnosis.reason, at: new Date().toISOString() }];
+    }
+  }
+  task.recoveryContext = { failureKind: diagnosis.failureKind, reason: diagnosis.reason, ...(diagnosis.evidence ? { evidence: diagnosis.evidence } : {}), recoveryTaskId: request.recoveryTaskId!, at: new Date().toISOString(), reroute: diagnosis.reroute };
+  if (diagnosis.reroute) { task.routing = undefined; task.workerSelection = undefined; }
+}
+
 /** Compatibility bridge: domain mutation only; adapters own wake/reconcile/output behavior. */
 export async function dispatchTaskAction(
   store: DurableStore,
@@ -186,7 +203,7 @@ export async function dispatchTaskAction(
       if (request.id === TASK_RETRY_ACTION) { applyTaskRetrySnapshot(task, { extendBudget: true }); task.routing = undefined; task.workerSelection = undefined; }
       else if (request.id === TASK_RECOVER_ACTION) {
         const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
-        const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+        const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); recordRecoveryRouting(task, request); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
         if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
       }
       else if (request.id === TASK_CANCEL_ACTION) cancelTaskSnapshot(task);
@@ -211,7 +228,7 @@ export async function dispatchTaskAction(
     if (!recovery || recovery.agentName !== 'troubleshooter' || recovery.parentTaskId !== task.id || !['QUEUED','RUNNING'].includes(recovery.state))
       throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
     const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
-    const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+    const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); recordRecoveryRouting(task, request); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
     if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
   }
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);

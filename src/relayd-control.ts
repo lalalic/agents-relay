@@ -173,7 +173,7 @@ export function createWorkspaceControl(deps: any) {
       const taskId = typeof body.taskId === 'string' ? body.taskId : '';
       const recoveryTaskId = typeof body.recoveryTaskId === 'string' ? body.recoveryTaskId : '';
       if (!taskId || !recoveryTaskId) throw new Error('task recover requires taskId and recoveryTaskId');
-      await dispatchTaskAction(store, { id: 'task.recover', jobId, taskId, recoveryTaskId });
+      await dispatchTaskAction(store, { id: 'task.recover', jobId, taskId, recoveryTaskId, recoveryDiagnosis: body.recoveryDiagnosis as import('./task-actions.js').TaskActionRequest['recoveryDiagnosis'] });
       await pool.reconcileLocalJob(jobId, 'control.task.recover'); return await store.load(jobId);
     }
     if (command === 'task.unblock') {

@@ -30,6 +30,15 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   if (!task) throw new Error(`Task ${id} missing after ${action}`);
   console.log(JSON.stringify(task, null, 2));
 }
+function recoveryDiagnosisFromArgs(args: string[]) {
+  const failureKind = arg(args, '--failure-kind');
+  if (!failureKind) return undefined;
+  const reason = arg(args, '--reason');
+  if (!reason.trim()) throw new Error('--failure-kind requires --reason');
+  if (!['adapter_failure', 'model_failure', 'provider_failure', 'task_failure', 'unknown'].includes(failureKind)) throw new Error('Invalid --failure-kind');
+  const reroute = args.includes('--reroute');
+  return { failureKind, reason, evidence: arg(args, '--evidence') || undefined, reroute, excludeCurrentRoute: args.includes('--exclude-current-route') };
+}
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
   if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
@@ -43,7 +52,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
     if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
-    if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
+    if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId, recoveryDiagnosis: recoveryDiagnosisFromArgs(args) }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'unblock') { if (!taskId) throw new Error('task unblock requires --task-id'); const reason = arg(args, '--reason'); const response = arg(args, '--response'); if (!reason.trim() && !response.trim()) throw new Error('task unblock requires --reason or --response'); const job = await relayControlCommand<Job>(args, { command: 'task.unblock', jobId, taskId, reason, ...(response.trim() ? { response } : {}) }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'escalate') { if (!taskId) throw new Error('task escalate requires --task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.escalate', jobId, taskId, requiredAction: arg(args, '--required-action'), resolutionCondition: arg(args, '--resolution-condition'), context: arg(args, '--context') }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'resume-troubleshooter') { if (!taskId) throw new Error('task resume-troubleshooter requires --task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.resume-troubleshooter', jobId, taskId, response: arg(args, '--response') }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
@@ -99,7 +108,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (action === 'retry' || action === 'recover') {
       const recoveryTaskId = action === 'recover' ? arg(args, '--recovery-task-id') : '';
       if (action === 'recover' && !recoveryTaskId) throw new Error('task recover requires --recovery-task-id');
-      const result = await dispatchTaskAction(store, { id: action === 'recover' ? 'task.recover' : 'task.retry', jobId: job.id, taskId: id, ...(recoveryTaskId ? { recoveryTaskId } : {}) });
+      const result = await dispatchTaskAction(store, { id: action === 'recover' ? 'task.recover' : 'task.retry', jobId: job.id, taskId: id, ...(recoveryTaskId ? { recoveryTaskId, recoveryDiagnosis: recoveryDiagnosisFromArgs(args) } : {}) });
       if (result.job.state === 'DRAFT') { await applyJobActivateAction(result.job); await store.saveJob(result.job); }
       outputJob = await store.load(job.id);
       outputTask = outputJob.tasks.find(item => item.id === id) ?? result.task;
