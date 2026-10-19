@@ -1,3 +1,4 @@
+import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
 import { readFile, readdir } from 'node:fs/promises';
@@ -186,6 +187,18 @@ export function serveDashboard(
     if (req.url === '/api/version') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ version: dashboardVersion }));
+      return;
+    }
+    if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/graph-symbol' && req.method === 'GET') {
+      const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams;
+      try {
+        const result = await inspectWorkflowSymbol(query.get('graph') ?? '', query.get('kind') ?? '', query.get('name') ?? '');
+        res.writeHead(result ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(result ?? { error: 'No canonical graph symbol found' }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Read error' }));
+      }
       return;
     }
     if (req.url === '/api/graphs') {
