@@ -12,17 +12,9 @@ export const REQUIRED_RECOVERY_PATHS = Object.freeze([
  {id:'stale-replay-after-restart',requires:['restart','stale.rejected','duplicate.rejected']},
  {id:'impossible-objective',requires:['objective.false','completion.rejected']},
 ]);
-export function recoveryEvidenceGate(path, proof) {
- // No external JSON or synthetic trace can prove production authority.
- // Reconciler instrumentation must issue an internal, non-serializable marker
- // after reading SQLite objective predicates and correlated graph effects.
- if(!proof || !verifiedProofs.has(proof))return {id:path.id,outcome:'NOT_RUN',reason:'No trusted production Reconciler/SQLite proof'};
- const missing=path.requires.filter(event=>!proof.events.includes(event));
- if(missing.length)return {id:path.id,outcome:'FAIL',reason:'Missing causal steps: '+missing.join(', ')};
- const expected=path.id==='impossible-objective'?'ACTIVE':'COMPLETED';
- if(path.id==='impossible-objective' && proof.sqliteState==='BLOCKED')return {id:path.id,outcome:'PASS'};
- return {id:path.id,outcome:proof.sqliteState===expected?'PASS':'FAIL',reason:proof.sqliteState===expected?null:'Authoritative SQLite objective mismatch'};
+// Production completion has no trusted adapter until A wires the Reconciler,
+// Scheduler, Graph dispatch and SQLite objective predicates. Never accept a
+// caller-supplied proof. Retain the inventory with explicit runtime blockers.
+export function evaluateRecoveryMatrix() {
+ return REQUIRED_RECOVERY_PATHS.map(path=>({id:path.id,outcome:'NOT_RUN',reason:'Production Graph/Reconciler/SQLite objective evidence provider not wired'}));
 }
-const verifiedProofs=new WeakSet();
-/** Reserved for trusted runner integration; not exposed to fixtures/CLI. */
-export function evaluateRecoveryMatrix(){return REQUIRED_RECOVERY_PATHS.map(path=>recoveryEvidenceGate(path));}

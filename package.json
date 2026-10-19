@@ -23,7 +23,7 @@
     "test:verification:l3": "npm run build && node --test test/verification/harness.test.mjs test/verification/l3-sqlite.test.mjs test/verification/l3-ingress.test.mjs test/verification/l3-replay.test.mjs test/verification/objective-authority.test.mjs test/verification/full-recovery-gates.test.mjs",
     "test:verification": "npm run test:verification:l1 && npm run test:verification:l3",
     "e2e": "node e2e/runner/run.mjs",
-    "test:verification:cross-a": "node --test test/verification/action-ledger-cross-branch.test.mjs"
+    "test:verification:cross-a": "node --test test/verification/action-ledger-cross-branch.test.mjs test/verification/outbox-cross-a.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
