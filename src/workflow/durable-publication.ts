@@ -10,11 +10,11 @@ export class DurableWorkflowPublication {
     )`);
   }
   /** State mutation callback MUST use this.db synchronously; rollback covers both writes. */
-  commitTransitionAndEvents(transition: () => void, events: readonly PendingWorkflowEvent[]): void {
+  commitTransitionAndEvents(transition: () => void, events: readonly PendingWorkflowEvent[] | (()=>readonly PendingWorkflowEvent[])): void {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       transition();
-      for (const event of events) this.enqueue(event.key, event.eventId, event.payload);
+      for (const event of (typeof events === 'function' ? events() : events)) this.enqueue(event.key, event.eventId, event.payload);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');

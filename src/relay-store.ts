@@ -48,6 +48,7 @@ export interface RelayStore {
   reserveWorkflowLaunch?(identity: {jobId: string; taskId: string; executionId: string; attempt: number; leaseOwner: string}): Promise<boolean>;
   verifyWorkflowLaunch?(jobId: string, taskId: string, executionId: string): Promise<'Verified'|'Failed'|'Unknown'>;
   commitWorkflowMutationAndEvents?(jobId: string, mutation: (job: Job) => Job, events: readonly {key: string; event: EventRecord}[]): Promise<Job>;
+  commitWorkflowMutationWithEvents?(jobId: string, mutation: (job:Job)=>{next:Job;events:readonly {key:string;event:EventRecord}[]}):Promise<Job>;
   drainWorkflowEvents?(publish: (event: EventRecord) => Promise<void>): Promise<number>;
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
@@ -217,6 +218,9 @@ export class SQLiteRelayStore implements RelayStore {
   async commitWorkflowMutationAndEvents(jobId:string,mutation:(job:Job)=>Job,events:readonly {key:string;event:EventRecord}[]):Promise<Job> {
     this.assertScope(jobId);
     return this.workflowOperations().commitWorkflowMutationAndEvents(jobId,mutation,events);
+  }
+  async commitWorkflowMutationWithEvents(jobId:string,mutation:(job:Job)=>{next:Job;events:readonly {key:string;event:EventRecord}[]}):Promise<Job>{
+    this.assertScope(jobId);return this.workflowOperations().commitWorkflowMutationWithEvents(jobId,mutation);
   }
   async reserveWorkflowLaunch(identity:{jobId:string;taskId:string;executionId:string;attempt:number;leaseOwner:string}):Promise<boolean>{
     this.assertScope(identity.jobId);

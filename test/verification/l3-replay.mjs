@@ -11,11 +11,12 @@ import {InMemoryStore} from '../../dist/store.js';
 import {MemoryEventBus,eventFor} from '../../dist/events.js';
 import {Reconciler,executionEventSource} from '../../dist/reconciler.js';
 import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js';
+import {requestTroubleshooterEscalation,recordEscalationNotificationDelivery,resumeTroubleshooter} from '../../dist/task-recovery.js';
 import {tryTransitionTaskEvent,dependencyReady} from '../../dist/scheduler.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
 const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
-const fingerprint=value=>JSON.stringify({job:value.state,merge:value.localMerge?.status??null,tasks:value.tasks.map(({id,state,attempt,executionId,result,error})=>({id,state,attempt,executionId,result:result??null,error:error??null}))});
+const fingerprint=value=>JSON.stringify({job:value.state,merge:value.localMerge?.status??null,tasks:value.tasks.map(({id,state,attempt,executionId,result,error,escalation})=>({id,state,attempt,executionId,result:result??null,error:error??null,escalation:escalation?{id:escalation.id,status:escalation.status,notification:escalation.notification?.status??null}:null}))});
 export async function runReplay(scenario) {
  if(!scenario || !/^[a-z0-9-]+$/.test(scenario.id??'') || !Array.isArray(scenario.steps) || scenario.steps.length>200) throw Error('invalid scenario');
  const env=createIsolatedEnvironment('relay-l3-replay-');
@@ -52,12 +53,38 @@ export async function runReplay(scenario) {
      if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
      return value??'a';
    };
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','task.recover','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
    else if(step.type==='task.recover') {
     const resolvedTaskId=await resolveTaskId(step.taskId);
     const result=await dispatchTaskAction(store,{id:TASK_RECOVER_ACTION,jobId,taskId:resolvedTaskId,recoveryTaskId:step.recoveryTaskId??`troubleshoot-${resolvedTaskId}`,recoveryDiagnosis:{failureKind:'task_failure',reason:step.reason??'L3 controlled recovery',evidence:'canonical event failure',reroute:false,excludeCurrentRoute:false}});
     if(result.task.state!=='QUEUED')throw Error('recover action did not requeue original Task');
+   }
+   else if(step.type==='task.escalate') {
+     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     const outcome=await requestTroubleshooterEscalation(store,jobId,recoveryId,{
+       requiredAction:step.requiredAction??'Human must authorize the provider prompt',
+       resolutionCondition:step.resolutionCondition??'Provider prompt is approved',
+       context:'Canonical worker failure followed by confirmed human-only blocker',
+     });
+     if(outcome.task.state!=='BLOCKED' || outcome.escalation.notification?.status!=='pending')throw Error('escalation must block recovery and wait for notification');
+     await runtime.reconcile(jobId);
+   }
+   else if(step.type==='mock.notification.delivered') {
+     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     if(!observedEvents.some(e=>e.event==='escalation.requested' && e.taskId===recoveryId))throw Error('cannot deliver unrequested escalation');
+     const recovery=(await snapshot()).tasks.find(t=>t.id===recoveryId);
+     if(!recovery?.escalation?.id)throw Error('notification has no durable escalation ID');
+     await recordEscalationNotificationDelivery(store,jobId,recoveryId,recovery.escalation.id,{
+       channel:'mock-human-notifier',deliveryId:`mock-delivery-${recovery.escalation.id}`,deliveredAt:new Date().toISOString(),
+     });
+   }
+   else if(step.type==='human.unblock') {
+     const recoveryId=step.recoveryTaskId??`troubleshoot-${step.taskId??'a'}`;
+     const recovery=(await snapshot()).tasks.find(t=>t.id===recoveryId);
+     if(recovery?.escalation?.notification?.status!=='delivered')throw Error('test requires actual notifier receipt before human response');
+     const result=await resumeTroubleshooter(store,jobId,recoveryId,step.response??'Provider authorization completed');
+     if(result.task.state!=='QUEUED' || result.task.escalation?.status!=='responded')throw Error('authorized human response did not resume Troubleshooter');
    }
    else if(step.type==='mock.claim') {
     // External provider/adapter claim is simulated; legality is decided by the production Graph.
@@ -133,7 +160,7 @@ export async function runReplay(scenario) {
      }
    }
    const observed=await snapshot();
-   trace.push({index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,progress:fingerprint(prior)!==fingerprint(observed)});
+   trace.push({index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
   }
   const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),localMerge:prior.localMerge??null};

@@ -29,8 +29,14 @@ export class SQLiteWorkflowOperations {
         next.updatedAt=new Date(beforeTime+1).toISOString();
       this.write(next,new Date().toISOString());
       committed=structuredClone(next);
-    }, events.map(item=>({key:item.key,eventId:item.event.type,payload:item.event})));
+    }, ()=>events.map(item=>({key:item.key,eventId:item.event.type,payload:item.event})));
     return committed!;
+  }
+  async commitWorkflowMutationWithEvents(jobId:string,mutation:(job:Job)=>{next:Job;events:readonly {key:string;event:EventRecord}[]}):Promise<Job>{
+    const emitted:{key:string;event:EventRecord}[]=[];
+    return this.commitWorkflowMutationAndEvents(jobId,current=>{
+      const result=mutation(current);emitted.push(...result.events);return result.next;
+    },emitted);
   }
   async reserveWorkflowLaunch(identity: {jobId:string;taskId:string;executionId:string;attempt:number;leaseOwner:string}): Promise<boolean> {
     const decision=dispatchWorkflowGraphSync(taskLifecycleV2,{initialState:'QUEUED',input:{transport:'event',id:'dispatch',payload:{}},durableFacts:{dispatchable:true}});

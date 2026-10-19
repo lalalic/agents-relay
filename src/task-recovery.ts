@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
-import type { Job, Task, TaskEscalation } from './types.js';
+import type { Job, Task, TaskEscalation, EventRecord } from './types.js';
 import { tryTransitionTaskEvent } from './scheduler.js';
 import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 
@@ -35,6 +36,7 @@ export async function requestTroubleshooterEscalation(
 ): Promise<{ job: Job; task: Task; escalation: TaskEscalation; duplicate: boolean }> {
   validateRequest(request);
   let result: { task: Task; escalation: TaskEscalation; duplicate: boolean } | undefined;
+  let requestedEvent: EventRecord | undefined;
   const apply = (job: Job): Job => {
     const recovery = job.tasks.find(task => task.id === recoveryTaskId);
     if (!recovery || recovery.agentName !== 'troubleshooter' || !recovery.parentTaskId) throw new Error(`Task ${recoveryTaskId} is not a Troubleshooter recovery`);
@@ -51,13 +53,20 @@ export async function requestTroubleshooterEscalation(
       createEscalationGate: () => { original.resolution = materializeResolution(original, proposal, 'troubleshooter', now); },
     });
     if (!decision.accepted) throw new Error(`Task resolution graph rejected escalation for ${original.id}`);
-    if (!tryTransitionTaskEvent(recovery, 'task.blocked', { recoverableExecution: true }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
+    if (!tryTransitionTaskEvent(recovery, recovery.state === 'QUEUED' ? 'block' : 'task.blocked', { recoverableExecution: true }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
     const escalation: TaskEscalation = {
       id: randomUUID(), originalTaskId: original.id, originalExecutionId: original.executionId ?? undefined,
       recoveryExecutionId: recovery.executionId ?? undefined, requiredAction: request.requiredAction.trim(),
       resolutionCondition: request.resolutionCondition.trim(), context: request.context.trim(), status: 'pending',
-      requestedAt: now, notification: request.notification ?? null,
+      requestedAt: now, notification: { status: 'pending', channel: typeof request.notification?.channel === 'string' ? request.notification.channel : 'relay-event', requestedAt: now },
     };
+    const event = eventFor(job.id, recovery.id, original.id, 'escalation.requested', 'blocked',
+      `Human action required: ${escalation.requiredAction}`, 'user',
+      { escalationId: escalation.id, originalTaskId: original.id, requiredAction: escalation.requiredAction,
+        resolutionCondition: escalation.resolutionCondition, notificationStatus: 'pending' },
+      { agent: 'relay', component: 'agents-relay' });
+    event.event_id = `escalation/${escalation.id}`;
+    requestedEvent = event;
     recovery.escalation = escalation;
     recovery.error = `Waiting for human action: ${escalation.requiredAction}`;
     recovery.failureReason = 'human_action_required';
@@ -67,7 +76,13 @@ export async function requestTroubleshooterEscalation(
     job.updatedAt = now;
     return job;
   };
-  const job = store.mutateJob ? await store.mutateJob(jobId, apply) : await store.load(jobId).then(async current => { apply(current); for (const task of current.tasks) await store.saveTask(task); await store.saveJob(current); return current; });
+  const job = store.commitWorkflowMutationWithEvents
+    ? await store.commitWorkflowMutationWithEvents(jobId, current => {
+      const next = apply(current);
+      return { next, events: requestedEvent ? [{ key: requestedEvent.event_id, event: requestedEvent }] : [] };
+    })
+    : store.mutateJob ? await store.mutateJob(jobId, apply)
+    : await store.load(jobId).then(async current => { apply(current); for (const task of current.tasks) await store.saveTask(task); await store.saveJob(current); return current; });
   if (!result) throw new Error('Escalation did not produce a durable result');
   return { job, ...result };
 }
@@ -103,4 +118,33 @@ export async function resumeTroubleshooter(
 export function hasPendingTroubleshooterEscalation(job: Job, original: Task): boolean {
   const recovery = activeRecovery(job, original);
   return recovery?.state === 'BLOCKED' && recovery.escalation?.status === 'pending';
+}
+
+/** Trusted notification adapter receipt. Publishing to the bus does NOT count as
+ * delivery to a human. Only an actual downstream delivery ID can set delivered. */
+export async function recordEscalationNotificationDelivery(
+  store: DurableStore, jobId: string, recoveryTaskId: string, escalationId: string,
+  receipt: {channel: string; deliveryId: string; deliveredAt: string},
+): Promise<TaskEscalation> {
+  if (!receipt.channel.trim() || !receipt.deliveryId.trim() || !Number.isFinite(Date.parse(receipt.deliveredAt)))
+    throw Error('Escalation delivery requires a real channel, provider receipt ID and timestamp');
+  if (!store.mutateJob) throw Error('Escalation receipt requires authoritative SQLite mutation');
+  let confirmed: TaskEscalation | undefined;
+  await store.mutateJob(jobId, job => {
+    const recovery = job.tasks.find(task=>task.id===recoveryTaskId && task.agentName==='troubleshooter');
+    const escalation = recovery?.escalation;
+    if (!escalation || escalation.id!==escalationId) throw Error('Unknown escalation delivery identity');
+    if (escalation.status!=='pending') throw Error('Escalation no longer pending');
+    const previous=escalation.notification as Record<string,unknown>|null|undefined;
+    if (previous?.status==='delivered') {
+      if (previous.deliveryId!==receipt.deliveryId || previous.channel!==receipt.channel)
+        throw Error('Escalation delivery receipt conflict');
+      confirmed=structuredClone(escalation);return job;
+    }
+    escalation.notification={status:'delivered',channel:receipt.channel,deliveryId:receipt.deliveryId,deliveredAt:receipt.deliveredAt};
+    recovery.updatedAt=receipt.deliveredAt;
+    confirmed=structuredClone(escalation);return job;
+  });
+  if(!confirmed)throw Error('Escalation delivery receipt not committed');
+  return confirmed;
 }

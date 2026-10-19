@@ -89,6 +89,7 @@ export interface DurableStore {
   verifyWorkflowLaunch?(jobId: string, taskId: string, executionId: string): Promise<'Verified'|'Failed'|'Unknown'>;
   /** Atomic SQLite-authoritative state mutation plus outbox enqueue. */
   commitWorkflowMutationAndEvents?(jobId: string, mutation: AtomicJobMutation, events: readonly { key: string; event: EventRecord }[]): Promise<Job>;
+  commitWorkflowMutationWithEvents?(jobId: string, mutation: (job: Job) => {next: Job; events: readonly {key:string;event:EventRecord}[]}): Promise<Job>;
   /** Replay stable event IDs; failed publish leaves outbox pending. */
   drainWorkflowEvents?(publish: (event: EventRecord) => Promise<void>): Promise<number>;
   claimScheduledSlot?(jobId: string, bucket: string, now: Date): Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }>;

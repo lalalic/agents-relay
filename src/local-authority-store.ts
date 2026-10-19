@@ -49,6 +49,11 @@ export class LocalAuthorityDurableStore implements DurableStore {
     publishLocalCommit(committed);
     return structuredClone(committed);
   }
+  async commitWorkflowMutationWithEvents(jobId:string,mutation:(job:Job)=>{next:Job;events:readonly {key:string;event:EventRecord}[]}):Promise<Job>{
+    if (!this.authority.commitWorkflowMutationWithEvents)throw Error('SQLite workflow outbox capability unavailable');
+    const result=await this.authority.commitWorkflowMutationWithEvents(jobId,mutation);
+    publishLocalCommit(result);return structuredClone(result);
+  }
   async drainWorkflowEvents(publish: (event: EventRecord)=>Promise<void>): Promise<number> {
     if (!this.authority.drainWorkflowEvents) throw new Error('SQLite workflow outbox capability unavailable');
     return this.authority.drainWorkflowEvents(publish);
