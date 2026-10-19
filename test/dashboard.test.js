@@ -1008,7 +1008,8 @@ test('main Mermaid file owns safe, validated navigation links', async () => {
   for(const link of links) assert.ok(ids.has(link[2]),'invalid target '+link[2]);
   assert.doesNotMatch(dashboardHtml, /const GRAPH_NAV=/);
   assert.match(dashboardHtml, /function graphLinks\(source\)/);
-  assert.match(dashboardHtml, /rendered\.svg\.replace/);
+  assert.match(dashboardHtml, /graph\.source\.replace/);
+  assert.match(dashboardHtml, /sanitizeGraphSvg\(rendered\.svg\)/);
   assert.match(dashboardHtml, /graphLinks\(graph\.source\)/);
   assert.match(dashboardHtml, /id="graph-back"/);
   assert.match(dashboardHtml, /id="graph-forward"/);
