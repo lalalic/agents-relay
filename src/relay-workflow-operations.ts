@@ -61,7 +61,7 @@ export class SQLiteWorkflowOperations {
     const started=task?.state==='RUNNING' && task.executionId===executionId
       && !!task.leaseOwner && task.executionHistory?.some(e=>e.id===executionId && e.attempt===task.attempt);
     const registry=new ConditionRegistry([booleanCondition('worker.started')]);
-    return ledger.verify(key,registry,{'worker.started':started===true}).outcome;
+    return ledger.verify(key,registry,{'worker.started':started ? true : undefined}).outcome;
   }
   async drainWorkflowEvents(publish: (event: EventRecord) => Promise<void>): Promise<number> {
     return new DurableWorkflowPublication(this.db).replay(async item => {

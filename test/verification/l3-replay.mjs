@@ -92,7 +92,7 @@ export async function runReplay(scenario) {
     const resolvedTaskId=await resolveTaskId(step.taskId);
     await store.mutateJob(jobId,current=>{
       const target=current.tasks.find(item=>item.id===resolvedTaskId);
-      if(!target || target.state!=='QUEUED' || !dependencyReady(target,new Map(current.tasks.map(t=>[t.id,t])))) throw Error('mock provider cannot claim non-dispatchable Task');
+      if(!target || target.state!=='QUEUED' || target.executionId!==null || !dependencyReady(target,new Map(current.tasks.map(t=>[t.id,t])))) throw Error('mock provider cannot claim non-dispatchable Task');
       const decision=tryTransitionTaskEvent(target,'dispatch',{dispatchable:true});
       if(!decision.accepted || !decision.actions.includes('effect.launchTask'))throw Error('canonical Graph rejected mock dispatch');
       target.attempt+=1;
@@ -160,7 +160,11 @@ export async function runReplay(scenario) {
      }
    }
    const observed=await snapshot();
-   trace.push({index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
+   const sqliteReader=new DatabaseSync(join(env.storeDir,'relay.sqlite'),{readOnly:true});
+   const actionTable=sqliteReader.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_action_trace'").get();
+   const actionAttempts=actionTable ? sqliteReader.prepare('SELECT attempt_key,execution_id,action_id,outcome FROM workflow_action_trace ORDER BY attempt_key').all() : [];
+   sqliteReader.close();
+   trace.push({actionAttempts,index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
   }
   const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),localMerge:prior.localMerge??null};

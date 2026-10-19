@@ -77,3 +77,11 @@ A later build at `4fa6893` changed the verified dispatcher contract to require `
 ## A `4fa6893` production wiring coordination
 
 Run `RELAY_A_ROOT=/absolute/path/to/A npm run test:verification:l3` to include `production-wiring.test.mjs`, which reads A's Reconciler/Scheduler source without changing it. A `4fa6893` lacks `actionVerification` invocation in either production module, an outbox restart drain, and an authoritative postcondition binding there. The probe yields `NOT_RUN`; even a future syntactic match only yields `INTEGRATION_PRESENT_UNVERIFIED`, **never** Objective PASS. Complete real L3 requires production path plus persistent, causal SQLite objective predicates, notification/unblock flow, event consumer dedup, and restart/crash recovery to be executed and observed.
+
+## Integration branch acceptance evidence — 2026-10-19
+
+- `npm run test:verification` runs L1, isolated L2 MCP transport contract, L3 and cross-A against **this branch's compiled dist**, plus production-outbox recovery.
+- `full-recovery-gates.mjs` has a trusted, in-process production replay evidence provider, with no caller-controlled proof flags. Currently **2/11 PASS**: human escalation with isolated notifier receipt/unblock and unknown launch effect with correlated started event/restart. Both use isolated SQLite → production event ingress → Reconciler/Graph → authoritative objective, with external model, notifier, and Git simulated. The other **9/11 are NOT_RUN**, not asserted to pass.
+- `test/verification/l2/event-server.mjs` is an isolated MCP capture sink with strict execution identity. Its test proves transport capture and error rejection only; **L2 real installed adapter/role/model compliance is NOT_RUN**. Do not mistake this MCP server test for a real provider run.
+- Production notification delivery to a user-visible channel, positive Planner **Plan round** recovery, complete combined multi-stage chain, and browser E2E remain unverified. A successful regression suite does not supersede these gates.
+- This branch is integration work only; no merge, publish or production Job 481 mutations occur through tests.
