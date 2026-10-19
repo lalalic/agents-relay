@@ -16,6 +16,9 @@ test('authoritative sqlite snapshot fences execution, lease, attempt and duplica
  assert.throws(()=>ledger.reserveForRunningTask({...identity,leaseOwner:'old'},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,attempt:1},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,generation:3},decision,'done',now),/fenced/);
+ job.tasks[0].executionHistory=[{id:'previous',attempt:2,startedAt:now}]; store.run('j',JSON.stringify(job));
+ assert.throws(()=>ledger.reserveForRunningTask(identity,decision,'done',now),/fenced/);
+ job.tasks[0].executionHistory=[{id:'e',attempt:2,startedAt:now}]; store.run('j',JSON.stringify(job));
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),true);
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),false);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,actionId:'other'}, { ...decision, actions:[{id:'other'}]},'done',now),/collision/);
