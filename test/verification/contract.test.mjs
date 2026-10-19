@@ -43,7 +43,7 @@ test('managed agent prompt requires canonical absolute contract read after start
   const prompt=taskReferencePrompt('lalalic/agents-relay','481','46','exec',managed);
   const source=read('src/managed-worker-input.ts');
   assert.ok(prompt.includes(path));
-  assert.ok(prompt.includes('THEN read the entire authoritative event contract')); 
+  assert.ok(prompt.includes('THEN read the entire authoritative event contract'));
   assert.ok(source.includes('Immediately after task.started'));
   assert.ok(source.includes(path));
   assert.ok(source.includes('publish task.failed'));
