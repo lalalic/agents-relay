@@ -18,6 +18,8 @@ export type WorkflowDispatchOptions = {
   actionVerification?: {
     ledger: WorkflowActionLedger;
     publication?: DurableWorkflowPublication;
+    /** Required for atomic verified transition: synchronous mutation on publication's SQLite connection. */
+    persistSqliteTransition?: (source: string, target: string) => void;
     conditions: ConditionRegistry;
     identity: (actionId: string) => ActionIdentity & {jobId: string; taskId: string; leaseOwner: string; attempt: number};
     conditionId: (actionId: string) => string;
@@ -122,15 +124,17 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
     if (options.actionVerification && result.decision.accepted) {
       if (result.receipts.some(receipt => receipt.ok === false)) throw new Error('action failed: reconciliation required; transition withheld');
       const transition = deferredTransition as { source: string; target: string } | null;
-      if (transition !== null) await options.persistTransition?.(transition.source, transition.target);
       const publication = options.actionVerification.publication;
-      if (deferredEvents.length && !publication) throw new Error('durable publication required for graph emitted events');
-      for (const [index, event] of deferredEvents.entries()) {
-        const actionIdentity = result.decision.actions[0] && options.actionVerification.identity(result.decision.actions[0].id);
-        if (!actionIdentity || !publication) throw new Error('missing durable action event identity');
-        publication.enqueue(`${actionIdentity.attemptKey}/emit/${index}`, event.id, event.payload);
-      }
-      if (publication && options.publishEvent) await publication.replay(async event => options.publishEvent!(event.eventId,event.payload));
+      const persist = options.actionVerification.persistSqliteTransition;
+      if (!publication || !persist || transition === null) throw new Error('atomic SQLite transition and outbox required');
+      const events = deferredEvents.map((event, index) => {
+        const action = result.decision.accepted ? result.decision.actions[0] : undefined;
+        if (!action) throw new Error('missing durable action event identity');
+        const identity = options.actionVerification!.identity(action.id);
+        return { key: `${identity.attemptKey}/emit/${index}`, eventId: event.id, payload: event.payload };
+      });
+      publication.commitTransitionAndEvents(() => persist(transition.source, transition.target), events);
+      if (options.publishEvent) await publication.replay(async event => options.publishEvent!(event.eventId,event.payload));
     }
     if (options.observe !== false) observeDecision(options.graphName, options.input, result.decision);
     if (!result.decision.accepted) return result.decision;

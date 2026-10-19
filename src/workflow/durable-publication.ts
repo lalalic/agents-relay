@@ -9,6 +9,18 @@ export class DurableWorkflowPublication {
       created_at TEXT NOT NULL, published_at TEXT
     )`);
   }
+  /** State mutation callback MUST use this.db synchronously; rollback covers both writes. */
+  commitTransitionAndEvents(transition: () => void, events: readonly PendingWorkflowEvent[]): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      transition();
+      for (const event of events) this.enqueue(event.key, event.eventId, event.payload);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   enqueue(key: string, eventId: string, payload: unknown): void {
     if (!key || !eventId) throw new Error('event identity required');
     const encoded = JSON.stringify(payload ?? null);
