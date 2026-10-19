@@ -24,6 +24,63 @@ const verifiedCases={
   steps:[{type:'task.failed',taskId:'a'},{type:'task.escalate',taskId:'a'},{type:'restart'},{type:'reconcile'},{type:'mock.notification.delivered',taskId:'a'},{type:'human.unblock',taskId:'a',response:'Human approved'},{type:'mock.claim',taskId:'troubleshoot-a',executionId:'recovery-2'},{type:'task.started',taskId:'troubleshoot-a',executionId:'recovery-2'},{type:'task.recover',taskId:'a'},{type:'task.completed',taskId:'troubleshoot-a',executionId:'recovery-2'},{type:'mock.claim',taskId:'a',executionId:'worker-2'},{type:'task.started',taskId:'a',executionId:'worker-2'},{type:'task.completed',taskId:'a',executionId:'worker-2'},{type:'job.merge.succeeded'},{type:'reconcile'}],
   expected:{jobState:'COMPLETED',tasks:{a:'SUCCEEDED','troubleshoot-a':'SUCCEEDED'},localMergeStatus:'succeeded'}},
 };
+
+const reviewSteps=[
+ {type:'task.completed',taskId:'a'},
+ {type:'mock.claim',taskId:'@review',executionId:'review-1'},
+ {type:'review.started',taskId:'@review',executionId:'review-1',data:{head_sha:'head-1'}},
+ {type:'review.changes_required',taskId:'@review',executionId:'review-1',data:{head_sha:'head-1',blocking_findings:[{message:'missing invariant'}]}},
+ {type:'mock.claim',taskId:'@fix',executionId:'fix-1'},
+ {type:'task.started',taskId:'@fix',executionId:'fix-1'},
+ {type:'task.completed',taskId:'@fix',executionId:'fix-1'},
+ {type:'job.head.changed',headSha:'head-2'},
+ {type:'reconcile'},
+ {type:'review.approved',taskId:'final-review-head-1',executionId:'review-1',data:{head_sha:'head-1'},expectIgnored:true},
+ {type:'mock.claim',taskId:'@review',executionId:'review-2'},
+ {type:'review.started',taskId:'@review',executionId:'review-2',data:{head_sha:'head-2'}},
+ {type:'task.failed',taskId:'@review',executionId:'review-2',data:{reason:'reviewer_transport_failure'}},
+ {type:'mock.claim',taskId:'troubleshoot-final-review-head-2',executionId:'troubleshoot-2'},
+ {type:'task.started',taskId:'troubleshoot-final-review-head-2',executionId:'troubleshoot-2'},
+ {type:'task.recover',taskId:'@review',recoveryTaskId:'troubleshoot-final-review-head-2'},
+ {type:'task.completed',taskId:'troubleshoot-final-review-head-2',executionId:'troubleshoot-2'},
+ {type:'restart'},
+ {type:'mock.claim',taskId:'@review',executionId:'review-3'},
+ {type:'review.started',taskId:'@review',executionId:'review-3',data:{head_sha:'head-2'}},
+ {type:'review.approved',taskId:'@review',executionId:'review-3',data:{head_sha:'head-2'}},
+ {type:'restart'},
+ {type:'mock.clock.advance',millis:5000},
+ {type:'reconcile'},
+];
+const reviewFixture={
+ id:'gate-review-recovery',autoMerge:true,reviewEnabled:true,headSha:'head-1',
+ mergeOutcomes:['failed','succeeded'],tasks:[{id:'a'}],steps:reviewSteps,
+ expected:{jobState:'COMPLETED',localMergeStatus:'succeeded',tasks:{a:'SUCCEEDED',
+ 'final-review-head-1':'SUCCEEDED','review-fix-head-1':'SUCCEEDED',
+ 'final-review-head-2':'SUCCEEDED','troubleshoot-final-review-head-2':'SUCCEEDED'}},
+};
+for(const id of ['review-changes-required','reviewer-failure-recovery','merge-failure-recovery']) verifiedCases[id]=reviewFixture;
+verifiedCases['worker-failure-recovery']={
+ id:'gate-worker-recovery',autoMerge:true,tasks:[{id:'a'}],
+ steps:[
+  {type:'task.failed',taskId:'a',executionId:'exec-a',data:{reason:'controlled_worker_failure'}},
+  {type:'mock.claim',taskId:'troubleshoot-a',executionId:'troubleshoot-a-1'},
+  {type:'task.started',taskId:'troubleshoot-a',executionId:'troubleshoot-a-1'},
+  {type:'task.recover',taskId:'a',recoveryTaskId:'troubleshoot-a'},
+  {type:'task.completed',taskId:'troubleshoot-a',executionId:'troubleshoot-a-1'},
+  {type:'restart'},
+  {type:'mock.claim',taskId:'a',executionId:'worker-2'},
+  {type:'task.started',taskId:'a',executionId:'worker-2'},
+  {type:'task.completed',taskId:'a',executionId:'worker-2'},
+  {type:'task.completed',taskId:'a',executionId:'exec-a',expectIgnored:true},
+  {type:'job.merge.succeeded'},{type:'reconcile'},
+ ],
+ expected:{jobState:'COMPLETED',tasks:{a:'SUCCEEDED','troubleshoot-a':'SUCCEEDED'},localMergeStatus:'succeeded'},
+};
+verifiedCases['impossible-objective']={
+ id:'gate-impossible-objective',autoMerge:true,tasks:[{id:'a'},{id:'b',dependencies:['a']}],
+ steps:[{type:'task.failed',taskId:'a'},{type:'restart'},{type:'job.merge.succeeded',mergedCommitSha:'fabricated'},{type:'reconcile'}],
+ expected:{jobState:'ACTIVE',tasks:{a:'FAILED',b:'DRAFT'}},
+};
 export async function evaluateRecoveryMatrix(){
  const results=[];
  for(const path of REQUIRED_RECOVERY_PATHS){
@@ -35,10 +92,25 @@ export async function evaluateRecoveryMatrix(){
   try{
    const result=await runReplay(fixture);
    const events=result.trace.map(x=>x.event);
-   const verified=result.outcome==='PASS'&&result.actual.jobState==='COMPLETED'&&result.actionTraces.length>0;
+   const impossible=path.id==='impossible-objective';
+   const verified=result.outcome==='PASS'&&(
+      impossible ? result.actual.jobState==='ACTIVE' && result.actual.tasks.a==='FAILED'
+      : result.actual.jobState==='COMPLETED'&&result.actionTraces.length>0);
    const causal=path.id==='unknown-effect-reconciliation'
      ? events.includes('restart')&&result.trace.find(x=>x.event==='reconcile')?.actionAttempts[0]?.outcome==='Unknown'&&result.trace.find(x=>x.event==='task.started')?.actionAttempts[0]?.outcome==='Verified'
-     : events.includes('task.escalate')&&events.includes('restart')&&result.trace.find(x=>x.event==='mock.notification.delivered')?.escalations[0]?.notificationStatus==='delivered'&&result.trace.find(x=>x.event==='human.unblock')?.escalations[0]?.status==='responded'&&events.includes('task.recover');
+     : path.id==='human-escalation-resume'
+     ? events.includes('task.escalate')&&events.includes('restart')&&result.trace.find(x=>x.event==='mock.notification.delivered')?.escalations[0]?.notificationStatus==='delivered'&&result.trace.find(x=>x.event==='human.unblock')?.escalations[0]?.status==='responded'&&events.includes('task.recover')
+     : path.id==='worker-failure-recovery'
+     ? result.trace[0].after.some(t=>t.id==='a'&&t.state==='FAILED')&&result.trace[3].after.some(t=>t.id==='a'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('restart')
+     : path.id==='review-changes-required'
+     ? result.trace[3].after.some(t=>t.id==='review-fix-head-1'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('review.approved')
+     : path.id==='reviewer-failure-recovery'
+     ? result.trace[12].after.some(t=>t.id==='final-review-head-2'&&t.state==='FAILED')&&result.trace[16].after.some(t=>t.id==='troubleshoot-final-review-head-2'&&t.state==='SUCCEEDED')&&events.includes('task.recover')
+     : path.id==='merge-failure-recovery'
+     ? result.externalGitAttempts===2&&result.observedEvents.filter(x=>x.event.startsWith('job.merge.')).map(x=>x.event).join(',')==='job.merge.failed,job.merge.succeeded'
+     : impossible
+     ? result.trace.some(x=>x.event==='job.merge.succeeded'&&x.jobState==='ACTIVE')&&events.includes('restart')
+     : false;
    results.push({id:path.id,outcome:verified&&causal?'PASS':'FAIL',reason:verified&&causal?null:result.errors.join('; ')||'Missing authoritative causal evidence',authority:result.authority,scenarioId:result.scenarioId,sqliteJobState:result.actual.jobState,traceSteps:result.trace.length,limitations:'External model, notifier and Git effects are isolated mocks'});
   }catch(error){results.push({id:path.id,outcome:'FAIL',reason:String(error)});}
  }

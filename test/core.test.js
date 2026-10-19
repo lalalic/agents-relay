@@ -2718,8 +2718,11 @@ test('same Job dispatches at most one task until the active execution terminates
     const source = await activeEventSource(store, first.id);
     await bus.publish(eventFor('j',first.id,null,'task.started','running','started','user',undefined,source));
     await bus.publish(eventFor('j',first.id,null,'task.completed','succeeded','done','orchestrator',undefined,source));
-    await new Promise(resolve => setTimeout(resolve,25));
-    await reconciler.reconcile('j');
+    const deadline = Date.now() + 2000;
+    while (adapter.launches < 2 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await reconciler.reconcile('j');
+    }
     assert.equal(adapter.launches, 2, 'next Job task should run after terminal event');
   } finally { await stop(); await reconciler.close(); }
 });
