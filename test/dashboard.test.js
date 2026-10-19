@@ -120,8 +120,8 @@ test('task tree branches default-collapse complete subtrees and preserve manual 
 });
 
 test('dashboard exposes a top-level Graphs browser backed by the workflow graph API', () => {
-  assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Graphs<\/button>/);
-  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Graphs<\/button>/);
+  assert.match(dashboardHtml, /id="graphs-tab"[\s\S]*>Workflow<\/button>/);
+  assert.match(dashboardHtml, /id="shortcuts-tab"[\s\S]*>Shortcuts<\/button>[\s\S]*id="graphs-tab"[\s\S]*>Workflow<\/button>/);
   assert.match(dashboardHtml, /id="graphs-view"/);
   assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
@@ -989,4 +989,24 @@ test('job list displays durable local merge failure reason', () => {
   assert.match(dashboardHtml, /job\.localMerge\?\.status==='failed'/);
   assert.match(dashboardHtml, /MERGE FAILED: /);
   assert.match(dashboardHtml, /job\.localMerge\.error/);
+});
+
+
+test('Workflow entry drill-down is presentation-only and links canonical graphs', async () => {
+  const graphs = await dashboardWorkflowGraphs();
+  const ids = new Set(graphs.map(graph => graph.id));
+  const mapping = dashboardHtml.match(/const GRAPH_NAV=(\{[^;]+\});/);
+  assert.ok(mapping, 'single graph navigation map');
+  const navigation = JSON.parse(mapping[1].replace(/([a-z]+):\[/g, '\"$1\":[').replace(/'/g, '\"'));
+  for (const targets of Object.values(navigation)) {
+    for (const id of targets) assert.ok(ids.has(id), 'broken drill-down: ' + id);
+  }
+  assert.match(dashboardHtml, /START: Job Objective/);
+  assert.match(dashboardHtml, /Changes Required/);
+  assert.match(dashboardHtml, /Escalator workflow/);
+  assert.match(dashboardHtml, /id=\"graph-back\"/);
+  assert.match(dashboardHtml, /id=\"graph-forward\"/);
+  assert.match(dashboardHtml, /id=\"graph-entry\"/);
+  assert.match(dashboardHtml, /securityLevel:'strict'/);
+  assert.match(dashboardHtml, /foreignObject,iframe,object,embed/);
 });
