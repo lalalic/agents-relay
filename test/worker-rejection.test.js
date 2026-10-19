@@ -1,28 +1,26 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { classifyChatGptPlatformFailure } from '../dist/worker-rejection.js';
+import { classifyChatGptPlatformFailure, PreSubmissionRejection } from '../dist/worker-rejection.js';
 
-test('ChatGPT platform rejection classification requires explicit safe pre-submission evidence', () => {
-  for (const [message, classification] of [
-    ['model_not_found: model is unavailable', 'model_unavailable'],
-    ['browser-workspace runtime dependency unavailable', 'browser_workspace_unavailable'],
-    ['ChatGPT login required', 'mcp_login_required'],
-    ['ChatGPT MCP app is disconnected', 'mcp_login_required'],
-    ['ChatGPT project name field not found', 'project_setup_unavailable'],
-  ]) {
-    assert.deepEqual(classifyChatGptPlatformFailure(message, 'delivery'), { classification, safeToReroute: true });
-  }
+test('only typed positive pre-submission rejection evidence permits rerouting', () => {
+  const rejected = PreSubmissionRejection.fromPlatformResponse({ status: 'rejected', submitted: false, code: 'MODEL_UNAVAILABLE', message: 'unsupported' });
+  assert.ok(rejected instanceof PreSubmissionRejection);
+  assert.deepEqual(classifyChatGptPlatformFailure(rejected, 'delivery'), {
+    classification: 'model_unavailable', safeToReroute: true, evidence: rejected.platformEvidence,
+  });
+  assert.equal(PreSubmissionRejection.fromPlatformResponse({ status: 'unknown', code: 'MODEL_UNAVAILABLE', message: 'unsupported' }), undefined);
+  assert.equal(PreSubmissionRejection.fromPlatformResponse({ status: 'rejected', submitted: true, code: 'MODEL_UNAVAILABLE', message: 'unsupported' }), undefined);
+  for (const message of [
+    'model_not_found: model is unavailable',
+    'browser-workspace runtime dependency unavailable',
+    'ChatGPT login required',
+    'project name field not found',
+  ]) assert.equal(classifyChatGptPlatformFailure(new Error(message), 'delivery').safeToReroute, false);
   assert.deepEqual(classifyChatGptPlatformFailure('no worker task.started start-ack', 'start-ack'), {
-    classification: 'start_ack_timeout', safeToReroute: false,
+    classification: 'start_ack_timeout', safeToReroute: false, evidence: 'no worker task.started start-ack',
   });
-  assert.deepEqual(classifyChatGptPlatformFailure('connection reset during submission', 'delivery'), {
-    classification: 'transport_failure', safeToReroute: false,
+  assert.deepEqual(classifyChatGptPlatformFailure(new Error('connection reset during submission'), 'delivery'), {
+    classification: 'outcome_unknown', safeToReroute: false, evidence: 'connection reset during submission',
   });
-  assert.deepEqual(classifyChatGptPlatformFailure('worker launch failed before session creation', 'launch'), {
-    classification: 'adapter_failure', safeToReroute: false,
-  });
-  assert.deepEqual(classifyChatGptPlatformFailure('Browser Workspace launcher rejected initialization', 'launch'), {
-    classification: 'launch_failure', safeToReroute: false,
-  });
-  assert.equal(classifyChatGptPlatformFailure('review changes required: required behavior is missing', 'delivery'), undefined);
+  assert.equal(classifyChatGptPlatformFailure(new Error('model unavailable after submit'), 'delivery').safeToReroute, false);
 });

@@ -8,6 +8,7 @@ import { Task, WorkerAdapterName, Result, RoutingDecision, ChatGptTabClosePolicy
 import { ExecutionContext } from './execution-context.js';
 import { taskReferencePrompt } from './task-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
+import { PreSubmissionRejection } from './worker-rejection.js';
 
 export type Execution = {
   id: string;
@@ -227,8 +228,14 @@ function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly str
         try {
           const envelope = parseWorkspaceJson(stdout);
           const result = envelope.result as Record<string, unknown> | undefined;
-          if (result?.ok === false && typeof result.code === 'string' && typeof result.message === 'string')
+          if (result?.ok === false && typeof result.code === 'string' && typeof result.message === 'string') {
             reason = `${result.code}: ${result.message}`;
+            const rejection = PreSubmissionRejection.fromPlatformResponse(result);
+            if (rejection) {
+              reject(rejection);
+              return;
+            }
+          }
         } catch { /* Preserve legacy error handling for other CLI failures. */ }
         reject(new Error(reason));
       }
@@ -413,6 +420,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         if (policy !== 'never') run.release?.();
         if (controller.signal.aborted) throw error;
         if (error instanceof StartAckTimeout) throw error;
+        if (error instanceof PreSubmissionRejection) throw error;
         throw new LaunchFailure(error instanceof Error ? error.message : String(error));
       }
     })();

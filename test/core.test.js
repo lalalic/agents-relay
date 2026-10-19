@@ -10,6 +10,7 @@ import { parseTask, marker, renderJobBody, TASK_MARKER } from '../dist/markers.j
 import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTaskEvent } from '../dist/scheduler.js';
 import { CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
+import { PreSubmissionRejection } from '../dist/worker-rejection.js';
 import { Reconciler, compareTaskPriority, executionEventSource } from '../dist/reconciler.js';
 import { MemoryEventBus, eventFor, subjectToken } from '../dist/events.js';
 import { serveDashboard, dashboardHtml } from '../dist/dashboard.js';
@@ -1144,7 +1145,7 @@ test('projection injection survives worker launch for its later checkpoint', asy
   }
 });
 
-test('ChatGPT Browser Workspace failure with ChatGPT-only requirements is quarantined without same-route replay', async () => {
+test('ambiguous ChatGPT Browser Workspace delivery failure is quarantined without same-route replay', async () => {
   const t=task('browser-runtime-retry');
   t.adapter='chatgpt';
   t.state='QUEUED';
@@ -1172,16 +1173,51 @@ test('ChatGPT Browser Workspace failure with ChatGPT-only requirements is quaran
   assert.equal(original.attempt,1);
   assert.equal(original.executionId,null);
   assert.match(original.error,/browser-workspace runtime dependency unavailable/);
-  assert.equal(original.failureReason,'worker_platform_fallback_unavailable');
-  assert.equal(original.platformFailure?.classification,'browser_workspace_unavailable');
+  assert.equal(original.failureReason,'worker_outcome_unknown');
+  assert.equal(original.platformFailure?.classification,'outcome_unknown');
   assert.equal(original.platformFailure?.executionId,'browser-exec-1');
   assert.equal(original.routing,undefined);
   assert.equal(original.workerSelection,undefined);
   assert.equal(original.routingExclusions?.[0]?.workerId,'chatgpt');
-  assert.ok(events.some(event=>event.type==='task.failed' && event.data?.reason==='browser_workspace_unavailable'));
+  assert.ok(events.some(event=>event.type==='task.failed' && event.data?.reason==='worker_outcome_unknown'));
   assert.ok(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'));
   assert.equal(events.some(event=>event.type==='task.runtime_retry'),false);
   await reconciler.close(); await stopEvents();
+});
+
+test('running ChatGPT delivery rejection is quarantined and cannot reroute after start', async () => {
+  const t=task('chat-running-failure'); t.adapter='chatgpt'; t.state='RUNNING'; t.attempt=1; t.maxAttempts=3;
+  t.executionId='running-chat-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[{id:t.executionId,attempt:1,startedAt:now()}];
+  t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+  const store=new InMemoryStore(job([t])); let cancelled=0;
+  class FailureHarness extends Reconciler { trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'explicit rejection'}),'delivery');} }
+  const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  reconciler.live.set(t.id,{jobId:'j',taskId:t.id,executionId:t.executionId,execution:{id:'old',promise:new Promise(()=>{}),cancel(){cancelled++;}},controller:new AbortController(),launchBarrier:0,workerStarted:true,processSettled:false});
+  await reconciler.trigger();
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'BLOCKED');
+  assert.equal(saved.failureReason,'worker_outcome_unknown');
+  assert.equal(saved.platformFailure.safeToReroute,true);
+  assert.equal(cancelled,1);
+  assert.equal(saved.executionId,null);
+  await reconciler.close();
+});
+
+test('stale old-generation failure cannot cancel or mutate the current execution', async () => {
+  const t=task('chat-generation-fence'); t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=2;
+  t.executionId='current-generation'; t.executionHistory=[{id:'old-generation',attempt:1,startedAt:now()},{id:t.executionId,attempt:2,startedAt:now()}];
+  const store=new InMemoryStore(job([t])); let cancelled=0;
+  class FailureHarness extends Reconciler { trigger(){return this.failLaunch('j',t.id,'old-generation',PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'explicit rejection'}),'delivery');} }
+  const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
+  reconciler.live.set(t.id,{jobId:'j',taskId:t.id,executionId:t.executionId,execution:{id:'new',promise:new Promise(()=>{}),cancel(){cancelled++;}},controller:new AbortController(),launchBarrier:0,workerStarted:true,processSettled:false});
+  await reconciler.trigger();
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.executionId,'current-generation');
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.platformFailure,undefined);
+  assert.equal(cancelled,0);
+  await reconciler.close();
 });
 
 test('confirmed ChatGPT platform rejection routes the same Task to a compatible Codex worker', async () => {
@@ -1195,7 +1231,7 @@ test('confirmed ChatGPT platform rejection routes the same Task to a compatible 
   const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const adapter=new FakeAdapter(); const stopEvents=await bus.subscribe('j',async event=>events.push(event));
   class FailureHarness extends Reconciler {
-    trigger(){return this.failLaunch('j',t.id,t.executionId,'model_unavailable: model is unsupported','delivery');}
+    trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'unsupported'}),'delivery');}
     routeForRetry(task){return this.routeTaskForExecution(job([task]),task);}
   }
   const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),adapter],eventBus:bus,maxConcurrent:0});
@@ -1472,7 +1508,7 @@ test('asynchronous LaunchFailure becomes authoritative delivery failure', async 
 });
 
 
-test('delivery failure after correlated task.started is diagnostic only and terminal event remains authoritative', async () => {
+test('ChatGPT delivery failure after correlated task.started quarantines and cancels that generation', async () => {
   const t=task('chat-delivery-after-start'); t.adapter='chatgpt';
   const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   let rejectRun;
@@ -1497,14 +1533,15 @@ test('delivery failure after correlated task.started is diagnostic only and term
   rejectRun(new LaunchFailure('DOM receipt missed the submitted user turn'));
   await new Promise(resolve=>setTimeout(resolve,20));
   let durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'RUNNING');
-  assert.equal(events.some(event=>event.type==='task.failed'),false);
-  assert.equal(events.some(event=>event.type==='task.process.delivery_failed' && event.data?.authoritative===false),true);
+  assert.equal(durable.state,'BLOCKED');
+  assert.equal(durable.failureReason,'worker_outcome_unknown');
+  assert.equal(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'),true);
+  assert.equal(events.some(event=>event.type==='task.process.delivery_failed' && event.data?.authoritative===false),false);
   await bus.publish(eventFor('j',durable.id,null,'task.completed','succeeded','review finished','user',undefined,eventSource('j',durable.id,durable.executionId)));
   await new Promise(resolve=>setTimeout(resolve,20));
   durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'SUCCEEDED');
-  assert.equal(durable.error,null);
+  assert.equal(durable.state,'BLOCKED');
+  assert.equal(durable.failureReason,'worker_outcome_unknown');
   await stop();
 });
 
@@ -1629,7 +1666,8 @@ test('async launch and delivery rejection emits exactly one task.failed', async 
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>{events.push(event);}});
   await reconciler.reconcile('j'); await reconciler.idle(); await new Promise(resolve=>setTimeout(resolve,50));
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
-  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+  assert.equal((await store.load('j')).tasks[0].state,'BLOCKED');
+  assert.equal((await store.load('j')).tasks[0].failureReason,'worker_outcome_unknown');
 });
 test('late worker events recover a watchdog timeout failure', async () => {
   const t=task('late-worker','FAILED'); t.adapter='chatgpt'; t.executionId='late-worker-exec'; t.error='Worker start-ack failed: worker_start_timeout'; t.failureReason='worker_start_timeout'; t.updatedAt='2026-09-20T20:00:00.000Z';

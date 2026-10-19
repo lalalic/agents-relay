@@ -158,6 +158,9 @@ running -->|on: task.completed| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
+running -->|on: worker.platform_failure| runningPlatformFailureQuarantine
+runningPlatformFailureQuarantine["action: mutation.quarantinePlatformFailure"]
+runningPlatformFailureQuarantine --> blocked
 running -->|on: watchdog.failed| failed
 running -->|on: planner.failed| plannerRetryAvailable
 running -->|on: execution.orphaned| orphanRetryAvailable

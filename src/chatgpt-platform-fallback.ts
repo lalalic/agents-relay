@@ -2,13 +2,28 @@ import type { Task, WorkerAdapterName, WorkerRequirements } from './types.js';
 import { eligibleWorkerCandidates, workerCandidates } from './worker-routing.js';
 import type { AgentRegistration } from './types.js';
 import type { ChatGptPlatformFailureClassification } from './worker-rejection.js';
+import { routeExecution } from './execution-routing.js';
+import type { AccountUsageOverview } from './usage.js';
 
 type WorkerAdapter = { name: WorkerAdapterName; id: string; capabilities: readonly string[] };
 
-export function codexFallbackCompatible(task: Task, adapters: readonly WorkerAdapter[], registered: readonly AgentRegistration[]): boolean {
+export async function codexFallbackCompatible(
+  task: Task,
+  adapters: readonly WorkerAdapter[],
+  registered: readonly AgentRegistration[],
+  usage?: AccountUsageOverview,
+): Promise<boolean> {
   if (task.adapter !== 'chatgpt' || task.chatgptThreadDelivery || task.workerRequirements?.runtime === 'chatgpt') return false;
   const requirements: WorkerRequirements = task.workerRequirements ?? { capabilities: [] };
-  return eligibleWorkerCandidates(workerCandidates(adapters, registered), requirements).some(candidate => candidate.adapter === 'codex');
+  const candidates = eligibleWorkerCandidates(workerCandidates(adapters, registered, usage), requirements, { strictCapabilities: true })
+    .filter(candidate => candidate.adapter === 'codex');
+  if (candidates.length === 0) return false;
+  try {
+    await routeExecution(candidates, requirements, { registered, usage, taskFacts: { task } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function persistChatGptPlatformFailure(

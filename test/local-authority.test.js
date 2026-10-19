@@ -9,6 +9,7 @@ import { InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { parseGitHubWebhook } from '../dist/github-webhook.js';
 import { subscribeLocalCommits } from '../dist/local-commit-events.js';
+import { transitionTaskEvent } from '../dist/scheduler.js';
 
 const at = '2026-10-08T20:00:00.000Z';
 function job(id = 'local') {
@@ -61,6 +62,31 @@ test('local authority never reads GitHub markers or creates lifecycle projection
   sqlite.close();
   await rm(path, { recursive: true, force: true });
 });
+
+test('same-state QUEUED platform reroute persists with unchanged attempt in local SQLite authority', async () => {
+  const sqlite = new SQLiteRelayStore(':memory:');
+  const local = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
+  const rerouting = {
+    ...task('QUEUED'), attempt: 1, executionId: 'chat-execution',
+    leaseOwner: 'relay', leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+    routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'test', decidedAt: at },
+    workerSelection: { workerId: 'chatgpt/browser-worker', adapter: 'chatgpt', capabilities: ['model'], selectedBy: 'test', selectedAt: at },
+  };
+  await local.saveJob({ ...job(), tasks: [rerouting] });
+  const fresh = (await local.load('local')).tasks[0];
+  const previousUpdatedAt = fresh.updatedAt;
+  const decision = await transitionTaskEvent(fresh, 'worker.platform_failure', { platformFallbackSafe: true });
+  assert.equal(decision.target, 'QUEUED');
+  await local.saveTask(fresh);
+  const saved = (await local.load('local')).tasks[0];
+  assert.equal(saved.attempt, 1);
+  assert.ok(saved.updatedAt > previousUpdatedAt);
+  assert.equal(saved.executionId, null);
+  assert.equal(saved.routing, undefined);
+  assert.equal(saved.workerSelection, undefined);
+  sqlite.close();
+});
+
 
 test('local authoritative registry and PR facts operate without any GitHub calls', async () => {
   const sqlite = new SQLiteRelayStore(':memory:');

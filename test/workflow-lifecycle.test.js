@@ -51,6 +51,7 @@ const taskCases = [
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
   ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
   ['QUEUED','worker.platform_failure',{platformFallbackSafe:false},'BLOCKED'],
+  ['RUNNING','worker.platform_failure',{platformFallbackSafe:true},'BLOCKED'],
   ['QUEUED','cancel',{},'CANCELLED'],
   ['RUNNING','task.blocked',{},'BLOCKED'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
