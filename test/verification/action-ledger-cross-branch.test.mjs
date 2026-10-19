@@ -13,7 +13,7 @@ const fixture=async run=>{
  const root=mkdtempSync(join(tmpdir(),'relay-ledger-cross-'));
  const db=new DatabaseSync(join(root,'store.sqlite'));
  db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
- const snapshot=(generation=2,patch={})=>db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES(?,?,?)').run('job-1',JSON.stringify({pause:{generation},tasks:[{id:'task-1',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner-1',attempt:2,leaseExpiresAt:'2099-01-01T00:00:00.000Z',...patch}]}),new Date().toISOString());
+ const snapshot=(generation=2,patch={})=>db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES(?,?,?)').run('job-1',JSON.stringify({tasks:[{id:'task-1',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner-1',attempt:2,leaseExpiresAt:'2099-01-01T00:00:00.000Z',...patch}]}),new Date().toISOString());
  snapshot();
  try{await run({db,snapshot,root});}finally{db.close();rmSync(root,{recursive:true,force:true});}
 };
@@ -21,13 +21,13 @@ const id={jobId:'job-1',taskId:'task-1',leaseOwner:'owner-1',attempt:2,execution
 const authorized={accepted:true,source:'ACTIVE',target:'ACTIVE',actions:[{id:id.actionId,input:{transport:'event',id:'approved',payload:{}},emittedEvents:[]}]};
 const load=()=>import(pathToFileURL(join(dist,'workflow/action-ledger.js')).href);
 
-test('A ledger: reject stale generation, lease, execution, owner, attempt and invalid clock', {skip:!dist},async()=>{
+test('A ledger: reject stale attempt-generation, lease, execution, owner and invalid clock', {skip:!dist},async()=>{
  const {WorkflowActionLedger}=await load();
  await fixture(async({db,snapshot})=>{
   const ledger=new WorkflowActionLedger(db);
   const reserve=(changes={},time='2026-10-19T20:00:00.000Z')=>ledger.reserveForRunningTask({...id,...changes},authorized,'merged',time);
   for(const changes of [{generation:3},{executionId:'old'},{leaseOwner:'stale'},{attempt:1}])assert.throws(()=>reserve(changes),/fenced/);
-  snapshot(5);assert.throws(()=>reserve(),/fenced/);
+  snapshot(5,{attempt:3});assert.throws(()=>reserve(),/fenced/);
   snapshot(2,{leaseExpiresAt:'2026-10-19T19:00:00.000Z'});assert.throws(()=>reserve(),/fenced/);
   snapshot(2,{leaseExpiresAt:'not-a-date'});assert.throws(()=>reserve(),/fenced/);
   snapshot();assert.throws(()=>reserve({},'not-a-date'),/fenced/);
@@ -51,7 +51,7 @@ test('A ledger: crash/reopen preserves Unknown and prevents duplicate effect exe
  let db=new DatabaseSync(filename);
  try{
   db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL)');
-  db.prepare('INSERT INTO job_snapshot VALUES(?,?,?)').run(id.jobId,JSON.stringify({pause:{generation:2},tasks:[{id:id.taskId,state:'RUNNING',executionId:id.executionId,leaseOwner:id.leaseOwner,attempt:id.attempt,leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}),new Date().toISOString());
+  db.prepare('INSERT INTO job_snapshot VALUES(?,?,?)').run(id.jobId,JSON.stringify({tasks:[{id:id.taskId,state:'RUNNING',executionId:id.executionId,leaseOwner:id.leaseOwner,attempt:id.attempt,leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}),new Date().toISOString());
   let ledger=new WorkflowActionLedger(db);
   assert.equal(ledger.reserveForRunningTask(id,authorized,'merged'),true);
   db.close();db=new DatabaseSync(filename);ledger=new WorkflowActionLedger(db);
@@ -60,4 +60,49 @@ test('A ledger: crash/reopen preserves Unknown and prevents duplicate effect exe
   // Action must not execute again after restart; real outbox and publish
   // crash windows require the future production runtime wiring.
  }finally{db.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('A dispatcher: verified effect persists transition once; crash before publish cannot repeat action', {skip:!dist},async()=>{
+ const {WorkflowActionLedger}=await load();
+ const {GraphRuntime}=await import(pathToFileURL(join(dist,'workflow/graph-v2.js')).href);
+ const {dispatchWorkflowGraph}=await import(pathToFileURL(join(dist,'workflow/dispatcher.js')).href);
+ const {ConditionRegistry,booleanCondition}=await import(pathToFileURL(join(dist,'workflow/conditions.js')).href);
+ const source=`flowchart LR\n%% relay: initial a\na["state: ACTIVE"]\nb["state: COMPLETED"]\neffect["action: effect.deliverLocalMerge"]\na -->|on: approved| effect\neffect --> b`;
+ const graph=new GraphRuntime(source,{states:new Set(['ACTIVE','COMPLETED']),actions:{[id.actionId]:{id:id.actionId}},events:{approved:{id:'approved'}}});
+ const input={transport:'event',id:'approved',payload:{}};
+ await fixture(async({db})=>{
+  const ledger=new WorkflowActionLedger(db);
+  const conditions=new ConditionRegistry([booleanCondition('merged')]);
+  const transitions=[];const published=[];let effects=0;
+  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input,executeAction:async()=>{effects++;return {ok:true};},persistTransition:async(a,b)=>{transitions.push([a,b]);},publishEvent:async id=>{published.push(id);},actionVerification:{ledger,conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({merged:true})},observe:false});
+  await invoke();
+  assert.equal(effects,1);
+  assert.equal(ledger.trace(id.attemptKey).outcome,'Verified');
+  assert.deepEqual(transitions,[['ACTIVE','COMPLETED']]);
+  await assert.rejects(invoke(),/already reserved/);
+  assert.equal(effects,1);
+  assert.deepEqual(transitions,[['ACTIVE','COMPLETED']]);
+  assert.ok(Array.isArray(published));
+ });
+});
+
+test('A dispatcher: unknown postcondition prevents state persist and event publish across replay', {skip:!dist},async()=>{
+ const {WorkflowActionLedger}=await load();
+ const {GraphRuntime}=await import(pathToFileURL(join(dist,'workflow/graph-v2.js')).href);
+ const {dispatchWorkflowGraph}=await import(pathToFileURL(join(dist,'workflow/dispatcher.js')).href);
+ const {ConditionRegistry,booleanCondition}=await import(pathToFileURL(join(dist,'workflow/conditions.js')).href);
+ const source=`flowchart LR\n%% relay: initial a\na["state: ACTIVE"]\nb["state: COMPLETED"]\neffect["action: effect.deliverLocalMerge"]\na -->|on: approved| effect\neffect --> b`;
+ const graph=new GraphRuntime(source,{states:new Set(['ACTIVE','COMPLETED']),actions:{[id.actionId]:{id:id.actionId}},events:{approved:{id:'approved'}}});
+ await fixture(async({db})=>{
+  const ledger=new WorkflowActionLedger(db);
+  const conditions=new ConditionRegistry([booleanCondition('merged')]);
+  let actions=0;const transitions=[];const emitted=[];
+  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input:{transport:'event',id:'approved',payload:{}},executeAction:async()=>{actions++;return {ok:true};},persistTransition:(a,b)=>transitions.push([a,b]),publishEvent:e=>emitted.push(e),actionVerification:{ledger,conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({})},observe:false});
+  await assert.rejects(invoke(),/Unknown/);
+  assert.equal(ledger.trace(id.attemptKey).outcome,'Unknown');
+  await assert.rejects(invoke(),/already reserved/);
+  assert.equal(actions,1);
+  assert.deepEqual(transitions,[]);
+  assert.deepEqual(emitted,[]);
+ });
 });
