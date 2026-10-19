@@ -20,7 +20,12 @@ export class WorkflowActionLedger {
     const statement = this.database.prepare(`INSERT OR IGNORE INTO workflow_action_trace
       (attempt_key,execution_id,generation,graph,action_id,condition_id,outcome,observed_at)
       VALUES (?,?,?,?,?,?,'Unknown',?)`);
-    return statement.run(identity.attemptKey, identity.executionId, identity.generation, identity.graph, identity.actionId, conditionId, new Date().toISOString()).changes === 1;
+    const inserted = statement.run(identity.attemptKey, identity.executionId, identity.generation, identity.graph, identity.actionId, conditionId, new Date().toISOString()).changes === 1;
+    if (!inserted) {
+      const old = this.trace(identity.attemptKey);
+      if (!old || old.executionId !== identity.executionId || old.generation !== identity.generation || old.graph !== identity.graph || old.actionId !== identity.actionId || old.conditionId !== conditionId) throw new Error('attempt key collision: inconsistent action identity');
+    }
+    return inserted;
   }
   /** Authoritative, fail-closed reservation against the durable job_snapshot row. */
   reserveForRunningTask(
@@ -31,9 +36,9 @@ export class WorkflowActionLedger {
     try {
       const row = this.database.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(identity.jobId) as {json?: string} | undefined;
       if (!row?.json) throw new Error('authoritative job snapshot unavailable');
-      const job = JSON.parse(row.json) as { tasks?: Array<{id: string; state: string; executionId: string | null; leaseOwner: string | null; leaseExpiresAt: string | null; attempt: number}> };
+      const job = JSON.parse(row.json) as { pause?: {generation: number}; tasks?: Array<{id: string; state: string; executionId: string | null; leaseOwner: string | null; leaseExpiresAt: string | null; attempt: number}> };
       const task = job.tasks?.find(item => item.id === identity.taskId);
-      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || !task.leaseExpiresAt || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
+      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || task.attempt !== identity.generation || !task.leaseExpiresAt || !Number.isFinite(Date.parse(task.leaseExpiresAt)) || !Number.isFinite(Date.parse(now)) || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
         throw new Error('stale execution, owner, attempt or lease: action fenced');
       }
       const created = this.reserve(identity, decision, conditionId);

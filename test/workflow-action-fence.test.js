@@ -15,8 +15,11 @@ test('authoritative sqlite snapshot fences execution, lease, attempt and duplica
  assert.throws(()=>ledger.reserveForRunningTask({...identity,executionId:'old'},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,leaseOwner:'old'},decision,'done',now),/fenced/);
  assert.throws(()=>ledger.reserveForRunningTask({...identity,attempt:1},decision,'done',now),/fenced/);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,generation:3},decision,'done',now),/fenced/);
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),true);
  assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),false);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,actionId:'other'}, { ...decision, actions:[{id:'other'}]},'done',now),/collision/);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,attemptKey:'invalid-date'},decision,'done','invalid'),/fenced/);
  job.tasks[0].leaseExpiresAt='2026-10-19T18:00:00.000Z'; store.run('j',JSON.stringify(job));
  assert.throws(()=>ledger.reserveForRunningTask({...identity,attemptKey:'new'},decision,'done',now),/fenced/);
 });

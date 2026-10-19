@@ -14,9 +14,12 @@ a -->|on: approved| merge
 merge --> b`;
 const runtime = new GraphRuntime(source, {states: new Set(['ACTIVE','COMPLETED']),actions:{'effect.mergePullRequest':{id:'effect.mergePullRequest'}},events:{approved:{id:'approved'}}});
 const input = {transport:'event',id:'approved',payload:{}};
-const identity = {attemptKey:'exec-1/g1/merge',executionId:'exec-1',generation:1,graph:'job-lifecycle.mmd',actionId:'effect.mergePullRequest'};
+const identity = {jobId:'j',taskId:'t',leaseOwner:'owner',attempt:1,attemptKey:'exec-1/g1/merge',executionId:'exec-1',generation:1,graph:'job-lifecycle.mmd',actionId:'effect.mergePullRequest'};
 test('production dispatcher action loop is fenced and Unknown stops repeated external effect', async () => {
-  const ledger = new WorkflowActionLedger(new DatabaseSync(':memory:'));
+  const db = new DatabaseSync(':memory:');
+ db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL)');
+ db.prepare('INSERT INTO job_snapshot VALUES (?,?)').run('j',JSON.stringify({tasks:[{id:'t',state:'RUNNING',executionId:'exec-1',leaseOwner:'owner',attempt:1,leaseExpiresAt:'2099-01-01T00:00:00.000Z'}]}));
+ const ledger = new WorkflowActionLedger(db);
   const conditions = new ConditionRegistry([booleanCondition('merged')]);
   let calls = 0;
   const transitions = [];

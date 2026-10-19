@@ -17,7 +17,7 @@ export type WorkflowDispatchOptions = {
   actionVerification?: {
     ledger: WorkflowActionLedger;
     conditions: ConditionRegistry;
-    identity: (actionId: string) => ActionIdentity;
+    identity: (actionId: string) => ActionIdentity & {jobId: string; taskId: string; leaseOwner: string; attempt: number};
     conditionId: (actionId: string) => string;
     observedFacts: (actionId: string) => ConditionFacts | Promise<ConditionFacts>;
   };
@@ -94,7 +94,7 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
         if (verification) {
           const identity = verification.identity(actionId);
           const decision = runtime.evaluateSync({ currentState: current, input: options.input, durableFacts: options.durableFacts ?? {} });
-          if (!verification.ledger.reserve(identity, decision, verification.conditionId(actionId))) {
+          if (!verification.ledger.reserveForRunningTask(identity, decision, verification.conditionId(actionId))) {
             throw new Error('action attempt already reserved: reconcile outcome; never repeat side effect');
           }
         }
