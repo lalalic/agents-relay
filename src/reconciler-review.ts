@@ -12,6 +12,7 @@ import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
+import { codexFallbackRouting, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -260,9 +261,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
+    const codexFallback = task.platformFailure?.safeToReroute === true && task.adapter === 'chatgpt';
+    const fallbackRouting = codexFallback ? codexFallbackRouting(task, this.options.adapters, registered, usage) : undefined;
     const excludedWorkers = new Set((task.routingExclusions ?? []).map(item => item.workerId).filter((id): id is string => Boolean(id)));
     const excludedAdapters = new Set((task.routingExclusions ?? []).map(item => item.adapter).filter((adapter): adapter is NonNullable<typeof adapter> => Boolean(adapter)));
-    const candidates = workerCandidates(this.options.adapters, registered, usage)
+    const candidates = fallbackRouting?.candidates ?? workerCandidates(this.options.adapters, registered, usage)
       .filter(candidate => !excludedWorkers.has(candidate.workerId))
       .filter(candidate => !excludedAdapters.has(candidate.adapter))
       .filter(candidate => (implementationThread || reviewerThread) ? candidate.adapter === 'chatgpt' : true);
@@ -293,7 +296,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const parentExcludedRoutes = parentRouteFailedBeforeStart && parent?.routing
       ? [{ provider: parent.routing.provider, model: parent.routing.model, profile: parent.routing.profile }]
       : [];
-    const taskExcludedRoutes = (task.routingExclusions ?? []).map(item => ({ provider: item.provider, model: item.model, profile: item.profile }));
+    const taskExcludedRoutes = fallbackRouting?.excludedRoutes ?? (task.routingExclusions ?? []).map(item => ({ provider: item.provider, model: item.model, profile: item.profile }));
     const excludedRoutes = [...taskExcludedRoutes, ...parentExcludedRoutes];
     const routed = await routeExecution(candidates, requirements, {
       decisionEngine: this.options.decisionEngine,
@@ -316,6 +319,14 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'worker.selected', 'queued', 'Worker ' + routed.selection.workerId + ' selected for task ' + task.id, 'user', { workerSelection: routed.selection, workerRequirements: requirements }, { agent: 'relay', component: 'agents-relay' }));
     await this.emit(eventFor(job.id, task.id, task.parentTaskId, 'model.selected', 'queued', 'Selected ' + task.routing.model + ' · thinking ' + (task.routing.reasoning ?? 'unknown'), 'user', { routing: task.routing }, { agent: 'relay', component: 'agents-relay' }));
     return { task, routed: true };
+  }
+  protected async routeTaskForExecutionFailClosed(job: Job, task: Task): Promise<{ task: Task; routed: boolean } | undefined> {
+    try { return await this.routeTaskForExecution(job, task); }
+    catch (error) {
+      if (task.adapter !== 'chatgpt' || !task.platformFailure?.safeToReroute) throw error;
+      await quarantineUnavailableCodexFallback(this.taskTransitions, event => this.emit(event), job.id, task.id, error);
+      return undefined;
+    }
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);

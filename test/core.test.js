@@ -1256,6 +1256,24 @@ test('confirmed ChatGPT platform rejection routes the same Task to a compatible 
   await reconciler.close(); await stopEvents();
 });
 
+test('confirmed ChatGPT rejection with no Codex route follows the graph BLOCKED quarantine edge', async () => {
+  const t=task('chat-platform-no-codex'); t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
+  t.executionId='chat-platform-no-codex-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[{id:t.executionId,attempt:1,startedAt:now()}];
+  t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+  const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+  const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  class FailureHarness extends Reconciler { trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'unsupported'}),'delivery');} }
+  const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter()],eventBus:bus,maxConcurrent:0});
+  await reconciler.trigger();
+  const saved=(await store.load('j')).tasks[0];
+  assert.equal(saved.state,'BLOCKED');
+  assert.equal(saved.failureReason,'worker_platform_fallback_unavailable');
+  assert.equal(saved.executionId,null);
+  assert.ok(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'));
+  await reconciler.close(); await stopEvents();
+});
+
 test('failed Codex exit preserves rate limit reason instead of terminal event timeout', async () => {
   class FailedExitAdapter extends FakeAdapter {
     launch(t, signal) {
