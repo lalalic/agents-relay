@@ -42,3 +42,34 @@ export class DurableWorkflowPublication {
     return delivered;
   }
 }
+
+/** Atomic SQLite inbox for event consumers. The callback MUST mutate the same DB
+ * synchronously; duplicate deliveries return false without repeating the mutation.
+ * Consumers with external side effects must use their own idempotency protocol. */
+export class DurableWorkflowConsumer {
+  constructor(private readonly db: DatabaseSync) {
+    db.exec(`CREATE TABLE IF NOT EXISTS workflow_event_inbox (
+      consumer_id TEXT NOT NULL, event_key TEXT NOT NULL, event_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL, consumed_at TEXT NOT NULL,
+      PRIMARY KEY(consumer_id,event_key)
+    )`);
+  }
+  consume(consumerId: string, event: PendingWorkflowEvent, apply: () => void): boolean {
+    if (!consumerId || !event.key || !event.eventId) throw new Error('consumer and event identity required');
+    const payload = JSON.stringify(event.payload ?? null);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const previous = this.db.prepare('SELECT event_id,payload_json FROM workflow_event_inbox WHERE consumer_id=? AND event_key=?').get(consumerId,event.key) as {event_id:string;payload_json:string} | undefined;
+      if (previous) {
+        if (previous.event_id !== event.eventId || previous.payload_json !== payload) throw new Error('consumer event key collision');
+        this.db.exec('COMMIT');
+        return false;
+      }
+      apply();
+      this.db.prepare('INSERT INTO workflow_event_inbox(consumer_id,event_key,event_id,payload_json,consumed_at) VALUES(?,?,?,?,?)')
+        .run(consumerId,event.key,event.eventId,payload,new Date().toISOString());
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+}
