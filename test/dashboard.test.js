@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
 import { Script } from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { dashboardHtml, dashboardVersion, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
+import { dashboardHtml, dashboardVersion, dashboardSourceRevision, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
 import { workflowPresentation } from '../dist/dashboard-workflow-presentation.js';
 import { inspectWorkflowSymbol } from '../dist/dashboard-workflow-inspection.js';
@@ -1063,7 +1063,8 @@ test('graph-symbol API returns real references and rejects missing or malformed 
 
 test('workflow code references pin to review branch and label text matches as suggestions only', async () => {
   assert.match(dashboardHtml, /WORKFLOW_SOURCE_REF/);
-  assert.ok(dashboardHtml.includes('feat/dashboard-workflow-drilldown'));
+  assert.match(dashboardSourceRevision(), /^[0-9a-f]{40}$/);
+  assert.ok(dashboardHtml.includes(dashboardSourceRevision()));
   assert.doesNotMatch(dashboardHtml, /blob\/main\/.*ref\.path/);
   const action = await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invoke');
   assert.equal(action?.graph.evidence, 'exact-token');

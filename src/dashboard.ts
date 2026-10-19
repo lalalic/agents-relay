@@ -70,7 +70,7 @@ async function eventHistory(jobId: string, taskId: string | null, limit: number)
   try { return await eventsBusHistory(jobId, taskId, limit); } catch { return []; }
 }
 
-export { dashboardHtml, dashboardVersion } from './dashboard-html.js';
+export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
 import { dashboardHtml, dashboardVersion } from './dashboard-html.js';
 
 export function serveDashboard(
