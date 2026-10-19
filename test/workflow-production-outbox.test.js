@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {SQLiteRelayStore} from '../dist/relay-store.js';
 import {LocalAuthorityDurableStore} from '../dist/local-authority-store.js';
 import {InMemoryStore} from '../dist/store.js';
-import {Reconciler} from '../dist/reconciler.js';
+import {managedReconciler} from './test-runtime.js';
 import {MemoryEventBus} from '../dist/events.js';
 
 const timestamp='2026-10-19T17:00:00.000Z';
@@ -21,7 +21,7 @@ test('production Reconciler persists Graph-selected outcome and event atomically
  let attempts=0;const git=()=>{attempts++;return {sourceSha:'head-immutable',mergedCommitSha:'merged-once'};};
  const bus=new MemoryEventBus(); const original=bus.publish.bind(bus);let rejectNext=true;
  bus.publish=async event=>{if(event.type==='job.merge.succeeded'&&rejectNext){rejectNext=false;throw Error('transport unavailable after SQLite commit');}return original(event);};
- let runtime=new Reconciler(store,{owner:'outbox-test',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,localMergeEffect:git,projectPathForJob:()=>folder});
+ let runtime=managedReconciler(store,{owner:'outbox-test',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,localMergeEffect:git,projectPathForJob:()=>folder});
  try{
   await store.saveJob(structuredClone(job));
   await assert.rejects(runtime.reconcile('outbox-production'),/transport unavailable/);
@@ -36,7 +36,7 @@ test('production Reconciler persists Graph-selected outcome and event atomically
   sqlite=new SQLiteRelayStore(path,'outbox-production');
   store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
   const observed=[];const unsubscribe=await bus.subscribeAll(async ev=>{if(ev.type==='job.merge.succeeded')observed.push(ev.event_id)});
-  runtime=new Reconciler(store,{owner:'outbox-test',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,localMergeEffect:git,projectPathForJob:()=>folder});
+  runtime=managedReconciler(store,{owner:'outbox-test',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,localMergeEffect:git,projectPathForJob:()=>folder});
   await runtime.reconcile('outbox-production');
   await runtime.reconcile('outbox-production');
   await unsubscribe();

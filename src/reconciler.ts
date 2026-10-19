@@ -1,3 +1,5 @@
+import { recoverPlannerChildren } from './planner-child-recovery.js';
+import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js';
 import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
@@ -65,21 +67,12 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return schedule(await this.store.load(jobId));
   }
-  /** Drain SQLite workflow events with transport failure propagation.
-   * The outbox retains unacknowledged events for restart replay. */
-  private async drainWorkflowOutbox(): Promise<number> {
-    if (!this.store.drainWorkflowEvents || (!this.options.eventBus && !this.options.emit)) return 0;
-    return this.store.drainWorkflowEvents(async event => {
-      if (this.options.eventBus) await this.options.eventBus.publish(event);
-      if (this.options.emit) await this.options.emit(event);
-    });
-  }
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
     this.reconciling = true;
     try {
       const job = await this.store.load(jobId);
-      await this.drainWorkflowOutbox();
+      await drainProductionWorkflowOutbox(this.store, this.options);
       for (const live of [...this.live.values()]) if (live.jobId === jobId && job.tasks.some(task => task.id === live.taskId && task.state === 'BLOCKED')) this.cancelExecutionGeneration(jobId, live.taskId, live.executionId);
       const previousState = job.state;
       const lifecycleFingerprint = (value: Job): string => `${value.state}|${value.tasks.map(task => `${task.id}:${task.state}`).join(',')}`;
@@ -182,7 +175,7 @@ export class Reconciler extends ReconcilerReviewBase {
       finalState = await this.store.load(jobId);
       const localMergeCompleted = await reconcileLocalGitCompletion(this.store, finalState, headSha,
         this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event), this.options.localMergeEffect, () => (this.options.now ?? new Date()).getTime());
-      await this.drainWorkflowOutbox();
+      await drainProductionWorkflowOutbox(this.store, this.options);
       if (localMergeCompleted) return this.store.load(jobId);
       await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
@@ -267,37 +260,7 @@ export class Reconciler extends ReconcilerReviewBase {
     if (!decision.accepted || !changed) return job;
     return this.store.load(job.id);
   }
-  private async recoverPlannerChildren(job: Job): Promise<void> {
-    for (const plan of (job.plans ?? []).filter(item => item.status === 'SUCCEEDED' && item.plannerResult)) {
-      const executionContext = await this.plannerContext(job, plan);
-      // Historical plans were validated on commit. Rechecking against later Task failures
-      // blocks recovery before the Troubleshooter graph can run.
-      const children = plan.plannerResult!.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
-      for (const child of children) {
-        const existing = job.tasks.find(item => item.id === child.id);
-        if (existing) continue;
-        const spec = plan.plannerResult!.next_tasks.find(item => item.id === child.id);
-        if (spec?.resolution) await this.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
-        await this.store.appendTask(child);
-        job.tasks.push(child);
-      }
-    }
-    const historicalPlanners = job.tasks.filter(task =>
-      task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult);
-    if (historicalPlanners.length === 0) return;
-    const executionContext = await this.plannerContext(job, historicalPlanners[0]);
-    for (const planner of historicalPlanners) {
-      const result = planner.plannerResult!;
-      const plan: Plan = { jobId: job.id, id: planner.id, round: planner.planningRound ?? 1, source: planner.planningSource ?? 'model-planner', previousPlanId: planner.previousPlannerTaskId ?? null, trigger: planner.planTrigger ?? { source: 'continuation' }, status: 'SUCCEEDED', guidance: planner.plannerGuidance, objectiveStatus: result.objective_status, plannerResult: result, assessment: result.assessment, generatedTaskIds: result.next_tasks.map(item => item.id), headSha: planner.planTrigger?.currentHeadSha ?? job.headSha, attempt: planner.attempt, maxAttempts: planner.maxAttempts, leaseOwner: null, leaseExpiresAt: null, executionId: null, timeoutMs: planner.timeoutMs, manualPlanning: planner.manualPlanning, createdAt: planner.createdAt, updatedAt: planner.updatedAt };
-      if (!(job.plans ?? []).some(item => item.id === plan.id)) { await this.store.appendPlan(plan); (job.plans ??= []).push(plan); } else continue;
-      const children = result.next_tasks.map(spec => materializePlannerChild(job, plan, spec, executionContext));
-      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) {
-        const spec = result.next_tasks.find(item => item.id === child.id);
-        if (spec?.resolution) await this.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
-        await this.store.appendTask(child); job.tasks.push(child);
-      }
-    }
-  }
+  private async recoverPlannerChildren(job:Job):Promise<void>{ return recoverPlannerChildren(this.store,job,(j,p)=>this.plannerContext(j,p)); }
   private async resolvedContext(job: Job, task: Task, role: ExecutionRole, projectPathOverride?: string): Promise<ExecutionContext> {
     const projectPath = projectPathOverride ?? (this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd());
     return resolveExecutionContext(projectPath, role, {

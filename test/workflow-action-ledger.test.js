@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { WorkflowActionLedger } from '../dist/workflow/action-ledger.js';

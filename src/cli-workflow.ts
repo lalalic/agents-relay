@@ -2,6 +2,7 @@
 import { buildWorkflowUsageIndex, defaultWorkflowDirectory, executableGraphs, whereWorkflowSymbol } from './workflow/usage-index.js';
 import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { GraphRuntime } from './workflow/graph-v2.js';
+import { dispatchWorkflowGraphSync } from './workflow/dispatcher.js';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { verifyAuthoritativeCondition, type AuthoritativePredicate } from './workflow/authoritative-conditions.js';
@@ -42,7 +43,7 @@ export function workflowCliResult(args: readonly string[]): unknown {
       actions: Object.fromEntries([...new Set([...WORKFLOW_EFFECT_NAMES, ...WORKFLOW_MUTATION_NAMES, ...[...graph.nodes.values()].filter(n => n.kind === 'action').map(n => n.semanticId)])].map(id => [id, { id }])),
       events: Object.fromEntries([...new Set([...WORKFLOW_EVENT_NAMES, inputId, ...graph.edges.filter(e => e.kind === 'on' || e.kind === 'emit').map(e => e.semanticId).filter((id): id is string => !!id)])].map(id => [id, { id }])),
     });
-    return { mode: 'dry-run', decision: runtime.evaluateSync({ currentState: state, input: { transport: 'event', id: inputId, payload: {} }, durableFacts: record }) };
+    return { mode: 'dry-run', decision: dispatchWorkflowGraphSync(runtime, {initialState:state,input:{transport:'event',id:inputId,payload:{}},durableFacts:record}) };
   }
   if (verb === 'verify') {
     const path = value('--sqlite');

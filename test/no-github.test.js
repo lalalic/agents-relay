@@ -543,6 +543,7 @@ test('local merge failure records reason and retry, then emits a successful reco
     assert.equal(state.localMerge.status,'failed');
     assert.match(state.localMerge.error,/tracked or index changes/);
     assert.ok(state.localMerge.nextAttemptAt);
+    await store.drainWorkflowEvents(emit);
     assert.equal(events.length,1);
     assert.equal(events[0].type,'job.merge.failed');
     assert.equal(events[0].data.reason,'dirty_target_worktree');
@@ -553,6 +554,7 @@ test('local merge failure records reason and retry, then emits a successful reco
     state=await store.load('local-job');
     const recovered=await reconcileLocalGitCompletion(store,state,repo.head,true,()=>repo.path,emit);
     assert.equal(recovered,true,JSON.stringify((await store.load('local-job')).localMerge));
+    await store.drainWorkflowEvents(emit);
     assert.equal(events[1].type,'job.merge.succeeded');
     assert.equal((await store.load('local-job')).state,'COMPLETED');
   } finally {db.close();repo.close()}

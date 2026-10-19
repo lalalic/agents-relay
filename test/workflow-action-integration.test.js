@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { GraphRuntime } from '../dist/workflow/graph-v2.js';

@@ -65,7 +65,7 @@ export class WorkflowActionLedger {
     const existing = this.trace(attemptKey);
     if (!existing) throw new Error('unreserved action attempt');
     if (existing.outcome !== 'Unknown') return existing;
-    const outcome = conditions.evaluate(existing.conditionId, facts);
+    const outcome = conditions.check(existing.conditionId, facts);
     // Unknown is intentionally retained: no second executor may treat it as a new attempt.
     this.database.prepare('UPDATE workflow_action_trace SET outcome=?, observed_at=? WHERE attempt_key=? AND outcome=?')
       .run(outcome, new Date().toISOString(), attemptKey, 'Unknown');

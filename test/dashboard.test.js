@@ -1001,9 +1001,9 @@ test('main Mermaid file owns safe, validated navigation links', async () => {
   assert.match(main.source, /presentation-only/);
   assert.match(main.source, /START: Job Objective/);
   assert.match(main.source, /Changes Required/);
-  assert.match(main.source, /Escalator workflow/);
-  assert.match(main.source, /linkStyle 8,9,10/);
-  const links = [...main.source.matchAll(/^click\s+([A-Za-z0-9_]+)\s+href\s+"([a-z0-9-]+)\.mmd"/gm)];
+  assert.match(main.source, /Escalation: human action only/);
+  assert.match(main.source, /class trouble,recover,escalation exception/);
+  const links = [...main.source.matchAll(/^\s*click\s+([A-Za-z0-9_]+)\s+href\s+"([a-z0-9-]+)\.mmd"/gm)];
   assert.ok(links.length >= 10);
   for(const link of links) assert.ok(ids.has(link[2]),'invalid target '+link[2]);
   assert.doesNotMatch(dashboardHtml, /const GRAPH_NAV=/);

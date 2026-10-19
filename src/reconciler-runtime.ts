@@ -1,7 +1,6 @@
 import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { executionEventSource, eventSourceId, executionIdFromSource, claimTerminalExecution, terminalExecutionClaimed } from './execution-event-identity.js';
-export { executionEventSource } from './execution-event-identity.js';
-import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
+export { executionEventSource } from './execution-event-identity.js'; import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
 import { classifyChatGptPlatformFailure, classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
@@ -10,8 +9,7 @@ import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
 import type { ExecutionContextRoots } from './execution-context.js';
 import type { AccountUsageOverview } from './usage.js';
-import type { DecisionEngine, DecisionMode } from './decision.js';
-import type { DecisionAuditStore } from './decision-audit.js';
+import type { DecisionEngine, DecisionMode } from './decision.js'; import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import type { LocalMergeEffect } from './local-merge-delivery.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
@@ -198,7 +196,6 @@ export abstract class ReconcilerRuntimeBase {
       if (outcome==='Failed')throw Error('worker start postcondition violated');
       // Unknown remains durable and never authorizes repeating this generation.
     }
-
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
     return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };
   }

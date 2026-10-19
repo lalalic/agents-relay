@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runWorkflowAction } from './cli-workflow-action.js';
 import { workflowCliResult } from './cli-workflow.js';
 import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
@@ -413,22 +414,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'workflow') {
-    if (args[0] === 'action') {
-      // This is an adapter to the canonical domain Action CLI. It does not
-      // grant access to raw Graph effects or arbitrary state terminalization.
-      const operation = arg(args, '--action');
-      const bindings: Record<string,string> = {
-        'task.retry':'retry', 'task.recover':'recover', 'task.cancel':'cancel',
-        'task.unblock':'unblock', 'task.escalate':'escalate',
-        'task.resume-troubleshooter':'resume-troubleshooter',
-      };
-      const delegate=bindings[operation];
-      if (!delegate) throw new Error('workflow action requires a supported Graph-authorized task Action ID');
-      if (!arg(args,'--repo') || !arg(args,'--id') || !arg(args,'--task-id'))
-        throw new Error('workflow action requires --repo, --id and --task-id');
-      await runTaskCommand(delegate,args);
-      return;
-    }
+    if (args[0] === 'action') { await runWorkflowAction(args, operation => runTaskCommand(operation, args)); return; }
     console.log(JSON.stringify(workflowCliResult(args), null, 2)); return;
   }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }

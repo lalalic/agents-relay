@@ -17,11 +17,11 @@ export class ConditionRegistry {
     if (!result) throw new Error(`unknown condition: ${id}`);
     return result;
   }
-  evaluate(id: string, facts: ConditionFacts): ConditionOutcome {
+  check(id: string, facts: ConditionFacts): ConditionOutcome {
     return this.inspect(id).check(facts);
   }
   guard(id: string): (facts: { durableFacts: ConditionFacts }) => boolean {
-    return ({ durableFacts }) => this.evaluate(id, durableFacts) === 'Verified';
+    return ({ durableFacts }) => this.check(id, durableFacts) === 'Verified';
   }
 }
 export function booleanCondition(id: string): ConditionSpec {
@@ -31,7 +31,7 @@ export type EffectVerification = Readonly<{ outcome: ConditionOutcome; actionId:
 export function verifyActionEffect(
   registry: ConditionRegistry, actionId: string, conditionId: string, facts: ConditionFacts,
 ): EffectVerification {
-  return { actionId, conditionId, outcome: registry.evaluate(conditionId, facts) };
+  return { actionId, conditionId, outcome: registry.check(conditionId, facts) };
 }
 export function safeRetryAllowed(outcome: ConditionOutcome): boolean {
   return outcome === 'Failed';

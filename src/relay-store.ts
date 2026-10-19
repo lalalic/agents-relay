@@ -1,3 +1,4 @@
+import { loadRelayJob, listRelayJobs } from './relay-job-snapshot-reads.js';
 import { SQLiteWorkflowOperations } from './relay-workflow-operations.js';
 import { taskLifecycleV2 } from './workflow/definitions-v2.js';
 import { dispatchWorkflowGraphSync } from './workflow/dispatcher.js';
@@ -202,17 +203,8 @@ export class SQLiteRelayStore implements RelayStore {
   async listPublicationEvents(jobId: string): Promise<PublicationEvent[]> {
     return listPublicationEventsFromDatabase(this.db, jobId);
   }
-  async loadJob(jobId: string): Promise<Job | null> {
-    this.assertScope(jobId);
-    const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
-    if (!row?.json) return null; const job = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
-    job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task, job.executionMode));
-    return job;
-  }
-  async listJobs(): Promise<Job[]> {
-    const rows = this.db.prepare(this.scopeJobId ? 'SELECT json FROM job_snapshot WHERE job_id=? ORDER BY job_id' : 'SELECT json FROM job_snapshot ORDER BY job_id').all(...(this.scopeJobId ? [this.scopeJobId] : [])) as unknown as Array<{ json: string }>;
-    return rows.map(row => { const job = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job); job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task, job.executionMode)); return job; });
-  }
+  async loadJob(jobId:string):Promise<Job|null>{ this.assertScope(jobId); return loadRelayJob(this.db,jobId); }
+  async listJobs():Promise<Job[]>{ return listRelayJobs(this.db,this.scopeJobId); }
   async saveJob(job: Job): Promise<void> {
     if (!this.scopeJobId) { this.writeJobSnapshot(job, new Date().toISOString()); return; }
     this.db.exec('BEGIN IMMEDIATE');
@@ -484,27 +476,19 @@ export class SQLiteRelayStore implements RelayStore {
     this.outbox.completeWithReceipt(id, operationKey, status, attempts, detail, new Date().toISOString());
   }
   async retryProjection(id: number, error: string, nextAttemptAt: Date): Promise<void> { this.outbox.retry(id, error, nextAttemptAt); }
-
   async retryProjectionWithReceipt(id: number, operationKey: string, error: string, nextAttemptAt: Date, attempts: number, detail: unknown): Promise<void> {
     this.outbox.retryWithReceipt(id, operationKey, error, nextAttemptAt, attempts, detail, new Date().toISOString());
   }
-
   async deadLetterProjection(id: number, error: string): Promise<void> { this.outbox.deadLetter(id, error); }
-
   async recordProjectionConflict(id: number, diagnostic: ProjectionConflictDiagnostic): Promise<void> { this.outbox.recordConflict(id, diagnostic); }
-
   async listProjectionConflicts(): Promise<ProjectionConflictRecord[]> { return this.outbox.listConflicts(); }
-
   async resolveProjectionConflict(id: number, resolution: ProjectionConflictResolutionRequest): Promise<boolean> { return this.outbox.resolveConflict(id, resolution); }
-
   async conflictProjectionCount(): Promise<number> { return this.outbox.conflictCount(); }
   async pendingProjectionCount(): Promise<number> { return this.outbox.pendingCount(); }
   async terminalProjectionCount(): Promise<number> { return this.outbox.terminalCount(); }
   async recordProjectionReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown): Promise<void> { this.outbox.recordReceipt(operationKey, status, attempts, detail, new Date().toISOString()); }
-
   close(): void { this.db.close(); }
 }
-
 export { relayStoreDirectory } from './local-job-path.js';
 export { relayUnifiedStorePath, resolveUnifiedJobScope, discoverLocalRelayStoreSnapshots } from './relay-store-discovery.js';
 export type { LocalRelayStoreSnapshot } from './relay-store-discovery.js';
