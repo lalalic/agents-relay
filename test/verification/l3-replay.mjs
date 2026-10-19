@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {DatabaseSync} from 'node:sqlite';
 // Deterministic production-ingress replay. External provider and Git effects are disabled.
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve,join} from 'node:path';
@@ -73,6 +74,9 @@ export async function runReplay(scenario) {
       target.executionHistory=[...(target.executionHistory??[]),{id:target.executionId,attempt:target.attempt,startedAt:stamp}];
       return current;
     });
+    const claimed=(await snapshot()).tasks.find(item=>item.id===resolvedTaskId);
+    if(claimed?.executionId && claimed.leaseOwner && store.reserveWorkflowLaunch)
+      await store.reserveWorkflowLaunch({jobId,taskId:resolvedTaskId,executionId:claimed.executionId,attempt:claimed.attempt,leaseOwner:claimed.leaseOwner});
    }
    else if(step.type==='restart') {
     await stop?.(); await runtime.close(); sqlite.close();
@@ -147,7 +151,13 @@ export async function runReplay(scenario) {
   }
   const seen=new Set();
   for(const item of trace) if(!item.progress && item.event==='reconcile'){const stable=JSON.stringify({after:item.after.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),job:item.jobState,merge:item.mergeStatus});if(seen.has(stable))errors.push('NO_PROGRESS_LOOP');seen.add(stable);}
-  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,externalGitAttempts:mergeAttempt,authority:'isolated SQLite via production event bus and reconciler'};
+  const auditDb=new DatabaseSync(join(env.storeDir,'relay.sqlite'),{readOnly:true});
+  const actionTraces=(() => {
+    try{return auditDb.prepare('SELECT execution_id,generation,action_id,condition_id,outcome,attempt_key FROM workflow_action_trace ORDER BY attempt_key').all();}
+    catch{return [];}
+    finally{auditDb.close();}
+  })();
+  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,externalGitAttempts:mergeAttempt,actionTraces,authority:'isolated SQLite via production event bus and reconciler'};
  }finally{await stop?.();await stopObserving();await runtime.close();sqlite.close();env.cleanup();}
 }
 export async function replayFile(path,outputDir){

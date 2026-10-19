@@ -35,6 +35,14 @@ export class LocalAuthorityDurableStore implements DurableStore {
     this.projection = new GitHubProjectionWriter(authority, github, undefined, true);
   }
 
+  async reserveWorkflowLaunch(identity:{jobId:string;taskId:string;executionId:string;attempt:number;leaseOwner:string}):Promise<boolean>{
+    if (!this.authority.reserveWorkflowLaunch)throw Error('authoritative workflow launch ledger unavailable');
+    return this.authority.reserveWorkflowLaunch(identity);
+  }
+  async verifyWorkflowLaunch(jobId:string,taskId:string,executionId:string):Promise<'Verified'|'Failed'|'Unknown'>{
+    if (!this.authority.verifyWorkflowLaunch)throw Error('authoritative workflow launch verifier unavailable');
+    return this.authority.verifyWorkflowLaunch(jobId,taskId,executionId);
+  }
   async commitWorkflowMutationAndEvents(jobId: string, mutation: AtomicJobMutation, events: readonly {key:string;event:EventRecord}[]): Promise<Job> {
     if (!this.authority.commitWorkflowMutationAndEvents) throw new Error('SQLite workflow outbox capability unavailable');
     const committed=await this.authority.commitWorkflowMutationAndEvents(jobId,mutation,events);

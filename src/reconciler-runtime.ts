@@ -192,7 +192,13 @@ export abstract class ReconcilerRuntimeBase {
         task.updatedAt = new Date().toISOString();
       },
     });
-    if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' };
+    if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' }; 
+    if (this.store.verifyWorkflowLaunch && transition.task.executionId) {
+      const outcome=await this.store.verifyWorkflowLaunch(event.job_id,event.task_id,transition.task.executionId);
+      if (outcome==='Failed')throw Error('worker start postcondition violated');
+      // Unknown remains durable and never authorizes repeating this generation.
+    }
+
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
     return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };
   }

@@ -39,6 +39,8 @@ test('three consecutive stage faults each recover via real Troubleshooter and Gr
  assert.equal(result.actual.jobState,'COMPLETED');
  assert.equal(result.trace.at(-1).jobState,'COMPLETED','only Graph reconciliation completes after verified delivery');
  assert.equal(result.externalGitAttempts,2);
+ assert.ok(result.actionTraces.length >= 6, 'Graph-authorized external launches should be audited');
+ assert.ok(result.actionTraces.every(x=>x.outcome==='Verified'), 'All confirmed task.started effects verified against authoritative SQLite');
  assert.deepEqual(result.observedEvents.filter(x=>x.event.startsWith('job.merge.')).map(x=>x.event),['job.merge.failed','job.merge.succeeded']);
  for(const id of stages){
    const failed=result.trace.find(x=>x.event==='task.failed'&&x.after.some(t=>t.id===id&&t.state==='FAILED'));

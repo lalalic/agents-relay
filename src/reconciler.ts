@@ -397,6 +397,13 @@ export class Reconciler extends ReconcilerReviewBase {
     }) ?? null;
     if (!claimedTask) return;
     task = claimedTask;
+    // After the durable execution claim, fence this Graph-selected launch
+    // before invoking the adapter. An Unknown previous attempt must never be
+    // re-launched speculatively. Legacy test stores have no SQLite ledger.
+    if (this.store.reserveWorkflowLaunch && task.executionId && task.leaseOwner) {
+      const reserved=await this.store.reserveWorkflowLaunch({jobId:job.id,taskId:task.id,executionId:task.executionId,attempt:task.attempt,leaseOwner:task.leaseOwner});
+      if (!reserved) throw new Error('already reserved launch attempt: reconcile existing generation');
+    }
     const adapter = this.options.adapters.find(x => x.name === task.adapter);
     if (!adapter) {
       await this.failLaunch(job.id, task.id, task.executionId, 'No adapter ' + task.adapter);

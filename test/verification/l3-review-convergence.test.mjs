@@ -37,6 +37,8 @@ test('review changes-required -> fix -> new SHA -> reviewer fails -> troubleshoo
  assert.equal(result.outcome,'PASS',result.errors.join('; '));
  assert.equal(result.trace.at(-1).jobState,'COMPLETED');
  assert.equal(result.externalGitAttempts,2);
+ assert.ok(result.actionTraces.length >= 5);
+ assert.ok(result.actionTraces.every(x=>x.outcome==='Verified'), 'Reviewer and Worker launches verified by authoritative SQLite');
  assert.deepEqual(result.observedEvents.filter(x=>x.event.startsWith('job.merge.')).map(x=>x.event),['job.merge.failed','job.merge.succeeded']);
  assert.equal(result.trace[9].progress,false,'stale approval of superseded SHA is rejected');
  assert.equal(result.trace[3].after.some(t=>t.id==='review-fix-head-1'&&t.state==='QUEUED'),true);

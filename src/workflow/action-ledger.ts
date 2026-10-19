@@ -30,7 +30,7 @@ export class WorkflowActionLedger {
   /** Authoritative, fail-closed reservation against the durable job_snapshot row. */
   reserveForRunningTask(
     identity: ActionIdentity & { jobId: string; taskId: string; leaseOwner: string; attempt: number },
-    decision: GraphDecision, conditionId: string, now = new Date().toISOString(),
+    decision: GraphDecision, conditionId: string, now = new Date().toISOString(), allowedState: 'RUNNING' | 'QUEUED' = 'RUNNING',
   ): boolean {
     this.database.exec('BEGIN IMMEDIATE');
     try {
@@ -38,13 +38,23 @@ export class WorkflowActionLedger {
       if (!row?.json) throw new Error('authoritative job snapshot unavailable');
       const job = JSON.parse(row.json) as { pause?: {generation: number}; tasks?: Array<{id: string; state: string; executionId: string | null; leaseOwner: string | null; leaseExpiresAt: string | null; attempt: number; executionHistory?: Array<{id: string; attempt: number; startedAt: string}>}> };
       const task = job.tasks?.find(item => item.id === identity.taskId);
-      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || task.attempt !== identity.generation || !task.executionHistory?.some(entry => entry.id === identity.executionId && entry.attempt === identity.generation) || Boolean(job.pause) || !task.leaseExpiresAt || !Number.isFinite(Date.parse(task.leaseExpiresAt)) || !Number.isFinite(Date.parse(now)) || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
+      if (!task || task.state !== allowedState || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || task.attempt !== identity.generation || !task.executionHistory?.some(entry => entry.id === identity.executionId && entry.attempt === identity.generation) || Boolean(job.pause) || !task.leaseExpiresAt || !Number.isFinite(Date.parse(task.leaseExpiresAt)) || !Number.isFinite(Date.parse(now)) || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
         throw new Error('stale execution, owner, attempt or lease: action fenced');
       }
       const created = this.reserve(identity, decision, conditionId);
       this.database.exec('COMMIT');
       return created;
     } catch (error) { this.database.exec('ROLLBACK'); throw error; }
+  }
+  /** A dispatch launch is authorized while the Task is QUEUED with a claimed
+   * execution lease; task.started later transitions it to RUNNING. */
+  reserveForClaimedDispatch(
+    identity: ActionIdentity & {jobId:string;taskId:string;leaseOwner:string;attempt:number},
+    decision: GraphDecision, conditionId: string,
+  ): boolean {
+    if (!decision.accepted || decision.source!=='QUEUED' || decision.target!=='QUEUED'
+      || identity.actionId!=='effect.launchTask')throw Error('dispatch reservation requires canonical QUEUED Graph launch decision');
+    return this.reserveForRunningTask(identity,decision,conditionId,new Date().toISOString(),'QUEUED');
   }
   trace(attemptKey: string): ActionTrace | null {
     const row = this.database.prepare('SELECT * FROM workflow_action_trace WHERE attempt_key=?').get(attemptKey) as Record<string, unknown> | undefined;

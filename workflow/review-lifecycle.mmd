@@ -101,6 +101,10 @@ autoMergePending -->|false| approved
 pending -->|on: review.changes_required| fixPending
 fixPending --> changes
 
+%% A failed Reviewer execution may recover with a new Execution ID while
+%% the Review lifecycle remains STARTED. This is a legal re-start event;
+%% Reconciler still fences stale execution generations and immutable head SHA.
+started -->|on: review.started| started
 started -->|on: review.approved| autoMergeStarted
 autoMergeStarted -->|true| mergeStarted
 mergeStarted --> approved

@@ -85,6 +85,8 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
 export type AtomicJobMutation = (job: Job) => Job;
 
 export interface DurableStore {
+  reserveWorkflowLaunch?(identity: {jobId: string; taskId: string; executionId: string; attempt: number; leaseOwner: string}): Promise<boolean>;
+  verifyWorkflowLaunch?(jobId: string, taskId: string, executionId: string): Promise<'Verified'|'Failed'|'Unknown'>;
   /** Atomic SQLite-authoritative state mutation plus outbox enqueue. */
   commitWorkflowMutationAndEvents?(jobId: string, mutation: AtomicJobMutation, events: readonly { key: string; event: EventRecord }[]): Promise<Job>;
   /** Replay stable event IDs; failed publish leaves outbox pending. */

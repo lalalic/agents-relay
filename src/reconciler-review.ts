@@ -437,6 +437,10 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt };
       job.updatedAt = reviewUpdatedAt; await this.store.saveTask(task); await this.store.saveJob(job);
     }
+    if (event.type==='review.started' && this.store.verifyWorkflowLaunch) {
+      const outcome=await this.store.verifyWorkflowLaunch(job.id,task.id,task.executionId!);
+      if (outcome==='Failed')throw Error('reviewer start postcondition violated');
+    }
     // Review approval records evidence only. The subsequent Graph reconcile
     // drives durable local Git merge delivery and terminalization.
     if (outcome === 'approved') needsReconcile = true;
