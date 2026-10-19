@@ -7,6 +7,7 @@ blocked["state: BLOCKED"]
 succeeded["state: SUCCEEDED"]
 failed["state: FAILED"]
 cancelled["state: CANCELLED"]
+platformFallbackSafe["guard: platformFallbackSafe"]
 
 depSat["guard: dependenciesSatisfied"]
 depUnsat["guard: dependenciesUnsatisfied"]
@@ -124,6 +125,13 @@ queued -->|on: effect.launchTask.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
+queued -->|on: worker.platform_failure| platformFallbackSafe
+platformFallbackSafe -->|true| platformFallbackClearFailure
+platformFallbackClearFailure["action: mutation.preparePlatformFallback"]
+platformFallbackClearFailure --> queued
+platformFallbackSafe -->|false| platformFallbackQuarantine
+platformFallbackQuarantine["action: mutation.quarantinePlatformFailure"]
+platformFallbackQuarantine --> blocked
 queued -->|on: planner.unavailable| plannerUnavailableMark
 plannerUnavailableMark --> failed
 queued -->|on: execution.orphaned| orphanRetryAvailable

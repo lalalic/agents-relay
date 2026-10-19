@@ -41,6 +41,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
   retryAvailable: boolGuard('retryAvailable'),
   autonomousJob: boolGuard('autonomousJob'),
+  platformFallbackSafe: boolGuard('platformFallbackSafe'),
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {

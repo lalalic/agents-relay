@@ -49,6 +49,8 @@ const taskCases = [
   ['QUEUED','watchdog.failed',{},'FAILED'],
   ['QUEUED','worker.delivery_failed',{},'FAILED'],
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
+  ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
+  ['QUEUED','worker.platform_failure',{platformFallbackSafe:false},'BLOCKED'],
   ['QUEUED','cancel',{},'CANCELLED'],
   ['RUNNING','task.blocked',{},'BLOCKED'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
@@ -123,6 +125,26 @@ test('planner unavailable is a canonical Task graph failure without attempt mani
   assert.equal(current.state,'FAILED');
   assert.equal(current.attempt,0);
   assert.equal(current.error,'No objective planner configured');
+});
+
+test('platform fallback graph clears routing while preserving identity and execution history', async () => {
+  const current={...task('QUEUED'),attempt:1,maxAttempts:3,leaseOwner:'relay',leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionId:'exec-chat',executionHistory:[{id:'exec-chat',attempt:1,startedAt:'2026-09-23T00:00:00.000Z'}],routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:'2026-09-23T00:00:00.000Z'},workerSelection:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',capabilities:['model'],selectedBy:'test',selectedAt:'2026-09-23T00:00:00.000Z'},error:'platform rejected'};
+  const decision=await transitionTaskEvent(current,'worker.platform_failure',{platformFallbackSafe:true});
+  assert.equal(decision.target,'QUEUED');
+  assert.equal(current.id,'task-graph');
+  assert.equal(current.executionId,null);
+  assert.equal(current.routing,undefined);
+  assert.equal(current.workerSelection,undefined);
+  assert.equal(current.executionHistory[0].id,'exec-chat');
+  assert.equal(current.error,null);
+
+  const unknown={...current,state:'QUEUED',attempt:1,maxAttempts:3,executionId:'exec-unknown',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:'2026-09-23T00:00:00.000Z'},workerSelection:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',capabilities:['model'],selectedBy:'test',selectedAt:'2026-09-23T00:00:00.000Z'},platformFailure:{classification:'start_ack_timeout',executionId:'exec-unknown',route:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',provider:'chatgpt',model:'account-defaults'},evidence:'start ack expired',safeToReroute:false,at:'2026-09-23T00:00:00.000Z'}};
+  const quarantined=await transitionTaskEvent(unknown,'worker.platform_failure',{platformFallbackSafe:false});
+  assert.equal(quarantined.target,'BLOCKED');
+  assert.equal(unknown.failureReason,'worker_outcome_unknown');
+  assert.equal(unknown.executionId,null);
+  assert.equal(unknown.routing,undefined);
+  assert.equal(unknown.platformFailure.classification,'start_ack_timeout');
 });
 
 test('Job reconcile never invokes GitHub actions; local completion owns the terminal gate', () => {

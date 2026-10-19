@@ -957,7 +957,7 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,50));
-  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.match(durable.error,/worker_start_timeout/); await stop();
+  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'BLOCKED'); assert.equal(durable.failureReason,'worker_outcome_unknown'); assert.equal(durable.platformFailure?.classification,'start_ack_timeout'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
 
 test('ChatGPT reviewer uses the same start acknowledgement policy as normal ChatGPT tasks', async () => {
@@ -987,7 +987,7 @@ test('ChatGPT reviewer uses the same start acknowledgement policy as normal Chat
 
 
 
-test('reviewer start acknowledgement timeout automatically wakes Troubleshooter recovery', async () => {
+test('reviewer start acknowledgement timeout quarantines the unknown ChatGPT submission outcome', async () => {
   const contextRoot=await mkdtemp(join(tmpdir(),'agents-relay-reviewer-recovery-context-')); await mkdir(join(contextRoot,'agents')); await writeFile(join(contextRoot,'agents','reviewer.agent.md'),'---\nname: reviewer\n---\nReview the managed task.\n');
   const work=task('work','SUCCEEDED'); const store=new InMemoryStore({...job([work]),headSha:'sha-review-recovery'}); const bus=new MemoryEventBus();
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
@@ -996,10 +996,11 @@ test('reviewer start acknowledgement timeout automatically wakes Troubleshooter 
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,100));
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
-  assert.equal(review?.state,'FAILED');
-  assert.equal(review?.failureReason,'worker_start_timeout');
+  assert.equal(review?.state,'BLOCKED');
+  assert.equal(review?.failureReason,'worker_outcome_unknown');
+  assert.equal(review?.platformFailure?.executionId,review?.executionHistory?.[0]?.id);
   const recovery=saved.tasks.find(item=>item.agentName==='troubleshooter'&&item.parentTaskId===review?.id);
-  assert.ok(recovery,'reviewer start-ack failure must automatically create Troubleshooter work');
+  assert.equal(recovery,undefined,'unknown ChatGPT submission outcome is quarantined without automatic replay or unnecessary Troubleshooter work');
   await stop(); await reconciler.close(); await rm(contextRoot,{recursive:true,force:true});
 });
 
@@ -1143,7 +1144,7 @@ test('projection injection survives worker launch for its later checkpoint', asy
   }
 });
 
-test('Browser Workspace transient delivery failure retries the same Task before exposing FAILED', async () => {
+test('ChatGPT Browser Workspace failure with ChatGPT-only requirements is quarantined without same-route replay', async () => {
   const t=task('browser-runtime-retry');
   t.adapter='chatgpt';
   t.state='QUEUED';
@@ -1167,14 +1168,55 @@ test('Browser Workspace transient delivery failure retries the same Task before 
   await new Promise(resolve=>setTimeout(resolve,20));
   const durable=await store.load('j');
   const original=durable.tasks.find(item=>item.id===t.id);
-  assert.equal(original.state,'QUEUED');
+  assert.equal(original.state,'BLOCKED');
   assert.equal(original.attempt,1);
   assert.equal(original.executionId,null);
-  assert.equal(original.error,null);
-  assert.equal(original.failureReason,undefined);
-  assert.equal(durable.tasks.some(item=>item.agentName==='troubleshooter'),false);
+  assert.match(original.error,/browser-workspace runtime dependency unavailable/);
+  assert.equal(original.failureReason,'worker_platform_fallback_unavailable');
+  assert.equal(original.platformFailure?.classification,'browser_workspace_unavailable');
+  assert.equal(original.platformFailure?.executionId,'browser-exec-1');
+  assert.equal(original.routing,undefined);
+  assert.equal(original.workerSelection,undefined);
+  assert.equal(original.routingExclusions?.[0]?.workerId,'chatgpt');
   assert.ok(events.some(event=>event.type==='task.failed' && event.data?.reason==='browser_workspace_unavailable'));
-  assert.ok(events.some(event=>event.type==='task.runtime_retry'));
+  assert.ok(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'));
+  assert.equal(events.some(event=>event.type==='task.runtime_retry'),false);
+  await reconciler.close(); await stopEvents();
+});
+
+test('confirmed ChatGPT platform rejection routes the same Task to a compatible Codex worker', async () => {
+  const t=task('chat-platform-reroute');
+  t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
+  t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
+  t.executionHistory=[{id:'chat-platform-exec',attempt:1,startedAt:now()}];
+  t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
+  t.workerSelection={workerId:'fake-chatgpt',adapter:'chatgpt',capabilities:['model','chatgpt'],selectedBy:'test',selectedAt:now()};
+  t.workerRequirements={capabilities:[]};
+  const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
+  const adapter=new FakeAdapter(); const stopEvents=await bus.subscribe('j',async event=>events.push(event));
+  class FailureHarness extends Reconciler {
+    trigger(){return this.failLaunch('j',t.id,t.executionId,'model_unavailable: model is unsupported','delivery');}
+    routeForRetry(task){return this.routeTaskForExecution(job([task]),task);}
+  }
+  const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),adapter],eventBus:bus,maxConcurrent:0});
+  await reconciler.trigger(); await new Promise(resolve=>setTimeout(resolve,30));
+  let saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.routing,undefined);
+  await reconciler.routeForRetry(saved);
+  saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
+  assert.equal(saved.id,t.id);
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.adapter,'codex');
+  assert.equal(saved.routing?.provider,'openai');
+  assert.equal(saved.workerSelection?.adapter,'codex');
+  assert.equal(saved.executionHistory?.length,1);
+  assert.equal(saved.executionHistory?.[0]?.id,'chat-platform-exec');
+  assert.equal(saved.platformFailure?.classification,'model_unavailable');
+  assert.equal(saved.platformFailure?.executionId,'chat-platform-exec');
+  assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
+  assert.equal(events.filter(event=>event.type==='task.rerouting').length,1);
+  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
   await reconciler.close(); await stopEvents();
 });
 

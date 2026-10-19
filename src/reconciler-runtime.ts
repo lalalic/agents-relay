@@ -1,6 +1,6 @@
 import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
-import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
+import { classifyChatGptPlatformFailure, classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
@@ -17,6 +17,7 @@ import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
+import { codexFallbackCompatible, persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
 export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
@@ -238,22 +239,31 @@ export abstract class ReconcilerRuntimeBase {
     return true;
   }
   protected async failLaunch(jobId: string, taskId: string, executionId: string | null, message: string, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
+    const currentJob = await this.store.load(jobId);
+    const currentTask = currentJob.tasks.find(task => task.id === taskId);
+    const platformFailure = currentTask?.adapter === 'chatgpt' ? classifyChatGptPlatformFailure(message, phase) : undefined;
     const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
       : /BROWSER_WORKSPACE_UNAVAILABLE|browser-workspace runtime dependency unavailable|browser-workspace session start returned no session_id|no close frame received or sent/i.test(message)
         ? 'browser_workspace_unavailable'
         : undefined;
     const claim = executionId ?? `${jobId}:${taskId}`;
-    if (this.launchFailureClaims.has(claim)) return;
-    this.launchFailureClaims.add(claim);
+    if (this.launchFailureClaims.has(claim)) return; this.launchFailureClaims.add(claim);
     const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000);
     cleanup.unref();
-    const workflowEvent = phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
-    const transition = await this.taskTransitions.apply(jobId, taskId, workflowEvent, {
+    const workflowEvent = platformFailure ? 'worker.platform_failure' : phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
+    if (platformFailure && executionId) {
+      const live = this.live.get(taskId);
+      if (live?.executionId === executionId) { live.controller.abort(); live.execution.cancel(); this.clearExecution(taskId, executionId); }
+    }
+    const platformWorkerCompatible = Boolean(platformFailure?.safeToReroute && currentTask && !(currentTask.agentName === 'reviewer' && this.options.reviewer?.threadId) && codexFallbackCompatible(currentTask, this.options.adapters, await this.store.listAgents()));
+    const transition = await this.taskTransitions.apply(jobId, taskId, platformFailure ? 'worker.platform_failure' : workflowEvent, {
       eligible: (_job, task) => task.executionId === executionId,
-      mutate: (_job, task) => {
-        this.clearExecution(task.id, executionId);
-        task.error = `Worker ${phase} failed: ${message}`;
-        task.failureReason = failureReason;
+      facts: (_job, task) => ({ platformFallbackSafe: Boolean(platformFailure?.safeToReroute && platformWorkerCompatible && task.attempt < task.maxAttempts) }),
+      mutate: (_job, task, decision) => {
+        if (platformFailure) persistChatGptPlatformFailure(task, currentTask, executionId, platformFailure.classification, message, platformFailure.safeToReroute);
+        if (!platformFailure) this.clearExecution(task.id, executionId);
+        task.error = decision.target === 'QUEUED' ? null : `Worker ${phase} failed: ${message}`;
+        task.failureReason = decision.target === 'BLOCKED' ? (task.platformFailure?.safeToReroute ? 'worker_platform_fallback_unavailable' : 'worker_outcome_unknown') : failureReason;
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
       },
@@ -273,17 +283,7 @@ export abstract class ReconcilerRuntimeBase {
       ));
       return;
     }
-    let runtimeRetry: Task | null = null;
-    if (failureReason === 'browser_workspace_unavailable' && transition.task.attempt < transition.task.maxAttempts) {
-      const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
-      if (current?.state === 'FAILED' && current.failureReason === failureReason && current.attempt === transition.task.attempt) {
-        await applyTaskRetryAction(current);
-        current.routing = undefined;
-        current.workerSelection = undefined;
-        await this.store.saveTask(current);
-        runtimeRetry = current;
-      }
-    }
+    const runtimeRetry = transition.decision.target === 'QUEUED' ? transition.task : null;
     const event = eventFor(
       jobId,
       taskId,
@@ -292,14 +292,14 @@ export abstract class ReconcilerRuntimeBase {
       'failed',
       transition.task.error ?? `Worker ${phase} failed: ${message}`,
       'user',
-      { phase, reason: failureReason, workflowEvent },
+      { phase, reason: failureReason, workflowEvent, ...(transition.task.platformFailure ? { platformFailure: transition.task.platformFailure } : {}) },
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     this.detach(this.emit(event), jobId, taskId, 'worker failure event');
     if (runtimeRetry) {
       this.detach(this.emit(eventFor(jobId, taskId, runtimeRetry.parentTaskId,
-        'task.runtime_retry', 'queued', 'Browser Workspace runtime unavailable; retrying the same Task',
-        'orchestrator', { previousFailure: failureReason, attempt: runtimeRetry.attempt, maxAttempts: runtimeRetry.maxAttempts })),
+        'task.rerouting', 'queued', 'ChatGPT platform rejection recorded; routing the same Task through Execution Router',
+        'orchestrator', { previousFailure: transition.task.platformFailure?.classification, executionId, attempt: runtimeRetry.attempt, maxAttempts: runtimeRetry.maxAttempts })),
       jobId, taskId, 'runtime retry event');
       this.detach(this.eventCoordinator.accept({ jobId, reason: 'browser-workspace-runtime-retry' }), jobId, taskId, 'runtime retry reconcile wake');
       return;

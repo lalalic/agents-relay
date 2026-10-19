@@ -37,6 +37,23 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
   if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
   if (mutation === 'mutation.markStartupOrphanedExhausted') task.error = 'Orphaned after relayd restart after maximum attempts';
   if (mutation === 'mutation.markPlannerUnavailable') task.error = 'No objective planner configured';
+  if (mutation === 'mutation.preparePlatformFallback') {
+    task.error = null;
+    task.failureReason = undefined;
+    task.routing = undefined;
+    task.workerSelection = undefined;
+    task.leaseOwner = null;
+    task.leaseExpiresAt = null;
+    task.executionId = null;
+  }
+  if (mutation === 'mutation.quarantinePlatformFailure') {
+    task.routing = undefined;
+    task.workerSelection = undefined;
+    task.leaseOwner = null;
+    task.leaseExpiresAt = null;
+    task.executionId = null;
+    task.failureReason = task.platformFailure?.safeToReroute ? 'worker_platform_fallback_unavailable' : 'worker_outcome_unknown';
+  }
 }
 
 

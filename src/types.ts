@@ -159,7 +159,15 @@ export type Task = {
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
   recoveryContext?: { failureKind: string; reason: string; evidence?: string; recoveryTaskId: string; at: string; reroute: boolean };
-  routingExclusions?: Array<{ provider: string; model: string; profile?: string; reason: string; at: string }>;
+  routingExclusions?: Array<{ provider: string; model: string; profile?: string; workerId?: string; adapter?: WorkerAdapterName; reason: string; at: string }>;
+  platformFailure?: {
+    classification: 'adapter_failure' | 'transport_failure' | 'launch_failure' | 'start_ack_timeout' | 'browser_workspace_unavailable' | 'mcp_login_required' | 'project_setup_unavailable' | 'model_unavailable' | 'outcome_unknown';
+    executionId: string;
+    route: { workerId: string; adapter: WorkerAdapterName; provider: string; model: string; profile?: string };
+    evidence: string;
+    safeToReroute: boolean;
+    at: string;
+  };
   chatgptThreadDelivery?: ChatGptThreadDelivery;
   interactiveInvocation?: import('./interactive-invocation.js').InteractiveInvocation;
   manualStateOverrides?: ManualTaskStateOverride[];
