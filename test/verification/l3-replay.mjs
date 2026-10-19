@@ -9,6 +9,8 @@ import {LocalAuthorityDurableStore} from '../../dist/local-authority-store.js';
 import {InMemoryStore} from '../../dist/store.js';
 import {MemoryEventBus,eventFor} from '../../dist/events.js';
 import {Reconciler,executionEventSource} from '../../dist/reconciler.js';
+import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js';
+import {tryTransitionTaskEvent,dependencyReady} from '../../dist/scheduler.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
 const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
@@ -19,25 +21,78 @@ export async function runReplay(scenario) {
  let sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
  let store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  const bus=new MemoryEventBus();
- let runtime=new Reconciler(store,{owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true});
+ const observedEvents=[];
+ const stopObserving=await bus.subscribeAll(async event=>{observedEvents.push({event:event.type,taskId:event.task_id,source:event.source?.id??null});});
+ let mockNow=Date.now();
+ let mergeAttempt=0;
+ const simulatedGitEffect=scenario.mergeOutcomes ? (_repoPath,receipt)=>{
+   const outcome=scenario.mergeOutcomes[mergeAttempt++];
+   if(outcome==='failed')throw Error('L3 external Git mock: deterministic merge failure');
+   if(outcome!=='succeeded')throw Error('Unexpected or missing external Git mock result');
+   return {sourceSha:receipt.sourceSha??scenario.headSha??'mock-head',mergedCommitSha:`mock-merge-${mergeAttempt}`};
+ } : undefined;
+ const runtimeOptions={owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,now:new Date(mockNow),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
+ let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {
   const tasks=(scenario.tasks??[{id:'a'},{id:'b',dependencies:['a']}]).map(item=>task(item.id,item.dependencies??[],item.state));
   if(new Set(tasks.map(item=>item.id)).size!==tasks.length || tasks.some(item=>item.dependencies.some(dep=>!tasks.some(other=>other.id===dep)))) throw Error('invalid task dependencies');
-  await store.saveJob({id:jobId,title:scenario.id,repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:scenario.executionMode??'fixed',autoMerge:false,reviewEnabled:false,createdAt:stamp,updatedAt:stamp,tasks});
+  await store.saveJob({id:jobId,title:scenario.id,repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:scenario.executionMode??'fixed',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
+   ...(scenario.headSha?{headSha:scenario.headSha}:{}),
+   ...(scenario.mergeOutcomes?{localMerge:{sourceRef:'refs/heads/mock-source',targetRef:'refs/heads/main',status:'pending',sourceSha:scenario.headSha??'mock-head',attempts:0}}:{}),
+   createdAt:stamp,updatedAt:stamp,tasks});
   stop=await runtime.watch(jobId);
   const snapshot=async()=>await sqlite.loadJob(jobId);
   let prior=await snapshot();
   for(let index=0;index<scenario.steps.length;index++) {
    const step=scenario.steps[index];
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   const resolveTaskId=async(value)=>{
+     if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
+     if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
+     return value??'a';
+   };
+   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','task.recover','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
+   else if(step.type==='task.recover') {
+    const resolvedTaskId=await resolveTaskId(step.taskId);
+    const result=await dispatchTaskAction(store,{id:TASK_RECOVER_ACTION,jobId,taskId:resolvedTaskId,recoveryTaskId:step.recoveryTaskId??`troubleshoot-${resolvedTaskId}`,recoveryDiagnosis:{failureKind:'task_failure',reason:step.reason??'L3 controlled recovery',evidence:'canonical event failure',reroute:false,excludeCurrentRoute:false}});
+    if(result.task.state!=='QUEUED')throw Error('recover action did not requeue original Task');
+   }
+   else if(step.type==='mock.claim') {
+    // External provider/adapter claim is simulated; legality is decided by the production Graph.
+    // Reconciler still processes all terminal events through its real ingress and SQLite.
+    const resolvedTaskId=await resolveTaskId(step.taskId);
+    await store.mutateJob(jobId,current=>{
+      const target=current.tasks.find(item=>item.id===resolvedTaskId);
+      if(!target || target.state!=='QUEUED' || !dependencyReady(target,new Map(current.tasks.map(t=>[t.id,t])))) throw Error('mock provider cannot claim non-dispatchable Task');
+      const decision=tryTransitionTaskEvent(target,'dispatch',{dispatchable:true});
+      if(!decision.accepted || !decision.actions.includes('effect.launchTask'))throw Error('canonical Graph rejected mock dispatch');
+      target.attempt+=1;
+      target.executionId=step.executionId??`mock-exec-${target.id}-${target.attempt}`;
+      target.leaseOwner='l3-mock-provider';target.leaseExpiresAt='2099-01-01T00:00:00.000Z';
+      target.executionHistory=[...(target.executionHistory??[]),{id:target.executionId,attempt:target.attempt,startedAt:stamp}];
+      return current;
+    });
+   }
    else if(step.type==='restart') {
     await stop?.(); await runtime.close(); sqlite.close();
     sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
     store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
-    runtime=new Reconciler(store,{owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true});
+    runtime=new Reconciler(store,runtimeOptions);
     stop=await runtime.watch(jobId);
+   }
+   else if(step.type==='mock.clock.advance') {
+     mockNow += step.millis??60000;
+     runtimeOptions.now=new Date(mockNow);
+     await runtime.reconcile(jobId);
+   }
+   else if(step.type==='job.head.changed') {
+     await store.mutateJob(jobId,current=>{
+       if(!step.headSha)throw Error('head change requires explicit SHA');
+       current.headSha=step.headSha;
+       current.updatedAt=new Date().toISOString();
+       return current;
+     });
    }
    else if(step.type.startsWith('job.merge.')) {
     const current=await snapshot();
@@ -47,11 +102,32 @@ export async function runReplay(scenario) {
     await sqlite.saveJob(current);
    }
    else {
-    const taskId=step.taskId??(step.type.startsWith('review.')?'review':'a');
+    const taskId=await resolveTaskId(step.taskId??(step.type.startsWith('review.')?'@review':'a'));
     const source=executionEventSource(jobId,taskId,step.executionId??'exec-a');
     await bus.publish(eventFor(jobId,taskId,null,step.type,step.type==='task.failed'?'failed':'succeeded',step.type,'orchestrator',step.data??{}, {id:source}));
    }
-   if(step.type!=='restart') await runtime.idle();
+   if(step.type!=='restart') {
+     await runtime.idle();
+     // EventCoordinator may detach a reconciliation after event acceptance.
+     // Wait for the authoritative SQLite state, never a synthetic trace flag.
+     const terminalStates={'task.started':'RUNNING','task.completed':'SUCCEEDED','task.failed':'FAILED'};
+     const checkedTaskId=await resolveTaskId(step.taskId);
+     const currentBefore=prior.tasks.find(t=>t.id===checkedTaskId);
+     const staleGeneration=Boolean(step.executionId && currentBefore?.executionId!==step.executionId);
+     const eligibleBefore=step.type==='task.started' ? currentBefore?.state==='QUEUED' : currentBefore?.state==='RUNNING' || (step.type==='task.failed' && currentBefore?.state==='QUEUED' && !step.executionId);
+     const expectedState=!step.expectIgnored && !staleGeneration && eligibleBefore ? terminalStates[step.type]:undefined;
+     if(expectedState){
+       const taskId=await resolveTaskId(step.taskId);
+       let progressed=false;
+       for(let check=0;check<40;check++){
+         const observed=await snapshot();
+         if(observed.tasks.find(item=>item.id===taskId)?.state===expectedState){progressed=true;break;}
+         await runtime.idle();
+         await new Promise(resolve=>setTimeout(resolve,5));
+       }
+       if(!progressed && !step.allowUnverified)throw Error(`Canonical event ${step.type} not observed as ${expectedState} in SQLite for ${taskId}; final=${JSON.stringify((await snapshot()).tasks.find(t=>t.id===taskId))}`);
+     }
+   }
    const observed=await snapshot();
    trace.push({index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
@@ -71,8 +147,8 @@ export async function runReplay(scenario) {
   }
   const seen=new Set();
   for(const item of trace) if(!item.progress && item.event==='reconcile'){const stable=JSON.stringify({after:item.after.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),job:item.jobState,merge:item.mergeStatus});if(seen.has(stable))errors.push('NO_PROGRESS_LOOP');seen.add(stable);}
-  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,authority:'isolated SQLite via production event bus and reconciler'};
- }finally{await stop?.();await runtime.close();sqlite.close();env.cleanup();}
+  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,externalGitAttempts:mergeAttempt,authority:'isolated SQLite via production event bus and reconciler'};
+ }finally{await stop?.();await stopObserving();await runtime.close();sqlite.close();env.cleanup();}
 }
 export async function replayFile(path,outputDir){
  const scenario=JSON.parse(readFileSync(path,'utf8'));

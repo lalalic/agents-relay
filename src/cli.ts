@@ -412,7 +412,25 @@ async function main(): Promise<void> {
     });
     return;
   }
-  if (command === 'workflow') { console.log(JSON.stringify(workflowCliResult(args), null, 2)); return; }
+  if (command === 'workflow') {
+    if (args[0] === 'action') {
+      // This is an adapter to the canonical domain Action CLI. It does not
+      // grant access to raw Graph effects or arbitrary state terminalization.
+      const operation = arg(args, '--action');
+      const bindings: Record<string,string> = {
+        'task.retry':'retry', 'task.recover':'recover', 'task.cancel':'cancel',
+        'task.unblock':'unblock', 'task.escalate':'escalate',
+        'task.resume-troubleshooter':'resume-troubleshooter',
+      };
+      const delegate=bindings[operation];
+      if (!delegate) throw new Error('workflow action requires a supported Graph-authorized task Action ID');
+      if (!arg(args,'--repo') || !arg(args,'--id') || !arg(args,'--task-id'))
+        throw new Error('workflow action requires --repo, --id and --task-id');
+      await runTaskCommand(delegate,args);
+      return;
+    }
+    console.log(JSON.stringify(workflowCliResult(args), null, 2)); return;
+  }
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'review') { const [action, ...reviewArgs] = args; await runReviewCommand(action ?? '', reviewArgs); return; }

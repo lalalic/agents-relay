@@ -65,11 +65,21 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return schedule(await this.store.load(jobId));
   }
+  /** Drain SQLite workflow events with transport failure propagation.
+   * The outbox retains unacknowledged events for restart replay. */
+  private async drainWorkflowOutbox(): Promise<number> {
+    if (!this.store.drainWorkflowEvents || (!this.options.eventBus && !this.options.emit)) return 0;
+    return this.store.drainWorkflowEvents(async event => {
+      if (this.options.eventBus) await this.options.eventBus.publish(event);
+      if (this.options.emit) await this.options.emit(event);
+    });
+  }
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
     this.reconciling = true;
     try {
       const job = await this.store.load(jobId);
+      await this.drainWorkflowOutbox();
       for (const live of [...this.live.values()]) if (live.jobId === jobId && job.tasks.some(task => task.id === live.taskId && task.state === 'BLOCKED')) this.cancelExecutionGeneration(jobId, live.taskId, live.executionId);
       const previousState = job.state;
       const lifecycleFingerprint = (value: Job): string => `${value.state}|${value.tasks.map(task => `${task.id}:${task.state}`).join(',')}`;
@@ -170,8 +180,10 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.ensureFinalReview(finalState, headSha);
       await this.dispatchExecutableTasks(jobId);
       finalState = await this.store.load(jobId);
-      if (await reconcileLocalGitCompletion(this.store, finalState, headSha,
-        this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event))) return this.store.load(jobId);
+      const localMergeCompleted = await reconcileLocalGitCompletion(this.store, finalState, headSha,
+        this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event), this.options.localMergeEffect, () => (this.options.now ?? new Date()).getTime());
+      await this.drainWorkflowOutbox();
+      if (localMergeCompleted) return this.store.load(jobId);
       await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
         const outcomes = await this.workflowEffects.execute([actionId as 'effect.mergePullRequest' | 'effect.cancelActiveTasks' | 'effect.cleanupJobWorktree'], { jobId: finalState.id, transitionKey: `reconcile:${headSha ?? 'no-head'}`, data: { headSha } });
         await this.applyJobEffectOutcomes(finalState, outcomes);

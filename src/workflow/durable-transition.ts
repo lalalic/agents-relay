@@ -48,11 +48,20 @@ export class DurableTaskTransitionRuntime {
         return null;
       }
       const from = task.state;
+      const previousUpdatedAt = task.updatedAt;
       const decision = tryTransitionTaskEvent(task, event, options.facts?.(job, task) ?? {});
       if (!decision.accepted || !decision.target) {
         return { job, task, from, decision };
       }
       await options.mutate?.(job, task, decision);
+      // The local SQLite writer rejects stale snapshots. Wall-clock timestamps may
+      // collide or move backwards across rapid start/terminal events; ensure the
+      // graph-selected transition has a strictly newer version before saving.
+      const previous = Date.parse(previousUpdatedAt);
+      const proposed = Date.parse(task.updatedAt);
+      if (Number.isFinite(previous) && (!Number.isFinite(proposed) || proposed <= previous)) {
+        task.updatedAt = new Date(previous + 1).toISOString();
+      }
       await this.store.saveTask(task);
       observability().record({
         stage: 'transition',

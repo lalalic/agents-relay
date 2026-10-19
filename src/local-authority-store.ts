@@ -1,3 +1,4 @@
+import type { EventRecord } from './types.js';
 import type { AgentRegistration, Job, Plan, Task } from './types.js';
 import type { AtomicJobMutation, DurableStore, Comment, PullRequestState } from './store.js';
 import { GitHubProjectionWriter } from './projected-store.js';
@@ -32,6 +33,17 @@ export class LocalAuthorityDurableStore implements DurableStore {
     readonly noGitHub = false,
   ) {
     this.projection = new GitHubProjectionWriter(authority, github, undefined, true);
+  }
+
+  async commitWorkflowMutationAndEvents(jobId: string, mutation: AtomicJobMutation, events: readonly {key:string;event:EventRecord}[]): Promise<Job> {
+    if (!this.authority.commitWorkflowMutationAndEvents) throw new Error('SQLite workflow outbox capability unavailable');
+    const committed=await this.authority.commitWorkflowMutationAndEvents(jobId,mutation,events);
+    publishLocalCommit(committed);
+    return structuredClone(committed);
+  }
+  async drainWorkflowEvents(publish: (event: EventRecord)=>Promise<void>): Promise<number> {
+    if (!this.authority.drainWorkflowEvents) throw new Error('SQLite workflow outbox capability unavailable');
+    return this.authority.drainWorkflowEvents(publish);
   }
 
   /** Queue one retryable PR merge; do not mutate Job lifecycle until external confirmation. */

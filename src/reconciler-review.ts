@@ -18,6 +18,9 @@ import { codexFallbackRouting, quarantineUnavailableCodexFallback } from './chat
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected abstract launch(job: Job, task: Task): Promise<void>;
   protected async currentHeadSha(job: Job): Promise<string | null> {
+    // Tests may replace the external Git effect entirely; in that case its
+    // immutable input SHA is already present in the authoritative Job.
+    if (this.options.noGitHub && this.options.localMergeEffect) return job.headSha ?? job.review?.headSha ?? null;
     // GitHub PR head facts are audit-only. Source identity is local Git.
     if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
     try {

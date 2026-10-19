@@ -1,3 +1,5 @@
+import { DurableWorkflowPublication } from './workflow/durable-publication.js';
+import type { EventRecord } from './types.js';
 import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
 import type { PullRequestState } from './store.js';
@@ -37,6 +39,8 @@ export type PullRequestFacts = {
   observedAt: string;
 };
 export interface RelayStore {
+  commitWorkflowMutationAndEvents?(jobId: string, mutation: (job: Job) => Job, events: readonly {key: string; event: EventRecord}[]): Promise<Job>;
+  drainWorkflowEvents?(publish: (event: EventRecord) => Promise<void>): Promise<number>;
   loadJob(jobId: string): Promise<Job | null>;
   listJobs(): Promise<Job[]>;
   saveJob(job: Job): Promise<void>;
@@ -207,6 +211,37 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.exec('BEGIN IMMEDIATE');
     try { this.writeJobSnapshot(job, new Date().toISOString()); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  async commitWorkflowMutationAndEvents(
+    jobId: string, mutation: (job: Job) => Job,
+    events: readonly {key: string; event: EventRecord}[],
+  ): Promise<Job> {
+    this.assertScope(jobId);
+    let committed: Job | undefined;
+    new DurableWorkflowPublication(this.db).commitTransitionAndEvents(() => {
+      const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as {json?:string}|undefined;
+      if (!row?.json) throw new Error(`Unknown Job ${jobId}`);
+      const current = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
+      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task,current.executionMode));
+      const next = mutation(current);
+      if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');
+      if (next.state !== current.state && ['COMPLETED','CANCELLED'].includes(current.state))
+        throw new Error('Cannot overwrite terminal authoritative state');
+      const beforeTime=Date.parse(current.updatedAt);
+      if (Number.isFinite(beforeTime) && !(Date.parse(next.updatedAt)>beforeTime))
+        next.updatedAt=new Date(beforeTime+1).toISOString();
+      this.writeJobSnapshot(next,new Date().toISOString());
+      committed=structuredClone(next);
+    }, events.map(item=>({key:item.key,eventId:item.event.type,payload:item.event})));
+    return committed!;
+  }
+  async drainWorkflowEvents(publish: (event: EventRecord) => Promise<void>): Promise<number> {
+    return new DurableWorkflowPublication(this.db).replay(async item => {
+      const event = item.payload as EventRecord;
+      if (!event || event.event_id !== item.key || event.type !== item.eventId)
+        throw new Error('Outbox event identity mismatch');
+      await publish(event);
+    });
   }
   async createJobIfAbsent(job: Job): Promise<Job> {
     this.assertScope(job.id);

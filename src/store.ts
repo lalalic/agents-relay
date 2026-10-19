@@ -1,4 +1,4 @@
-import { Job, Plan, Task, normalizeLegacyTaskLifecycle } from './types.js';
+import { Job, Plan, Task, EventRecord, normalizeLegacyTaskLifecycle } from './types.js';
 import type { ExecutionProcessRecord } from './process-identity.js';
 import type { BlockerDependentTarget, BlockerResolutionSummary } from './blockers.js';
 import { parseAgent, parseJob, parsePlan, parseTask, renderAgentComment, renderJobBody, renderJobComment, renderPlanComment, renderTaskComment, AGENT_MARKER, JOB_MARKER, PLAN_MARKER, TASK_MARKER } from './markers.js';
@@ -85,6 +85,10 @@ export function dashboardManagedJobs(items: readonly ManagedJobOverview[]): Mana
 export type AtomicJobMutation = (job: Job) => Job;
 
 export interface DurableStore {
+  /** Atomic SQLite-authoritative state mutation plus outbox enqueue. */
+  commitWorkflowMutationAndEvents?(jobId: string, mutation: AtomicJobMutation, events: readonly { key: string; event: EventRecord }[]): Promise<Job>;
+  /** Replay stable event IDs; failed publish leaves outbox pending. */
+  drainWorkflowEvents?(publish: (event: EventRecord) => Promise<void>): Promise<number>;
   claimScheduledSlot?(jobId: string, bucket: string, now: Date): Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }>;
   finishScheduledSlot?(jobId: string, slot: string, now: Date): Promise<Job>;
   recordExecutionProcess?(record: ExecutionProcessRecord): Promise<void>;
