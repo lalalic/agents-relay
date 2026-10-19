@@ -1,5 +1,7 @@
 import { GraphDispatcher, type ActionReceipt, type GraphDecision, type GraphInput, type GraphRuntime } from './graph-v2.js';
 import { observability } from '../observability.js';
+import { WorkflowActionLedger, type ActionIdentity } from './action-ledger.js';
+import { ConditionRegistry, type ConditionFacts } from './conditions.js';
 
 export type WorkflowDispatchOptions = {
   initialState: string;
@@ -12,6 +14,13 @@ export type WorkflowDispatchOptions = {
   publishEvent?: (id: string, payload: unknown) => void | Promise<void>;
   maxSteps?: number;
   observe?: boolean;
+  actionVerification?: {
+    ledger: WorkflowActionLedger;
+    conditions: ConditionRegistry;
+    identity: (actionId: string) => ActionIdentity;
+    conditionId: (actionId: string) => string;
+    observedFacts: (actionId: string) => ConditionFacts | Promise<ConditionFacts>;
+  };
 };
 
 /**
@@ -75,7 +84,23 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
   for (let step = 0; step < maxSteps; step += 1) {
     const dispatcher = new GraphDispatcher(runtime, {
       persistTransition: async transition => { await options.persistTransition?.(transition.source, transition.target); },
-      executeAction: options.executeAction ? async actionId => await options.executeAction!(actionId) : undefined,
+      executeAction: options.executeAction ? async actionId => {
+        const verification = options.actionVerification;
+        if (verification) {
+          const identity = verification.identity(actionId);
+          const decision = runtime.evaluateSync({ currentState: current, input: options.input, durableFacts: options.durableFacts ?? {} });
+          if (!verification.ledger.reserve(identity, decision, verification.conditionId(actionId))) {
+            throw new Error('action attempt already reserved: reconcile outcome; never repeat side effect');
+          }
+        }
+        const receipt = await options.executeAction!(actionId);
+        if (verification) {
+          const identity = verification.identity(actionId);
+          const trace = verification.ledger.verify(identity.attemptKey, verification.conditions, await verification.observedFacts(actionId));
+          if (trace.outcome !== 'Verified') throw new Error('action postcondition '+trace.outcome+': reconciliation required');
+        }
+        return receipt;
+      } : undefined,
       publishEvent: async event => { await options.publishEvent?.(event.id, event.payload); },
     });
     const result = await dispatcher.dispatch({
