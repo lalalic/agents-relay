@@ -7,7 +7,7 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const NAME = /^[A-Za-z0-9_.-]{1,100}$/;
 const KINDS = new Set(['Event', 'Guard', 'Action', 'State']);
 export type WorkflowSymbolKind = 'Event' | 'Guard' | 'Action' | 'State';
-export type WorkflowSourceReference = { path: string; line: number };
+export type WorkflowSourceReference = { path: string; line: number; evidence: "exact-token" | "text-search" };
 export type WorkflowSymbolInspection = {
   graph: WorkflowSourceReference;
   contracts: WorkflowSourceReference[];
@@ -32,7 +32,7 @@ async function sourceFiles(relative: string): Promise<string[]> {
 function matches(content: string, symbol: string, path: string, limit: number): WorkflowSourceReference[] {
   const result: WorkflowSourceReference[] = [];
   for (const [index, line] of content.split('\n').entries()) {
-    if (line.includes(symbol)) result.push({ path, line: index + 1 });
+    if (new RegExp('(^|[^A-Za-z0-9_.-])' + symbol.replaceAll('.', '\\.') + '($|[^A-Za-z0-9_.-])').test(line)) result.push({ path, line: index + 1, evidence: 'text-search' });
     if (result.length >= limit) break;
   }
   return result;
@@ -54,8 +54,9 @@ export async function inspectWorkflowSymbol(graphId: string, kind: string, name:
   let source: string;
   try { source = await readFile(join(ROOT, graphPath), 'utf8'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
-  const prefix = kind === 'Event' ? 'on: ' : `${kind.toLowerCase()}: `;
-  const matchingLine = source.split('\n').findIndex(line => line.includes(prefix + name) && !line.includes(prefix + name + '.'));
+  const escaped = name.replaceAll('.', '\\.');
+  const pattern = kind === 'Event' ? new RegExp(`\\|on:\\s*${escaped}\\|`) : new RegExp(`\\["${kind.toLowerCase()}:\\s*${escaped}"\\]`);
+  const matchingLine = source.split('\n').findIndex(line => pattern.test(line));
   if (matchingLine < 0) return null;
   const contracts = ['skills/agents-relay/contracts/event-contract.md', 'skills/agents-relay/contracts/task-recovery-flows.md'];
   const contractRefs = (await Promise.all(contracts.map(async path => {
@@ -65,8 +66,8 @@ export async function inspectWorkflowSymbol(graphId: string, kind: string, name:
   const sourcePaths = (await sourceFiles('src')).sort((a, b) => Number(b.startsWith('src/workflow/')) - Number(a.startsWith('src/workflow/')));
   const testPaths = await sourceFiles('test');
   return {
-    graph: { path: graphPath, line: matchingLine + 1 },
-    contracts: contractRefs.length ? contractRefs : contracts.map(path => ({ path, line: 0 })),
+    graph: { path: graphPath, line: matchingLine + 1, evidence: "exact-token" },
+    contracts: contractRefs,
     implementation: await findReferences(sourcePaths, name, 8),
     tests: await findReferences(testPaths, name, 8),
   };

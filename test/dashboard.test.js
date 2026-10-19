@@ -1060,3 +1060,15 @@ test('graph-symbol API returns real references and rejects missing or malformed 
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+test('workflow code references pin to review branch and label text matches as suggestions only', async () => {
+  assert.match(dashboardHtml, /WORKFLOW_SOURCE_REF/);
+  assert.ok(dashboardHtml.includes('feat/dashboard-workflow-drilldown'));
+  assert.doesNotMatch(dashboardHtml, /blob\/main\/.*ref\.path/);
+  const action = await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invoke');
+  assert.equal(action?.graph.evidence, 'exact-token');
+  assert.ok(action?.implementation.every(ref => ref.evidence === 'text-search'));
+  assert.ok(action?.contracts.every(ref => ref.line > 0));
+  assert.equal(await inspectWorkflowSymbol('escalation', 'Action', 'escalation.invokeExtra'), null);
+  assert.equal(await inspectWorkflowSymbol('escalation', 'State', 'invoke'), null);
+});

@@ -11,3 +11,10 @@ Canonical reference contracts: `skills/agents-relay/contracts/event-contract.md`
 Validation: `npm run build` then `node --import ./test/test-store-env.mjs --test test/dashboard.test.js`.
 
 Security scope: rendered Mermaid SVG is recreated using an explicit SVG element/attribute whitelist. Inline event handlers, styles, foreignObject, use, external URLs and malformed SVG are not imported. The browser E2E sends six adversarial SVG payloads; this is a bounded regression suite, not proof of comprehensive XSS immunity.
+
+## Review E2E evidence (2026-10-19)
+
+- `docs/evidence/dashboard-workflow-review/evidence.json`: 32 browser checks, including direct graph URL, Back/Forward, keyboard activation, mobile viewport, renderer fallback, and adversarial SVG inputs. Run again using `test/workflow-dashboard-browser-e2e.py` with the isolated Dashboard bound to port 18983 (not the live service).
+- Screenshots: `entry.png`, `planner.png`, `escalation.png`, `mobile.png` in the evidence directory. Entry has visible text labels, red failure/recovery paths, and a neutral Changes Required → Fix Task cycle.
+- Symbol references are two classes: exact validated graph tokens and *text-search suggestions* for source, tests and contracts. Missing contract evidence remains empty rather than fabricating a line number. Links use the configured `AGENTS_RELAY_WORKFLOW_SOURCE_REF` (defaults to the review branch), not `main`. Confirm ref when running from a different branch.
+- This is a read-only design view, not a deployment or acceptance approval. Event labels and symbols originate from authoritative `.mmd` files; workflow transition policy is not changed.
