@@ -99,6 +99,7 @@ export const dashboardStyles = `  <style>
     .graph-preview-head h3 { margin:0; font-size:.95rem; }
     .graph-canvas { min-height:24rem; display:grid; place-items:center; overflow:auto; padding:1rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface2); }
     .graph-canvas svg { max-width:none; height:auto; }
+    .graph-canvas svg rect.background { display:none; }
     .graph-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.7rem; }
     .graph-canvas .node.drillable { cursor:pointer; }
     .graph-dialog { width:96vw; height:94vh; max-width:none; max-height:none; padding:.7rem; border:1px solid var(--border); border-radius:.5rem; background:var(--surface); color:var(--text); }
