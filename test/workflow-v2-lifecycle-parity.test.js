@@ -28,6 +28,9 @@ const taskCases = [
   ['QUEUED','watchdog.failed',{},'FAILED'],
   ['QUEUED','worker.delivery_failed',{},'FAILED'],
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
+  ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
+  ['QUEUED','worker.platform_failure',{platformFallbackSafe:false},'BLOCKED'],
+  ['RUNNING','worker.platform_failure',{platformFallbackSafe:true},'BLOCKED'],
   ['QUEUED','cancel',{},'CANCELLED'],
   ['RUNNING','task.blocked',{},'BLOCKED'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
@@ -76,9 +79,10 @@ const taskRuntime = new GraphRuntime(taskSource, {
     troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
     retryAvailable: boolGuard('retryAvailable'),
     autonomousJob: boolGuard('autonomousJob'),
+    platformFallbackSafe: boolGuard('platformFallbackSafe'),
   },
   events: eventRegistry([...taskCases.map(([,event]) => event), 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
-  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','effect.launchTask']),
+  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask']),
 });
 
 const jobRuntime = new GraphRuntime(jobSource, {

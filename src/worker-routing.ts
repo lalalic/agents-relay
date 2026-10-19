@@ -115,19 +115,21 @@ export function workerCandidates(
 }
 
 /**
- * Worker legality is intentionally narrow. Descriptive capability labels and provider
- * quota are facts for decide(), not hard gates. An explicit runtime is retained as a
- * compatibility/caller-owned constraint, and an explicitly offline worker is illegal.
+ * Capability labels are soft by default. Callers handling explicit hard task
+ * requirements can opt into strict capability matching through eligibility options.
  */
-export function satisfiesWorker(candidate: WorkerCandidate, requirements: WorkerRequirements): boolean {
+export type WorkerEligibilityOptions = { strictCapabilities?: boolean };
+
+export function satisfiesWorker(candidate: WorkerCandidate, requirements: WorkerRequirements, options: WorkerEligibilityOptions = {}): boolean {
   if (candidate.availability === 'offline') return false;
   if (requirements.runtime && candidate.runtime !== requirements.runtime) return false;
+  if (options.strictCapabilities && (requirements.capabilities ?? []).some(capability => !candidate.capabilities.includes(capability))) return false;
   if (candidate.adapter === 'chatgpt' && candidate.browserWorkspaceCapacity?.available === 0) return false;
   return true;
 }
 
-export function eligibleWorkerCandidates(candidates: readonly WorkerCandidate[], requirements: WorkerRequirements): WorkerCandidate[] {
-  return candidates.filter(candidate => satisfiesWorker(candidate, requirements));
+export function eligibleWorkerCandidates(candidates: readonly WorkerCandidate[], requirements: WorkerRequirements, options: WorkerEligibilityOptions = {}): WorkerCandidate[] {
+  return candidates.filter(candidate => satisfiesWorker(candidate, requirements, options));
 }
 
 function deterministicWorker(eligible: readonly WorkerCandidate[]): WorkerCandidate {

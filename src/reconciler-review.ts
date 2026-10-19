@@ -260,7 +260,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
     const usage = this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined;
     const registered = await this.store.listAgents();
-    const candidates = workerCandidates(this.options.adapters, registered, usage).filter(candidate => (implementationThread || reviewerThread) ? candidate.adapter === 'chatgpt' : true);
+    const excludedWorkers = new Set((task.routingExclusions ?? []).map(item => item.workerId).filter((id): id is string => Boolean(id)));
+    const excludedAdapters = new Set((task.routingExclusions ?? []).map(item => item.adapter).filter((adapter): adapter is NonNullable<typeof adapter> => Boolean(adapter)));
+    const candidates = workerCandidates(this.options.adapters, registered, usage)
+      .filter(candidate => !excludedWorkers.has(candidate.workerId))
+      .filter(candidate => !excludedAdapters.has(candidate.adapter))
+      .filter(candidate => (implementationThread || reviewerThread) ? candidate.adapter === 'chatgpt' : true);
     const runtimeSummary = this.options.runtimeSummaryProvider?.();
     const requirements = (implementationThread || reviewerThread) ? chatgptThreadRequirements(task.workerRequirements) : (task.workerRequirements ?? { capabilities: [] });
     const taskFacts = {

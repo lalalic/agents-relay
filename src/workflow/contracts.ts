@@ -40,6 +40,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'watchdog.failed',
   'worker.delivery_failed',
   'worker.start_ack_failed',
+  'worker.platform_failure',
 ] as const;
 
 export const WORKFLOW_FACT_NAMES = [
@@ -60,6 +61,7 @@ export const WORKFLOW_FACT_NAMES = [
   'implementationComplete',
   'headAvailable',
   'mergeCapable',
+  'platformFallbackSafe',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [
@@ -70,6 +72,8 @@ export const WORKFLOW_MUTATION_NAMES = [
   'mutation.markLeaseExpired',
   'mutation.markStartupOrphanedExhausted',
   'mutation.markPlannerUnavailable',
+  'mutation.preparePlatformFallback',
+  'mutation.quarantinePlatformFailure',
 ] as const;
 
 export const WORKFLOW_EFFECT_NAMES = [
