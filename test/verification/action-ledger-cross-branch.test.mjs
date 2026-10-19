@@ -64,6 +64,7 @@ test('A ledger: crash/reopen preserves Unknown and prevents duplicate effect exe
 
 test('A dispatcher: verified effect persists transition once; crash before publish cannot repeat action', {skip:!dist},async()=>{
  const {WorkflowActionLedger}=await load();
+ const {DurableWorkflowPublication}=await import(pathToFileURL(join(dist,'workflow/durable-publication.js')).href);
  const {GraphRuntime}=await import(pathToFileURL(join(dist,'workflow/graph-v2.js')).href);
  const {dispatchWorkflowGraph}=await import(pathToFileURL(join(dist,'workflow/dispatcher.js')).href);
  const {ConditionRegistry,booleanCondition}=await import(pathToFileURL(join(dist,'workflow/conditions.js')).href);
@@ -72,9 +73,10 @@ test('A dispatcher: verified effect persists transition once; crash before publi
  const input={transport:'event',id:'approved',payload:{}};
  await fixture(async({db})=>{
   const ledger=new WorkflowActionLedger(db);
+  const publication=new DurableWorkflowPublication(db);
   const conditions=new ConditionRegistry([booleanCondition('merged')]);
   const transitions=[];const published=[];let effects=0;
-  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input,executeAction:async()=>{effects++;return {ok:true};},persistTransition:async(a,b)=>{transitions.push([a,b]);},publishEvent:async id=>{published.push(id);},actionVerification:{ledger,conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({merged:true})},observe:false});
+  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input,executeAction:async()=>{effects++;return {ok:true};},persistTransition:async(a,b)=>{transitions.push([a,b]);},publishEvent:async id=>{published.push(id);},actionVerification:{ledger,publication,persistSqliteTransition:(a,b)=>{transitions.push([a,b]);},conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({merged:true})},observe:false});
   await invoke();
   assert.equal(effects,1);
   assert.equal(ledger.trace(id.attemptKey).outcome,'Verified');
@@ -88,6 +90,7 @@ test('A dispatcher: verified effect persists transition once; crash before publi
 
 test('A dispatcher: unknown postcondition prevents state persist and event publish across replay', {skip:!dist},async()=>{
  const {WorkflowActionLedger}=await load();
+ const {DurableWorkflowPublication}=await import(pathToFileURL(join(dist,'workflow/durable-publication.js')).href);
  const {GraphRuntime}=await import(pathToFileURL(join(dist,'workflow/graph-v2.js')).href);
  const {dispatchWorkflowGraph}=await import(pathToFileURL(join(dist,'workflow/dispatcher.js')).href);
  const {ConditionRegistry,booleanCondition}=await import(pathToFileURL(join(dist,'workflow/conditions.js')).href);
@@ -95,9 +98,10 @@ test('A dispatcher: unknown postcondition prevents state persist and event publi
  const graph=new GraphRuntime(source,{states:new Set(['ACTIVE','COMPLETED']),actions:{[id.actionId]:{id:id.actionId}},events:{approved:{id:'approved'}}});
  await fixture(async({db})=>{
   const ledger=new WorkflowActionLedger(db);
+  const publication=new DurableWorkflowPublication(db);
   const conditions=new ConditionRegistry([booleanCondition('merged')]);
   let actions=0;const transitions=[];const emitted=[];
-  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input:{transport:'event',id:'approved',payload:{}},executeAction:async()=>{actions++;return {ok:true};},persistTransition:(a,b)=>transitions.push([a,b]),publishEvent:e=>emitted.push(e),actionVerification:{ledger,conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({})},observe:false});
+  const invoke=()=>dispatchWorkflowGraph(graph,{initialState:'ACTIVE',input:{transport:'event',id:'approved',payload:{}},executeAction:async()=>{actions++;return {ok:true};},persistTransition:(a,b)=>transitions.push([a,b]),publishEvent:e=>emitted.push(e),actionVerification:{ledger,publication,persistSqliteTransition:(a,b)=>{transitions.push([a,b]);},conditions,identity:()=>id,conditionId:()=> 'merged',observedFacts:()=>({})},observe:false});
   await assert.rejects(invoke(),/Unknown/);
   assert.equal(ledger.trace(id.attemptKey).outcome,'Unknown');
   await assert.rejects(invoke(),/already reserved/);
