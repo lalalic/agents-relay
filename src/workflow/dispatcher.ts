@@ -1,6 +1,7 @@
 import { GraphDispatcher, type ActionReceipt, type GraphDecision, type GraphInput, type GraphRuntime } from './graph-v2.js';
 import { observability } from '../observability.js';
 import { WorkflowActionLedger, type ActionIdentity } from './action-ledger.js';
+import { DurableWorkflowPublication } from './durable-publication.js';
 import { ConditionRegistry, type ConditionFacts } from './conditions.js';
 
 export type WorkflowDispatchOptions = {
@@ -16,6 +17,7 @@ export type WorkflowDispatchOptions = {
   observe?: boolean;
   actionVerification?: {
     ledger: WorkflowActionLedger;
+    publication?: DurableWorkflowPublication;
     conditions: ConditionRegistry;
     identity: (actionId: string) => ActionIdentity & {jobId: string; taskId: string; leaseOwner: string; attempt: number};
     conditionId: (actionId: string) => string;
@@ -121,7 +123,14 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
       if (result.receipts.some(receipt => receipt.ok === false)) throw new Error('action failed: reconciliation required; transition withheld');
       const transition = deferredTransition as { source: string; target: string } | null;
       if (transition !== null) await options.persistTransition?.(transition.source, transition.target);
-      for (const event of deferredEvents) await options.publishEvent?.(event.id, event.payload);
+      const publication = options.actionVerification.publication;
+      if (deferredEvents.length && !publication) throw new Error('durable publication required for graph emitted events');
+      for (const [index, event] of deferredEvents.entries()) {
+        const actionIdentity = result.decision.actions[0] && options.actionVerification.identity(result.decision.actions[0].id);
+        if (!actionIdentity || !publication) throw new Error('missing durable action event identity');
+        publication.enqueue(`${actionIdentity.attemptKey}/emit/${index}`, event.id, event.payload);
+      }
+      if (publication && options.publishEvent) await publication.replay(async event => options.publishEvent!(event.eventId,event.payload));
     }
     if (options.observe !== false) observeDecision(options.graphName, options.input, result.decision);
     if (!result.decision.accepted) return result.decision;
