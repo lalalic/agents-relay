@@ -19,10 +19,13 @@ test('production dispatcher action loop is fenced and Unknown stops repeated ext
   const ledger = new WorkflowActionLedger(new DatabaseSync(':memory:'));
   const conditions = new ConditionRegistry([booleanCondition('merged')]);
   let calls = 0;
+  const transitions = [];
   const options = {initialState:'ACTIVE', input, executeAction:() => {calls++; return {ok:true};},
+    persistTransition:(from,to)=>transitions.push([from,to]),
     actionVerification:{ledger,conditions,identity:()=>identity,conditionId:()=> 'merged',observedFacts:()=>({})},observe:false};
   await assert.rejects(dispatchWorkflowGraph(runtime,options), /Unknown/);
   assert.equal(calls,1);
+  assert.deepEqual(transitions, []);
   await assert.rejects(dispatchWorkflowGraph(runtime,options), /already reserved/);
   assert.equal(calls,1);
   assert.equal(ledger.trace(identity.attemptKey).outcome,'Unknown');

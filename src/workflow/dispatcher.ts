@@ -82,8 +82,13 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
   let current = options.initialState;
   const maxSteps = options.maxSteps ?? 1;
   for (let step = 0; step < maxSteps; step += 1) {
+    let deferredTransition: { source: string; target: string } | null = null;
+    const deferredEvents: Array<{id: string; payload: unknown}> = [];
     const dispatcher = new GraphDispatcher(runtime, {
-      persistTransition: async transition => { await options.persistTransition?.(transition.source, transition.target); },
+      persistTransition: async transition => {
+        if (options.actionVerification) deferredTransition = transition;
+        else await options.persistTransition?.(transition.source, transition.target);
+      },
       executeAction: options.executeAction ? async actionId => {
         const verification = options.actionVerification;
         if (verification) {
@@ -94,6 +99,7 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
           }
         }
         const receipt = await options.executeAction!(actionId);
+        if (receipt.ok === false) throw new Error('action returned failure receipt: reconciliation required');
         if (verification) {
           const identity = verification.identity(actionId);
           const trace = verification.ledger.verify(identity.attemptKey, verification.conditions, await verification.observedFacts(actionId));
@@ -101,13 +107,22 @@ export async function dispatchWorkflowGraph(runtime: GraphRuntime, options: Work
         }
         return receipt;
       } : undefined,
-      publishEvent: async event => { await options.publishEvent?.(event.id, event.payload); },
+      publishEvent: async event => {
+        if (options.actionVerification) deferredEvents.push(event);
+        else await options.publishEvent?.(event.id, event.payload);
+      },
     });
     const result = await dispatcher.dispatch({
       currentState: current,
       input: options.input,
       durableFacts: options.durableFacts ?? {},
     });
+    if (options.actionVerification && result.decision.accepted) {
+      if (result.receipts.some(receipt => receipt.ok === false)) throw new Error('action failed: reconciliation required; transition withheld');
+      const transition = deferredTransition as { source: string; target: string } | null;
+      if (transition !== null) await options.persistTransition?.(transition.source, transition.target);
+      for (const event of deferredEvents) await options.publishEvent?.(event.id, event.payload);
+    }
     if (options.observe !== false) observeDecision(options.graphName, options.input, result.decision);
     if (!result.decision.accepted) return result.decision;
     current = result.decision.target;
