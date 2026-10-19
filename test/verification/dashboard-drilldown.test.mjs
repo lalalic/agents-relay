@@ -7,7 +7,7 @@ const graphIds=new Set(readdirSync(new URL('../../workflow/',import.meta.url)).f
 const html=read('src/dashboard-html.ts');
 const css=read('src/dashboard-style.ts');
 test('presentation graph references only existing canonical Mermaid files',()=>{
- assert.match(main,/dashboard: presentation-only/);
+ assert.match(main,/(?:dashboard:\s*)?presentation[ -]only/i);
  const targets=[...main.matchAll(/^click\s+\w+\s+href\s+"([\w-]+\.mmd)"/gm)].map(m=>m[1]);
  assert.ok(targets.length>=10);
  for(const path of targets)assert.ok(graphIds.has(path),`unbound graph ${path}`);

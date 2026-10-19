@@ -35,3 +35,9 @@ Run `node test/verification/l3-replay.mjs test/verification/l3-scenarios/depende
 `node test/verification/evidence-matrix.mjs /tmp/agents-relay-verification-b` emits JSON and Markdown status for the original scenario corpus, conservatively `NOT_RUN` until a trusted production runner supplies causal evidence. It does not accept an arbitrary JSON file as PASS authority. L2 may be PASS only when real installed role skills, actual providers/adapters, Relay acceptance, and the emitted events have been verified. Simulated adapter outputs do not count.
 
 Dashboard graph `workflow/main.mmd` is presentation-only. Canonical nested Mermaid graphs remain the only workflow-policy authority. Browser tests and screenshots are **NOT_RUN** in this independent B slice; static UI tests alone do not satisfy real-browser E2E.
+
+## Independent B review corrections (2026-10-19)
+
+The evidence-matrix gate no longer accepts user-defined `productionPath`, `graphTransitions`, `sqlitePredicates`, `actualTerminal`, or provider booleans. An L3 scenario must execute `runReplay` in a newly isolated SQLite store, with observed ingress transitions. The matrix CLI accepts only its report destination; all corpus cases without complete scenario-specific evidence remain `NOT_RUN`. The replay runner's injected merge outcomes are SQLite fixtures, **not real Graph-selected merge effects**, so they are never independently certified as full-path success by this gate.
+
+Two new L3 negative/safety regressions cover sequential blocked Planner/Worker/Reviewer/Merge attempts, restart, and stale or duplicate generations. These establish no false completion and fencing, **not recovery to an actually achieved Objective**. A production-driven action/effect-reconcile simulator covering successful recovery, unknown-effects reconciliation and human escalation remains incomplete. Real-provider L2 and browser screenshot evidence remain `NOT_RUN`.
