@@ -21,7 +21,7 @@
     "test:full": "npm run build && node --import ./test/test-store-env.mjs --test --test-concurrency=1 test/*.test.js && npm run test:verification:l3",
     "test:verification:l1": "npm run build && node --test test/verification/harness.test.mjs test/verification/contract.test.mjs test/verification/dashboard-drilldown.test.mjs test/verification/evidence-matrix.test.mjs",
     "test:verification:l3": "npm run build && node --test test/verification/harness.test.mjs test/verification/l3-sqlite.test.mjs test/verification/l3-ingress.test.mjs test/verification/l3-replay.test.mjs test/verification/objective-authority.test.mjs test/verification/l3-convergence.test.mjs test/verification/l3-review-convergence.test.mjs test/verification/full-recovery-gates.test.mjs test/verification/production-wiring.test.mjs",
-    "test:verification": "npm run test:verification:l1 && npm run test:verification:l3",
+    "test:verification": "npm run test:verification:l1 && npm run test:verification:l3 && npm run test:verification:cross-a && node --test test/workflow-production-outbox.test.js",
     "e2e": "node e2e/runner/run.mjs",
     "test:verification:cross-a": "npm run build && RELAY_A_DIST=$PWD/dist node --test test/verification/action-ledger-cross-branch.test.mjs test/verification/outbox-cross-a.test.mjs"
   },
