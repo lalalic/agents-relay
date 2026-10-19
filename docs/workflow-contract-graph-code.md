@@ -1,0 +1,27 @@
+# Workflow Contract → Graph → Code traceability
+
+## Authority
+
+- Contract owns event names, schemas, event producer/owner, action/condition interfaces, permission, and invariants.
+- Canonical executable `workflow/*.mmd` files own transitions and guard/action sequencing.
+- Code implements observed conditions and controlled effects; it may not introduce another transition policy.
+- SQLite is authoritative for executions, generations, routing and observed outcomes.
+- `workflow/main.mmd` is **presentation/navigation only**. It is never loaded as an executable graph.
+- A review change request is a normal fix loop; a platform failure enters the existing guarded recovery graph, and unknown external outcomes require reconciliation, never blind re-execution.
+
+## Current incremental implementation
+
+- `src/workflow/usage-index.ts`: `executableGraphs` loads the strict Graph V2 subset, excluding the presentation entry; `buildWorkflowUsageIndex` derives reverse source references for event/request/guard/action/state/emit symbols with graph and line.
+- `whereWorkflowSymbol` is read-only and deterministic, suitable for a future `workflow where` CLI without duplicating a maintained registry.
+- Existing `src/workflow/graph-v2.ts` parses and validates topology and guards/actions/events; `src/workflow/definitions-v2.ts` binds current typed graphs to the existing registries.
+- Existing `src/workflow/contracts.ts` contains the canonical event/action symbol inventory. Schema/ownership/permissions are not yet complete for every symbol; avoid inferring those from the index.
+
+## Follow-on gates (not yet implemented)
+
+1. Contract metadata: stable typed symbol IDs with schema, owner, permissions and invariants. Validate generated registries against the canonical contract and graph; do not add hand-maintained parallel symbol maps.
+2. Shared Condition Registry: read-only facts/conditions usable before actions as guards and after actions as effect verification. Return `Verified | Failed | Unknown`; `Unknown` must reconcile and not retry an external side effect.
+3. Graph-controlled authorized Action requests, generation/lease fencing, execution ID correlation and postcondition trace recording. Reject arbitrary CLI force-terminalization.
+4. CLI read-only `discover / inspect / where / evaluate` plus guarded `action request`; all entry points share the same graph runtime.
+5. L1 per-wire contract tests (ownership, orphan symbols, reachability, terminal objective gate, no duplicate control path), L2 durable/runtime tests and Thread B's independently owned L3 corpus.
+
+Do not merge this exploratory graph/index baseline as a claim of complete refactoring until the remaining gates pass review.

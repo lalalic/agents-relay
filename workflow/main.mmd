@@ -1,29 +1,53 @@
-%% dashboard: presentation-only; not an executable workflow
+%% PRESENTATION ONLY — not registered with GraphRuntime or the executable Graph DSL.
+%% Nodes link to the canonical executable workflow graphs. SQLite remains authoritative.
 flowchart LR
-objective["START: Job Objective"] --> planner["Planner"] --> worker["Worker"] --> reviewer["Reviewer"] --> merge["Merge / Delivery"] --> achieved["Objective Achieved"] --> completed["Job Completed"]
-reviewer -->|Changes Required| fix["Fix Task"] --> worker
-planner -->|Failed| troubleshooter["Troubleshooter"]
-worker -->|Failed| troubleshooter
-reviewer -->|Failed| troubleshooter
-merge -->|Failed| troubleshooter
-troubleshooter --> resolution["Resolution"]
-resolution -->|Recovered| planner
-resolution -->|Recovered| worker
-resolution -->|Recovered| reviewer
-resolution -->|Recovered| merge
-resolution -->|Needs human action| escalator["Escalator workflow"] -->|Resolved| resolution
-classDef failure fill:#ffe4e4,stroke:#be3030,color:#7c1818
-class troubleshooter,resolution,escalator failure
-linkStyle 8,9,10,11,12,13,14,15,16,17,18 stroke:#be3030,stroke-width:2px
+    objective["START: Job Objective"]
+    planner["Planner"]
+    worker["Worker"]
+    reviewer["Reviewer"]
+    delivery["Merge / Delivery"]
+    verify["Objective Verification"]
+    completed["Completed"]
+    trouble["Troubleshooter"]
+    recover{"Recovery conditions verified?"}
+    escalation["Escalation: human action only"]
+    fix["Changes Required: fix and review again"]
 
-click objective href "job-lifecycle.mmd"
-click planner href "planner-orchestration.mmd"
-click worker href "task-lifecycle.mmd"
-click reviewer href "review-lifecycle.mmd"
-click merge href "job-lifecycle.mmd"
-click achieved href "job-lifecycle.mmd"
-click completed href "job-lifecycle.mmd"
-click fix href "review-lifecycle.mmd"
-click troubleshooter href "troubleshooter.mmd"
-click resolution href "blocker-resolution.mmd"
-click escalator href "escalation.mmd"
+    objective --> planner
+    planner --> worker
+    worker --> reviewer
+    reviewer -->|approved| delivery
+    reviewer -->|changes required| fix
+    fix --> worker
+    delivery --> verify
+    verify -->|verified| completed
+
+    planner -->|failure| trouble
+    worker -->|failure| trouble
+    reviewer -->|failure| trouble
+    delivery -->|failure| trouble
+    verify -->|unknown / failed| trouble
+    trouble --> recover
+    recover -->|guarded retry to exact failed step| planner
+    recover -->|guarded retry to exact failed step| worker
+    recover -->|guarded retry to exact failed step| reviewer
+    recover -->|guarded retry to exact failed step| delivery
+    recover -->|unknown: reconcile first| trouble
+    recover -->|human action required| escalation
+    escalation -->|resolved: reconcile and resume| trouble
+
+    click objective href "job-lifecycle.mmd" "Job lifecycle"
+    click planner href "planner-orchestration.mmd" "Planner orchestration"
+    click worker href "task-lifecycle.mmd" "Task lifecycle"
+    click reviewer href "review-lifecycle.mmd" "Review lifecycle"
+    click delivery href "job-lifecycle.mmd" "Job completion"
+    click verify href "job-lifecycle.mmd" "Objective completion gate"
+    click trouble href "troubleshooter.mmd" "Troubleshooter"
+    click recover href "task-resolution.mmd" "Task resolution"
+    click escalation href "escalation.mmd" "Escalation"
+    click fix href "review-lifecycle.mmd" "Review fixes"
+
+    classDef exception fill:#fee2e2,stroke:#b91c1c,color:#991b1b
+    classDef normal fill:#eff6ff,stroke:#2563eb,color:#1e40af
+    class trouble,recover,escalation exception
+    class objective,planner,worker,reviewer,delivery,verify,completed,fix normal
