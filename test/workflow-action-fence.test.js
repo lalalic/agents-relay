@@ -1,0 +1,22 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { WorkflowActionLedger } from '../dist/workflow/action-ledger.js';
+const identity = {jobId:'j',taskId:'t',leaseOwner:'owner',attempt:2,executionId:'e',generation:2,graph:'task-lifecycle.mmd',actionId:'effect.launchTask',attemptKey:'j/t/e/2/launch'};
+const decision={accepted:true,source:'QUEUED',target:'RUNNING',actions:[{id:'effect.launchTask',input:{transport:'event',id:'dispatch',payload:{}},emittedEvents:[]}]};
+const now='2026-10-19T19:00:00.000Z';
+test('authoritative sqlite snapshot fences execution, lease, attempt and duplicate', () => {
+ const db=new DatabaseSync(':memory:');
+ db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT NOT NULL)');
+ const job={tasks:[{id:'t',state:'RUNNING',executionId:'e',leaseOwner:'owner',leaseExpiresAt:'2026-10-19T20:00:00.000Z',attempt:2}]};
+ const store=db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES (?,?)');
+ store.run('j',JSON.stringify(job));
+ const ledger=new WorkflowActionLedger(db);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,executionId:'old'},decision,'done',now),/fenced/);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,leaseOwner:'old'},decision,'done',now),/fenced/);
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,attempt:1},decision,'done',now),/fenced/);
+ assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),true);
+ assert.equal(ledger.reserveForRunningTask(identity,decision,'done',now),false);
+ job.tasks[0].leaseExpiresAt='2026-10-19T18:00:00.000Z'; store.run('j',JSON.stringify(job));
+ assert.throws(()=>ledger.reserveForRunningTask({...identity,attemptKey:'new'},decision,'done',now),/fenced/);
+});

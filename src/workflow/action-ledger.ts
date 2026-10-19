@@ -22,6 +22,25 @@ export class WorkflowActionLedger {
       VALUES (?,?,?,?,?,?,'Unknown',?)`);
     return statement.run(identity.attemptKey, identity.executionId, identity.generation, identity.graph, identity.actionId, conditionId, new Date().toISOString()).changes === 1;
   }
+  /** Authoritative, fail-closed reservation against the durable job_snapshot row. */
+  reserveForRunningTask(
+    identity: ActionIdentity & { jobId: string; taskId: string; leaseOwner: string; attempt: number },
+    decision: GraphDecision, conditionId: string, now = new Date().toISOString(),
+  ): boolean {
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.database.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(identity.jobId) as {json?: string} | undefined;
+      if (!row?.json) throw new Error('authoritative job snapshot unavailable');
+      const job = JSON.parse(row.json) as { tasks?: Array<{id: string; state: string; executionId: string | null; leaseOwner: string | null; leaseExpiresAt: string | null; attempt: number}> };
+      const task = job.tasks?.find(item => item.id === identity.taskId);
+      if (!task || task.state !== 'RUNNING' || task.executionId !== identity.executionId || task.leaseOwner !== identity.leaseOwner || task.attempt !== identity.attempt || !task.leaseExpiresAt || Date.parse(task.leaseExpiresAt) <= Date.parse(now)) {
+        throw new Error('stale execution, owner, attempt or lease: action fenced');
+      }
+      const created = this.reserve(identity, decision, conditionId);
+      this.database.exec('COMMIT');
+      return created;
+    } catch (error) { this.database.exec('ROLLBACK'); throw error; }
+  }
   trace(attemptKey: string): ActionTrace | null {
     const row = this.database.prepare('SELECT * FROM workflow_action_trace WHERE attempt_key=?').get(attemptKey) as Record<string, unknown> | undefined;
     if (!row) return null;
