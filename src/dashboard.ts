@@ -23,7 +23,7 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
   const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort();
   return Promise.all(names.map(async name => ({
     id: name.replace(/\.mmd$/, ''),
-    name: name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
+    name: name === 'main.mmd' ? 'Main / Happy Path' : name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
     path: `workflow/${name}`,
     source: await readFile(join(WORKFLOW_DIR, name), 'utf8'),
   })));

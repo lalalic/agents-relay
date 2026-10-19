@@ -29,3 +29,7 @@ Security scope: rendered Mermaid SVG is recreated using an explicit SVG element/
 ## Viewer display controls
 
 The Workflow graph can be opened in a modal viewer using **Maximize graph**. The viewer has Zoom in, Zoom out, Fit (100%), pointer drag to pan and Ctrl/Cmd + wheel zoom; Close and Escape return the same interactive graph to the original Dashboard location. SVG node labels are anchored to the node's local `(0, 0)` center and wrapped based on the node rectangle's width. The Mermaid presentation remains read-only.
+
+## Canonical main graph and file links
+
+`workflow/main.mmd` is the presentation-only entry graph. It is served from the existing `/api/graphs` endpoint, not evaluated by the transition engine. Each line `click planner href "planner-orchestration.mmd"` binds a node to an existing workflow graph. Any `.mmd` can declare links using the same syntax; the Viewer validates graph IDs against loaded `.mmd` files and binds the clickable SVG nodes after sanitization. Mermaid strict mode stays enabled, and runtime lifecycle policy does not change. `#/graphs/main` is the entry deep link; legacy `#/graphs/entry` resolves to main.

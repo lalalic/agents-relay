@@ -6,7 +6,6 @@ import { Script } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { dashboardHtml, dashboardVersion, dashboardSourceRevision, dashboardWorkflowGraphs, githubPrUrl, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
-import { workflowPresentation } from '../dist/dashboard-workflow-presentation.js';
 import { inspectWorkflowSymbol } from '../dist/dashboard-workflow-inspection.js';
 
 
@@ -994,37 +993,26 @@ test('job list displays durable local merge failure reason', () => {
 });
 
 
-test('Workflow entry drill-down is presentation-only and links canonical graphs', async () => {
+test('main Mermaid file owns safe, validated navigation links', async () => {
   const graphs = await dashboardWorkflowGraphs();
-  const ids = new Set(graphs.map(graph => graph.id));
-  const mapping = dashboardHtml.match(/const GRAPH_NAV=(\{[^;]+\});/);
-  assert.ok(mapping, 'single graph navigation map');
-  const navigation = JSON.parse(mapping[1].replace(/([a-z]+):\[/g, '\"$1\":[').replace(/'/g, '\"'));
-  for (const targets of Object.values(navigation)) {
-    for (const id of targets) assert.ok(ids.has(id), 'broken drill-down: ' + id);
-  }
-  assert.match(dashboardHtml, /GRAPH_ENTRY_SOURCE/);
-  assert.match(dashboardHtml, /Changes Required/);
-  assert.match(dashboardHtml, /Escalator workflow/);
-  assert.match(dashboardHtml, /id=\"graph-back\"/);
-  assert.match(dashboardHtml, /id=\"graph-forward\"/);
-  assert.match(dashboardHtml, /id=\"graph-entry\"/);
+  const ids = new Set(graphs.map(g => g.id));
+  const main = graphs.find(g => g.id === 'main');
+  assert.ok(main);
+  assert.match(main.source, /presentation-only/);
+  assert.match(main.source, /START: Job Objective/);
+  assert.match(main.source, /Changes Required/);
+  assert.match(main.source, /Escalator workflow/);
+  assert.match(main.source, /linkStyle 8,9,10/);
+  const links = [...main.source.matchAll(/^click\s+([A-Za-z0-9_]+)\s+href\s+"([a-z0-9-]+)\.mmd"/gm)];
+  assert.ok(links.length >= 10);
+  for(const link of links) assert.ok(ids.has(link[2]),'invalid target '+link[2]);
+  assert.doesNotMatch(dashboardHtml, /const GRAPH_NAV=/);
+  assert.match(dashboardHtml, /function graphLinks\(source\)/);
+  assert.match(dashboardHtml, /rendered\.svg\.replace/);
+  assert.match(dashboardHtml, /graphLinks\(graph\.source\)/);
+  assert.match(dashboardHtml, /id="graph-back"/);
+  assert.match(dashboardHtml, /id="graph-forward"/);
   assert.match(dashboardHtml, /securityLevel:'strict'/);
-  assert.match(dashboardHtml, /function sanitizeGraphSvg/);
-});
-
-
-test('canonical presentation navigation has no dead child graph targets', async () => {
-  const graphs = await dashboardWorkflowGraphs();
-  const ids = new Set(graphs.map(graph => graph.id));
-  for (const targets of Object.values(workflowPresentation.navigation)) {
-    assert.ok(targets.length > 0);
-    for (const id of targets) assert.ok(ids.has(id), 'unresolved graph: ' + id);
-  }
-  assert.match(workflowPresentation.entrySource, /START: Job Objective/);
-  assert.match(workflowPresentation.entrySource, /Changes Required/);
-  assert.match(workflowPresentation.entrySource, /linkStyle 8,9,10/);
-  assert.match(dashboardHtml, /Entry \(conceptual\)/);
 });
 
 test('graph detail resolves only symbols present in canonical executable graph', async () => {

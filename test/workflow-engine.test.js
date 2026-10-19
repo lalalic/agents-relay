@@ -71,7 +71,7 @@ A --> C: stop
 test('every repository lifecycle graph file parses and validates with the production contract', async () => {
   const directory = new URL('../workflow/', import.meta.url);
   const files = (await readdir(directory, { withFileTypes: true }))
-    .filter(entry => entry.isFile() && entry.name.endsWith('.mmd'))
+    .filter(entry => entry.isFile() && entry.name.endsWith('.mmd') && entry.name !== 'main.mmd')
     .map(entry => entry.name)
     .sort();
   assert.ok(files.length > 0, 'expected at least one workflow .mmd file');
