@@ -67,3 +67,77 @@ test('real Planner round retries, then Worker and Reviewer faults recover, Revie
  assert.ok(result.observedEvents.some(x=>x.event==='job.merge.failed'));
  assert.ok(result.observedEvents.some(x=>x.event==='job.merge.succeeded'));
 });
+
+test('terminal FAILED Plan is recovered through Graph-authorized Troubleshooter events before original objective converges',async()=>{
+ const {runReplay}=await import('./l3-replay.mjs');
+ const {terminalPlannerCombinedScenario}=await import('./l3-planner-terminal-combined.mjs');
+ const result=await runReplay(terminalPlannerCombinedScenario);
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+ assert.equal(result.plannerCalls,2);
+ assert.equal(result.actual.plans[0].status,'FAILED');
+ assert.equal(result.actual.plans[0].attempt,1);
+ assert.equal(result.actual.plans[1].status,'SUCCEEDED');
+ assert.equal(result.actual.jobState,'COMPLETED');
+ assert.equal(result.externalGitAttempts,2);
+ assert.equal(result.trace[0].jobState,'ACTIVE');
+ assert.equal(result.trace[0].planStatuses[0].status,'FAILED');
+ assert.ok(result.trace[1].after.some(t=>t.id==='recover-plan-1'&&t.state==='QUEUED'));
+ assert.ok(result.trace[4].after.some(t=>t.id==='recover-plan-1'&&t.state==='SUCCEEDED'));
+ assert.ok(result.trace[5].planStatuses.some(p=>p.id==='plan-2'&&p.status==='SUCCEEDED'));
+ assert.ok(result.observedEvents.some(e=>e.event==='planner.failed'));
+ assert.ok(result.observedEvents.some(e=>e.event==='planner.completed'));
+ assert.ok(result.observedEvents.some(e=>e.event==='job.merge.failed'));
+ assert.ok(result.observedEvents.some(e=>e.event==='job.merge.succeeded'));
+ assert.equal(result.actionTraces.every(e=>e.outcome==='Verified'),true);
+});
+
+test('terminal FAILED Plan cannot be recovered by unverified Troubleshooter claim',async()=>{
+ const {runReplay}=await import('./l3-replay.mjs');
+ const {terminalPlannerCombinedScenario}=await import('./l3-planner-terminal-combined.mjs');
+ const scenario={...terminalPlannerCombinedScenario,id:'planner-recovery-unverified',
+  steps:[
+   {type:'planner.settle',expectStatus:'FAILED'},
+   {type:'reconcile'},
+   {type:'mock.claim',taskId:'recover-plan-1',executionId:'unverified-recovery'},
+   {type:'task.started',taskId:'recover-plan-1',executionId:'unverified-recovery'},
+   {type:'task.completed',taskId:'recover-plan-1',executionId:'unverified-recovery',data:{verified:false,evidence:'No actual repair'}},
+   {type:'restart'},{type:'reconcile'},
+  ],
+  expected:{jobState:'ACTIVE',plans:{'plan-1':'FAILED'}}};
+ const result=await runReplay(scenario);
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+ assert.equal(result.actual.plans.length,1,'fabricated completion cannot start replacement Plan');
+ assert.equal(result.actual.tasks['recover-plan-1'],'SUCCEEDED');
+ assert.equal(result.plannerCalls,1);
+});
+
+test('Plan-specific Troubleshooter human escalation retains failed Plan, notification receipt and authoritative recovery',async()=>{
+ const {runReplay}=await import('./l3-replay.mjs');
+ const {terminalPlannerCombinedScenario}=await import('./l3-planner-terminal-combined.mjs');
+ const scenario={...terminalPlannerCombinedScenario,id:'planner-human-escalation-recovery',
+  steps:[
+   {type:'planner.settle',expectStatus:'FAILED'},
+   {type:'reconcile'},
+   {type:'task.escalate',taskId:'plan-1',recoveryTaskId:'recover-plan-1'},
+   {type:'restart'},{type:'reconcile'},
+   {type:'mock.notification.delivered',taskId:'plan-1',recoveryTaskId:'recover-plan-1'},
+   {type:'human.unblock',taskId:'plan-1',recoveryTaskId:'recover-plan-1',response:'Provider authorization verified'},
+   {type:'mock.claim',taskId:'recover-plan-1',executionId:'plan-escalation-recovery'},
+   {type:'task.started',taskId:'recover-plan-1',executionId:'plan-escalation-recovery'},
+   {type:'task.completed',taskId:'recover-plan-1',executionId:'plan-escalation-recovery',
+    data:{verified:true,evidence:'Model connection tested and recovered after human authorization'}},
+   {type:'planner.await-success'},
+  ],
+  expected:{jobState:'ACTIVE',plans:{'plan-1':'FAILED','plan-2':'SUCCEEDED'}}};
+ const result=await runReplay(scenario);
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+ assert.equal(result.trace[2].escalations[0]?.notificationStatus,'pending');
+ assert.equal(result.trace[3].planStatuses[0]?.status,'FAILED');
+ assert.equal(result.trace[4].escalations[0]?.notificationStatus,'pending');
+ assert.equal(result.trace[5].escalations[0]?.notificationStatus,'delivered');
+ assert.equal(result.trace[6].escalations[0]?.status,'responded');
+ assert.equal(result.actual.plans[0]?.status,'FAILED');
+ assert.equal(result.actual.plans[1]?.status,'SUCCEEDED');
+ assert.equal(result.actual.jobState,'ACTIVE');
+ assert.equal(result.observedEvents.filter(e=>e.event==='escalation.requested').length,1);
+});

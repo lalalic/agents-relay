@@ -3,6 +3,9 @@ flowchart LR
 idle["state: idle"]
 checkLegacy["state: check_legacy_pending"]
 checkRecover["state: check_recover"]
+checkPlanFailure["state: check_plan_failure"]
+checkPlanRecovery["state: check_plan_recovery"]
+checkPlanRecoveryExists["state: check_plan_recovery_exists"]
 checkSeed["state: check_seed"]
 checkPlanner["state: check_planner"]
 checkResolution["state: check_resolution_ownership"]
@@ -17,6 +20,9 @@ created["state: created"]
 autonomous["guard: autonomousJob"]
 legacyPending["guard: legacyPlanningPending"]
 recoverablePending["guard: recoverablePendingPlan"]
+terminalFailure["guard: terminalPlanFailure"]
+recoveryVerified["guard: planRecoveryVerified"]
+recoveryExists["guard: planRecoveryExists"]
 hasSeed["guard: hasSeedWork"]
 noActivePlanner["guard: noActivePlanner"]
 resolutionOwned["guard: resolutionOwnedByTroubleshooter"]
@@ -26,6 +32,7 @@ materialized["guard: continuationMaterialized"]
 unsatisfied["guard: objectiveUnsatisfied"]
 
 recoverAction["action: planner.recoverPending"]
+createRecovery["action: planner.createRecovery"]
 createAction["action: planner.createRound"]
 
 idle -->|on: planner.reconcile| autonomous
@@ -39,7 +46,20 @@ legacyPending -->|false| checkRecover
 checkRecover -->|on: planner.reconcile| recoverablePending
 recoverablePending -->|true| recoverAction
 recoverAction --> recovered
-recoverablePending -->|false| checkSeed
+recoverablePending -->|false| checkPlanFailure
+
+checkPlanFailure -->|on: planner.reconcile| terminalFailure
+terminalFailure -->|false| checkSeed
+terminalFailure -->|true| checkPlanRecovery
+
+checkPlanRecovery -->|on: planner.reconcile| recoveryVerified
+recoveryVerified -->|true| checkPlanner
+recoveryVerified -->|false| checkPlanRecoveryExists
+
+checkPlanRecoveryExists -->|on: planner.reconcile| recoveryExists
+recoveryExists -->|true| wait
+recoveryExists -->|false| createRecovery
+createRecovery --> created
 
 checkSeed -->|on: planner.reconcile| hasSeed
 hasSeed -->|false| wait

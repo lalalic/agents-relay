@@ -1,3 +1,5 @@
+import {deliverPendingEscalations} from './escalation-notifier.js';
+import {createFailedPlanRecovery} from './planner-recovery.js';
 import { recoverPlannerChildren } from './planner-child-recovery.js';
 import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js';
 import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
@@ -71,8 +73,10 @@ export class Reconciler extends ReconcilerReviewBase {
     if (this.reconciling) return this.store.load(jobId);
     this.reconciling = true;
     try {
-      const job = await this.store.load(jobId);
+      let job = await this.store.load(jobId);
       await drainProductionWorkflowOutbox(this.store, this.options);
+      await deliverPendingEscalations(this.store,jobId,this.options.escalationNotifier);
+      job = await this.store.load(jobId);
       for (const live of [...this.live.values()]) if (live.jobId === jobId && job.tasks.some(task => task.id === live.taskId && task.state === 'BLOCKED')) this.cancelExecutionGeneration(jobId, live.taskId, live.executionId);
       const previousState = job.state;
       const lifecycleFingerprint = (value: Job): string => `${value.state}|${value.tasks.map(task => `${task.id}:${task.state}`).join(',')}`;
@@ -245,6 +249,17 @@ export class Reconciler extends ReconcilerReviewBase {
         if (!recoverable) throw new Error('Planner graph requested pending recovery without a recoverable Plan');
         await this.launchPlanner(job, recoverable);
         changed = true;
+        return {};
+      }
+      if (actionId === 'planner.createRecovery') {
+        const failed=(job.plans??[]).at(-1);
+        if(!failed || failed.status!=='FAILED')throw Error('Graph selected missing FAILED Plan recovery');
+        const recovery=createFailedPlanRecovery(job,failed);
+        await this.store.appendTask(recovery);
+        await this.emit(eventFor(job.id,recovery.id,null,'troubleshooter.created','queued',
+          `Troubleshooter recovery for failed Plan ${failed.id}`,'orchestrator',
+          {agentName:'troubleshooter',planId:failed.id}));
+        changed=true;
         return {};
       }
       if (actionId === 'planner.createRound') {

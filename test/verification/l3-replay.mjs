@@ -51,7 +51,7 @@ export async function runReplay(scenario) {
    ...(scenario.headSha?{headSha:scenario.headSha}:{}),
    ...(scenario.mergeOutcomes?{localMerge:{sourceRef:'refs/heads/mock-source',targetRef:'refs/heads/main',status:'pending',sourceSha:scenario.headSha??'mock-head',attempts:0}}:{}),
    createdAt:stamp,updatedAt:stamp,tasks};
-  if(scenario.plannerScript)initialJob.plans=[createPlanRound(initialJob)];
+  if(scenario.plannerScript)initialJob.plans=[{...createPlanRound(initialJob),...(scenario.plannerScript.maxAttempts?{maxAttempts:scenario.plannerScript.maxAttempts}:{})}];
   await store.saveJob(initialJob);
   stop=await runtime.watch(jobId);
   const snapshot=async()=>await sqlite.loadJob(jobId);
@@ -59,24 +59,28 @@ export async function runReplay(scenario) {
   for(let index=0;index<scenario.steps.length;index++) {
    const step=scenario.steps[index];
    const resolveTaskId=async(value)=>{
-     if(value==='@planned')return (await snapshot()).plans?.[0]?.generatedTaskIds?.[0]??'__planned_unavailable__';
-     if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.[0]?.generatedTaskIds?.[0]??'__planned_unavailable__');
+     if(value==='@planned')return (await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__';
+     if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.findLast(p=>p.status==='SUCCEEDED')?.generatedTaskIds?.[0]??'__planned_unavailable__');
      if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
      if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
      return value??'a';
    };
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','planner.await-success','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
-   else if(step.type==='planner.settle'){
+   else if(step.type==='planner.settle' || step.type==='planner.await-success'){
+     const desired=step.type==='planner.await-success'?'SUCCEEDED':(step.expectStatus??'SUCCEEDED');
+     const planId=step.type==='planner.await-success'?'plan-2':'plan-1';
      for(let attempt=0;attempt<100;attempt++){
        await runtime.reconcile(jobId);
-       const pending=(await snapshot()).plans?.[0]?.status;
-       if(pending==='SUCCEEDED'||pending==='FAILED')break;
+       const status=(await snapshot()).plans?.find(p=>p.id===planId)?.status;
+       if(status===desired)break;
        await new Promise(resolve=>setTimeout(resolve,10));
      }
      const current=await snapshot();
-     if(current.plans?.[0]?.status!=='SUCCEEDED'||plannerCalls!==scenario.plannerScript?.failures+1)
-       throw Error('Real Planner Plan round did not recover: '+JSON.stringify({plannerCalls,plans:current.plans}));
+     if(current.plans?.find(p=>p.id===planId)?.status!==desired)
+       throw Error('Real Planner Plan round did not reach '+desired+': '+JSON.stringify({plannerCalls,plans:current.plans}));
+     if(step.type==='planner.settle'&&plannerCalls!==scenario.plannerScript?.maxAttempts && desired==='FAILED')
+       throw Error('Unexpected terminal Planner attempt count '+plannerCalls);
    }
    else if(step.type==='task.recover') {
     const resolvedTaskId=await resolveTaskId(step.taskId);

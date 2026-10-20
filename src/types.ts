@@ -105,7 +105,8 @@ export type TaskResolution = {
 export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence'>;
 export type TaskEscalation = {
   id: string;
-  originalTaskId: string;
+  originalTaskId?: string;
+  originalPlanId?: string;
   originalExecutionId?: string;
   recoveryExecutionId?: string;
   requiredAction: string;
@@ -158,6 +159,7 @@ export type Task = {
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
   reviewHeadSha?: string;
+  recoveryPlanId?: string;
   recoveryContext?: { failureKind: string; reason: string; evidence?: string; recoveryTaskId: string; at: string; reroute: boolean };
   routingExclusions?: Array<{ provider: string; model: string; profile?: string; workerId?: string; adapter?: WorkerAdapterName; reason: string; at: string }>;
   platformFailure?: {

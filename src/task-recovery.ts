@@ -39,30 +39,38 @@ export async function requestTroubleshooterEscalation(
   let requestedEvent: EventRecord | undefined;
   const apply = (job: Job): Job => {
     const recovery = job.tasks.find(task => task.id === recoveryTaskId);
-    if (!recovery || recovery.agentName !== 'troubleshooter' || !recovery.parentTaskId) throw new Error(`Task ${recoveryTaskId} is not a Troubleshooter recovery`);
+    if (!recovery || recovery.agentName !== 'troubleshooter' || (!recovery.parentTaskId && !recovery.recoveryPlanId)) throw new Error(`Task ${recoveryTaskId} is not a Troubleshooter recovery`);
     if (job.state === 'CANCELLED' || job.state === 'COMPLETED') throw new Error(`Job ${job.id} is terminal`);
-    const original = job.tasks.find(task => task.id === recovery.parentTaskId);
-    if (!original || original.state !== 'FAILED') throw new Error(`Troubleshooter ${recoveryTaskId} has no current FAILED original Task`);
+    const original = recovery.parentTaskId ? job.tasks.find(task => task.id === recovery.parentTaskId) : undefined;
+    const originalPlan = recovery.recoveryPlanId ? job.plans?.find(plan => plan.id === recovery.recoveryPlanId) : undefined;
+    if ((!original || original.state !== 'FAILED') && (!originalPlan || originalPlan.status !== 'FAILED'))
+      throw new Error(`Troubleshooter ${recoveryTaskId} has no current FAILED original Task or Plan`);
     if (recovery.escalation?.status === 'pending' && recovery.state === 'BLOCKED') {
       result = { task: structuredClone(recovery), escalation: structuredClone(recovery.escalation), duplicate: true };
       return job;
     }
     if (!['QUEUED', 'RUNNING', 'FAILED'].includes(recovery.state)) throw new Error(`Troubleshooter ${recoveryTaskId} cannot escalate from ${recovery.state}`);
-    const proposal = { path: 'escalation_gate' as const, targetTaskId: original.id, rootCause: request.context.trim(), solution: request.requiredAction.trim() };
-    const decision = dispatchTaskResolutionSync(original, proposal, 'troubleshooter', {
-      createEscalationGate: () => { original.resolution = materializeResolution(original, proposal, 'troubleshooter', now); },
-    });
-    if (!decision.accepted) throw new Error(`Task resolution graph rejected escalation for ${original.id}`);
+    if (original) {
+      const proposal = { path: 'escalation_gate' as const, targetTaskId: original.id, rootCause: request.context.trim(), solution: request.requiredAction.trim() };
+      const decision = dispatchTaskResolutionSync(original, proposal, 'troubleshooter', {
+        createEscalationGate: () => { original.resolution = materializeResolution(original, proposal, 'troubleshooter', now); },
+      });
+      if (!decision.accepted) throw new Error(`Task resolution graph rejected escalation for ${original.id}`);
+    }
+    // A Plan is an independent durable entity, never a synthetic Task. The
+    // Plan-failure guard is owned by planner-orchestration; only the real
+    // Troubleshooter Task undergoes the task-lifecycle BLOCKED transition.
     if (!tryTransitionTaskEvent(recovery, recovery.state === 'QUEUED' ? 'block' : 'task.blocked', { recoverableExecution: true }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
     const escalation: TaskEscalation = {
-      id: randomUUID(), originalTaskId: original.id, originalExecutionId: original.executionId ?? undefined,
+      id: randomUUID(), originalTaskId: original?.id, originalPlanId: originalPlan?.id,
+      originalExecutionId: original?.executionId ?? undefined,
       recoveryExecutionId: recovery.executionId ?? undefined, requiredAction: request.requiredAction.trim(),
       resolutionCondition: request.resolutionCondition.trim(), context: request.context.trim(), status: 'pending',
       requestedAt: now, notification: { status: 'pending', channel: typeof request.notification?.channel === 'string' ? request.notification.channel : 'relay-event', requestedAt: now },
     };
-    const event = eventFor(job.id, recovery.id, original.id, 'escalation.requested', 'blocked',
+    const event = eventFor(job.id, recovery.id, original?.id ?? null, 'escalation.requested', 'blocked',
       `Human action required: ${escalation.requiredAction}`, 'user',
-      { escalationId: escalation.id, originalTaskId: original.id, requiredAction: escalation.requiredAction,
+      { escalationId: escalation.id, originalTaskId: original?.id, originalPlanId: originalPlan?.id, requiredAction: escalation.requiredAction,
         resolutionCondition: escalation.resolutionCondition, notificationStatus: 'pending' },
       { agent: 'relay', component: 'agents-relay' });
     event.event_id = `escalation/${escalation.id}`;

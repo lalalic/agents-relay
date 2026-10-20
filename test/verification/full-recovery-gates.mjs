@@ -14,6 +14,7 @@ export const REQUIRED_RECOVERY_PATHS = Object.freeze([
 ]);
 // Trusted, in-process production replay. No caller evidence or blessing flags.
 import {runReplay} from './l3-replay.mjs';
+import {terminalPlannerCombinedScenario} from './l3-planner-terminal-combined.mjs';
 import {spawnSync} from 'node:child_process';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -51,6 +52,8 @@ const verifiedCases={
   expected:{jobState:'COMPLETED',tasks:{a:'SUCCEEDED','troubleshoot-a':'SUCCEEDED'},localMergeStatus:'succeeded'}},
 };
 
+verifiedCases['planner-failure-recovery']=terminalPlannerCombinedScenario;
+verifiedCases['sequential-complete-objective']=terminalPlannerCombinedScenario;
 const reviewSteps=[
  {type:'task.completed',taskId:'a'},
  {type:'mock.claim',taskId:'@review',executionId:'review-1'},
@@ -132,6 +135,22 @@ export async function evaluateRecoveryMatrix(){
      ? events.includes('restart')&&result.trace.find(x=>x.event==='reconcile')?.actionAttempts[0]?.outcome==='Unknown'&&result.trace.find(x=>x.event==='task.started')?.actionAttempts[0]?.outcome==='Verified'
      : path.id==='human-escalation-resume'
      ? events.includes('task.escalate')&&events.includes('restart')&&result.trace.find(x=>x.event==='mock.notification.delivered')?.escalations[0]?.notificationStatus==='delivered'&&result.trace.find(x=>x.event==='human.unblock')?.escalations[0]?.status==='responded'&&events.includes('task.recover')
+     : path.id==='planner-failure-recovery' || path.id==='sequential-complete-objective'
+     ? result.plannerCalls===2
+       && result.actual.plans[0]?.status==='FAILED'
+       && result.actual.plans[1]?.status==='SUCCEEDED'
+       && result.trace[0].planStatuses[0]?.status==='FAILED'
+       && result.trace[4].after.some(t=>t.id==='recover-plan-1'&&t.state==='SUCCEEDED')
+       && result.trace[5].planStatuses.some(p=>p.id==='plan-2'&&p.status==='SUCCEEDED')
+       && result.observedEvents.some(e=>e.event==='planner.failed')
+       && result.observedEvents.some(e=>e.event==='planner.completed')
+       && (path.id==='planner-failure-recovery'
+           || (events.includes('review.changes_required')
+             && events.includes('review.approved')
+             && result.trace.filter(t=>t.event==='task.failed').length>=2
+             && result.externalGitAttempts===2
+             && result.observedEvents.some(e=>e.event==='job.merge.failed')
+             && result.observedEvents.some(e=>e.event==='job.merge.succeeded')))
      : path.id==='worker-failure-recovery'
      ? result.trace[0].after.some(t=>t.id==='a'&&t.state==='FAILED')&&result.trace[3].after.some(t=>t.id==='a'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('restart')
      : path.id==='stale-replay-after-restart'

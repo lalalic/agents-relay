@@ -5,7 +5,7 @@ import type { Job } from '../types.js';
 import { isEffectivelyBlocked, unblockNeedsNewPlan, unconsumedUnblockTrigger } from '../unblock.js';
 
 export type PlannerOrchestrationState =
-  | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_seed' | 'check_planner'
+  | 'idle' | 'check_legacy_pending' | 'check_recover' | 'check_plan_failure' | 'check_plan_recovery' | 'check_plan_recovery_exists' | 'check_seed' | 'check_planner'
   | 'check_resolution_ownership' | 'check_blocked' | 'check_work' | 'check_materialized' | 'check_objective'
   | 'wait' | 'recovered' | 'created';
 
@@ -14,13 +14,16 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 
 export const plannerOrchestrationV2 = new GraphRuntime(source, {
   states: new Set<PlannerOrchestrationState>([
-    'idle','check_legacy_pending','check_recover','check_seed','check_planner','check_resolution_ownership',
+    'idle','check_legacy_pending','check_recover','check_plan_failure','check_plan_recovery','check_plan_recovery_exists','check_seed','check_planner','check_resolution_ownership',
     'check_blocked','check_work','check_materialized','check_objective','wait','recovered','created',
   ]),
   guards: {
     autonomousJob: boolGuard('autonomousJob'),
     legacyPlanningPending: boolGuard('legacyPlanningPending'),
     recoverablePendingPlan: boolGuard('recoverablePendingPlan'),
+    terminalPlanFailure: boolGuard('terminalPlanFailure'),
+    planRecoveryExists: boolGuard('planRecoveryExists'),
+    planRecoveryVerified: boolGuard('planRecoveryVerified'),
     hasSeedWork: boolGuard('hasSeedWork'),
     noActivePlanner: boolGuard('noActivePlanner'),
     resolutionOwnedByTroubleshooter: boolGuard('resolutionOwnedByTroubleshooter'),
@@ -30,6 +33,7 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
     objectiveUnsatisfied: boolGuard('objectiveUnsatisfied'),
   },
   actions: {
+    'planner.createRecovery': { id: 'planner.createRecovery' },
     'planner.recoverPending': { id: 'planner.recoverPending' },
     'planner.createRound': { id: 'planner.createRound' },
   },
@@ -50,6 +54,12 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
   const scopedPlans = (job.plans ?? []).filter(plan => !Number.isFinite(slot) || Date.parse(plan.createdAt) >= slot)
     .sort((a, b) => a.round - b.round || a.createdAt.localeCompare(b.createdAt));
   const latestPlan = scopedPlans.at(-1);
+  const failedPlan = latestPlan?.status === 'FAILED' ? latestPlan : null;
+  const recovery = failedPlan ? job.tasks.find(task => task.agentName === 'troubleshooter' && task.recoveryPlanId === failedPlan.id) : undefined;
+  const recoveryVerified = recovery?.state === 'SUCCEEDED'
+    && recovery.result?.data?.verified === true
+    && typeof recovery.result?.data?.evidence === 'string'
+    && recovery.result.data.evidence.trim().length > 0;
   const legacyLatest = scopedPlans.length === 0
     ? scopedTasks.filter(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1)
@@ -60,8 +70,11 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
     autonomousJob: job.executionMode === 'autonomous',
     legacyPlanningPending: job.initialPlanning?.status === 'pending',
     recoverablePendingPlan,
+    terminalPlanFailure: Boolean(failedPlan && !failedPlan.manualPlanning && failedPlan.trigger.source !== 'unblock'),
+    planRecoveryExists: Boolean(recovery),
+    planRecoveryVerified: recoveryVerified,
     hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),
-    noActivePlanner: unblockNeedsNewPlan(job) || !unconsumedUnblockTrigger(job) ? !scopedPlans.some(plan => plan.status === 'PLANNING') : false,
+    noActivePlanner: failedPlan?.manualPlanning ? false : unblockNeedsNewPlan(job) || !unconsumedUnblockTrigger(job) ? !scopedPlans.some(plan => plan.status === 'PLANNING') : false,
     noBlockedWork: Boolean(unconsumedUnblockTrigger(job)) || !scopedTasks.some(task => task.kind !== 'planner' && isEffectivelyBlocked(task)),
     noActiveImplementation: !scopedTasks.some(task => task.kind !== 'planner' && (['QUEUED', 'RUNNING'].includes(task.state) || (task.state === 'DRAFT' && !task.unblock))),
     resolutionOwnedByTroubleshooter: scopedTasks.some(task => task.kind !== 'planner' && task.resolution?.owner === 'troubleshooter' && ['active', 'waiting'].includes(task.resolution.state)),

@@ -100,8 +100,14 @@ test('planner failure after an orchestrator-started batch does not invent execut
   const stop = await reconciler.watch('planning');
   await settle(reconciler);
   const result = await store.load('planning');
-  assert.equal(result.tasks.filter(task => task.kind !== 'planner').length, 1);
+  assert.deepEqual(result.tasks.filter(task => task.agentName !== 'troubleshooter').map(task => task.id), ['initial'],
+    'Planner failure must not invent or replace business work');
+  const recovery = result.tasks.filter(task => task.agentName === 'troubleshooter');
+  assert.equal(recovery.length, 1, 'one Graph-selected Plan recovery, not unbounded Planner rounds');
+  assert.equal(recovery[0].recoveryPlanId, 'plan-1');
+  assert.equal(recovery[0].parentTaskId, null, 'a Plan is not an ordinary Task');
   assert.equal(result.tasks.some(task => task.id === 'plan-1'), false);
   assert.equal(result.plans?.find(plan => plan.id === 'plan-1')?.status, 'FAILED');
+  assert.equal(result.plans.length, 1, 'unverified recovery cannot create a new Plan');
   await stop();
 });
