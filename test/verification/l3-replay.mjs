@@ -13,6 +13,7 @@ import {Reconciler,executionEventSource} from '../../dist/reconciler.js';
 import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js';
 import {requestTroubleshooterEscalation,recordEscalationNotificationDelivery,resumeTroubleshooter} from '../../dist/task-recovery.js';
 import {tryTransitionTaskEvent,dependencyReady} from '../../dist/scheduler.js';
+import {createPlanRound} from '../../dist/planner.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
 const task=(id,deps=[],initialState)=>{const state=initialState??(deps.length?'DRAFT':'RUNNING');const running=state==='RUNNING';return {jobId,id,kind:'work',agentName:'implementation',adapter:'chatgpt',input:'mock agent',output:{kind:'task_pr'},parentTaskId:null,dependencies:deps,capabilities:[],state,attempt:state==='QUEUED'||deps.length?0:1,maxAttempts:3,leaseOwner:running?'mock':null,leaseExpiresAt:running?'2099-01-01T00:00:00.000Z':null,executionId:running?'exec-a':null,executionHistory:running?[{id:'exec-a',attempt:1,startedAt:stamp}]:[],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:stamp,updatedAt:stamp};};
@@ -33,31 +34,54 @@ export async function runReplay(scenario) {
    if(outcome!=='succeeded')throw Error('Unexpected or missing external Git mock result');
    return {sourceSha:receipt.sourceSha??scenario.headSha??'mock-head',mergedCommitSha:`mock-merge-${mergeAttempt}`};
  } : undefined;
- const runtimeOptions={owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,now:new Date(mockNow),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
+ let plannerCalls=0;
+ const planner=scenario.plannerScript ? {plan:async()=>{
+   plannerCalls++;
+   if(plannerCalls <= (scenario.plannerScript.failures??0))throw new Error('Injected isolated Planner provider failure '+plannerCalls);
+   return scenario.plannerScript.result;
+ }} : undefined;
+ const runtimeOptions={owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,
+   ...(planner?{planner,projectPathForJob:()=>process.cwd()}:{}),...(!planner?{now:new Date(mockNow)}:{}),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {
   const tasks=(scenario.tasks??[{id:'a'},{id:'b',dependencies:['a']}]).map(item=>task(item.id,item.dependencies??[],item.state));
   if(new Set(tasks.map(item=>item.id)).size!==tasks.length || tasks.some(item=>item.dependencies.some(dep=>!tasks.some(other=>other.id===dep)))) throw Error('invalid task dependencies');
-  await store.saveJob({id:jobId,title:scenario.id,repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:scenario.executionMode??'fixed',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
+  const initialJob={id:jobId,title:scenario.id,objective:scenario.plannerScript?'Verify complete multi-stage objective':undefined,repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:scenario.executionMode??'fixed',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
    ...(scenario.headSha?{headSha:scenario.headSha}:{}),
    ...(scenario.mergeOutcomes?{localMerge:{sourceRef:'refs/heads/mock-source',targetRef:'refs/heads/main',status:'pending',sourceSha:scenario.headSha??'mock-head',attempts:0}}:{}),
-   createdAt:stamp,updatedAt:stamp,tasks});
+   createdAt:stamp,updatedAt:stamp,tasks};
+  if(scenario.plannerScript)initialJob.plans=[createPlanRound(initialJob)];
+  await store.saveJob(initialJob);
   stop=await runtime.watch(jobId);
   const snapshot=async()=>await sqlite.loadJob(jobId);
   let prior=await snapshot();
   for(let index=0;index<scenario.steps.length;index++) {
    const step=scenario.steps[index];
    const resolveTaskId=async(value)=>{
+     if(value==='@planned')return (await snapshot()).plans?.[0]?.generatedTaskIds?.[0]??'__planned_unavailable__';
+     if(value==='@troubleshoot-planned')return 'troubleshoot-'+((await snapshot()).plans?.[0]?.generatedTaskIds?.[0]??'__planned_unavailable__');
      if(value==='@review')return (await snapshot()).review?.taskId??'__review_unavailable__';
      if(value==='@fix')return (await snapshot()).tasks.find(t=>t.id.startsWith('review-fix-'))?.id??'__fix_unavailable__';
      return value??'a';
    };
-   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
+   if(!['task.completed','task.failed','task.started','review.started','review.approved','review.changes_required','job.merge.failed','job.merge.succeeded','job.head.changed','mock.clock.advance','mock.claim','planner.settle','task.recover','task.escalate','mock.notification.delivered','human.unblock','reconcile','restart'].includes(step.type)) throw Error(`unsupported event: ${step.type}`);
    if(step.type==='reconcile') await runtime.reconcile(jobId);
+   else if(step.type==='planner.settle'){
+     for(let attempt=0;attempt<100;attempt++){
+       await runtime.reconcile(jobId);
+       const pending=(await snapshot()).plans?.[0]?.status;
+       if(pending==='SUCCEEDED'||pending==='FAILED')break;
+       await new Promise(resolve=>setTimeout(resolve,10));
+     }
+     const current=await snapshot();
+     if(current.plans?.[0]?.status!=='SUCCEEDED'||plannerCalls!==scenario.plannerScript?.failures+1)
+       throw Error('Real Planner Plan round did not recover: '+JSON.stringify({plannerCalls,plans:current.plans}));
+   }
    else if(step.type==='task.recover') {
     const resolvedTaskId=await resolveTaskId(step.taskId);
-    const result=await dispatchTaskAction(store,{id:TASK_RECOVER_ACTION,jobId,taskId:resolvedTaskId,recoveryTaskId:step.recoveryTaskId??`troubleshoot-${resolvedTaskId}`,recoveryDiagnosis:{failureKind:'task_failure',reason:step.reason??'L3 controlled recovery',evidence:'canonical event failure',reroute:false,excludeCurrentRoute:false}});
+    const recoveryTaskId=step.recoveryTaskId?await resolveTaskId(step.recoveryTaskId):`troubleshoot-${resolvedTaskId}`;
+    const result=await dispatchTaskAction(store,{id:TASK_RECOVER_ACTION,jobId,taskId:resolvedTaskId,recoveryTaskId,recoveryDiagnosis:{failureKind:'task_failure',reason:step.reason??'L3 controlled recovery',evidence:'canonical event failure',reroute:false,excludeCurrentRoute:false}});
     if(result.task.state!=='QUEUED')throw Error('recover action did not requeue original Task');
    }
    else if(step.type==='task.escalate') {
@@ -164,13 +188,14 @@ export async function runReplay(scenario) {
    const actionTable=sqliteReader.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_action_trace'").get();
    const actionAttempts=actionTable ? sqliteReader.prepare('SELECT attempt_key,execution_id,action_id,outcome FROM workflow_action_trace ORDER BY attempt_key').all() : [];
    sqliteReader.close();
-   trace.push({actionAttempts,index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
+   trace.push({actionAttempts,planStatuses:(observed.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,generatedTaskIds:p.generatedTaskIds})),index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
   }
-  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),localMerge:prior.localMerge??null};
+  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt})),localMerge:prior.localMerge??null};
   const errors=[];
   if(scenario.expected?.jobState && scenario.expected.jobState!==actual.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.jobState}`);
   for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) if(actual.tasks[id]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[id]??'missing'}`);
+  for(const [id,state] of Object.entries(scenario.expected?.plans??{})) if(!actual.plans.some(p=>p.id===id&&p.status===state))errors.push(`Plan ${id} expected ${state}`);
   if(scenario.expected?.localMergeStatus && actual.localMerge?.status!==scenario.expected.localMergeStatus) errors.push(`merge expected ${scenario.expected.localMergeStatus}, got ${actual.localMerge?.status??'none'}`);
   for(const assertion of scenario.assertions??[]){
    const transition=trace[assertion.step];
@@ -188,7 +213,7 @@ export async function runReplay(scenario) {
     catch{return [];}
     finally{auditDb.close();}
   })();
-  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,externalGitAttempts:mergeAttempt,actionTraces,authority:'isolated SQLite via production event bus and reconciler'};
+  return {schemaVersion:2,scenarioId:scenario.id,category:scenario.category??'L3',outcome:errors.length?'FAIL':'PASS',actual,trace,errors,observedEvents,plannerCalls,externalGitAttempts:mergeAttempt,actionTraces,authority:'isolated SQLite via production event bus and reconciler'};
  }finally{await stop?.();await stopObserving();await runtime.close();sqlite.close();env.cleanup();}
 }
 export async function replayFile(path,outputDir){

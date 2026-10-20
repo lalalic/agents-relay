@@ -96,3 +96,11 @@ Use `RELAY_L2_LIVE=1 RELAY_L2_ROLE=implementation npm run test:verification:l2:l
 `npm run test:verification:l2` validates the isolated MCP capture protocol, normal production Relay ingress, and immutable reviewer SHA rejection without incurring a real-model cost.
 
 `npm run test:verification:matrix` recomputes the 11-scenario L3 acceptance inventory via internally fixed production replays and writes `/tmp/agents-relay-job481-evidence/report.json` and `report.md`. Nine paths have internally rerun proof. Planner Plan-round failure/recovery and its combined end-to-end Objective convergence remain NOT_RUN. The Outbox path uses production Reconciler restart plus focused atomicity/publish-before-ack tests, with zero skipped tests; its report names those separate test sources rather than presenting them as one monolithic scenario.
+
+### Additional verified real Plan-round convergence (integration follow-up)
+
+`l3-planner-round.test.mjs` now exercises a real `Plan` record, **not** a synthetic Planner Task. Production Reconciler launches the Planner, receives the injected provider failure, emits `planner.retry`, launches attempt two, commits the resulting Plan children into isolated SQLite, and leaves the unfinished objective ACTIVE. The second test follows those committed children through Worker failure → Troubleshooter recovery → changed Reviewer head → fix task → Reviewer failure → Troubleshooter recovery → approval → simulated Git merge failure/retry → SQLite Job COMPLETED. Run with `npm run test:verification:l3`; both positive tests pass. `l3-planner-combined.mjs` supplies the fixed scenario; no caller-supplied PASS flags are possible.
+
+**Critical remaining distinction:** A retryable Planner failure produces `planner.retry`, not terminal `planner.failed`. The two strict Job 481 matrix paths `planner-failure-recovery` and `sequential-complete-objective` explicitly require terminal Planner failure, a separate Troubleshooter-owned recovery and an eventual successful Plan. That specific sequence is still **NOT_RUN** and is not inferred from this positive automatic retry test.
+
+The isolated escalation notification receipt is injected through a test notifier. A connected production user-visible notifier, complete native CodexAdapter launch compliance, and standalone real-browser Dashboard E2E are not established by these tests.
