@@ -13,6 +13,7 @@ type ProjectedPayload =
   | { operation: 'save_job'; value: Job }
   | { operation: 'append_plan' | 'save_plan'; value: Plan }
   | { operation: 'append_task' | 'save_task'; value: Task }
+  | { operation: 'append_task_comment'; value: import('./task-comments.js').TaskComment }
   | { operation: 'save_agent'; value: AgentRegistration }
   | { operation: 'update_pr_body'; value: string }
   | { operation: 'create_pull_request'; repository: string; head: string; base: string; title: string; body: string; sourceRef: string; targetRef: string }
@@ -117,7 +118,7 @@ export class GitHubProjectionWriter {
     let deferred = 0;
     for (const item of items) {
       try {
-        if (this.externalOnly && !['merge_pull_request', 'close_pull_request', 'update_pr_body', 'create_pull_request'].includes(item.operation)) {
+        if (this.externalOnly && !['merge_pull_request', 'close_pull_request', 'update_pr_body', 'create_pull_request', 'append_task_comment'].includes(item.operation)) {
           // Drop legacy lifecycle projections; GitHub may not override SQLite truth.
           await this.relay.completeProjection(item.id);
           continue;
@@ -191,6 +192,9 @@ export class GitHubProjectionWriter {
       case 'save_plan': await this.github.savePlan(payload.value); return;
       case 'append_task': await this.github.appendTask(payload.value); return;
       case 'save_task': await this.github.saveTask(payload.value); return;
+      case 'append_task_comment':
+        if (!this.github.appendTaskHistoryComment) throw new Error('GitHub projection target cannot append Task history comments');
+        await this.github.appendTaskHistoryComment(payload.value); return;
       case 'save_agent': await this.github.saveAgent(payload.value); return;
       case 'update_pr_body':
         if (!this.github.updatePullRequestBody) throw new Error('GitHub projection target cannot update PR body');

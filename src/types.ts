@@ -105,6 +105,7 @@ export type TaskResolution = {
 export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence'>;
 export type TaskEscalation = {
   id: string;
+  fingerprint?: string;
   originalTaskId?: string;
   originalPlanId?: string;
   originalExecutionId?: string;

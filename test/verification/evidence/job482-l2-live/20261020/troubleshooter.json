@@ -1,0 +1,93 @@
+{
+  "outcome": "PASS",
+  "role": "troubleshooter",
+  "scenario": "contradictory-mcp",
+  "provider": "codex",
+  "code": 0,
+  "termination": null,
+  "jobId": "l2-1c9cb485-4a0f-4819-b51b-299dc0d687d8",
+  "taskId": "troubleshooter-test",
+  "executionId": "1f42783e-589c-4e98-89f4-1fe14ee0c866",
+  "eventCount": 2,
+  "providerChecks": {
+    "exitCode": true,
+    "started": true,
+    "terminalCount": true,
+    "terminalType": "task.completed",
+    "correctRole": true
+  },
+  "accepted": [
+    {
+      "type": "task.started",
+      "sourceId": "job/l2-1c9cb485-4a0f-4819-b51b-299dc0d687d8/task/troubleshooter-test/execution/1f42783e-589c-4e98-89f4-1fe14ee0c866",
+      "data": {}
+    },
+    {
+      "type": "task.completed",
+      "sourceId": "job/l2-1c9cb485-4a0f-4819-b51b-299dc0d687d8/task/troubleshooter-test/execution/1f42783e-589c-4e98-89f4-1fe14ee0c866",
+      "data": {
+        "diagnosis": "The Job482 original Task remains FAILED. The summary's claim that Neo MCP was connected and permissions were granted conflicts with the authoritative capture, which records connected=false and permissions=false because required user authorization was still missing. The summary claim is stale and is not proof of recovery.",
+        "evidence": "Contradictory MCP evidence fixture: summary reports Neo MCP connected=true and permissions=true; authoritative capture reports connected=false and permissions=false after required user authorization remained missing. This user-owned authorization cannot be completed by self-healing.",
+        "recoveryRecommendation": {
+          "path": "escalation_gate",
+          "requiredAction": "Use the existing Relay task escalation operation to request the user to complete the required ChatGPT authorization for Neo MCP.",
+          "resolutionCondition": "An authoritative capture for the original failing execution context confirms Neo MCP connected=true and permissions=true.",
+          "context": "The original Task remains FAILED. Its summary contains a stale connected=true/permissions=true claim that conflicts with authoritative connected=false/permissions=false evidence; do not treat the summary as proof or claim the failed Task was recovered."
+        }
+      }
+    }
+  ],
+  "rejected": [],
+  "relayAcceptance": {
+    "accepted": true,
+    "progress": [
+      {
+        "type": "task.started",
+        "state": "RUNNING",
+        "reviewOutcome": null
+      },
+      {
+        "type": "task.completed",
+        "state": "SUCCEEDED",
+        "reviewOutcome": null
+      }
+    ],
+    "jobState": "ACTIVE",
+    "taskState": "SUCCEEDED",
+    "reviewOutcome": null,
+    "escalationLoop": {
+      "accepted": true,
+      "escalationId": "6890cfde-162c-4624-afa7-490612812ae0",
+      "duplicate": true,
+      "states": {
+        "original": "QUEUED",
+        "recovery": "QUEUED"
+      },
+      "recoveryExecution": {
+        "original": null,
+        "recovery": null
+      },
+      "comments": {
+        "original": 2,
+        "recovery": 2
+      }
+    }
+  },
+  "modelOutputTail": "itative Relay store with `agents-relay task context`; GitHub is only an optional projection and is never lifecycle authority.\n2. **Mandatory before diagnosis:** retrieve the failed Task's task-scoped lifecycle event history. When the local Relay dashboard is available, use `GET http://127.0.0.1:8787/api/events?job=<job_id>&task=<task_id>&limit=200`. Inspect event order, type/status, source, data/phase, execution IDs, duplicates, missing expected lifecycle events, and late events. Then inspect task error/failureReason, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.\n3. Classify the blocker:\n   - transient execution/delivery/lease failure;\n   - task-local implementation or validation failure;\n   - shared worker/runtime/tool/Agents Relay defect;\n   - genuine external/human blocker.\n4. Diagnose the smallest root cause from the combined durable Task + event sequence + logs. The final `task.error` is only one piece of evidence. Never retry first and investigate later.\n5. Repair:\n   - For a transient failure, verify the transient condition is gone.\n   - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.\n   - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed ins**Filtering tools for MCP publish**\ncodex\nI’ll emit the required lifecycle events through `relay_l2.publish` only, using the supplied execution identity and recording the original Task as still failed.\n**Preparing tool execution**\nmcp: relay_l2/publish started\nmcp: relay_l2/publish (completed)\n**Summarizing recovery recommendation details**\nmcp: relay_l2/publish started\nmcp: relay_l2/publish (completed)\n**Confirming transport acceptance**\ncodex\nPublished `task.started` and exactly one `task.completed` through `relay_l2.publish`. The completion records the stale summary conflict, escalation recommendation, and that the original Task remains FAILED. Relay accepted both events for transport; lifecycle validation is independent.\ntokens used\n27,974\nPublished `task.started` and exactly one `task.completed` through `relay_l2.publish`. The completion records the stale summary conflict, escalation recommendation, and that the original Task remains FAILED. Relay accepted both events for transport; lifecycle validation is independent.\n",
+  "reason": null,
+  "prompt": "You are running a real L2 isolated contract evaluation. This is a test, NOT a real Relay task. Do not edit files, invoke shell, contact production endpoints or invent success. You must use ONLY the MCP tool relay_l2.publish to emit events; do not invoke other MCP servers. Your exact source.id is job/l2-1c9cb485-4a0f-4819-b51b-299dc0d687d8/task/troubleshooter-test/execution/1f42783e-589c-4e98-89f4-1fe14ee0c866. Emit task.started first. Then perform the tiny role test: Use the Job482 contradictory MCP evidence fixture. The task summary claims Neo MCP connected=true and permissions=true, while authoritative capture says connected=false and permissions=false after required user authorization remained missing. Do not treat the summary claim as proof. Select escalation_gate because self-healing cannot complete user-owned ChatGPT authorization. State that the exact original task remains FAILED, identify the stale claim conflict, and recommend the existing Relay task escalation operation with authoritative connected=true and permissions=true as the resolution condition. Emit exactly one task.completed with data including diagnosis, evidence, and an object recoveryRecommendation containing exactly path:\"escalation_gate\", requiredAction, resolutionCondition and context strings. Never claim the original failed Task was recovered.\n## Role Contract\n---\nname: troubleshooter\ndescription: Recover FAILED Agents Relay tasks by diagnosing runtime/execution faults and repairing recoverable causes. BLOCKED tasks require authoritative unblock and are not resumed by Troubleshooter.\ncapabilities: [troubleshoot, recovery, orchestration, local_repo, iterative_tools]\nruntime: codex\ndelegation: [p0-self-job, relay-task-retry]\nrestrictions: [preserve-failure-evidence, no-blind-retry, no-human-blocker-bypass]\n---\n\n# Troubleshooter Agent\n\nYou are the recovery orchestrator for a FAILED Agents Relay task. Do not authoritatively clear BLOCKED work; that requires `task unblock`, `job unblock`, or blocker-Job resolution.\n\nYour goal is not to explain the failure. Your goal is to make the original task move again when it is safe and technically possible.\n\nRead and follow the shared Task / Job contract and orchestrator P0/self-job workflow before acting.\n\n## Recovery loop\n\n1. Retrieve the durable original Job and Task from the authoritative Relay store with `agents-relay task context`; GitHub is only an optional projection and is never lifecycle authority.\n2. **Mandatory before diagnosis:** retrieve the failed Task's task-scoped lifecycle event history. When the local Relay dashboard is available, use `GET http://127.0.0.1:8787/api/events?job=<job_id>&task=<task_id>&limit=200`. Inspect event order, type/status, source, data/phase, execution IDs, duplicates, missing expected lifecycle events, and late events. Then inspect task error/failureReason, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.\n3. Classify the blocker:\n   - transient execution/delivery/lease failure;\n   - task-local implementation or validation failure;\n   - shared worker/runtime/tool/Agents Relay defect;\n   - genuine external/human blocker.\n4. Diagnose the smallest root cause from the combined durable Task + event sequence + logs. The final `task.error` is only one piece of evidence. Never retry first and investigate later.\n5. Repair:\n   - For a transient failure, verify the transient condition is gone.\n   - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.\n   - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed inside this recovery execution, fix/verify it and retry the original Task. If it cannot be completed now, register the original Task with `agents-relay blocker add` on that blocker Job and finish this Troubleshooter task; do not stay running while waiting for another Job.\n   - For a suspected genuine human/external blocker, do not publish `task.blocked` and do not branch on Neo's result yourself. Invoke `agents-relay escalation` with the original intent, blocker, and relevant context. The canonical graph owns the `resolved`, `failed`, and `needs_user` outcomes. When it returns `needs_user`, call Relay's `task escalate` operation with the concrete required action, resolution condition, and diagnostic context. Relay records the escalation and blocks this Troubleshooter; no worker remains running while waiting.\n6. For an immediate repair, only after the blocker is removed request `agents-relay task recover` for the original Task with this Troubleshooter's recovery Task ID. Verify the authoritative postcondition from SQLite: original state is QUEUED with the expected resolution and recovery correlation. A human response arrives as a Task Comment; keep Task input unchanged, treat the old resolution condition as provenance, and independently verify it using evidence from the original failing execution context. If the same evidence still leaves the issue unresolved, do not submit an identical escalation again. For deferred repair, rely on the durable blocker relation: merge-mode blockers wake matching dependents after merge; release/deploy/runtime blockers use `--resolution verified` and `agents-relay blocker resolve` only after verification.\n7. Verify durable evidence that the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.\n8. Publish this Troubleshooter Task's terminal event only after the recovery outcome is durable.\n\n## Rules\n\n- Never erase or rewrite the original failure evidence.\n- Never blindly retry a deterministic failure. Event-history inspection is a hard precondition for retry; if event history cannot be retrieved, record that observability blocker explicitly rather than pretending diagnosis is complete.\n- Never create a second P0 Job for the same root cause when a suitable active one already exists; reuse/adopt/reconcile it.\n- P0 fixes must follow the P0/self-job contract: durable Job first, orchestrator-owned Task immediately, direct execution by this recovery orchestrator, no reviewer gate unless explicitly required.\n- Repository PR creation/adoption/repair still goes through Agents Relay.\n- Keep fixes narrowly scoped; do not use a failed application task as permission for broad platform refactoring.\n- If a P0 fix publishes a package or changes a managed service, verify the released artifact and dependent service health before retrying the original Task.\n- Do not mark an immediate recovery successful merely because a repair PR was opened. A deferred recovery may complete after it has durably registered the exact original Task/attempt on the blocker Job; Relay then owns the later generation-safe wake-up.\n\n## Example\n\nA final review fails because the ChatGPT browser worker reports `Temporary Chat toggle was not uniquely observed`.\n\nThat is not a defect in the reviewed PR. Inspect the browser-worker/browser-harness path, repair that shared runtime through a P0/self-job in its owning repository, validate/deploy the fix, then retry the original final-review Task and verify its new execution begins.\n\n## Event Contract\n# Agents Relay Unified Task Event Contract\n\n**Scope:** Relay-specific event meaning and validation. This does **not** define Events Bus transport. The bus only handles generic event identity, type, timestamp, routing as needed, and opaque `data`. No Events Bus change is required when Relay adds agent roles or payload fields.\n\n## Producer contract\n\nEvery Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress` or `task.heartbeat`, then **exactly one** agent terminal event:\n\n- `task.completed`: assigned responsibility finished and its role-specific output is durable, regardless of whether a reviewed artifact passed.\n- `task.failed`: assigned responsibility could not be fulfilled; include failure phase, reason, and evidence in `data`.\n\n`task.blocked` and `task.unblocked` are **Relay-owned lifecycle facts**, not agent terminal outcomes. Transport acceptance is not proof Relay accepted the transition. Every lifecycle event must use the exact Job, Task, and execution source identity provided by Relay; stale/duplicate execution events cannot change current state.\n\n## Role-specific completed data\n\n| Role | `task.completed.data` | Relay action |\n| --- | --- | --- |\n| Implementation | Evidence of output/artifact, validation, and summary as required by the Task | Persist Task success and continue dependencies/review |\n| Reviewer | `verdict` (`approved` or `changes-required`), exact immutable `head_sha`, actionable `findings` as necessary | Validate current immutable review target and apply verdict; defects are a successful Reviewer execution, not `task.failed` |\n| Troubleshooter | Recovery action and durable evidence of verified original Task retry, blocker-Job handoff, or other authorized recovery | Complete recovery Task only; original Task state changes through separately authorized Relay operations |\n\nA Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay normalizes an authenticated structured Reviewer terminal event into its internal Review decision; native `review.*` events may be accepted for backward compatibility.\n\n## Troubleshooter human escalation\n\nOnly a real user action merits escalation. Troubleshooter invokes the Relay escalation operation, specifying the required action, resolution condition, and diagnostic context. Relay durably records the human action and blocks **the Troubleshooter Task**, leaving the original failed Task `FAILED`. This is a Relay state transition, not a third agent terminal event.\n\nWhen the human responds, Relay records the response as an append-only Task Comment and authoritatively unblocks the **Troubleshooter Task**. The stable Task input is unchanged. Troubleshooter receives current authoritative state and relevant comments, independently verifies the response against the original failing execution context, requests an authorized original Task recovery, and only then publishes its own `task.completed`. A repeated identical escalation without new evidence is idempotent. If unresolved, it continues diagnosis or escalates again; human assertion alone is not technical verification.\n\nSee [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, overall flow, failure recovery, and post-blocked resumption.\n\nReviewer unavailable evidence is an execution failure (`task.failed`), not a blocked Task. Legacy Reviewer verdict `blocked` is normalized to failure and must dispatch Troubleshooter. Only Relay blocks a Troubleshooter during human escalation.\n\nA host-mediated interactive invocation is a separate Relay-controlled wait. It requires an already-bound `interactiveInvocation` with status `awaiting_decision`. It is not permission for a Worker or Reviewer to choose a blocked terminal outcome.\n\nA legacy Job-level `review: blocked` gate is reset to `pending` only after authoritative `task.unblocked` metadata exists on its bound Reviewer Task and the immutable review head still matches. The same Reviewer Task then resumes without creating a duplicate.\n\n## Local Git merge delivery history\n\nThe Relay-owned merge effect persists the current `job.localMerge` receipt in SQLite. Every attempted delivery also emits `job.merge.failed` or `job.merge.succeeded` to the canonical events-bus, keyed by the Job and merge attempt. Failure `data` contains `reason`, exact `message`, `attempts`, `retryable`, and `nextAttemptAt`; success contains `mergedCommitSha` and `sourceSha`. A dirty checked-out target is `reason: dirty_target_worktree`. The dashboard displays the durable failure reason while `localMerge.status=failed`. After the retry deadline, periodic reconciliation must select ACTIVE Jobs with failed local merges even when all Tasks have succeeded. Historical failure events remain visible after successful recovery.\n",
+  "artifacts": {
+    "report": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/troubleshooter.json",
+    "fixture": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/troubleshooter-fixture",
+    "sqlite": [
+      {
+        "path": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/troubleshooter-fixture/relay.sqlite",
+        "bytes": 188416
+      },
+      {
+        "path": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/troubleshooter-fixture/job482-escalation.sqlite",
+        "bytes": 188416
+      }
+    ]
+  }
+}

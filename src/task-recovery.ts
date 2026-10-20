@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
 import type { Job, Task, TaskEscalation, EventRecord } from './types.js';
@@ -29,6 +29,11 @@ function validateRequest(request: EscalationRequest): void {
   if (!request.resolutionCondition.trim()) throw new Error('Escalation requires a resolution condition');
   if (!request.context.trim()) throw new Error('Escalation requires diagnostic context');
 }
+function escalationFingerprint(request: EscalationRequest, executionId?: string | null): string {
+  return createHash('sha256').update(JSON.stringify([
+    request.requiredAction.trim(), request.resolutionCondition.trim(), request.context.trim(), executionId ?? null,
+  ])).digest('hex');
+}
 
 /** Relay-owned escalation: the recovery Task, never the failed original, becomes BLOCKED. */
 export async function requestTroubleshooterEscalation(
@@ -45,6 +50,11 @@ export async function requestTroubleshooterEscalation(
     const originalPlan = recovery.recoveryPlanId ? job.plans?.find(plan => plan.id === recovery.recoveryPlanId) : undefined;
     if ((!original || original.state !== 'FAILED') && (!originalPlan || originalPlan.status !== 'FAILED'))
       throw new Error(`Troubleshooter ${recoveryTaskId} has no current FAILED original Task or Plan`);
+    const fingerprint = escalationFingerprint(request, original?.executionId ?? originalPlan?.executionId);
+    if (recovery.escalation?.fingerprint === fingerprint) {
+      result = { task: structuredClone(recovery), escalation: structuredClone(recovery.escalation), duplicate: true };
+      return job;
+    }
     if (recovery.escalation?.status === 'pending' && recovery.state === 'BLOCKED') {
       result = { task: structuredClone(recovery), escalation: structuredClone(recovery.escalation), duplicate: true };
       return job;
@@ -63,6 +73,7 @@ export async function requestTroubleshooterEscalation(
     if (!tryTransitionTaskEvent(recovery, recovery.state === 'QUEUED' ? 'block' : 'task.blocked', { recoverableExecution: true }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be blocked`);
     const escalation: TaskEscalation = {
       id: randomUUID(), originalTaskId: original?.id, originalPlanId: originalPlan?.id,
+      fingerprint,
       originalExecutionId: original?.executionId ?? undefined,
       recoveryExecutionId: recovery.executionId ?? undefined, requiredAction: request.requiredAction.trim(),
       resolutionCondition: request.resolutionCondition.trim(), context: request.context.trim(), status: 'pending',
@@ -92,6 +103,8 @@ export async function requestTroubleshooterEscalation(
     : store.mutateJob ? await store.mutateJob(jobId, apply)
     : await store.load(jobId).then(async current => { apply(current); for (const task of current.tasks) await store.saveTask(task); await store.saveJob(current); return current; });
   if (!result) throw new Error('Escalation did not produce a durable result');
+  result.task = structuredClone(job.tasks.find(task => task.id === recoveryTaskId) ?? result.task);
+  result.escalation = structuredClone(result.task.escalation ?? result.escalation);
   return { job, ...result };
 }
 
@@ -108,7 +121,6 @@ export async function resumeTroubleshooter(
     if (task.state !== 'BLOCKED') throw new Error(`Task ${recoveryTaskId} is not a blocked Troubleshooter escalation`);
     if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be resumed`);
     task.escalation = { ...task.escalation, status: 'responded', response: response.trim(), respondedAt: now };
-    task.input += `\n\n## Human response (${now})\n${response.trim()}\n\nRe-validate the original failure against this response. Required resolution condition: ${task.escalation.resolutionCondition}`;
     task.result = null;
     task.error = null;
     task.failureReason = undefined;
@@ -120,6 +132,7 @@ export async function resumeTroubleshooter(
   };
   const job = store.mutateJob ? await store.mutateJob(jobId, apply) : await store.load(jobId).then(async current => { apply(current); for (const task of current.tasks) await store.saveTask(task); await store.saveJob(current); return current; });
   if (!updated) throw new Error('Troubleshooter was not resumed');
+  updated = structuredClone(job.tasks.find(item => item.id === recoveryTaskId) ?? updated);
   return { job, task: updated };
 }
 

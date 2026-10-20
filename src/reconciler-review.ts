@@ -140,7 +140,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }, this.options.reviewer?.threadId);
     const input = [
       `Job ID: ${job.id}`,
-      `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.`,
+      reviewPrNumber > 0 ? `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.` : `Review the local Job artifact at exactly head SHA ${headSha}.`,
       `Review head SHA: ${headSha}`,
       'Job objective: ' + (job.objective ?? job.description ?? job.title),
       'Use the selected reviewer agent contract as the authoritative review protocol.',
@@ -149,7 +149,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: `Final review: ${job.title}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
+      jobId: job.id, id, title: `Review ${headSha.slice(0, 8)}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
@@ -370,8 +370,10 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
         const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
         if (!job.tasks.some(item => item.id === id)) {
-          const input = 'Address all reviewer findings for PR #' + this.externalReviewPrNumber(job) + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
-          const fixTask = createTaskEntity(job, { jobId: job.id, id, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
+          const fixPrNumber = this.externalReviewPrNumber(job);
+          const fixTarget = fixPrNumber > 0 ? `PR #${fixPrNumber}` : `Job ${job.id} artifact`;
+          const input = 'Address all reviewer findings for ' + fixTarget + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
+          const fixTask = createTaskEntity(job, { jobId: job.id, id, title: `Fix review ${headSha.slice(0, 8)}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
           pendingFixTask = fixTask;
         }
         return {};

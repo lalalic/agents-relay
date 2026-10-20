@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { appendTaskComment, taskCommentContext } from '../dist/task-comments.js';
-import { taskExecutionContext } from '../dist/task-context.js';
+import { taskExecutionContext, taskAgentHistoryContext } from '../dist/task-context.js';
 import { SQLiteRelayStore, mergeInboundJobSnapshot } from '../dist/relay-store.js';
 
 const task = { id:'1', state:'RUNNING', executionId:'e1', input:'immutable', dependencies:[] };
@@ -12,8 +12,20 @@ test('Task comments append without mutating original input or execution', () => 
   assert.equal(job.tasks[0].input,'immutable');assert.equal(job.tasks[0].executionId,'e1');
   assert.match(taskCommentContext(job.tasks[0]),/first/);
   assert.deepEqual(taskExecutionContext(job,'1','e1').comments.map(c=>c.text),['first','second']);
+  assert.equal(taskExecutionContext(job,'1','e1').currentState,'RUNNING');
   assert.throws(()=>appendTaskComment(job,'1','  '),/nonempty/);
   assert.throws(()=>appendTaskComment(job,'not-found','x'),/not found/);
+});
+
+test('reviewer and troubleshooter runtime context includes authoritative state and related comments',()=>{
+  const original={...task,id:'original',state:'FAILED',executionId:'failed-exec',resolution:{path:'escalation_gate',state:'waiting'},comments:[{id:'c1',text:'historical evidence',author:'relay',createdAt:'now'}]};
+  const recovery={...task,id:'recovery',agentName:'troubleshooter',state:'RUNNING',executionId:'recovery-exec',parentTaskId:'original',comments:[]};
+  const job={id:'j',repository:'r/r',tasks:[original,recovery]};
+  const context=taskAgentHistoryContext(job,recovery);
+  assert.match(context,/"state": "FAILED"/);
+  assert.match(context,/historical evidence/);
+  assert.match(context,/original failing execution/);
+  assert.equal(original.input,'immutable');
 });
 test('SQLite atomic mutation serializes appended comments',async()=>{
   const store=new SQLiteRelayStore(':memory:');
@@ -24,6 +36,26 @@ test('SQLite atomic mutation serializes appended comments',async()=>{
   assert.equal(saved.tasks[0].comments.length,12);
   assert.equal(new Set(saved.tasks[0].comments.map(c=>c.id)).size,12);
   assert.equal(saved.tasks[0].input,'immutable');
+});
+
+test('authoritative resolution and escalation comments enqueue one idempotent GitHub projection in the same SQLite mutation',async()=>{
+  const store=new SQLiteRelayStore(':memory:');
+  const failed={...task,id:'original',state:'FAILED',executionId:'failed-exec',comments:[]};
+  const recovery={...task,id:'recovery',state:'RUNNING',executionId:'recovery-exec',agentName:'troubleshooter',parentTaskId:'original',comments:[]};
+  await store.saveJob({id:'history-job',repository:'r/r',prNumber:4,state:'ACTIVE',updatedAt:'2026-01-01T00:00:00Z',tasks:[failed,recovery],plans:[]});
+  const committed=await store.mutateJob('history-job',job=>{
+    job.tasks[0].resolution={path:'escalation_gate',state:'waiting',owner:'troubleshooter',updatedAt:'2026-01-01T00:00:01Z'};
+    job.tasks[1].escalation={id:'esc-1',originalTaskId:'original',originalExecutionId:'failed-exec',recoveryExecutionId:'recovery-exec',requiredAction:'Approve access',resolutionCondition:'A fresh session succeeds',context:'Worker received access denied',status:'pending',requestedAt:'2026-01-01T00:00:01Z'};
+    return job;
+  });
+  assert.equal(committed.tasks[0].comments[0].kind,'resolution.changed');
+  assert.equal(committed.tasks[1].comments[0].kind,'escalation.requested');
+  assert.equal(committed.tasks[1].comments[0].executionId,'failed-exec');
+  assert.equal(await store.pendingProjectionCount(),2);
+  const items=await store.claimDueProjections();
+  assert.deepEqual(items.map(item=>item.operation),['append_task_comment','append_task_comment']);
+  assert.equal(new Set(items.map(item=>item.idempotencyKey)).size,2);
+  assert.equal(items[0].payload.operation,'append_task_comment');
 });
 
 test('state updates from stale snapshots cannot erase newly appended comments',async()=>{

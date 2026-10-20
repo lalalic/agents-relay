@@ -25,7 +25,7 @@ A Reviewer must **not** publish unstructured `task.completed`: missing verdict o
 
 Only a real user action merits escalation. Troubleshooter invokes the Relay escalation operation, specifying the required action, resolution condition, and diagnostic context. Relay durably records the human action and blocks **the Troubleshooter Task**, leaving the original failed Task `FAILED`. This is a Relay state transition, not a third agent terminal event.
 
-When the human responds, the **Troubleshooter Task** is authoritatively unblocked and resumed with its prior context plus the response. Troubleshooter independently verifies resolution, requests an authorized original Task recovery, and only then publishes its own `task.completed`. If unresolved, it continues diagnosis or escalates again; human assertion alone is not technical verification.
+When the human responds, Relay records the response as an append-only Task Comment and authoritatively unblocks the **Troubleshooter Task**. The stable Task input is unchanged. Troubleshooter receives current authoritative state and relevant comments, independently verifies the response against the original failing execution context, requests an authorized original Task recovery, and only then publishes its own `task.completed`. A repeated identical escalation without new evidence is idempotent. If unresolved, it continues diagnosis or escalates again; human assertion alone is not technical verification.
 
 See [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, overall flow, failure recovery, and post-blocked resumption.
 

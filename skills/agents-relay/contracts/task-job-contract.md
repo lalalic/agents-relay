@@ -32,6 +32,13 @@ A later Planner round must inspect the existing semantic tree and attach review,
 
 A Task input records **what is known and what has already been decided before execution**. A Task result records **what execution discovered and what was actually done**.
 
+After creation, keep `Task.input` stable as the objective and initial evidence.
+Responses, resolution changes, and escalation history belong in append-only
+Task Comments. SQLite atomically records typed comments with authoritative
+resolution/escalation mutations; PR-bound Jobs project those comments through
+the durable idempotent projection outbox. Comments supplement current state and
+never replace `Task.resolution` or `Task.escalation`.
+
 Task input should include, as applicable:
 
 - goal and observed behavior;
