@@ -182,7 +182,7 @@ export type Task = {
   blockedBy?: TaskBlockerReference;
   blockedBaseline?: BlockedBaseline;
   unblock?: TaskUnblockRecord;
-  result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; createdAt: string; updatedAt: string;
+  result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; lastProgressAt?: string; lastProgressEventAt?: string; processExitedAt?: string; createdAt: string; updatedAt: string;
 };
 /** Normalize snapshots written before UNBLOCKED was removed from the lifecycle graph. */
 export function normalizeLegacyTaskLifecycle(task: Task, executionMode: ExecutionMode): Task {

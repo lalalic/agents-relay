@@ -4,7 +4,9 @@
 
 ## Producer contract
 
-Every Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress` or `task.heartbeat`, then **exactly one** agent terminal event:
+Every Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress`, then **exactly one** agent terminal event:
+
+`task.started` and `task.progress` reset the Task inactivity timeout only when Relay accepts the event for the exact current execution. Progress is nonterminal, must be newer than the last accepted progress event, and cannot extend a terminal or stale execution.
 
 - `task.completed`: assigned responsibility finished and its role-specific output is durable, regardless of whether a reviewed artifact passed.
 - `task.failed`: assigned responsibility could not be fulfilled; include failure phase, reason, and evidence in `data`.

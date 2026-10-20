@@ -151,6 +151,7 @@ leaseFailQueuedClearExecution --> failed
 queued -->|on: cancel| cancelled
 
 running -->|on: task.blocked| blocked
+running -->|on: task.progress| running
 running -->|on: review.approved| reviewApproveRunningClearError
 reviewApproveRunningClearError --> reviewApproveRunningClearReason
 reviewApproveRunningClearReason --> succeeded

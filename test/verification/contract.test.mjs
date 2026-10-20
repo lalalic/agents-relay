@@ -18,6 +18,9 @@ test('agent instruction contract stays aligned with canonical terminal ownership
   assert.match(reviewer,/task\.completed/);assert.match(reviewer,/data\.head_sha/);
   assert.match(worker,/task\.completed.*task\.failed/);
   assert.match(troubleshooter,/do not publish `task\.blocked`/i);
+  assert.doesNotMatch(contract,/task\.heartbeat/);
+  assert.doesNotMatch(read('src/managed-worker-input.ts'),/task\.heartbeat/);
+  assert.match(contract,/exact current execution/);
 });
 test('production reviewer normalization keeps approved and changes-required identities',()=>{
   for (const [verdict,type] of [['approved','review.approved'],['changes-required','review.changes_required']]) {

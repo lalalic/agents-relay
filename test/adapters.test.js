@@ -441,7 +441,7 @@ test('ChatGptAdapter aborts hung browser submission when worker start ack expire
 test('implementation-thread delivery sends reference plus canonical execution events', async () => {
   const requests = [];
   const adapter = new ChatGptAdapter({ agentRunner: fakeRunner({ status:'submitted',mode:'new-turn',thread_id:'implementation-thread',verified_by:'user-turn' }, requests) });
-  await adapter.launch(task({ input:'SECRET_LONG_TASK_INSTRUCTIONS\n[Execution event contract — mandatory]\nsource.id=job/job-1/task/chat-task/execution/exec-1\ntask.started task.heartbeat task.completed', chatgptThreadDelivery: {
+  await adapter.launch(task({ input:'SECRET_LONG_TASK_INSTRUCTIONS\n[Execution event contract — mandatory]\nsource.id=job/job-1/task/chat-task/execution/exec-1\ntask.started task.progress task.completed', chatgptThreadDelivery: {
     kind:'new-turn',threadId:'implementation-thread',threadSource:'implementation',requestId:'delivery-1',
     repository:'owner/repo',jobId:'job-1',taskId:'chat-task',executionId:'exec-1',prNumber:0,
   } }), new AbortController().signal).promise;

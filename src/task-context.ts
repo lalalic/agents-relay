@@ -46,5 +46,5 @@ THEN read the entire authoritative event contract from /Users/chengli/Workspace/
 THEN retrieve the authoritative Task Context:
   agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}
 Verify the execution ID. Read Task input, dependencies, Plan, project context, and output requirements from that response. Never guess or create a new Job. Continue in this thread; Relay owns completion and review.
-Follow the file's lifecycle contract, including progress/heartbeat and exactly one task.completed or task.failed before exiting. If context is unavailable publish task.failed with the blocker.`;
+Follow the file's lifecycle contract, including optional meaningful progress and exactly one task.completed or task.failed before exiting. Accepted current-execution task.started and newer task.progress events reset Task.timeoutMs; duplicate, stale, or out-of-order progress does not. If context is unavailable publish task.failed with the blocker.`;
 }

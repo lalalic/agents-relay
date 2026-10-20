@@ -22,6 +22,8 @@ Ordinary `job create` requires standalone objective Markdown. An external displa
 Any task producer — orchestrator, planner, or nested task-producing agent — must follow this contract.
 Task producers choose semantic task properties such as objective, dependencies, worker requirements, priority, and `storySize`. They do not normally choose an adapter, provider/model, or raw timeout milliseconds.
 
+`Task.timeoutMs` is the inactivity window. Only an accepted `task.started` or newer `task.progress` event for the exact current execution resets it; duplicate, stale, and out-of-order progress does not.
+
 ### Planning graph and semantic Task tree
 
 The planning graph expresses execution flow. The Task tree expresses semantic ownership. `dependencies` answer which durable outcomes must succeed before a Task can run; `parentTaskId` answers which durable artifact or milestone owns the Task. These are independent relationships.

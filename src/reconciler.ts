@@ -159,6 +159,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       const scheduleBefore = JSON.stringify(beforeSchedule.schedule ?? null);
       let scheduled = schedule(beforeSchedule);
+      for (const task of scheduled.tasks) if (task.executionId && ['QUEUED', 'RUNNING'].includes(task.state)) this.armInactivityWatchdog(task, task.executionId);
       for (const task of scheduled.tasks) {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
@@ -328,6 +329,7 @@ export class Reconciler extends ReconcilerReviewBase {
       freshTask.leaseOwner = this.options.owner;
       freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
       freshTask.executionId = randomUUID();
+      delete freshTask.lastProgressAt; delete freshTask.lastProgressEventAt; delete freshTask.processExitedAt;
       freshTask.executionHistory = [...(freshTask.executionHistory ?? []), {
         id: freshTask.executionId,
         attempt: freshTask.attempt,
@@ -354,6 +356,7 @@ export class Reconciler extends ReconcilerReviewBase {
           durable.leaseOwner = this.options.owner;
           durable.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
           durable.executionId = randomUUID();
+          delete durable.lastProgressAt; delete durable.lastProgressEventAt; delete durable.processExitedAt;
           durable.executionHistory = [...(durable.executionHistory ?? []), {
             id: durable.executionId, attempt: durable.attempt, startedAt: new Date(startedAt).toISOString(),
           }].slice(-8);
@@ -467,10 +470,7 @@ export class Reconciler extends ReconcilerReviewBase {
       transition: { graph: 'task-lifecycle', from: 'QUEUED', to: 'QUEUED', actions: ['effect.launchTask'] },
       data: { adapter: adapter.id, attempt: task.attempt, model: task.routing?.model ?? null },
     });
-    const terminalTimer = setTimeout(() => {
-      this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
-    }, Math.max(1, task.timeoutMs));
-    this.terminalTimers.set(task.id, terminalTimer);
+    this.armInactivityWatchdog(task, durableExecutionId);
     this.detach(
       execution.promise.then(
         result => this.runtimeSettled(job.id, task.id, durableExecutionId, result, null),

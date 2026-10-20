@@ -100,6 +100,9 @@ for(const [filename,graph] of graphs){
 test('all workflow diagrams declare Mermaid frontmatter title and description',()=>{
  for(const filename of readdirSync(graphDirectory).filter(name=>name.endsWith('.mmd'))){
   const contents=readFileSync(join(graphDirectory,filename),'utf8');
-  assert.match(contents,/^---\r?\ntitle: .+\r?\ndescription: .+\r?\n---\r?\n/,filename);
+  const frontmatter=contents.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  assert.ok(frontmatter,filename);
+  assert.match(frontmatter[1],/^title: .+$/m,filename);
+  assert.match(frontmatter[1],/^description: .+$/m,filename);
  }
 });

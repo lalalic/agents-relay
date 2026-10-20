@@ -21,6 +21,7 @@ import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState, runti
 import { relayControlJob, relayJobStateCommand } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
 import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
+import { DurableTaskTransitionRuntime } from '../dist/workflow/durable-transition.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -668,6 +669,21 @@ test('repository pool uses targeted wake metadata without a full workspace scan'
   await bus.publish(eventFor('job-1','task-1',null,'job.wake','queued','wake','orchestrator',{repository:'owner/repo',prNumber:42}));
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.deepEqual(calls,[{id:'job-1',maxConcurrent:0}]);
+  await stop();
+});
+
+test('repository pool forwards task.progress to the reconciler rather than dropping it', async () => {
+  const bus=new MemoryEventBus(); const received=[];
+  const root={...job([]),id:'progress-routed-job',prNumber:0};
+  const store=new InMemoryStore(root);
+  const pool=new RepositoryWorkerPool(1,
+    ()=>({ applyEvent:async event=>{ received.push(event.type); return {applied:true,reconcile:false,reason:event.type}; }, reconcile:async()=>{} }),
+    async()=>[{job:root,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}],
+    async id=>id===root.id?{job:root,store}:null);
+  const stop=await pool.watch(bus);
+  await bus.publish(eventFor(root.id,'task-1',null,'task.progress','running','real milestone','user',undefined,{id:'job/progress-routed-job/task/task-1/execution/current'}));
+  for (let i=0;i<50 && !received.length;i++) await new Promise(resolve=>setTimeout(resolve,4));
+  assert.deepEqual(received,['task.progress']);
   await stop();
 });
 
@@ -1349,6 +1365,80 @@ test('async ChatGPT runtime exit keeps the overall terminal timeout active', asy
   await stop();
 });
 
+test('accepted current task progress extends inactivity timeout; duplicate, stale, and out-of-order progress do not', async () => {
+  const t=task('progress-watchdog'); t.timeoutMs=120; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus}); const stop=await reconciler.watch('j');
+  await reconciler.reconcile('j'); const source=await activeEventSource(store,t.id);
+  await bus.publish(eventFor('j',t.id,null,'task.started','running','started','user',undefined,source));
+  await new Promise(resolve=>setTimeout(resolve,70));
+  const first=eventFor('j',t.id,null,'task.progress','running','milestone','user',undefined,source); await bus.publish(first);
+  assert.equal((await store.load('j')).tasks[0].lastProgressAt !== undefined,true);
+  await new Promise(resolve=>setTimeout(resolve,70));
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  const before=(await store.load('j')).tasks[0].lastProgressAt;
+  await bus.publish(first);
+  await bus.publish({...first,event_id:'older',timestamp:'2000-01-01T00:00:00.000Z'});
+  await bus.publish({...eventFor('j',t.id,null,'task.progress','running','wrong generation','user',undefined,{id:'job/j/task/progress-watchdog/execution/old'}),timestamp:new Date().toISOString()});
+  assert.equal((await store.load('j')).tasks[0].lastProgressAt,before);
+  await new Promise(resolve=>setTimeout(resolve,80));
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+  await stop();
+});
+
+test('progress racing watchdog expiration cannot cancel a still-running worker', async () => {
+  const t=task('race-progress'); t.timeoutMs=85;
+  const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
+  const source=await activeEventSource(store,t.id);
+  await bus.publish(eventFor('j',t.id,null,'task.started','running','start','user',undefined,source));
+  const executionId=(await store.load('j')).tasks[0].executionId;
+  const timer=reconciler.terminalTimers.get(t.id); if (timer) clearTimeout(timer);
+  await new Promise(resolve=>setTimeout(resolve,90));
+  const original=reconciler.taskTransitions.apply.bind(reconciler.taskTransitions);
+  let intercepted=false;
+  reconciler.taskTransitions.apply=async (...args)=>{
+    if(args[2]==='watchdog.failed'&&!intercepted){
+      intercepted=true;
+      await bus.publish(eventFor('j',t.id,null,'task.progress','running','new milestone','user',undefined,source));
+    }
+    return original(...args);
+  };
+  await reconciler.timeoutTask('j',t.id,executionId);
+  assert.equal(intercepted,true);
+  assert.equal((await store.load('j')).tasks[0].state,'RUNNING');
+  assert.equal(adapter.cancelled,0);
+  await reconciler.close(); await stop();
+});
+
+test('reconcile restores an inactivity watchdog from durable progress after daemon restart', async () => {
+  const t=task('restart-watchdog','RUNNING'); t.timeoutMs=120; t.executionId='prior-generation'; t.leaseOwner='test';
+  t.leaseExpiresAt=new Date(Date.now()+60_000).toISOString(); t.lastProgressAt=new Date(Date.now()-80).toISOString();
+  t.lastProgressEventAt=t.lastProgressAt; t.executionHistory=[{id:t.executionId,attempt:1,startedAt:new Date(Date.now()-500).toISOString()}];
+  const store=new InMemoryStore(job([t])); const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus()});
+  await reconciler.reconcile('j');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+});
+
+test('process-exit fact cannot revive terminal Task or modify a newer execution', async () => {
+  const t=task('exit-terminal','SUCCEEDED'); t.executionId='generation-one'; t.attempt=1;
+  const store=new InMemoryStore(job([t]));
+  const runtime=new DurableTaskTransitionRuntime(store);
+  assert.equal(await runtime.updateFact('j', t.id,
+    current => current.state==='RUNNING' && current.executionId==='generation-one',
+    current => { current.processExitedAt=now(); }),null);
+  let current=(await store.load('j')).tasks[0];
+  assert.equal(current.state,'SUCCEEDED'); assert.equal(current.processExitedAt,undefined);
+  current.state='RUNNING'; current.executionId='generation-two'; current.updatedAt=new Date(Date.now()+5).toISOString();
+  await store.saveTask(current);
+  assert.equal(await runtime.updateFact('j', t.id,
+    task => task.state==='RUNNING' && task.executionId==='generation-one',
+    task => {task.processExitedAt=now(); }),null);
+  current=(await store.load('j')).tasks[0];
+  assert.equal(current.executionId,'generation-two'); assert.equal(current.processExitedAt,undefined);
+});
+
 test('stale sync process settlement cannot clear a newer execution terminal timer', async () => {
   const t=task('stale-runtime-exit'); t.timeoutMs=1000; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
@@ -1503,6 +1593,34 @@ test('Codex exit before task.started is observational and does not terminate the
   await new Promise(resolve=>setTimeout(resolve,30));
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.state,'QUEUED'); assert.equal(durable.failureReason,undefined); await reconciler.close(); await stop();
+});
+
+test('Codex exit before task.started arms the shorter terminal grace', async () => {
+  const t=task('exit-before-start-grace'); t.timeoutMs=1000;
+  const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,postExitTerminalGraceMs:20});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
+  adapter.resolvers[0].resolve({summary:'worker exited without start'});
+  await new Promise(resolve=>setTimeout(resolve,85));
+  const durable=(await store.load('j')).tasks[0];
+  assert.equal(durable.state,'FAILED'); assert.equal(durable.failureReason,'terminal_event_timeout');
+  await reconciler.close(); await stop();
+});
+
+test('late task.started after synchronous exit preserves post-exit grace', async () => {
+  const t=task('late-start-after-exit'); t.timeoutMs=1000;
+  const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,postExitTerminalGraceMs:75});
+  const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
+  const source=await activeEventSource(store,t.id);
+  adapter.resolvers[0].resolve({summary:'process exit before started'});
+  for(let attempt=0;attempt<35 && !(await store.load('j')).tasks[0].processExitedAt;attempt++) await new Promise(resolve=>setTimeout(resolve,2));
+  assert.ok((await store.load('j')).tasks[0].processExitedAt);
+  await bus.publish(eventFor('j',t.id,null,'task.started','running','late start','user',undefined,source));
+  assert.ok((await store.load('j')).tasks[0].processExitedAt);
+  await new Promise(resolve=>setTimeout(resolve,105));
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
+  await reconciler.close(); await stop();
 });
 
 test('asynchronous LaunchFailure becomes authoritative delivery failure', async () => {
@@ -1791,7 +1909,7 @@ test('terminal event for another task cannot complete running work', async () =>
   await stop();
 });
 
-test('timeout produces explicit terminal-event failure when worker never reports terminal state', async () => {
+test('inactivity timeout produces explicit failure when worker never reports terminal state', async () => {
   const t=task('timeout'); t.timeoutMs=20; const store=new InMemoryStore(job([t])); const adapter=new FakeAdapter(); const bus=new MemoryEventBus();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus});
   const stop=await reconciler.watch('j');
@@ -1799,7 +1917,7 @@ test('timeout produces explicit terminal-event failure when worker never reports
   await new Promise(resolve=>setTimeout(resolve,60));
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.state,'FAILED');
-  assert.match(durable.error,/mandatory terminal worker event/);
+  assert.match(durable.error,/inactivity timeout/);
   await stop();
 });
 
