@@ -25,14 +25,16 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
    - shared worker/runtime/tool/Agents Relay defect;
    - genuine external/human blocker.
 4. Diagnose the smallest root cause from the combined durable Task + event sequence + logs. The final `task.error` is only one piece of evidence. Never retry first and investigate later.
-5. Repair:
+5. For ChatGPT browser failures, run `browser-workspace platform run chatgpt validate --session-id SESSION_ID` in a caller-owned `Relay` session and close the session afterward. Parse the action JSON from the platform-run `result.stdout` (the outer `result.ok` only reports command execution). The action returns exactly JSON `true` on validation success or one failure ID: `PAGE_NOT_READY`, `COMPOSER_NOT_READY`, or `DELIVERY_ERROR`. Treat any unexpected output or runner error as validation unavailable. These are UI-readiness results, NOT authentication results. None permits a human login escalation. Never independently interpret DOM snapshots, sign-in buttons, or disabled Send; only confirmed authentication failure from the actual Worker authentication protocol can justify login escalation. Inspect original task delivery/start-ack evidence separately.
+
+6. Repair:
    - For a transient failure, verify the transient condition is gone.
    - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.
    - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed inside this recovery execution, fix/verify it and retry the original Task. If it cannot be completed now, register the original Task with `agents-relay blocker add` on that blocker Job and finish this Troubleshooter task; do not stay running while waiting for another Job.
    - For a suspected genuine human/external blocker, do not publish `task.blocked` and do not branch on Neo's result yourself. Invoke `agents-relay escalation` with the original intent, blocker, and relevant context. The canonical graph owns the `resolved`, `failed`, and `needs_user` outcomes. When it returns `needs_user`, call Relay's `task escalate` operation with the concrete required action, resolution condition, and diagnostic context. Relay records the escalation and blocks this Troubleshooter; no worker remains running while waiting.
-6. For an immediate repair, only after the blocker is removed run `agents-relay task recover` for the original Task with this Troubleshooter's recovery Task ID and reconcile its Job. An authorized human response resumes this same Troubleshooter with its diagnostic context; verify the action before requesting original-task recovery. For deferred repair, rely on the durable blocker relation: merge-mode blockers wake matching dependents after merge; release/deploy/runtime blockers use `--resolution verified` and `agents-relay blocker resolve` only after verification.
-7. Verify durable evidence that the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.
-8. Publish this Troubleshooter Task's terminal event only after the recovery outcome is durable.
+7. For an immediate repair, only after the blocker is removed run `agents-relay task recover` for the original Task with this Troubleshooter's recovery Task ID and reconcile its Job. An authorized human response resumes this same Troubleshooter with its diagnostic context; verify the action before requesting original-task recovery. For deferred repair, rely on the durable blocker relation: merge-mode blockers wake matching dependents after merge; release/deploy/runtime blockers use `--resolution verified` and `agents-relay blocker resolve` only after verification.
+8. Verify durable evidence that the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.
+9. Publish this Troubleshooter Task's terminal event only after the recovery outcome is durable.
 
 ## Rules
 
