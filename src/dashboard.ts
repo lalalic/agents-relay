@@ -1,8 +1,8 @@
 import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { handleTroubleshooterQa } from './troubleshooter-qa-api.js';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DurableStore, GitHubRateLimitBucket, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
@@ -19,8 +19,6 @@ import type { DecisionAuditRecord } from './decision-audit.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
-const TROUBLESHOOTER_QA_FILE = fileURLToPath(new URL('../skills/agents-relay/troubleshooter-qa.md', import.meta.url));
-const qaHash = (content: string): string => createHash('sha256').update(content).digest('hex');
 export type DashboardWorkflowGraph = { id: string; name: string; description: string; path: string; source: string };
 export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
   const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort(); return Promise.all(names.map(async name => {
@@ -201,39 +199,7 @@ export function serveDashboard(
       }
       return;
     }
-    if (req.url === '/api/troubleshooter-qa') {
-      try {
-        const current = await readFile(TROUBLESHOOTER_QA_FILE, 'utf8');
-        if (req.method === 'GET') {
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-          res.end(JSON.stringify({ text: current, hash: qaHash(current) }));
-          return;
-        }
-        if (req.method === 'PUT') {
-          if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415); res.end('Expected JSON'); return; }
-          const chunks: Buffer[] = [];
-          let size = 0;
-          for await (const chunk of req) {
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            size += buffer.length;
-            if (size > 128 * 1024) { res.writeHead(413); res.end('Q&A too large'); return; }
-            chunks.push(buffer);
-          }
-          const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (!body || typeof body !== 'object' || !('text' in body) || !('hash' in body) || typeof body.text !== 'string' || typeof body.hash !== 'string') { res.writeHead(400); res.end('Invalid Q&A payload'); return; }
-          if (body.hash !== qaHash(current)) { res.writeHead(409); res.end('Q&A changed on disk; reload before saving'); return; }
-          if (Buffer.byteLength(body.text) > 128 * 1024) { res.writeHead(413); res.end('Q&A too large'); return; }
-          await writeFile(TROUBLESHOOTER_QA_FILE, body.text, 'utf8');
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-          res.end(JSON.stringify({ hash: qaHash(body.text) }));
-          return;
-        }
-        res.writeHead(405, { allow: 'GET, PUT' }); res.end('Method not allowed');
-      } catch (error) {
-        res.writeHead(500); res.end(error instanceof Error ? error.message : String(error));
-      }
-      return;
-    }
+    if (req.url === '/api/troubleshooter-qa') { await handleTroubleshooterQa(req, res); return; }
     if (req.url === '/api/graphs') {
       try {
         const graphs = await dashboardWorkflowGraphs();
