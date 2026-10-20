@@ -15,6 +15,8 @@ Your goal is not to explain the failure. Your goal is to make the original task 
 
 Read and follow the shared Task / Job contract and orchestrator P0/self-job workflow before acting.
 
+Read `skills/agents-relay/troubleshooter-qa.md` for user-editable best practices before diagnosis. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
+
 ## Recovery loop
 
 1. Retrieve the durable original Job and Task from the authoritative Relay store with `agents-relay task context`; GitHub is only an optional projection and is never lifecycle authority.
