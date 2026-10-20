@@ -1000,7 +1000,7 @@ test('main Mermaid file owns safe, validated navigation links', async () => {
   const main = graphs.find(g => g.id === 'main');
   assert.ok(main);
   assert.match(main.source, /presentation-only/);
-  for (const symbol of ["contract: Event schema", "graph: Transitions", "code: Facts", "GUARD checks SQLite", "ACTION requests", "EFFECT performs"]) assert.ok(main.source.includes(symbol), symbol);
+  for (const symbol of ["contract: Schemas", "graph: Transitions", "code: Facts", "guard: Read authoritative facts", "action: Graph-selected operation", "effect: Side effect + receipt", "GUARD checks SQLite", "ACTION requests", "EFFECT performs"]) assert.ok(main.source.includes(symbol), symbol);
   assert.match(main.source, /state: Job Objective/);
   assert.match(main.source, /graph: Review changes loop/);
   assert.match(main.source, /graph: Human escalation/);

@@ -347,6 +347,7 @@ export async function createService(args: string[]): Promise<Service> {
     },
   } : undefined;
   const dashboardServer = serveDashboard(loaded.store, Number(arg(args, '--port', String(SERVICE_DEFAULTS.port))), bus, Number(arg(args, '--refresh-ms', String(SERVICE_DEFAULTS.dashboardRefreshMs))), loaded.job.id, usageRegistry, overviewProvider, webhook, undefined, undefined, undefined, {
+    control: await (await import('./single-job-task-control.js')).createSingleJobTaskControl(loaded.job.id, loaded.store, reconciler, bus),
     start: dashboardJobAction(loaded.store, reconciler, 'start'),
     reconcile: dashboardJobAction(loaded.store, reconciler, 'reconcile'),
     cancel: dashboardJobAction(loaded.store, reconciler, 'cancel'),

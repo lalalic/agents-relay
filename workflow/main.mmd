@@ -44,10 +44,14 @@ flowchart LR
     escalation -->|resolved: reconcile and resume| trouble
 
     subgraph principles["Contract / Graph / Code — principal rules"]
-      contractNote["contract: Event schema + authority + permissions"]
-      graphNote["graph: Transitions + Guards + Action ordering"]
-      codeNote["code: Facts + SQLite + guarded effects"]
+      contractNote["contract: Schemas + owner + permissions"]
+      graphNote["graph: Transitions + action ordering"]
+      codeNote["code: Facts + SQLite + effect executors"]
+      guardNote["guard: Read authoritative facts; no mutation"]
+      actionNote["action: Graph-selected operation only"]
+      effectNote["effect: Side effect + receipt; never policy"]
       contractNote ~~~ graphNote ~~~ codeNote
+      guardNote ~~~ actionNote ~~~ effectNote
     end
 
 
@@ -66,7 +70,7 @@ flowchart LR
     classDef normal fill:#eff6ff,stroke:#2563eb,color:#1e40af
     class trouble,recover,escalation exception
     class objective,planner,worker,reviewer,delivery,verify,completed,fix normal
-    class contractNote,graphNote,codeNote normal
+    class contractNote,graphNote,codeNote,guardNote,actionNote,effectNote normal
 
     %% Failed/unknown transitions are red; verified retries remain blue.
     linkStyle 8,9,10,11,12,18 stroke:#be3030,stroke-width:2px
