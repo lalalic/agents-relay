@@ -1,0 +1,67 @@
+{
+  "outcome": "PASS",
+  "role": "reviewer",
+  "scenario": "contradictory-mcp",
+  "provider": "codex",
+  "code": 0,
+  "termination": null,
+  "jobId": "l2-2b3f5dc8-52a4-4920-8765-5aa47baa4ff3",
+  "taskId": "reviewer-test",
+  "executionId": "60998dc5-f996-4249-8a82-7a98cc58ecf5",
+  "eventCount": 2,
+  "accepted": [
+    {
+      "type": "task.started",
+      "sourceId": "job/l2-2b3f5dc8-52a4-4920-8765-5aa47baa4ff3/task/reviewer-test/execution/60998dc5-f996-4249-8a82-7a98cc58ecf5",
+      "data": {}
+    },
+    {
+      "type": "task.completed",
+      "sourceId": "job/l2-2b3f5dc8-52a4-4920-8765-5aa47baa4ff3/task/reviewer-test/execution/60998dc5-f996-4249-8a82-7a98cc58ecf5",
+      "data": {
+        "verdict": "changes-required",
+        "head_sha": "job482-contradictory-mcp",
+        "findings": [
+          {
+            "severity": "high",
+            "target": "Job482 MCP connectivity and permissions evidence",
+            "issue": "The task summary claims connected=true and permissions=true, but authoritative capture records connected=false and permissions=false while required user authorization was still missing. The summary claim is not proof of tool access.",
+            "remediation": "Use authoritative MCP status as the source of truth, obtain the required user authorization, then provide end-to-end delivery proof showing the permitted operation completed and its observable result."
+          }
+        ]
+      }
+    }
+  ],
+  "rejected": [],
+  "relayAcceptance": {
+    "accepted": true,
+    "progress": [
+      {
+        "type": "task.started",
+        "state": "RUNNING",
+        "reviewOutcome": "pending"
+      },
+      {
+        "type": "task.completed",
+        "state": "SUCCEEDED",
+        "reviewOutcome": "changes_required"
+      }
+    ],
+    "jobState": "ACTIVE",
+    "taskState": "SUCCEEDED",
+    "reviewOutcome": "changes_required"
+  },
+  "modelOutputTail": "half of users, or perform publication, merges or external actions. Relay owns the review lifecycle and Task/Job completion.\n\n## Unified execution event\n\nAfter completing the review, publish **`task.completed`**, including `data.verdict`\n(`approved` or `changes-required`), the **exact immutable**\n`data.head_sha`, and actionable `data.findings` for changes required. A\nnegative verdict is a successful review, not `task.failed`. If review\nexecution fails or required validation evidence is unavailable, publish `task.failed`.\nNever emit `review.*` as the agent's terminal event. The event source must\nmatch the execution identity supplied by Relay. See\n`../contracts/event-contract.md`.\n\n## Event Contract\n# Agents Relay Unified Task Event Contract\n\n**Scope:** Relay-specific event meaning and validation. This does **not** define Events Bus transport. The bus only handles generic event identity, type, timestamp, routing as needed, and opaque `data`. No Events Bus change is required when Relay adds agent roles or payload fields.\n\n## Producer contract\n\nEvery Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress` or `task.heartbeat`, then **exactly one** agent terminal event:\n\n- `task.completed`: assigned responsibility finished and its role-specific output is durable, regardless of whether a reviewed artifact passed.\n- `task**Identifying correct tool for publishing**\ncodex\nI’ll use only the Relay publish tool to record the required start and final review events.\n**Executing commands sequentially**\nmcp: relay_l2/publish started\nmcp: relay_l2/publish (completed)\n**Reviewing findings requirements**\nmcp: relay_l2/publish started\nmcp: relay_l2/publish (completed)\ncodex\nPublished `task.started` and one `task.completed` for `job482-contradictory-mcp`. The verdict is `changes-required`: authoritative evidence shows MCP connectivity and permissions were false, and the finding requires authoritative status plus end-to-end delivery proof. I did not claim the original failed Task was recovered.\ntokens used\n26,752\nPublished `task.started` and one `task.completed` for `job482-contradictory-mcp`. The verdict is `changes-required`: authoritative evidence shows MCP connectivity and permissions were false, and the finding requires authoritative status plus end-to-end delivery proof. I did not claim the original failed Task was recovered.\n",
+  "reason": null,
+  "prompt": "You are running a real L2 isolated contract evaluation. This is a test, NOT a real Relay task. Do not edit files, invoke shell, contact production endpoints or invent success. You must use ONLY the MCP tool relay_l2.publish to emit events; do not invoke other MCP servers. Your exact source.id is job/l2-2b3f5dc8-52a4-4920-8765-5aa47baa4ff3/task/reviewer-test/execution/60998dc5-f996-4249-8a82-7a98cc58ecf5. Emit task.started first. Then perform the tiny role test: Use the Job482 contradictory MCP evidence fixture. The task summary claims Neo MCP connected=true and permissions=true, while authoritative capture says connected=false and permissions=false after required user authorization remained missing. Do not treat the summary claim as proof. Return a truthful changes-required verdict with immutable head_sha \"job482-contradictory-mcp\" and an actionable finding that evidence must use authoritative status and end-to-end delivery proof. Emit exactly one task.completed with data including verdict:\"changes-required\", head_sha:\"job482-contradictory-mcp\", findings:[] when approved or actionable findings otherwise. Never claim the original failed Task was recovered.\n## Role Contract\n---\nname: reviewer\ndescription: Independently evaluate one immutable review target against the complete Job objective and acceptance criteria.\ncapabilities: [review, evidence-verification]\nrestrictions: [no-artifact-edits, no-merge, preserve-review-target]\n---\n\n# Relay Reviewer Agent\n\nReview exactly the immutable target/version specified by the Review Task. Do not silently substitute newer content or a different commit, document, artifact, or SHA.\n\n## Review Scope\n\nReconstruct all material acceptance requirements from the durable Job objective and Task, then evaluate each with direct evidence. Check correctness, completeness, provenance, quality, regressions, explicit approvals and externally observable outcomes where applicable. Missing evidence is not PASS. If validation cannot complete, report task.failed. Keep review independent of implementation work.\n\n## Review Decision\n\nReturn a concrete approved or changes-required verdict tied to the declared immutable target, with attributed findings, severity and remediation steps. Do not alter artifacts, generate approvals on behalf of users, or perform publication, merges or external actions. Relay owns the review lifecycle and Task/Job completion.\n\n## Unified execution event\n\nAfter completing the review, publish **`task.completed`**, including `data.verdict`\n(`approved` or `changes-required`), the **exact immutable**\n`data.head_sha`, and actionable `data.findings` for changes required. A\nnegative verdict is a successful review, not `task.failed`. If review\nexecution fails or required validation evidence is unavailable, publish `task.failed`.\nNever emit `review.*` as the agent's terminal event. The event source must\nmatch the execution identity supplied by Relay. See\n`../contracts/event-contract.md`.\n\n## Event Contract\n# Agents Relay Unified Task Event Contract\n\n**Scope:** Relay-specific event meaning and validation. This does **not** define Events Bus transport. The bus only handles generic event identity, type, timestamp, routing as needed, and opaque `data`. No Events Bus change is required when Relay adds agent roles or payload fields.\n\n## Producer contract\n\nEvery Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress` or `task.heartbeat`, then **exactly one** agent terminal event:\n\n- `task.completed`: assigned responsibility finished and its role-specific output is durable, regardless of whether a reviewed artifact passed.\n- `task.failed`: assigned responsibility could not be fulfilled; include failure phase, reason, and evidence in `data`.\n\n`task.blocked` and `task.unblocked` are **Relay-owned lifecycle facts**, not agent terminal outcomes. Transport acceptance is not proof Relay accepted the transition. Every lifecycle event must use the exact Job, Task, and execution source identity provided by Relay; stale/duplicate execution events cannot change current state.\n\n## Role-specific completed data\n\n| Role | `task.completed.data` | Relay action |\n| --- | --- | --- |\n| Implementation | Evidence of output/artifact, validation, and summary as required by the Task | Persist Task success and continue dependencies/review |\n| Reviewer | `verdict` (`approved` or `changes-required`), exact immutable `head_sha`, actionable `findings` as necessary | Validate current immutable review target and apply verdict; defects are a successful Reviewer execution, not `task.failed` |\n| Troubleshooter | Recovery action and durable evidence of verified original Task retry, blocker-Job handoff, or other authorized recovery | Complete recovery Task only; original Task state changes through separately authorized Relay operations |\n\nA Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay normalizes an authenticated structured Reviewer terminal event into its internal Review decision; native `review.*` events may be accepted for backward compatibility.\n\n## Troubleshooter human escalation\n\nOnly a real user action merits escalation. Troubleshooter invokes the Relay escalation operation, specifying the required action, resolution condition, and diagnostic context. Relay durably records the human action and blocks **the Troubleshooter Task**, leaving the original failed Task `FAILED`. This is a Relay state transition, not a third agent terminal event.\n\nWhen the human responds, Relay records the response as an append-only Task Comment and authoritatively unblocks the **Troubleshooter Task**. The stable Task input is unchanged. Troubleshooter receives current authoritative state and relevant comments, independently verifies the response against the original failing execution context, requests an authorized original Task recovery, and only then publishes its own `task.completed`. A repeated identical escalation without new evidence is idempotent. If unresolved, it continues diagnosis or escalates again; human assertion alone is not technical verification.\n\nSee [task-recovery-flows.md](task-recovery-flows.md) for unified architecture, overall flow, failure recovery, and post-blocked resumption.\n\nReviewer unavailable evidence is an execution failure (`task.failed`), not a blocked Task. Legacy Reviewer verdict `blocked` is normalized to failure and must dispatch Troubleshooter. Only Relay blocks a Troubleshooter during human escalation.\n\nA host-mediated interactive invocation is a separate Relay-controlled wait. It requires an already-bound `interactiveInvocation` with status `awaiting_decision`. It is not permission for a Worker or Reviewer to choose a blocked terminal outcome.\n\nA legacy Job-level `review: blocked` gate is reset to `pending` only after authoritative `task.unblocked` metadata exists on its bound Reviewer Task and the immutable review head still matches. The same Reviewer Task then resumes without creating a duplicate.\n\n## Local Git merge delivery history\n\nThe Relay-owned merge effect persists the current `job.localMerge` receipt in SQLite. Every attempted delivery also emits `job.merge.failed` or `job.merge.succeeded` to the canonical events-bus, keyed by the Job and merge attempt. Failure `data` contains `reason`, exact `message`, `attempts`, `retryable`, and `nextAttemptAt`; success contains `mergedCommitSha` and `sourceSha`. A dirty checked-out target is `reason: dirty_target_worktree`. The dashboard displays the durable failure reason while `localMerge.status=failed`. After the retry deadline, periodic reconciliation must select ACTIVE Jobs with failed local merges even when all Tasks have succeeded. Historical failure events remain visible after successful recovery.\n",
+  "artifacts": {
+    "report": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/reviewer.json",
+    "fixture": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/reviewer-fixture",
+    "sqlite": [
+      {
+        "path": "/Users/chengli/Workspace/.worktrees/agents-relay/lalalic-agents-relay-job-483-48ce32e8ec77/job/test/verification/evidence/job482-l2-live/20261020/reviewer-fixture/relay.sqlite",
+        "bytes": 196608
+      }
+    ]
+  }
+}
