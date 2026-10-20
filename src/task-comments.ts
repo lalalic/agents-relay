@@ -1,12 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import type { Job, Task } from './types.js';
 
-export type TaskComment = { id: string; text: string; author: string; createdAt: string };
-export function appendTaskComment(job: Job, taskId: string, message: string, author = 'cli'): TaskComment {
+export type TaskCommentKind = 'human' | 'resolution.changed' | 'escalation.requested' | 'escalation.responded';
+export type TaskComment = {
+  id: string; text: string; author: string; createdAt: string; kind?: TaskCommentKind;
+  jobId?: string; taskId?: string; executionId?: string; transition?: string; idempotencyKey?: string;
+};
+export type TaskCommentOptions = {
+  author?: string; kind?: TaskCommentKind; executionId?: string; transition?: string; idempotencyKey?: string;
+};
+export function appendTaskComment(job: Job, taskId: string, message: string, options: string | TaskCommentOptions = 'cli'): TaskComment {
   const task = job.tasks.find(item => item.id === taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
   if (!message.trim()) throw new Error('task comment requires nonempty --message');
-  const comment = { id: randomUUID(), text: message.trim(), author, createdAt: new Date().toISOString() };
+  const config = typeof options === 'string' ? { author: options } : options;
+  const key = config.idempotencyKey;
+  const existing = key && task.comments?.find(comment => comment.idempotencyKey === key);
+  if (existing) return existing;
+  const comment: TaskComment = {
+    id: key ?? randomUUID(), text: message.trim(), author: config.author ?? 'cli', createdAt: new Date().toISOString(),
+    jobId: job.id, taskId, ...(config.kind ? { kind: config.kind } : {}),
+    ...(config.executionId ? { executionId: config.executionId } : {}),
+    ...(config.transition ? { transition: config.transition } : {}), ...(key ? { idempotencyKey: key } : {}),
+  };
   task.comments = [...(task.comments ?? []), comment];
   return comment;
 }

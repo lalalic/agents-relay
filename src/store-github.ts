@@ -208,6 +208,19 @@ export class GitHubStore implements DurableStore {
     if (jobs.length > 1) throw new Error(`JOB_BINDING_CONFLICT: PR #${this.prNumber} contains trusted ${JOB_MARKER} markers for multiple job ids`);
   }
   async listAgents(): Promise<AgentRegistration[]> { return (await this.list()).filter(comment => this.isTrusted(comment)).map(x => parseAgent(x.body)).filter((x): x is AgentRegistration => x !== null); }
+  async appendTaskHistoryComment(comment: import('./task-comments.js').TaskComment): Promise<void> {
+    if (!comment.idempotencyKey || comment.jobId === undefined || comment.taskId === undefined) throw new Error('Task history projection requires durable identity');
+    const marker = `<!-- agents-relay:task-comment:v1 key=${comment.idempotencyKey} -->`;
+    if ((await this.list()).some(existing => this.isTrusted(existing) && existing.body.includes(marker))) return;
+    try {
+      await this.comment(`${marker}\n**Task ${comment.taskId} · ${comment.kind ?? 'history'}**\n\n${comment.text}`);
+    } catch (error) {
+      // The server may have accepted the comment before the connection failed.
+      // Force a fresh read before the outbox retries this stable logical key.
+      this.clearReadSnapshot();
+      throw error;
+    }
+  }
   private async comment(body: string): Promise<Comment> {
     const pr = await this.prNode();
     const data = await this.graphql(

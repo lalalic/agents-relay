@@ -17,7 +17,7 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
 
 ## Recovery loop
 
-1. Retrieve the durable original Job and failed/blocked Task from GitHub.
+1. Retrieve the durable original Job and Task from the authoritative Relay store with `agents-relay task context`; GitHub is only an optional projection and is never lifecycle authority.
 2. **Mandatory before diagnosis:** retrieve the failed Task's task-scoped lifecycle event history. When the local Relay dashboard is available, use `GET http://127.0.0.1:8787/api/events?job=<job_id>&task=<task_id>&limit=200`. Inspect event order, type/status, source, data/phase, execution IDs, duplicates, missing expected lifecycle events, and late events. Then inspect task error/failureReason, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.
 3. Classify the blocker:
    - transient execution/delivery/lease failure;
@@ -32,8 +32,8 @@ Read and follow the shared Task / Job contract and orchestrator P0/self-job work
    - For task-local failure, make the smallest durable repair in the original Job/PR when that is within scope.
    - For a shared platform/runtime defect, first create or reuse the owning blocker P0/self-job. If it can be completed inside this recovery execution, fix/verify it and retry the original Task. If it cannot be completed now, register the original Task with `agents-relay blocker add` on that blocker Job and finish this Troubleshooter task; do not stay running while waiting for another Job.
    - For a suspected genuine human/external blocker, do not publish `task.blocked` and do not branch on Neo's result yourself. Invoke `agents-relay escalation` with the original intent, blocker, and relevant context. The canonical graph owns the `resolved`, `failed`, and `needs_user` outcomes. When it returns `needs_user`, call Relay's `task escalate` operation with the concrete required action, resolution condition, and diagnostic context. Relay records the escalation and blocks this Troubleshooter; no worker remains running while waiting.
-7. For an immediate repair, only after the blocker is removed run `agents-relay task recover` for the original Task with this Troubleshooter's recovery Task ID and reconcile its Job. An authorized human response resumes this same Troubleshooter with its diagnostic context; verify the action before requesting original-task recovery. For deferred repair, rely on the durable blocker relation: merge-mode blockers wake matching dependents after merge; release/deploy/runtime blockers use `--resolution verified` and `agents-relay blocker resolve` only after verification.
-8. Verify durable evidence that the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.
+7. For an immediate repair, only after the blocker is removed request `agents-relay task recover` with this Troubleshooter's recovery Task ID, then reconcile the original Job. Verify the SQLite postcondition: original Task state QUEUED, expected resolution and recovery correlation. An authorized human response is a Task Comment, not a rewrite of Task input. Retain historical conditions as provenance, independently verify the original failing execution context, and do not submit an identical escalation with no new evidence. Deferred repair uses the durable blocker relation: merge-mode blockers wake dependents after merge; release/deploy/runtime blockers require `--resolution verified` and `agents-relay blocker resolve` only after verification.
+8. Verify durable evidence the original Task moved: at minimum QUEUED after retry, preferably a new execution / task.started / observable progress.
 9. Publish this Troubleshooter Task's terminal event only after the recovery outcome is durable.
 
 ## Rules

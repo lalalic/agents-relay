@@ -5,6 +5,7 @@ import { agentGraphPrompt } from './agent-graph.js';
 import { createReviewChairExecutionPlan } from './review-chair.js';
 import { taskTagWorkerPrompt } from './task-tag.js';
 import { executionEventSource } from './reconciler-runtime.js';
+import { taskAgentHistoryContext } from './task-context.js';
 
 export async function managedWorkerInput(job: Job, task: Task, context?: ExecutionContext, mode: 'production' | 'evaluation' = 'production'): Promise<string> {
   const isLocalJob = Boolean(job.localMerge?.sourceRef);
@@ -51,7 +52,7 @@ ${interactiveContext}Task attempt/execution: ${task.attempt}/${task.maxAttempts}
 Dependencies: ${task.dependencies.length ? task.dependencies.join(', ') : 'none'}
 ${task.attempt > 1 || task.error ? `Retry summary: prior error=${task.error ?? 'none'}; prior generations=${(task.executionHistory ?? []).map(item => `${item.id}@${item.attempt}`).join(', ') || 'none'}` : 'Retry summary: first attempt'}
 SQLite/RelayStore and the canonical Mermaid Graphs own lifecycle, merge, recovery, and completion decisions. Do not perform Relay-owned merge or completion actions from this worker.
-${chairPlan ? `[Review Chair execution plan]\n${JSON.stringify(chairPlan, null, 2)}\n\nUse this runtime-discovered panel to create sibling durable specialist Tasks. Preserve each specialistTasks entry as review metadata, keep the target immutable, and synthesize structured results with synthesizeReview semantics before returning the unified revision plan.\n\n` : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
+${taskAgentHistoryContext(job, task)}\n\n${chairPlan ? `[Review Chair execution plan]\n${JSON.stringify(chairPlan, null, 2)}\n\nUse this runtime-discovered panel to create sibling durable specialist Tasks. Preserve each specialistTasks entry as review metadata, keep the target immutable, and synthesize structured results with synthesizeReview semantics before returning the unified revision plan.\n\n` : ''}Follow the resolved project instructions and Agents Relay/events-bus worker contracts.
 [Output contract]
 ${output}
 ${taskTag}${mode === 'evaluation' ? `[Isolated prompt evaluation mode]

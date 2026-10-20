@@ -6,6 +6,7 @@ export type ProjectionOperation =
   | 'save_plan'
   | 'append_task'
   | 'save_task'
+  | 'append_task_comment'
   | 'save_agent'
   | 'update_pr_body'
   | 'create_pull_request'

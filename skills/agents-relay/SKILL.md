@@ -54,7 +54,7 @@ The event must carry the exact durable `job_id` and `task_id`. Progress events a
 Agents Relay maps those terminal events to durable state:
 - `task.completed` → `SUCCEEDED`
 - `task.failed` → `FAILED`
-Relay may authoritatively move a Task to `BLOCKED` for an external condition and may resume it only through an authorized unblock operation. A human response resumes the blocked Troubleshooter, not the failed original Task.
+Relay may authoritatively move a Task to `BLOCKED` for an external condition and may resume it only through an authorized unblock operation. A human response is an append-only Task Comment and resumes the blocked Troubleshooter, not the failed original Task. Task input remains stable; recovery agents receive current authoritative state and relevant comments as execution context.
 
 A model-backed task must not launch without an event bus. If no terminal event arrives before the task timeout, Relay records an explicit timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
 
