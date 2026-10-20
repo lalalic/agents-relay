@@ -26,7 +26,8 @@
     "test:verification:cross-a": "npm run build && RELAY_A_DIST=$PWD/dist node --test test/verification/action-ledger-cross-branch.test.mjs test/verification/outbox-cross-a.test.mjs",
     "test:verification:matrix": "node test/verification/recovery-report.mjs /tmp/agents-relay-job481-evidence",
     "test:verification:l2": "npm run build && node --test test/verification/l2/*.test.mjs",
-    "test:verification:l2:live": "node test/verification/l2/live-provider.mjs"
+    "test:verification:l2:live": "node test/verification/l2/live-provider.mjs",
+    "test:l2:agents": "npm run build && node test/l2-agent-prompts/evaluate.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
