@@ -20,17 +20,13 @@ const SSE_HEARTBEAT_MS = 15000;
 const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
 export type DashboardWorkflowGraph = { id: string; name: string; description: string; path: string; source: string };
 export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
-  const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort();
-  return Promise.all(names.map(async name => {
-    const source = await readFile(join(WORKFLOW_DIR, name), 'utf8');
-    const metadata = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source)?.[1] ?? '';
-    const field = (key: string) => metadata.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() ?? '';
-    return {
+  const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort(); return Promise.all(names.map(async name => {
+    const source = await readFile(join(WORKFLOW_DIR, name), 'utf8'); const metadata = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source)?.[1] ?? '';
+    const field = (key: string) => metadata.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() ?? ''; return {
       id: name.replace(/\.mmd$/, ''),
       name: field('title') || (name === 'main.mmd' ? 'Main / Happy Path' : name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')),
       description: field('description'),
-      path: `workflow/${name}`,
-      source,
+      path: `workflow/${name}`, source,
     };
   }));
 }
