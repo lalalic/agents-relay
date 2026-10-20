@@ -17,6 +17,16 @@ export function workflowCliResult(args: readonly string[]): unknown {
   const graphs = executableGraphs(defaultWorkflowDirectory());
   const index = buildWorkflowUsageIndex(graphs);
   if (verb === 'discover') return { graphs: [...graphs.keys()], symbols: [...new Set(index.map(x => x.id))].sort() };
+  if (verb === 'actions') {
+    const actionIds = [...new Set(index.filter(item => item.kind === 'action').map(item => item.id))].sort();
+    return {
+      count: actionIds.length,
+      actions: actionIds.map(id => ({ id, graphReferences: whereWorkflowSymbol(index, id, 'action'), cli: 'inspect-only; execution requires owning Graph runtime' })),
+      taskControls: ['task.retry', 'task.recover', 'task.cancel', 'task.unblock', 'task.escalate', 'task.resume-troubleshooter'],
+      warning: 'Task controls are not equivalent to arbitrary internal Graph Action execution. No direct CLI bypass of guards or SQLite fencing.',
+    };
+  }
+
   if (verb === 'where') return whereWorkflowSymbol(index, value('--id'));
   if (verb === 'inspect') {
     const name = value('--graph');
@@ -68,5 +78,5 @@ export function workflowCliResult(args: readonly string[]): unknown {
     } finally { db.close(); }
   }
   if (verb === 'action') throw new Error('durable graph authorization required; unsafe action request refused');
-  throw new Error('workflow supports discover, inspect, where, evaluate; action/trace require durable authorization');
+  throw new Error('workflow supports discover, actions, inspect, where, evaluate, verify, trace; mutations require durable authorization');
 }

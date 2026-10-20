@@ -1000,11 +1000,12 @@ test('main Mermaid file owns safe, validated navigation links', async () => {
   const main = graphs.find(g => g.id === 'main');
   assert.ok(main);
   assert.match(main.source, /presentation-only/);
-  assert.match(main.source, /START: Job Objective/);
-  assert.match(main.source, /Changes Required/);
-  assert.match(main.source, /Escalation: human action only/);
+  for (const symbol of ["contract: Event schema", "graph: Transitions", "code: Facts", "GUARD checks SQLite", "ACTION requests", "EFFECT performs"]) assert.ok(main.source.includes(symbol), symbol);
+  assert.match(main.source, /state: Job Objective/);
+  assert.match(main.source, /graph: Review changes loop/);
+  assert.match(main.source, /graph: Human escalation/);
   assert.match(main.source, /class trouble,recover,escalation exception/);
-  assert.match(main.source, /recover\{"Recovery conditions verified\?"\}/);
+  assert.match(main.source, /recover\{"guard: Recovery verified\?"\}/);
   assert.match(main.source, /linkStyle 8,9,10,11,12,18 stroke:#be3030/);
   assert.match(dashboardHtml, /node\.classList\.contains\('exception'\)/);
   assert.match(dashboardHtml, /match\[2\]\|\|match\[3\]/);

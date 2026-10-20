@@ -29,7 +29,7 @@ try:
     ids=browser('workflowGraphs.map(x=>x.id)')
     check('Canonical graph inventory',len(ids)==17 and 'main' in ids,ids)
     main=browser('({nodes:document.querySelectorAll("#graph-canvas g.node").length,links:document.querySelectorAll("#graph-canvas [role=button]").length,error:document.querySelector("#graph-canvas .error-state")?.textContent||null})')
-    check('Main visible with clickable hyperlinked nodes',main['nodes']==11 and main['links']>=9 and not main['error'],main)
+    check('Main visible with clickable hyperlinked nodes',main['nodes']==14 and main['links']>=9 and not main['error'],main)
     capture_screenshot(str(OUT/'main.png'),full=False,max_dim=1500)
     rendered={}
     for graph in ids:
@@ -38,7 +38,7 @@ try:
         check('Rendered '+graph,view['nodes']>0 and not view['error'],view)
     check('All executable graphs and main rendered',len(rendered)==17)
     main=open_graph('main')
-    check('Main ready before hyperlink',main['nodes']==11,main)
+    check('Main ready before hyperlink',main['nodes']==14,main)
     click_result=browser('(()=>{const n=[...document.querySelectorAll("#graph-canvas [role=button]")].find(x=>x.getAttribute("aria-label")==="Explore planner");if(!n)return false;n.dispatchEvent(new MouseEvent("click",{bubbles:true}));return true})()')
     check('Main Planner hyperlink accepted',click_result)
     wait(0.7)

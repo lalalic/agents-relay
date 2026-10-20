@@ -10,8 +10,8 @@ test('presentation entry never registers as an executable lifecycle', () => {
   assert.ok(graphs.size >= 10);
   assert.equal(graphs.has('main.mmd'), false);
   const entry = readFileSync(join(directory, 'main.mmd'), 'utf8');
-  assert.match(entry, /START: Job Objective/);
-  assert.match(entry, /Changes Required/);
+  assert.match(entry, /state: Job Objective/);
+  assert.match(entry, /graph: Review changes loop/);
   assert.match(entry, /unknown: reconcile first/);
   const targets = [...entry.matchAll(/click \w+ href "([^"]+\.mmd)"/g)].map(match => match[1]);
   assert.ok(targets.length >= 9);

@@ -1,17 +1,24 @@
 %% dashboard: presentation-only — not registered with GraphRuntime or the executable Graph DSL.
-%% Nodes link to the canonical executable workflow graphs. SQLite remains authoritative.
+%% PRINCIPLES (this graph is a readable overview, not an executable policy):
+%% CONTRACT defines typed events, permissions and invariants; GRAPH defines legal transitions,
+%% guards and ordering; CODE supplies verified facts and implements authorized effects.
+%% GUARD checks SQLite-backed facts without mutation; ACTION requests a Graph-authorized
+%% mutation; EFFECT performs/verifies an external side effect, never decides policy.
+%% Unknown effects must reconcile before retry. CLI can inspect/trace graph symbols;
+%% only explicitly authorized task controls are callable as CLI workflow actions.
+%% Nodes link to canonical executable workflow graphs. SQLite remains authoritative.
 flowchart LR
-    objective["START: Job Objective"]
-    planner["Planner"]
-    worker["Worker"]
-    reviewer["Reviewer"]
-    delivery["Merge / Delivery"]
-    verify["Objective Verification"]
-    completed["Completed"]
-    trouble["Troubleshooter"]
-    recover{"Recovery conditions verified?"}
-    escalation["Escalation: human action only"]
-    fix["Changes Required: fix and review again"]
+    objective["state: Job Objective"]
+    planner["graph: Planner"]
+    worker["graph: Worker"]
+    reviewer["graph: Reviewer"]
+    delivery["graph: Merge / Delivery"]
+    verify["guard: Objective verified?"]
+    completed["state: Completed"]
+    trouble["graph: Troubleshooter"]
+    recover{"guard: Recovery verified?"}
+    escalation["graph: Human escalation"]
+    fix["graph: Review changes loop"]
 
     objective --> planner
     planner --> worker
@@ -36,6 +43,14 @@ flowchart LR
     recover -->|human action required| escalation
     escalation -->|resolved: reconcile and resume| trouble
 
+    subgraph principles["Contract / Graph / Code — principal rules"]
+      contractNote["contract: Event schema + authority + permissions"]
+      graphNote["graph: Transitions + Guards + Action ordering"]
+      codeNote["code: Facts + SQLite + guarded effects"]
+      contractNote ~~~ graphNote ~~~ codeNote
+    end
+
+
     click objective href "job-lifecycle.mmd" "Job lifecycle"
     click planner href "planner-orchestration.mmd" "Planner orchestration"
     click worker href "task-lifecycle.mmd" "Task lifecycle"
@@ -51,6 +66,7 @@ flowchart LR
     classDef normal fill:#eff6ff,stroke:#2563eb,color:#1e40af
     class trouble,recover,escalation exception
     class objective,planner,worker,reviewer,delivery,verify,completed,fix normal
+    class contractNote,graphNote,codeNote normal
 
     %% Failed/unknown transitions are red; verified retries remain blue.
     linkStyle 8,9,10,11,12,18 stroke:#be3030,stroke-width:2px
