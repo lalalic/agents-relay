@@ -1,6 +1,6 @@
 # Task Failure Recovery and Human Escalation — Agreed Target Design
 
-**Status:** Design agreement; not an assertion of current implementation. This document describes two flows. Existing runtime, workflow graphs, and agent instructions may need changes to conform.
+**Status:** Current recovery contract. SQLite Task snapshots retain append-only typed comments alongside authoritative state.
 
 ## Principles and ownership
 
@@ -133,3 +133,20 @@ flowchart TD
 - Align escalation graph, CLI, reconciler, and unblock commands so human intervention blocks **Troubleshooter**, not the original failed Task; preserve the original failure and correlated recovery context.
 - Ensure the blocked Troubleshooter can resume after an authorized human unblock rather than being treated as a finished terminal execution.
 - Add integrated checks: technical retry, blocker-Job handoff, human request/block, human unblock/resume, failed verification/re-escalation, stale/duplicate responses, and correct original-Task retry.
+
+## Durable recovery history
+
+`Task.input` remains the stable objective and original evidence. `Task.resolution` and
+`Task.escalation` remain the current authoritative states; comments are append-only
+history, not a second state authority. SQLite mutation transactions compare the
+before/after authoritative values and append typed comments with Job, Task,
+execution, transition, and idempotency identity in the same commit. Do not add a
+`resolutionHistory` field.
+
+Human responses are comments. Resuming a Troubleshooter must not rewrite its
+input or append a stale “Required resolution condition” as new objective text.
+The condition remains in escalation provenance. Reviewer and Troubleshooter
+prompts receive current authoritative state and relevant task comments as runtime
+context; Troubleshooters independently verify a response against evidence from
+the original failing execution. Repeating an identical escalation with unchanged
+evidence is idempotent.

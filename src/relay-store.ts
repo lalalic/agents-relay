@@ -213,7 +213,7 @@ export class SQLiteRelayStore implements RelayStore {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   private workflowOperations(): SQLiteWorkflowOperations {
-    return new SQLiteWorkflowOperations(this.db, (job,at)=>this.writeJobSnapshot(job,at));
+    return new SQLiteWorkflowOperations(this.db, (job,at)=>this.writeJobSnapshot(job,at), (request,now)=>{ this.enqueueProjectionInTransaction(request,now); });
   }
   async commitWorkflowMutationAndEvents(jobId:string,mutation:(job:Job)=>Job,events:readonly {key:string;event:EventRecord}[]):Promise<Job> {
     this.assertScope(jobId);

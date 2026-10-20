@@ -1,6 +1,8 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
+import { SQLiteRelayStore } from '../dist/relay-store.js';
 import { InMemoryStore } from '../dist/store.js';
+import { LocalAuthorityDurableStore } from '../dist/local-authority-store.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from '../dist/task-recovery.js';
 import { unblockTask } from '../dist/unblock.js';
 
@@ -11,8 +13,10 @@ function fixture() {
   return { id: 'j', title: 'recovery', repository: 'x/y', prNumber: 1, state: 'ACTIVE', executionMode: 'fixed', continuation: null, createdAt: now, updatedAt: now, tasks: [original, recovery] };
 }
 
+async function fixtureStore() { const sqlite = new SQLiteRelayStore(':memory:'); const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore()); await store.saveJob(fixture()); return store; }
+
 test('human escalation blocks and resumes the Troubleshooter, not the failed original', async () => {
-  const store = new InMemoryStore(fixture());
+  const store = await fixtureStore();
   const blocked = await requestTroubleshooterEscalation(store, 'j', 'troubleshoot-original', {
     requiredAction: 'Approve the identity prompt', resolutionCondition: 'The authenticated session can complete the original review', context: 'The worker reached a real identity prompt after event-history diagnosis',
   }, '2026-10-16T12:00:00.000Z');
@@ -29,15 +33,32 @@ test('human escalation blocks and resumes the Troubleshooter, not the failed ori
   const resumed = await resumeTroubleshooter(store, 'j', 'troubleshoot-original', 'Approved the prompt', '2026-10-16T12:05:00.000Z');
   assert.equal(resumed.task.state, 'QUEUED');
   assert.equal(resumed.task.escalation?.status, 'responded');
-  assert.match(resumed.task.input, /Approved the prompt/);
+  assert.equal(resumed.task.input, 'diagnose');
+  assert.equal(resumed.task.comments.at(-1).kind, 'escalation.responded');
+  assert.equal(resumed.task.comments.at(-1).executionId, 'original-exec');
+  assert.equal(resumed.task.comments.at(-1).transition, 'escalation.responded');
+  assert.ok(resumed.task.comments.at(-1).idempotencyKey);
   await assert.rejects(() => resumeTroubleshooter(store, 'j', 'troubleshoot-original', 'Duplicate response'), /already has a response/);
 });
 
 test('duplicate escalation is idempotent while the same generation waits', async () => {
-  const store = new InMemoryStore(fixture());
+  const store = await fixtureStore();
   const request = { requiredAction: 'Approve', resolutionCondition: 'Approval is observable', context: 'Identity prompt' };
   const first = await requestTroubleshooterEscalation(store, 'j', 'troubleshoot-original', request);
   const second = await requestTroubleshooterEscalation(store, 'j', 'troubleshoot-original', request);
   assert.equal(second.duplicate, true);
   assert.equal(second.escalation.id, first.escalation.id);
+  assert.equal(second.task.comments.filter(comment => comment.kind === 'escalation.requested').length, 1);
+});
+
+test('repeated human escalation with identical evidence after response does not block again', async () => {
+  const store = await fixtureStore();
+  const request = { requiredAction: 'Approve', resolutionCondition: 'Approval is observable', context: 'Identity prompt' };
+  const first = await requestTroubleshooterEscalation(store, 'j', 'troubleshoot-original', request);
+  await resumeTroubleshooter(store, 'j', 'troubleshoot-original', 'Approved', '2026-10-16T12:05:00.000Z');
+  const second = await requestTroubleshooterEscalation(store, 'j', 'troubleshoot-original', request);
+  assert.equal(second.duplicate, true);
+  assert.equal(second.task.state, 'QUEUED');
+  assert.equal(second.escalation.id, first.escalation.id);
+  assert.equal(second.task.comments.filter(comment => comment.kind === 'escalation.requested').length, 1);
 });

@@ -109,6 +109,16 @@ const memoryWithComments = comments => {
   return store;
 };
 
+test('Task history GitHub projection uses a stable marker for exactly-once logical replay', async () => {
+  const comments=[];
+  const history={id:'history-1',jobId:'job-1',taskId:'task-1',text:'Escalation requested',author:'relay',createdAt:now(),kind:'escalation.requested',executionId:'exec-1',transition:'escalation.pending',idempotencyKey:'task-state/job-1/task-1/escalation/hash'};
+  await githubWithComments(comments).appendTaskHistoryComment(history);
+  await githubWithComments(comments).appendTaskHistoryComment(history);
+  assert.equal(comments.length,1);
+  assert.match(comments[0].body,/agents-relay:task-comment:v1/);
+  assert.match(comments[0].body,/Escalation requested/);
+});
+
 test('same task id remains scoped to its job', async () => {
   const shared = 'shared-task';
   const first = task('job-a', shared, 'SUCCEEDED');
