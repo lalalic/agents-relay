@@ -34,7 +34,6 @@ export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
-
 function effectiveGitHubUsage(snapshot: GitHubRateLimitSnapshot | null, runtime: GitHubRuntimeRateUsage | null): EffectiveGitHubUsage | null {
   const candidates = [snapshot?.resources.core, snapshot?.resources.graphql, snapshot?.resources.search, runtime?.resources.core, runtime?.resources.graphql, runtime?.resources.search]
     .filter((candidate): candidate is GitHubRateLimitBucket | NonNullable<GitHubRuntimeRateUsage['resources']['core']> => candidate !== undefined && candidate !== null)
@@ -42,15 +41,12 @@ function effectiveGitHubUsage(snapshot: GitHubRateLimitSnapshot | null, runtime:
   const lowest = candidates.reduce<typeof candidates[number] | null>((current, candidate) => !current || Number(candidate.remaining) / Number(candidate.limit) < Number(current.remaining) / Number(current.limit) ? candidate : current, null);
   return lowest ? { limit: Number(lowest.limit), remaining: Number(lowest.remaining), reset: Number(lowest.reset) } : null;
 }
-
 function isPositiveInteger(candidate: unknown): candidate is number {
   return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
 }
-
 function isTaskId(candidate: string): boolean {
   return candidate.length > 0;
 }
-
 function isSafeRepositorySegment(segment: string): boolean {
   return segment !== '.' && segment !== '..';
 }
