@@ -14,6 +14,32 @@ export const REQUIRED_RECOVERY_PATHS = Object.freeze([
 ]);
 // Trusted, in-process production replay. No caller evidence or blessing flags.
 import {runReplay} from './l3-replay.mjs';
+import {spawnSync} from 'node:child_process';
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+function verifyProductionOutboxCrash() {
+ const checks=[
+  {file:'test/workflow-production-outbox.test.js',expected:1},
+  {file:'test/verification/outbox-cross-a.test.mjs',expected:3},
+ ];
+ const evidence=[];
+ for(const check of checks){
+  const env={...process.env,RELAY_A_DIST:resolve(root,'dist')};
+  delete env.NODE_TEST_CONTEXT;
+  const result=spawnSync(process.execPath,['--test',check.file],{
+   cwd:root,timeout:20000,encoding:'utf8',
+   env,
+  });
+  const output=result.stdout??'';
+  const pass=Number(output.match(/(?:^|\n)ℹ pass (\d+)/)?.[1]??-1);
+  const skip=Number(output.match(/(?:^|\n)ℹ skipped (\d+)/)?.[1]??-1);
+  const ok=result.status===0&&pass===check.expected&&skip===0;
+  evidence.push({file:check.file,passed:pass,skipped:skip,exitCode:result.status});
+  if(!ok)return {outcome:'FAIL',reason:`Production outbox regression missing/failing: ${check.file}: ${String(result.stderr??'').slice(-500)}`,evidence};
+ }
+ return {outcome:'PASS',reason:null,authority:'Production Reconciler SQLite Objective completion, durable outbox atomicity and crash/restart tests',evidence,limitations:'External Git/publisher effects are deterministic isolated faults'};
+}
 const verifiedCases={
  'unknown-effect-reconciliation':{
   id:'gate-unknown-effect',autoMerge:true,tasks:[{id:'a',state:'QUEUED'}],
@@ -72,10 +98,12 @@ verifiedCases['worker-failure-recovery']={
   {type:'task.started',taskId:'a',executionId:'worker-2'},
   {type:'task.completed',taskId:'a',executionId:'worker-2'},
   {type:'task.completed',taskId:'a',executionId:'exec-a',expectIgnored:true},
+  {type:'task.completed',taskId:'a',executionId:'worker-2',expectIgnored:true},
   {type:'job.merge.succeeded'},{type:'reconcile'},
  ],
  expected:{jobState:'COMPLETED',tasks:{a:'SUCCEEDED','troubleshoot-a':'SUCCEEDED'},localMergeStatus:'succeeded'},
 };
+verifiedCases['stale-replay-after-restart']=verifiedCases['worker-failure-recovery'];
 verifiedCases['impossible-objective']={
  id:'gate-impossible-objective',autoMerge:true,tasks:[{id:'a'},{id:'b',dependencies:['a']}],
  steps:[{type:'task.failed',taskId:'a'},{type:'restart'},{type:'job.merge.succeeded',mergedCommitSha:'fabricated'},{type:'reconcile'}],
@@ -84,6 +112,10 @@ verifiedCases['impossible-objective']={
 export async function evaluateRecoveryMatrix(){
  const results=[];
  for(const path of REQUIRED_RECOVERY_PATHS){
+  if(path.id==='crash-after-persist-before-publish'){
+   results.push({id:path.id,...verifyProductionOutboxCrash()});
+   continue;
+  }
   const fixture=verifiedCases[path.id];
   if(!fixture){
    results.push({id:path.id,outcome:'NOT_RUN',reason:'No scenario-specific production Graph/Reconciler/SQLite causal proof for the entire required path'});
@@ -102,6 +134,8 @@ export async function evaluateRecoveryMatrix(){
      ? events.includes('task.escalate')&&events.includes('restart')&&result.trace.find(x=>x.event==='mock.notification.delivered')?.escalations[0]?.notificationStatus==='delivered'&&result.trace.find(x=>x.event==='human.unblock')?.escalations[0]?.status==='responded'&&events.includes('task.recover')
      : path.id==='worker-failure-recovery'
      ? result.trace[0].after.some(t=>t.id==='a'&&t.state==='FAILED')&&result.trace[3].after.some(t=>t.id==='a'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('restart')
+     : path.id==='stale-replay-after-restart'
+     ? result.trace[5].event==='restart'&&result.trace[9].progress===false&&result.trace[10].progress===false&&result.trace[9].before.some(t=>t.id==='a'&&t.state==='SUCCEEDED')&&result.trace[10].after.some(t=>t.id==='a'&&t.state==='SUCCEEDED')
      : path.id==='review-changes-required'
      ? result.trace[3].after.some(t=>t.id==='review-fix-head-1'&&t.state==='QUEUED')&&result.trace[9].progress===false&&events.includes('review.approved')
      : path.id==='reviewer-failure-recovery'

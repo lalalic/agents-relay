@@ -5,17 +5,17 @@ test('Job 481 matrix derives only trusted replay proof from production Graph and
  assert.equal(REQUIRED_RECOVERY_PATHS.length,11);
  const results=await evaluateRecoveryMatrix();
  assert.equal(results.length,11);
- for(const id of ['human-escalation-resume','unknown-effect-reconciliation','review-changes-required','reviewer-failure-recovery','merge-failure-recovery','impossible-objective','worker-failure-recovery']){
+ for(const id of ['human-escalation-resume','unknown-effect-reconciliation','review-changes-required','reviewer-failure-recovery','merge-failure-recovery','impossible-objective','worker-failure-recovery','stale-replay-after-restart','crash-after-persist-before-publish']){
   const item=results.find(x=>x.id===id);
   assert.equal(item.outcome,'PASS',JSON.stringify(item));
-  assert.equal(item.sqliteJobState,id==='impossible-objective'?'ACTIVE':'COMPLETED');
-  assert.match(item.authority,/isolated SQLite/);
+  if(id!=='crash-after-persist-before-publish')assert.equal(item.sqliteJobState,id==='impossible-objective'?'ACTIVE':'COMPLETED');
+  assert.match(item.authority,/SQLite/);
  }
- for(const item of results.filter(x=>!['human-escalation-resume','unknown-effect-reconciliation','review-changes-required','reviewer-failure-recovery','merge-failure-recovery','impossible-objective','worker-failure-recovery'].includes(x.id)))
+ for(const item of results.filter(x=>!['human-escalation-resume','unknown-effect-reconciliation','review-changes-required','reviewer-failure-recovery','merge-failure-recovery','impossible-objective','worker-failure-recovery','stale-replay-after-restart','crash-after-persist-before-publish'].includes(x.id)))
   assert.equal(item.outcome,'NOT_RUN',item.id);
 });
 test('external inputs cannot bless any of the remaining paths',async()=>{
  const forged={outcome:'PASS',trusted:true,objective:'COMPLETED'};
  const results=await evaluateRecoveryMatrix(forged);
- assert.equal(results.filter(x=>x.outcome==='PASS').length,7);
+ assert.equal(results.filter(x=>x.outcome==='PASS').length,9);
 });
