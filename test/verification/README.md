@@ -104,3 +104,10 @@ Use `RELAY_L2_LIVE=1 RELAY_L2_ROLE=implementation npm run test:verification:l2:l
 **Critical remaining distinction:** A retryable Planner failure produces `planner.retry`, not terminal `planner.failed`. The two strict Job 481 matrix paths `planner-failure-recovery` and `sequential-complete-objective` explicitly require terminal Planner failure, a separate Troubleshooter-owned recovery and an eventual successful Plan. That specific sequence is still **NOT_RUN** and is not inferred from this positive automatic retry test.
 
 The isolated escalation notification receipt is injected through a test notifier. A connected production user-visible notifier, complete native CodexAdapter launch compliance, and standalone real-browser Dashboard E2E are not established by these tests.
+
+
+## Graph-complete integration follow-up (2026-10-20)
+
+See `docs/evidence/job481-final-integration-20261020.md` for the current results. Historical 2/11, 7/11 and 9/11 results above are snapshots from earlier branch commits, not the latest acceptance matrix. **The fixed 11-scenario L3 matrix now runs 11/11 PASS in isolated production Graph/Reconciler/SQLite**, including the terminal FAILED Plan recovery via a separate Troubleshooter. This does not establish exhaustive L3 graph-edge execution in production.
+
+The new L1 inventory validates all 16 executable Graphs and every declared edge through `GraphRuntime`, with one presentation-only main graph. Real Codex positive four roles and three negative case probes passed via isolated MCP+Relay SQLite (not full CodexAdapter). Dashboard browser: 38/38 read-only isolated interactions including all 17 visual graphs; source script `test/workflow-dashboard-graph-coverage-e2e.py`. A configurable production human escalation notifier now persists actual provider delivery receipts, but no real external delivery destination was verified; pending notifications never auto-complete on bus ACK.

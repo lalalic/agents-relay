@@ -1,3 +1,5 @@
+> Historical report at 6d9b9e4. Current integration evidence superseding this snapshot: [job481-final-integration-20261020.md](job481-final-integration-20261020.md).
+
 # Job 481 integration branch verification
 
 Branch: `fix/review-integration-20261019` (not merged, not live, not published). Latest changes through commit `79ea2ad`.

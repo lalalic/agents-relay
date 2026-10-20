@@ -6,7 +6,7 @@ import {LocalAuthorityDurableStore} from '../../../dist/local-authority-store.js
 import {InMemoryStore} from '../../../dist/store.js';
 import {Reconciler} from '../../../dist/reconciler.js';
 import {MemoryEventBus} from '../../../dist/events.js';
-export async function relayAcceptProviderEvents({work,jobId,taskId,executionId,role,events}) {
+export async function relayAcceptProviderEvents({work,jobId,taskId,executionId,role,events,expectedState='SUCCEEDED',expectedVerdict='approved'}) {
  const sqlite=new SQLiteRelayStore(join(work,'stores','relay.sqlite'),jobId);
  const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  const bus=new MemoryEventBus();
@@ -24,7 +24,7 @@ export async function relayAcceptProviderEvents({work,jobId,taskId,executionId,r
    const progress=[];
    for(const raw of events) {
      const event={event_id:`l2-${randomUUID()}`,job_id:jobId,task_id:taskId,type:raw.type,
-       source:{id:raw.source.id,agent:role},status:raw.type==='task.started'?'running':'succeeded',message:raw.type,
+       source:{id:raw.source.id,agent:role},status:raw.type==='task.started'?'running':raw.type==='task.failed'?'failed':'succeeded',message:raw.type,
        visibility:'orchestrator',data:raw.data??{},timestamp:new Date().toISOString()};
      await bus.publish(event);
      await runtime.idle();
@@ -33,7 +33,7 @@ export async function relayAcceptProviderEvents({work,jobId,taskId,executionId,r
    }
    const observed=await sqlite.loadJob(jobId);
    const terminal=observed.tasks.find(t=>t.id===taskId);
-   const accepted=terminal?.state==='SUCCEEDED'&&(role!=='reviewer'||observed.review?.outcome==='approved');
+   const accepted=terminal?.state===expectedState&&(role!=='reviewer'||expectedState==='FAILED'||observed.review?.outcome===(expectedVerdict==='changes-required'?'changes_required':expectedVerdict));
    return {accepted,progress,jobState:observed.state,taskState:terminal?.state,reviewOutcome:observed.review?.outcome??null};
  }finally{await stop?.();await runtime.close();sqlite.close();}
 }
