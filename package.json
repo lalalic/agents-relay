@@ -27,6 +27,7 @@
     "test:verification:matrix": "node test/verification/recovery-report.mjs /tmp/agents-relay-job481-evidence",
     "test:verification:l2": "npm run build && node --test test/verification/l2/*.test.mjs",
     "test:verification:l2:live": "node test/verification/l2/live-provider.mjs",
+    "test:verification:l2:live-codex": "npm run build && node test/verification/l2/live-codex-agents.mjs",
     "test:l2:agents": "npm run build && node test/l2-agent-prompts/evaluate.mjs"
   },
   "devDependencies": {

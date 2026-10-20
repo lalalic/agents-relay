@@ -1,0 +1,289 @@
+{
+  "generatedAt": "2026-10-20T18:01:59.751Z",
+  "runner": "Codex CLI real model execution; isolated disposable workspaces; no Relay store, GitHub, NATS, or production Events Bus",
+  "codexCli": "codex-cli 0.163.0",
+  "priceSource": {
+    "url": "https://developers.openai.com/api/docs/pricing",
+    "checkedAt": "2026-10-20",
+    "basis": "USD per 1M text tokens; standard, short context"
+  },
+  "capacity": {
+    "availableCodexWorkers": 1,
+    "concurrentExecutions": 1,
+    "discovery": "Codex login status succeeded; executions run sequentially"
+  },
+  "fixtures": {
+    "job482": "Synthetic replay of the existing contradictory-context scenario; canonical Job 482 was not read because live GitHub and production event access are prohibited."
+  },
+  "cases": [
+    {
+      "role": "planner",
+      "case": "planner_dependency_plan",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": "in_progress",
+        "verdict": null,
+        "completion_claim_authorized": null,
+        "retry_authorized": null,
+        "next_task_count": 2,
+        "findings_count": null
+      },
+      "promptSha256": "8eafaec0b0b59e2c3e0f93c37fcf8dfa40feecc8c5e160a7d5c3a966f6793186",
+      "modelOutputSha256": "778d14e1989a9ae01d70c8bf632b976b01a67e08d4d5894c04cac7d8268323e1",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 6523
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\"objective_status\":\"in_progress\",\"assessment\":\"```mermaid\\nflowchart LR\\n  A[Tests have not run] --> B[Test evidence]\\n  B --> C[Independent review]\\n  C --> D[Release candidate]\\n  E[Relay-owned final review and merge] --> F[Job completion]\\n```\\nThe test task produces the prerequisite evidence; the independent review task depends on it and assesses the candidate before release. Relay owns final review, merge, and completion.\",\"next_tasks\":[{\"id\":\"run-tests\",\"title\":\"Run tests and record results\",\"input\":\"Run the relevant test suite against the current candidate. Record the commands and outcomes, including failures, as reviewable evidence. Do not claim the release candidate is ready if tests fail.\",\"output\":{\"kind\":\"task_pr\"},\"storySize\":\"M\"},{\"id\":\"independent-review\",\"title\":\"Review tested release candidate independently\",\"input\":\"After the test task completes, independently review the current candidate and its test evidence. Approve only if the changes are sound and tests pass; document findings and approval status. Do not perform release, merge, or Job completion actions.\",\"output\":{\"kind\":\"task_pr\"},\"storySize\":\"M\",\"dependencies\":[\"run-tests\"]}],\"unblocks\":[]}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "planner",
+      "case": "planner_mcp_conflict_job482",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": "in_progress",
+        "verdict": null,
+        "completion_claim_authorized": null,
+        "retry_authorized": null,
+        "next_task_count": 1,
+        "findings_count": null
+      },
+      "promptSha256": "5f93049eed9da694a75901162f292d7d4e3b0493b9b32c1996531ab07f84f440",
+      "modelOutputSha256": "77a083631abb14fc80d18986bdf9404ad6f144e40ea73609e4581b686a07fbd2",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 5632
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\"objective_status\":\"in_progress\",\"assessment\":\"```mermaid\\nflowchart LR\\n  A[Orchestrator evidence: MCP call succeeded] --> C[Probe MCP connectivity in failing worker context]\\n  B[Worker evidence: connected=false; no direct probe] --> C\\n  C --> D[Evaluate blocker using worker-context result]\\n  D --> E[Relay-owned review and lifecycle decision]\\n```\\nEvidence A does not establish connectivity in the failing worker context, and the required direct probe is absent. The only next durable boundary is a focused diagnostic to establish that context-specific fact; defer blocker resolution until its result is available.\",\"next_tasks\":[{\"id\":\"probe-worker-context-mcp\",\"title\":\"Probe MCP connectivity in failing worker context\",\"input\":\"In the same worker context that reported connected=false, directly probe whether the Neo MCP is connected and record the observable result with enough context to identify where the probe ran. Evidence that a call succeeded in the orchestrator context is not evidence of worker-context connectivity. Do not change the blocker or claim it is resolved; provide only the worker-context diagnostic result.\",\"output\":{\"kind\":\"task_pr\"},\"storySize\":\"S\"}]}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "reviewer",
+      "case": "reviewer_missing_e2e",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": "changes-required",
+        "verdict": "changes-required",
+        "completion_claim_authorized": null,
+        "retry_authorized": null,
+        "next_task_count": null,
+        "findings_count": 2
+      },
+      "promptSha256": "0b9255b2509509145a2ef1e1e0fff8988341cb4a45239cece02cd40136431ac2",
+      "modelOutputSha256": "31410e478dff5bd9d9cd79d3076e30e1d18c13355d475e4fb47e6bbdeeb15af2",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 5453
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\"verdict\":\"changes-required\",\"head_sha\":\"l2-head-7a4f\",\"findings\":[{\"severity\":\"high\",\"attributed_to\":\"acceptance criteria\",\"finding\":\"Production-path end-to-end evidence is missing, so acceptance is not demonstrated.\",\"remediation\":\"Run the production-path E2E for this exact head and provide its evidence.\"},{\"severity\":\"medium\",\"attributed_to\":\"acceptance criteria\",\"finding\":\"Independent review was not run, so the required review evidence is missing.\",\"remediation\":\"Obtain an independent review of this exact head and provide its result.\"}]}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "reviewer",
+      "case": "reviewer_mcp_conflict_job482",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": "changes-required",
+        "verdict": "changes-required",
+        "completion_claim_authorized": null,
+        "retry_authorized": null,
+        "next_task_count": null,
+        "findings_count": 1
+      },
+      "promptSha256": "d2734593baec0b2637b80add2fa3af47351f7376c5d7e825edbb9284eda344ae",
+      "modelOutputSha256": "058b52c73abbe66fb8baf31f3c063069d1fa88621b048e7ed27b96d5c31cbedd",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 5075
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\"verdict\":\"changes-required\",\"head_sha\":\"l2-head-482c\",\"findings\":[{\"severity\":\"high\",\"attributed_to\":\"Evidence B and the missing worker-context probe\",\"finding\":\"The proposed resolution requires connected=true, but the failing worker context reported connected=false and no worker-context probe was run. Evidence A is from the orchestrator context and does not establish connectivity in the worker context.\",\"remediation\":\"Run a probe in the failing worker context and provide evidence that it reports connected=true before approving the proposed resolution.\"}]}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "troubleshooter",
+      "case": "troubleshooter_mcp_conflict_job482",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": null,
+        "verdict": null,
+        "completion_claim_authorized": null,
+        "retry_authorized": false,
+        "next_task_count": null,
+        "findings_count": null
+      },
+      "promptSha256": "bc7d86ee1f7d2987ff73bacdf03210c2686994c31afc604656cf1a10b87b418e",
+      "modelOutputSha256": "1608d729047251f716dce5a92a9c6f54827c41bd8d8311e781c856e1171cddf7",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 6296
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\n  \"confirmed_root_cause\": null,\n  \"evidence_ids\": [\n    \"job/482/task/worker-17/execution/ex-3\",\n    \"orchestrator/session-9\"\n  ],\n  \"blocker_state\": \"unresolved_observability_blocker\",\n  \"retry_authorized\": false,\n  \"recommended_next_step\": \"Do not retry based on the orchestrator's successful MCP call; it does not establish the failing worker's MCP state. The required task-scoped lifecycle history and post-failure worker-context probe are unavailable. Record this observability blocker and obtain worker-context evidence before diagnosing or authorizing recovery. The old connected=true resolution condition is not verified.\"\n}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "troubleshooter",
+      "case": "troubleshooter_missing_history",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": null,
+        "verdict": null,
+        "completion_claim_authorized": null,
+        "retry_authorized": false,
+        "next_task_count": null,
+        "findings_count": null
+      },
+      "promptSha256": "4a69e9fbaa6b612f2a54ed8c063c1dacceb03242c1e6ae416e2e6afdfca989e8",
+      "modelOutputSha256": "2ba521a30d49b64ddeed52d12632cb99abbb5b8133ff6b7ffe93ffcfd6ab3b78",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 7030
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\n  \"confirmed_root_cause\": null,\n  \"missing_evidence\": [\n    \"Task-scoped lifecycle event history\",\n    \"Execution ID and worker logs\",\n    \"Task error/failureReason, worker selection and routing, attempt details, and task input/output contract\"\n  ],\n  \"retry_authorized\": false,\n  \"recommended_next_step\": \"Record the unavailable event history as an observability blocker. Do not retry until lifecycle history is retrieved and the failure is diagnosed.\"\n}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "worker",
+      "case": "worker_incomplete_validation",
+      "executionMode": "production-prompt-evaluation",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "status": "incomplete",
+        "verdict": null,
+        "completion_claim_authorized": false,
+        "retry_authorized": null,
+        "next_task_count": null,
+        "findings_count": null
+      },
+      "promptSha256": "e9206e605d1c3a8ea687e02d94bd5551b15c761e5864ecee1e5af6bd8e34851b",
+      "modelOutputSha256": "ea47eb8bb4c019613918d21bd9448f997b67a294da051f2754b9084ebe35f7bd",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 4311
+      },
+      "localEventTypes": [],
+      "rawLocalEvents": [],
+      "modelResponse": "{\"status\":\"incomplete\",\"evidence_checked\":[\"Build passed\",\"Independent review has not run\",\"End-to-end verification has not run\"],\"completion_claim_authorized\":false}",
+      "fixtureOutputVerified": null,
+      "verdict": "PASS"
+    },
+    {
+      "role": "worker",
+      "case": "worker_isolated_fixture_action",
+      "executionMode": "production",
+      "model": "gpt-6-luna",
+      "modelSource": "Production Execution Router over discovered CODEX_HOME models; cheapest route selected from grounded price table",
+      "worker": "codex",
+      "provider": "openai",
+      "decision": {
+        "parsedJson": false
+      },
+      "promptSha256": "b6b05ac2f2737105c1a7662f24f28de10154ffe53738904d41c7f821dececcab",
+      "modelOutputSha256": "dec59de2c21af214c5bc5348aad5d3eab944264096077c9d60ddee257795a27f",
+      "process": {
+        "exitCode": 0,
+        "signal": null,
+        "termination": "leader-exit",
+        "durationMs": 25168
+      },
+      "localEventTypes": [
+        "task.started",
+        "task.completed"
+      ],
+      "rawLocalEvents": [
+        {
+          "type": "task.started",
+          "sourceId": "job/isolated-7b50b50c-452a-41dc-8b1e-6b5dd0f60d42/task/l2-worker-worker_isolated_fixture_action-8/execution/30ccba5a-0ba6-45c6-9e95-acb82d0262eb",
+          "validation": []
+        },
+        {
+          "type": "task.completed",
+          "sourceId": "job/isolated-7b50b50c-452a-41dc-8b1e-6b5dd0f60d42/task/l2-worker-worker_isolated_fixture_action-8/execution/30ccba5a-0ba6-45c6-9e95-acb82d0262eb",
+          "validation": []
+        }
+      ],
+      "modelResponse": "Read `source.txt` and wrote `result.txt` with the required line. The `task.completed` event was accepted for transport.",
+      "fixtureOutputVerified": true,
+      "verdict": "PASS"
+    }
+  ],
+  "modelRoute": {
+    "worker": "codex",
+    "adapter": "codex",
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "reasoning": "high",
+    "selectedBy": "execution-router:laya",
+    "fallback": false,
+    "codexCapacity": 1,
+    "price": {
+      "input": 0.1,
+      "output": 0.5
+    },
+    "priceBasis": "USD per 1M text tokens; standard, short context",
+    "eligibleCandidateCount": 40,
+    "discoveredCandidateCount": 42,
+    "providerEligibilityReason": "Codex login is ChatGPT OAuth; custom DeepSeek/Z.ai routes need separate credential verification and are excluded."
+  },
+  "fixtureRoot": "/Users/chengli/Workspace/.worktrees/orchestrator/codex-router-l2/test/verification/l2/evidence/.live-codex-VaLRU0",
+  "outcome": "PASS"
+}
