@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import {escalationNotifierFromEnvironment} from './escalation-notifier.js';
-import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
+import {escalationNotifierFromEnvironment} from './escalation-notifier.js'; import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';

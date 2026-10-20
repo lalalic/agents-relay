@@ -127,7 +127,8 @@ test('dashboard exposes a top-level Graphs browser backed by the workflow graph 
   assert.match(dashboardHtml, /loadJSON\('\/api\/graphs'\)/);
   assert.match(dashboardHtml, /function renderSelectedGraph\(\)/);
   assert.match(dashboardHtml, /window\.mermaid\.render/);
-  assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(markup,'image\/svg\+xml'\)/);
+  assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(markup\.replace\(/);
+  assert.match(dashboardHtml, /xmlns:xlink/);
   assert.match(dashboardHtml, /id="graph-source"/);
 });
 
