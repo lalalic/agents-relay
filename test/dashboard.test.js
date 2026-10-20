@@ -129,7 +129,10 @@ test('dashboard exposes a top-level Graphs browser backed by the workflow graph 
   assert.match(dashboardHtml, /window\.mermaid\.render/);
   assert.match(dashboardHtml, /new DOMParser\(\)\.parseFromString\(markup\.replace\(/);
   assert.match(dashboardHtml, /xmlns:xlink/);
-  assert.match(dashboardHtml, /id="graph-source"/);
+  assert.match(dashboardHtml, /id="graph-description"/);
+  assert.doesNotMatch(dashboardHtml, /id="graph-source"/);
+  assert.doesNotMatch(dashboardHtml, /id="graph-links"/);
+  assert.doesNotMatch(dashboardHtml, /Mermaid source/);
 });
 
 test('dashboard discovers workflow Mermaid files dynamically', async () => {
@@ -138,6 +141,8 @@ test('dashboard discovers workflow Mermaid files dynamically', async () => {
   assert.ok(graphs.some(graph => graph.id === 'job-lifecycle' && graph.name === 'Job Lifecycle'));
   assert.ok(graphs.every(graph => graph.path.startsWith('workflow/') && graph.path.endsWith('.mmd')));
   assert.ok(graphs.every(graph => graph.source.trim().length > 0));
+  assert.ok(graphs.every(graph => graph.name.length > 0 && graph.description.length > 0));
+  assert.ok(graphs.some(graph => graph.id === 'planner-orchestration' && graph.description.includes('planning rounds')));
 });
 
 test('dashboard exposes workflow graphs through a no-store API', async () => {

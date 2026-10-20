@@ -18,15 +18,21 @@ import type { DecisionAuditRecord } from './decision-audit.js';
 const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
 const SSE_HEARTBEAT_MS = 15000;
 const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
-export type DashboardWorkflowGraph = { id: string; name: string; path: string; source: string };
+export type DashboardWorkflowGraph = { id: string; name: string; description: string; path: string; source: string };
 export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
   const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort();
-  return Promise.all(names.map(async name => ({
-    id: name.replace(/\.mmd$/, ''),
-    name: name === 'main.mmd' ? 'Main / Happy Path' : name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
-    path: `workflow/${name}`,
-    source: await readFile(join(WORKFLOW_DIR, name), 'utf8'),
-  })));
+  return Promise.all(names.map(async name => {
+    const source = await readFile(join(WORKFLOW_DIR, name), 'utf8');
+    const metadata = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source)?.[1] ?? '';
+    const field = (key: string) => metadata.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() ?? '';
+    return {
+      id: name.replace(/\.mmd$/, ''),
+      name: field('title') || (name === 'main.mmd' ? 'Main / Happy Path' : name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')),
+      description: field('description'),
+      path: `workflow/${name}`,
+      source,
+    };
+  }));
 }
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
