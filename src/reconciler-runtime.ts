@@ -7,19 +7,20 @@ import { DurableStore } from './store.js'; import { Job, Task, EventRecord, Chat
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
-import type { ExecutionContextRoots } from './execution-context.js';
-import type { AccountUsageOverview } from './usage.js';
-import type { DecisionEngine, DecisionMode } from './decision.js'; import type { DecisionAuditStore } from './decision-audit.js';
+import type { ExecutionContextRoots } from './execution-context.js'; import type { AccountUsageOverview } from './usage.js';
+import type { LocalMergeReceipt } from './local-git-merge.js'; import type { DecisionEngine, DecisionMode } from './decision.js';
+import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import type { LocalMergeEffect } from './local-merge-delivery.js';
 import type { EscalationNotifier } from './escalation-notifier.js'; import { workflowEffectFailureEvent } from './workflow/contracts.js';
 import { ReconcileCoordinator } from './reconcile-coordinator.js';
 import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
-import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
 import { codexFallbackCompatible, persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
-export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; localMergeEffect?: LocalMergeEffect; escalationNotifier?: EscalationNotifier };
+import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure } from './task-inactivity-watchdog.js';
+
+export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; localMergeEffect?: LocalMergeEffect; localMergeDelivery?: (projectPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string }; headShaProvider?: (job: Job) => string | null | Promise<string | null>; escalationNotifier?: EscalationNotifier };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
@@ -79,6 +80,7 @@ export abstract class ReconcilerRuntimeBase {
     const sourceId = eventSourceId(event); const activeOwner = sourceId ? activeExecutionOwners.get(sourceId) : undefined;
     if (activeOwner && activeOwner !== this) return activeOwner.applyEvent(event);
     if (event.type === 'task.started') return this.markWorkerStarted(event);
+    if (event.type === 'task.progress') return this.markWorkerProgress(event);
     if (event.type === 'task.completed') {
       const task = (await this.store.load(event.job_id)).tasks.find(item => item.id === event.task_id);
       const normalized = task?.agentName === 'reviewer' ? normalizeReviewerTerminalEvent(event) : null;
@@ -153,12 +155,9 @@ export abstract class ReconcilerRuntimeBase {
     owner.clearExecution(taskId, executionId);
     return true;
   }
-  protected clearTerminalTimer(taskId: string, executionId: string): void {
-    const live = this.live.get(taskId);
-    if (!live || live.executionId !== executionId) return;
-    const timer = this.terminalTimers.get(taskId);
-    if (timer) clearTimeout(timer);
-    this.terminalTimers.delete(taskId);
+  protected armInactivityWatchdog(task: Task, executionId: string): void {
+    armInactivityWatchdog(task, executionId, this.terminalTimers, this.options.postExitTerminalGraceMs ?? 15_000,
+      () => this.detach(this.timeoutTask(task.jobId!, task.id, executionId), task.jobId!, task.id, 'worker inactivity timeout'));
   }
   protected clearExecution(taskId: string, executionId?: string | null): void {
     const live = this.live.get(taskId);
@@ -178,39 +177,29 @@ export abstract class ReconcilerRuntimeBase {
     const transition = await this.taskTransitions.apply(event.job_id, event.task_id, 'task.started', {
       eligible: (job, task) => {
         if (!task.executionId || eventSourceId(event) !== executionEventSource(job.id, task.id, task.executionId)) return false;
+        if (!Number.isFinite(Date.parse(event.timestamp)) || Date.parse(event.timestamp) > Date.now()) return false;
         const claimedExecution = task.executionId !== null && task.leaseOwner !== null;
         const exactLiveExecution = live && event.job_id === live.jobId && task.executionId === live.executionId;
-        return Boolean(exactLiveExecution || claimedExecution || this.isRecoverableWatchdogFailure(task));
+        return Boolean(exactLiveExecution || claimedExecution || isRecoverableWatchdogFailure(task));
       },
       facts: (_job, task) => ({
-        recoverableExecution: this.isRecoverableWatchdogFailure(task)
+        recoverableExecution: isRecoverableWatchdogFailure(task)
           && Boolean(task.executionId && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId)),
       }),
       mutate: (_job, task) => {
-        task.updatedAt = new Date().toISOString();
+        task.updatedAt = task.lastProgressAt = new Date().toISOString(); task.lastProgressEventAt = event.timestamp;
       },
     });
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: 'task.started.ignored' }; 
     if (this.store.verifyWorkflowLaunch && transition.task.executionId) {
       const outcome=await this.store.verifyWorkflowLaunch(event.job_id,event.task_id,transition.task.executionId);
       if (outcome==='Failed')throw Error('worker start postcondition violated');
-      // Unknown remains durable and never authorizes repeating this generation.
     }
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
+    this.armInactivityWatchdog(transition.task, transition.task.executionId!);
     return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };
   }
-  protected isRecoverableWatchdogFailure(task: Task): boolean {
-    if (['worker_start_timeout', 'terminal_event_timeout', 'worker_exit_before_start', 'worker_exit_without_terminal_event', 'worker_delivery_after_start'].includes(task.failureReason ?? '')) return true;
-    const error = task.error ?? '';
-    return error.includes('worker_start_timeout')
-      || error.includes('timed out waiting for the mandatory terminal worker event')
-      || error.includes('exited before publishing task.started')
-      || error.includes('exited after task.started without publishing a terminal task event')
-      || error.includes('Worker delivery failed after task.started');
-  }
-  protected isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean {
-    return task.executionId !== null && eventSourceId(event) === executionEventSource(event.job_id, task.id, task.executionId);
-  }
+  protected async markWorkerProgress(event: EventRecord): Promise<EventHandlingResult> { const task = await acceptTaskProgress(this.taskTransitions, event); if (!task?.executionId) return { applied: false, reconcile: false, reason: 'task.progress.ignored' }; this.armInactivityWatchdog(task, task.executionId); return { applied: true, reconcile: false, reason: 'task.progress' }; }
   protected finalizeReviewExecution(jobId: string, task: Task, event: EventRecord, afterCommit = true): boolean {
     if (!task.executionId) return true;
     const sourceId = eventSourceId(event);
@@ -312,12 +301,15 @@ export abstract class ReconcilerRuntimeBase {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) return;
+    if (task.adapter !== 'chatgpt') {
+      const exited = await this.taskTransitions.updateFact(jobId, taskId,
+        current => current.executionId === executionId && ['RUNNING', 'QUEUED'].includes(current.state),
+        current => { current.processExitedAt = new Date().toISOString(); });
+      if (exited) this.armInactivityWatchdog(exited, executionId);
+    }
     const correlated = task.executionId === executionId || task.executionHistory?.some(item => item.id === executionId);
     if (!correlated) return;
     if (task.adapter !== 'chatgpt' && (task.executionId !== executionId || terminalExecutionClaimed(jobId, taskId, executionId))) return;
-    if (task.adapter !== 'chatgpt' && task.executionId === executionId && live?.executionId === executionId)
-      rearmTerminalEventDeadline(this.terminalTimers, taskId, task.timeoutMs - (Date.now() - live.launchBarrier),
-        this.options.postExitTerminalGraceMs ?? 15_000, () => this.detach(this.timeoutTask(jobId, taskId, executionId), jobId, taskId, 'post-exit terminal event timeout'));
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
       task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
@@ -329,18 +321,20 @@ export abstract class ReconcilerRuntimeBase {
     ));
   }
   protected async timeoutTask(jobId: string, taskId: string, executionId: string): Promise<void> {
+    const current = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
+    if (!current || current.executionId !== executionId || !['QUEUED', 'RUNNING'].includes(current.state)) return;
+    const deadline = inactivityDeadline(current, executionId, this.options.postExitTerminalGraceMs ?? 15_000);
+    if (deadline > Date.now()) { this.armInactivityWatchdog(current, executionId); return; }
     const live = this.live.get(taskId);
-    if (live?.executionId === executionId) {
-      live.controller.abort();
-      live.execution.cancel();
-    }
+    // Do not cancel before the serialized watchdog transition rechecks the
+    // deadline: a concurrent accepted progress event may have extended it.
     const exit = live?.executionId === executionId && live.processSettled ? live.execution.processExit : undefined;
     const rawError = live?.executionId === executionId && live.processSettled ? (live.processError || exit?.stderr || '').trim() : '';
     const failedExit = Boolean(exit && (exit.exitCode !== 0 || exit.signal));
     const failureReason = failedExit ? classifyWorkerRejection(rawError) : 'terminal_event_timeout';
-    const failureMessage = failedExit ? (rawError || `Worker exited with code ${exit?.exitCode ?? 'null'}${exit?.signal ? `, signal ${exit.signal}` : ''}`) : `Task ${taskId} timed out waiting for the mandatory terminal worker event`;
+    const failureMessage = failedExit ? (rawError || `Worker exited with code ${exit?.exitCode ?? 'null'}${exit?.signal ? `, signal ${exit.signal}` : ''}`) : `Task ${taskId} exceeded its inactivity timeout without a terminal event`;
     const transition = await this.taskTransitions.apply(jobId, taskId, 'watchdog.failed', {
-      eligible: (_job, task) => task.executionId === executionId,
+      eligible: (_job, task) => task.executionId === executionId && inactivityDeadline(task, executionId, this.options.postExitTerminalGraceMs ?? 15_000) <= Date.now(),
       mutate: (_job, task) => {
         this.clearExecution(task.id, executionId);
         task.error = failureMessage;
@@ -350,8 +344,13 @@ export abstract class ReconcilerRuntimeBase {
       },
     });
     if (!transition?.decision.accepted) {
-      this.clearExecution(taskId, executionId);
+      const latest = (await this.store.load(jobId)).tasks.find(task => task.id === taskId);
+      if (latest?.executionId === executionId && ['QUEUED', 'RUNNING'].includes(latest.state)) this.armInactivityWatchdog(latest, executionId);
       return;
+    }
+    if (live?.executionId === executionId) {
+      live.controller.abort();
+      live.execution.cancel();
     }
     let reroutedTask: Task | null = null;
     if (reroutableWorkerRejections.has(failureReason) && transition.task.attempt < transition.task.maxAttempts) {
@@ -403,18 +402,18 @@ export abstract class ReconcilerRuntimeBase {
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
-        if (!trustedInternal && modelBacked && !this.isCorrelatedWorkerEvent(task, event)) {
+        if (!trustedInternal && modelBacked && !isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
           if (!prior || prior.attempt !== task.attempt) return false;
         }
         const terminalWaiter = this.terminalWaiters.get(task.id);
-        return !terminalWaiter || Boolean(task.executionId && terminalWaiter.executionId === task.executionId && this.isCorrelatedWorkerEvent(task, event));
+        return !terminalWaiter || Boolean(task.executionId && terminalWaiter.executionId === task.executionId && isCorrelatedWorkerEvent(task, event));
       },
       facts: (_job, task) => {
         const processExitedAfterPublishedTerminal = task.failureReason === 'worker_exit_without_terminal_event';
-        const freshEnough = processExitedAfterPublishedTerminal || this.isCorrelatedWorkerEvent(task, event);
-        return { recoverableExecution: this.isRecoverableWatchdogFailure(task) && freshEnough };
+        const freshEnough = processExitedAfterPublishedTerminal || isCorrelatedWorkerEvent(task, event);
+        return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough };
       },
       mutate: (job, task) => {
         const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';

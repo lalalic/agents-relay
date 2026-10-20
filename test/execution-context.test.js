@@ -1,6 +1,6 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -110,7 +110,9 @@ test('managed worker prompt exposes resolved context and durable retrieval guida
     const job = { id:'j', title:'job', executionMode:'fixed', prNumber:54, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
     const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:'nested-exec', threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
-    assert.match(prompt, /Role: nested-worker/);
+    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
+    assert.ok(reference);
+    assert.match(await readFile(reference[1], 'utf8'), /Role: nested-worker/);
     assert.match(prompt, /Retrieve the durable job and task from GitHub before doing the work/);
     assert.match(prompt, /Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/54#issuecomment-1/);
     assert.doesNotMatch(prompt, /do work/);
@@ -132,10 +134,12 @@ test('managed worker input loads the selected agent Markdown contract by agentNa
     const job = { id:'j', title:'job', objective:'ship safely', executionMode:'fixed', prNumber:75, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
     const task = { id:'review', agentName:'reviewer', executionId:'review-exec', parentTaskId:null, dependencies:[], capabilities:['review'], adapter:'codex', input:'review exact head abc', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
-    assert.match(prompt, /\[Selected task agent contract\]/);
-    assert.match(prompt, /Agent: reviewer/);
-    assert.match(prompt, /CANONICAL REVIEW CONTRACT: emit review\.started then one decision/);
-    assert.match(prompt, /Worker\/model routing\s+does not change the selected agent identity/);
+    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
+    assert.ok(reference, 'effective agent contract must have an immutable reference');
+    const contract = await readFile(reference[1], 'utf8');
+    assert.match(contract, /Agent: reviewer/);
+    assert.match(contract, /CANONICAL REVIEW CONTRACT: emit review\.started then one decision/);
+    assert.match(contract, /Worker\/model routing\s+does not change the selected agent identity/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -22,7 +22,11 @@ Create an isolated store with `createIsolatedEnvironment`; pass its returned `en
 
 `npm run test:verification:l3` also runs `l3-ingress.test.mjs`: an isolated unified SQLite authority under a temporary `AGENTS_RELAY_STORE_DIR`, with real `MemoryEventBus.subscribe`, `Reconciler.watch`/`handleEvent`, production Graph transitions and scheduler-driven dependency release. It asserts persisted state, tests duplicate/stale event rejection, and confirms that a deliberately wrong-generation event fails the expected-success assertion. No external Git or provider calls are made.
 
-**Remaining gap:** This coverage is not a full L3 scenario simulator/CLI replay. Multi-phase recovery, escalation, reviews and merges still need production-path simulator fixtures, actual SQLite causal history, and evidence exports. The older `cli.mjs replay` is only a trace validator, not a production-path replay. Do not label those cases PASS.
+### Full production-path simulator
+
+`l3-simulator.mjs` drives the real `Reconciler`, Graph engine, scheduler, event ingress and SQLite store. Only the worker/provider and local Git delivery are mocked. `l3-full-path.test.mjs` covers worker lifecycle, immutable review changes/re-review, restart and parallel dependencies, durable merge failure receipts, and deliberately asserts terminal state from SQLite. Use `runFullPath({ outputDir })` to export unified `report.json` and `report.md` evidence. The simulator never writes lifecycle state directly after setup.
+
+The older `cli.mjs replay` remains a trace validator for L1/foundation fixtures; it is not evidence of a production-path run.
 
 ### Bounded production ingress replay
 
@@ -111,3 +115,6 @@ The isolated escalation notification receipt is injected through a test notifier
 See `docs/evidence/job481-final-integration-20261020.md` for the current results. Historical 2/11, 7/11 and 9/11 results above are snapshots from earlier branch commits, not the latest acceptance matrix. **The fixed 11-scenario L3 matrix now runs 11/11 PASS in isolated production Graph/Reconciler/SQLite**, including the terminal FAILED Plan recovery via a separate Troubleshooter. This does not establish exhaustive L3 graph-edge execution in production.
 
 The new L1 inventory validates all 16 executable Graphs and every declared edge through `GraphRuntime`, with one presentation-only main graph. Real Codex positive four roles and three negative case probes passed via isolated MCP+Relay SQLite (not full CodexAdapter). Dashboard browser: 38/38 read-only isolated interactions including all 17 visual graphs; source script `test/workflow-dashboard-graph-coverage-e2e.py`. A configurable production human escalation notifier now persists actual provider delivery receipts, but no real external delivery destination was verified; pending notifications never auto-complete on bus ACK.
+### Job 481 / Task 59 production-path evidence
+
+Run `node test/verification/l3-evidence.mjs /tmp/relay-l3-evidence` after `npm run build`. Each scenario writes its own SQLite-derived `report.json` and `report.md`; the aggregate report records observed failures, including an intentionally broken assertion, and lists unsupported flows rather than declaring them PASS. See `evidence/job481-task59/assessment.md` for actual validation and unresolved review terminal stall.

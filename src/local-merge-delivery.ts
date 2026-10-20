@@ -3,8 +3,9 @@ import type { Job, EventRecord } from './types.js';
 import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
 import { transitionJobEvent } from './scheduler.js';
-import { deliverLocalMerge, localMergeEligible, requiresLocalGitMerge, type LocalMergeReceipt } from './local-git-merge.js';
+import { deliverLocalMerge, localMergeFacts, type LocalMergeReceipt } from './local-git-merge.js';
 import { errorMessage } from './observability.js';
+import { decideJobLifecycle } from './workflow/lifecycle.js';
 
 
 export type LocalMergeEffect = (repoPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string };
@@ -19,18 +20,19 @@ export async function reconcileLocalGitCompletion(
   mergeEffect: LocalMergeEffect = deliverLocalMerge,
   now: () => number = Date.now,
 ): Promise<boolean> {
-  if (localMergeEligible(finalState) && !requiresLocalGitMerge(finalState)) {
-        await transitionJobEvent(finalState, 'local.completed', { localCompletionAllowed: true });
-        await store.saveJob(finalState);
-        return true;
-      }
-  if (localMergeEligible(finalState) &&
-        finalState.localMerge && (!finalState.reviewEnabled || finalState.review?.headSha === headSha)) {
+  const facts = localMergeFacts(finalState, headSha, now);
+  if (decideJobLifecycle(finalState, 'local.completed', facts).target === 'COMPLETED') {
+    await transitionJobEvent(finalState, 'local.completed', facts);
+    await store.saveJob(finalState);
+    return true;
+  }
+  if (decideJobLifecycle(finalState, 'local.merge.requested', facts).actions.includes('effect.deliverLocalMerge')) {
         const receipt = finalState.localMerge;
+        if (!receipt) return false;
         let activeReceipt = receipt;
         if (receipt.status !== 'succeeded' &&
             (!receipt.nextAttemptAt || Date.parse(receipt.nextAttemptAt) <= now())) {
-          await transitionJobEvent(finalState, 'local.merge.requested', { localMergeReady: true }, async actionId => {
+          await transitionJobEvent(finalState, 'local.merge.requested', facts, async actionId => {
           if (actionId !== 'effect.deliverLocalMerge') throw new Error('Unsupported local merge Graph effect ' + actionId);
           try {
             if (receipt.sourceSha !== headSha && headSha) {
@@ -88,7 +90,8 @@ export async function reconcileLocalGitCompletion(
           });
         }
         if (finalState.localMerge?.status === 'succeeded') {
-          await transitionJobEvent(finalState, 'local.completed', { localCompletionAllowed: true });
+          const completionFacts = localMergeFacts(finalState, headSha, now);
+          await transitionJobEvent(finalState, 'local.completed', completionFacts);
           await store.saveJob(finalState);
             return true;
         }

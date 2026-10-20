@@ -365,16 +365,26 @@ test('Plan marker round-trips independently from Job and Task markers', () => {
   assert.equal(parseTask(body), null);
 });
 
-test('default planner agent loads markdown instructions and returns typed planning JSON', async () => {
+test('default planner uses the production reference-first prompt and preserves Plan apply contract', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-agent-'));
   try {
     const command = join(root, 'model-runtime');
-    const agentFile = join(root, 'planner.agent.md');
-    await writeFile(agentFile, '# Planner Agent\nReturn JSON only.\n');
-    await writeFile(command, ['#!/bin/sh', "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"objective_status\\\":\\\"satisfied\\\",\\\"assessment\\\":\\\"done\\\",\\\"next_tasks\\\":[]}\"}}'"].join('\n'), { mode: 0o700 });
+    const promptFile = join(root, 'assembled-prompt.txt');
+    await writeFile(command, `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv.at(-1));
+process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]})}}) + '\\n');
+`, { mode: 0o700 });
     await chmod(command, 0o700);
-    const planner = new AgentObjectivePlanner(command, agentFile);
+    const planner = new AgentObjectivePlanner(command);
     assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null }, new AbortController().signal)).objective_status, 'satisfied');
+    const prompt = await readFile(promptFile, 'utf8');
+    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
+    assert.ok(reference);
+    assert.match(await readFile(reference[1], 'utf8'), /plan apply --repo/);
+    assert.match(prompt, /Verify its SHA-256/);
+    assert.match(prompt, /## Durable planner input/);
+    assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

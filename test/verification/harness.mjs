@@ -12,8 +12,8 @@ export function validateScenario(scenario) {
   if (!CATEGORIES.includes(scenario.category)) throw new Error('invalid scenario category');
   if (!Array.isArray(scenario.expectedTrace) || !scenario.expectedTrace.every(x => typeof x === 'string')) throw new Error('invalid expectedTrace');
   if (typeof scenario.expectedTerminal !== 'string') throw new Error('invalid expectedTerminal');
-  if (scenario.effects !== undefined && (!Array.isArray(scenario.effects) || !scenario.effects.every(x => typeof x === 'string'))) throw new Error('invalid effects');
-  if (scenario.assertions !== undefined && (!Array.isArray(scenario.assertions) || !scenario.assertions.every(x => typeof x === 'string'))) throw new Error('invalid assertions');
+  if (scenario.effects !== undefined && (!Array.isArray(scenario.effects) || !scenario.effects.every(x => typeof x === 'string' || (x && typeof x === 'object' && typeof x.name === 'string')))) throw new Error('invalid effects');
+  if (scenario.assertions !== undefined && (!Array.isArray(scenario.assertions) || !scenario.assertions.every(x => typeof x === 'string' || (x && typeof x === 'object' && typeof x.name === 'string')))) throw new Error('invalid assertions');
   return Object.freeze({ ...scenario, expectedTrace: Object.freeze([...scenario.expectedTrace]), effects: Object.freeze([...(scenario.effects ?? [])]), assertions: Object.freeze([...(scenario.assertions ?? [])]) });
 }
 

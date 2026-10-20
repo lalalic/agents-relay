@@ -77,7 +77,8 @@ test('every repository lifecycle graph file parses and validates with the produc
   assert.ok(files.length > 0, 'expected at least one workflow .mmd file');
   for (const file of files) {
     const source = await readFile(new URL(file, directory), 'utf8');
-    assert.match(source, /^---\r?\ntitle: .+\r?\ndescription: .+\r?\n---\r?\nflowchart /, file+' must use frontmatter followed by the canonical flowchart profile');
+    const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\nflowchart /);
+    assert.ok(frontmatter && /^title: .+$/m.test(frontmatter[1]) && /^description: .+$/m.test(frontmatter[1]), file+' must use descriptive frontmatter followed by the canonical flowchart profile');
     {
       assert.doesNotThrow(() => parseGraphV2(source), file);
       const runtimes = new Map([

@@ -33,10 +33,21 @@ export function localSourceHead(repoPath: string, sourceRef: string): string {
 export function requiresLocalGitMerge(job: Job): boolean {
   return Boolean(job.localMerge) || job.tasks.some(task => task.output?.kind === 'task_pr');
 }
-export function localMergeEligible(job: Job): boolean {
-  return job.state === 'ACTIVE' && job.autoMerge !== false && !job.schedule &&
-    implementationComplete(job) && completionGateSatisfied(job) &&
-    (job.reviewEnabled === false || job.review?.outcome === 'approved');
+export function localMergeFacts(job: Job, headSha: string | null, now: () => number = Date.now): Readonly<Record<string, unknown>> {
+  return {
+    jobActive: job.state === 'ACTIVE',
+    autoMergeEnabled: job.autoMerge !== false,
+    schedulePresent: Boolean(job.schedule),
+    implementationComplete: implementationComplete(job),
+    completionGateSatisfied: completionGateSatisfied(job),
+    reviewSatisfied: job.reviewEnabled === false || job.review?.outcome === 'approved',
+    localMergeRequired: requiresLocalGitMerge(job),
+    localMergeSucceeded: job.localMerge?.status === 'succeeded',
+    localMergePresent: Boolean(job.localMerge),
+    reviewHeadCurrent: job.reviewEnabled === false || job.review?.headSha === headSha,
+    mergeAttemptReady: Boolean(job.localMerge && job.localMerge.status !== 'succeeded'
+      && (!job.localMerge.nextAttemptAt || Date.parse(job.localMerge.nextAttemptAt) <= now())),
+  };
 }
 
 

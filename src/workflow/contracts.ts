@@ -35,6 +35,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'task.cancelled',
   'task.completed',
   'task.failed',
+  'task.progress',
   'task.started',
   'task.unblocked',
   'watchdog.failed',

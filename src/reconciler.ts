@@ -94,7 +94,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.invalidateStaleReview(job, headSha);
       const now = (this.options.now ?? new Date()).getTime();
       if (job.pause) { cancelPausedGenerations(job, (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId), planId => { const live = this.plannerLive.get(planId); if (live) { clearTimeout(live.timer); live.controller.abort(); this.plannerLive.delete(planId); } }); return job; }
-      if (job.state !== 'ACTIVE') return job;
+      if (job.state !== 'ACTIVE' && job.projectionRecovery?.status !== 'repairing') return job;
       await recoverExpiredExecutions(job, now, this.executionRecoveryPorts(job));
       await repairLegacyOrchestrators(jobId, now, { store: this.store, owner: this.options.owner, emit: event => this.emit(event) });
       await recoverInteractiveDecisions(this.store, jobId);
@@ -159,6 +159,7 @@ export class Reconciler extends ReconcilerReviewBase {
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       const scheduleBefore = JSON.stringify(beforeSchedule.schedule ?? null);
       let scheduled = schedule(beforeSchedule);
+      for (const task of scheduled.tasks) if (task.executionId && ['QUEUED', 'RUNNING'].includes(task.state)) this.armInactivityWatchdog(task, task.executionId);
       for (const task of scheduled.tasks) {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
@@ -178,7 +179,9 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.dispatchExecutableTasks(jobId);
       finalState = await this.store.load(jobId);
       const localMergeCompleted = await reconcileLocalGitCompletion(this.store, finalState, headSha,
-        this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event), this.options.localMergeEffect, () => (this.options.now ?? new Date()).getTime());
+        this.options.noGitHub === true, this.options.projectPathForJob, event => this.emit(event),
+        this.options.localMergeEffect ?? this.options.localMergeDelivery,
+        () => (this.options.now ?? new Date()).getTime());
       await drainProductionWorkflowOutbox(this.store, this.options);
       if (localMergeCompleted) return this.store.load(jobId);
       await dispatchJobReconcile(finalState, { jobActive: finalState.state === 'ACTIVE', implementationComplete: implementationComplete(finalState), headAvailable: Boolean(headSha), deliveryReady: finalState.localMerge?.status === 'succeeded' }, async actionId => {
@@ -326,6 +329,7 @@ export class Reconciler extends ReconcilerReviewBase {
       freshTask.leaseOwner = this.options.owner;
       freshTask.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
       freshTask.executionId = randomUUID();
+      delete freshTask.lastProgressAt; delete freshTask.lastProgressEventAt; delete freshTask.processExitedAt;
       freshTask.executionHistory = [...(freshTask.executionHistory ?? []), {
         id: freshTask.executionId,
         attempt: freshTask.attempt,
@@ -352,6 +356,7 @@ export class Reconciler extends ReconcilerReviewBase {
           durable.leaseOwner = this.options.owner;
           durable.leaseExpiresAt = new Date(startedAt + leaseMs).toISOString();
           durable.executionId = randomUUID();
+          delete durable.lastProgressAt; delete durable.lastProgressEventAt; delete durable.processExitedAt;
           durable.executionHistory = [...(durable.executionHistory ?? []), {
             id: durable.executionId, attempt: durable.attempt, startedAt: new Date(startedAt).toISOString(),
           }].slice(-8);
@@ -465,10 +470,7 @@ export class Reconciler extends ReconcilerReviewBase {
       transition: { graph: 'task-lifecycle', from: 'QUEUED', to: 'QUEUED', actions: ['effect.launchTask'] },
       data: { adapter: adapter.id, attempt: task.attempt, model: task.routing?.model ?? null },
     });
-    const terminalTimer = setTimeout(() => {
-      this.detach(this.timeoutTask(job.id, task.id, durableExecutionId), job.id, task.id, 'worker terminal-event timeout');
-    }, Math.max(1, task.timeoutMs));
-    this.terminalTimers.set(task.id, terminalTimer);
+    this.armInactivityWatchdog(task, durableExecutionId);
     this.detach(
       execution.promise.then(
         result => this.runtimeSettled(job.id, task.id, durableExecutionId, result, null),

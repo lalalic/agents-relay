@@ -21,6 +21,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     // Tests may replace the external Git effect entirely; in that case its
     // immutable input SHA is already present in the authoritative Job.
     if (this.options.noGitHub && this.options.localMergeEffect) return job.headSha ?? job.review?.headSha ?? null;
+    if (this.options.headShaProvider) return this.options.headShaProvider(job);
     // GitHub PR head facts are audit-only. Source identity is local Git.
     if (!this.options.projectPathForJob) return job.headSha ?? job.review?.headSha ?? null;
     try {
@@ -37,7 +38,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     return {
       unscheduled: !job.schedule,
       reviewEnabled: job.reviewEnabled !== false,
-      jobActive: job.state === 'ACTIVE',
+      jobActive: job.state === 'ACTIVE' || job.projectionRecovery?.status === 'repairing',
       implementationComplete: implementationComplete(job),
       headAvailable: Boolean(headSha),
       completionGateSatisfied: completionGateSatisfied(job),
@@ -340,7 +341,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const headSha = normalizedEvidence.headSha;
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.currentHeadSha(job);
-    if ((currentHeadSha && currentHeadSha !== headSha) || (job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
+    if (currentHeadSha ? currentHeadSha !== headSha : Boolean(job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
     const freshAfterStale = job.review?.outcome === 'stale'
@@ -414,6 +415,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if ((!current.review || (current.review.outcome === 'stale' && current.review.headSha !== headSha)) && freshTask.planningDecisionId) {
           current.review = { outcome: 'pending', headSha, taskId: freshTask.id, evidence: null, updatedAt: reviewUpdatedAt };
         }
+        if (currentHeadSha === headSha) current.headSha = headSha;
         freshTask.error = null;
         if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
         if (pendingFixTask && !current.tasks.some(item => item.id === pendingFixTask!.id)) current.tasks.push(structuredClone(pendingFixTask));

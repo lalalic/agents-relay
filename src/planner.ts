@@ -1,3 +1,4 @@
+import { buildReferenceFirstPrompt, renderAgentPrompt } from './agent-prompt-builder.js';
 import { readFile } from 'node:fs/promises';
 import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
@@ -460,7 +461,6 @@ function parsePlannerAgentMessage(line: string): string | undefined {
   } catch { /* ignore non-JSON runtime diagnostics */ }
   return undefined;
 }
-
 export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
@@ -468,7 +468,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const instructions = effectivePlanner?.content ?? await readFile(this.agentFile, 'utf8');
     const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
-    const prompt = (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim() + '\n\n' + resolvedContext + '## Durable planner input\n\n' + plannerInput(context);
+    const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '', finalMessage = '', stderrTail = '';

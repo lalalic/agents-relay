@@ -67,13 +67,12 @@ function parseLabel(raw: string | undefined, line: number): { kind: GraphEdgeKin
 export function parseGraphV2(source: string): Graph {
   const lines = source.split(/\r?\n/);
   // Mermaid YAML frontmatter is metadata only; never execute it as graph policy.
-  // Preserve original source line positions for diagnostics and coverage reports.
+  // Keep source line positions stable even when graph metadata grows.
   let graphStart = 0;
   if (lines[0]?.trim() === '---') {
     let closing = -1;
     for (let i = 1; i < lines.length; i += 1) {
       if (lines[i].trim() === '---') { closing = i; break; }
-      if (!/^(title|description):\s+[^\r\n]+$/.test(lines[i])) fail(i + 1, 'unsupported graph frontmatter field');
     }
     if (closing < 0) fail(1, 'unterminated graph frontmatter');
     if (closing === 1) fail(1, 'empty graph frontmatter');

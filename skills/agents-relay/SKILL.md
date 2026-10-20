@@ -56,9 +56,9 @@ Agents Relay maps those terminal events to durable state:
 - `task.failed` → `FAILED`
 Relay may authoritatively move a Task to `BLOCKED` for an external condition and may resume it only through an authorized unblock operation. A human response is an append-only Task Comment and resumes the blocked Troubleshooter, not the failed original Task. Task input remains stable; recovery agents receive current authoritative state and relevant comments as execution context.
 
-A model-backed task must not launch without an event bus. If no terminal event arrives before the task timeout, Relay records an explicit timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
+A model-backed task must not launch without an event bus. If no accepted `task.started` or newer current-execution `task.progress` arrives within `Task.timeoutMs`, Relay records an inactivity timeout failure. A Codex process exit or ChatGPT submission receipt alone never changes the task to a terminal state.
 
-Worker process exit is observational only. Relay does not perform an exit-time terminal check or synthesize task failure from process exit; semantic terminal state comes from the worker event contract or the normal task timeout.
+Worker process exit is observational only. Relay does not perform an exit-time terminal check or synthesize task failure from process exit; for synchronous workers it caps the remaining inactivity wait at the shorter post-exit terminal grace.
 
 ## Managed GitHub jobs
 

@@ -135,7 +135,8 @@ Example:
   'task update': `Update mutable durable Task fields in place.
 
 Required: --task-id ID and the normal Job storage options.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout, --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Accepted task.started and newer current-execution task.progress events reset --timeout.
 Use --clear-routing to remove routing metadata.
 
 Example:

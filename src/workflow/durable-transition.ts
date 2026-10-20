@@ -75,6 +75,35 @@ export class DurableTaskTransitionRuntime {
     });
   }
 
+  /** Persist a non-lifecycle fact without racing the serialized terminal transitions. */
+  async updateFact(
+    jobId: string, taskId: string,
+    eligible: (task: Task) => boolean,
+    mutate: (task: Task) => void,
+  ): Promise<Task | null> {
+    return this.withLock(`${jobId}/${taskId}`, async () => {
+      let accepted = false;
+      const apply = (job: Job): Job => {
+        const task = job.tasks.find(item => item.id === taskId);
+        if (!task || !eligible(task)) return job;
+        const previous = Date.parse(task.updatedAt);
+        mutate(task);
+        task.updatedAt = new Date(Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0)).toISOString();
+        accepted = true;
+        return job;
+      };
+      if (this.store.mutateJob) {
+        const updated = await this.store.mutateJob(jobId, apply);
+        return accepted ? updated.tasks.find(item => item.id === taskId) ?? null : null;
+      }
+      const job = apply(await this.store.load(jobId));
+      if (!accepted) return null;
+      const task = job.tasks.find(item => item.id === taskId)!;
+      await this.store.saveTask(task);
+      return task;
+    });
+  }
+
   private async withLock<T>(key: string, work: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key);
     let release!: () => void;
