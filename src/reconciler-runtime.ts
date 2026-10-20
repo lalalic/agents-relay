@@ -7,9 +7,9 @@ import { DurableStore } from './store.js'; import { Job, Task, EventRecord, Chat
 import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
-import type { ExecutionContextRoots } from './execution-context.js';
-import type { AccountUsageOverview } from './usage.js';
-import type { DecisionEngine, DecisionMode } from './decision.js'; import type { DecisionAuditStore } from './decision-audit.js';
+import type { ExecutionContextRoots } from './execution-context.js'; import type { AccountUsageOverview } from './usage.js';
+import type { LocalMergeReceipt } from './local-git-merge.js'; import type { DecisionEngine, DecisionMode } from './decision.js';
+import type { DecisionAuditStore } from './decision-audit.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import type { LocalMergeEffect } from './local-merge-delivery.js';
 import type { EscalationNotifier } from './escalation-notifier.js'; import { workflowEffectFailureEvent } from './workflow/contracts.js';
@@ -19,7 +19,8 @@ import { rearmTerminalEventDeadline } from './terminal-event-watchdog.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
 import { codexFallbackCompatible, persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
-export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; localMergeEffect?: LocalMergeEffect; escalationNotifier?: EscalationNotifier };
+
+export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; localMergeEffect?: LocalMergeEffect; localMergeDelivery?: (projectPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string }; headShaProvider?: (job: Job) => string | null | Promise<string | null>; escalationNotifier?: EscalationNotifier };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
 type LivePlanner = { executionId: string; controller: AbortController; timer: NodeJS.Timeout };
@@ -194,7 +195,6 @@ export abstract class ReconcilerRuntimeBase {
     if (this.store.verifyWorkflowLaunch && transition.task.executionId) {
       const outcome=await this.store.verifyWorkflowLaunch(event.job_id,event.task_id,transition.task.executionId);
       if (outcome==='Failed')throw Error('worker start postcondition violated');
-      // Unknown remains durable and never authorizes repeating this generation.
     }
     if (live?.executionId === transition.task.executionId) live.workerStarted = true;
     return { applied: true, reconcile: transition.from === 'FAILED', reason: transition.from === 'FAILED' ? 'task.started.recovery' : 'task.started', reconcileMode: transition.from === 'FAILED' ? 'detached' : undefined };

@@ -56,8 +56,20 @@ export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
   implementationComplete: boolGuard('implementationComplete'),
   headAvailable: boolGuard('headAvailable'),
   mergeCapable: boolGuard('mergeCapable'),
-  localCompletionAllowed: boolGuard('localCompletionAllowed'),
-  localMergeReady: boolGuard('localMergeReady'),
+  localCompletionAllowed: (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => {
+    const values = facts.durableFacts;
+    return values.jobActive === true && values.autoMergeEnabled === true && values.schedulePresent !== true
+      && values.implementationComplete === true && values.completionGateSatisfied === true
+      && values.reviewSatisfied === true
+      && (values.localMergeRequired !== true || values.localMergeSucceeded === true);
+  },
+  localMergeReady: (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => {
+    const values = facts.durableFacts;
+    return values.jobActive === true && values.autoMergeEnabled === true && values.schedulePresent !== true
+      && values.implementationComplete === true && values.completionGateSatisfied === true
+      && values.reviewSatisfied === true && values.localMergePresent === true
+      && values.reviewHeadCurrent === true && values.mergeAttemptReady === true;
+  },
 });
 
 function topologyTargets(graph: Graph, from: string): Set<string> {

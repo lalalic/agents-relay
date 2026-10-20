@@ -80,8 +80,8 @@ const jobCases = [
   ['ACTIVE','review.approved',{},'ACTIVE'],
   ['ACTIVE','implementation.completed',{},'ACTIVE'],
   ['ACTIVE','cancel',{},'CANCELLED'],
-  ['ACTIVE','local.merge.requested',{localMergeReady:true},'ACTIVE'],
-  ['ACTIVE','local.completed',{localCompletionAllowed:true},'COMPLETED'],
+  ['ACTIVE','local.merge.requested',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true,localMergePresent:true,reviewHeadCurrent:true,mergeAttemptReady:true},'ACTIVE'],
+  ['ACTIVE','local.completed',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true},'COMPLETED'],
   ['ACTIVE','effect.deliverLocalMerge.failed',{},'ACTIVE'],
   ['COMPLETED','effect.cleanupJobWorktree.failed',{},'COMPLETED'],
 ];
@@ -156,7 +156,7 @@ test('Job reconcile never invokes GitHub actions; local completion owns the term
     assert.equal(result.target,'ACTIVE');
     assert.deepEqual(result.effects,[]);
   }
-  const local=decideJobLifecycle(active,'local.completed',{localCompletionAllowed:true});
+  const local=decideJobLifecycle(active,'local.completed',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true});
   assert.equal(local.target,'COMPLETED');
 });
 

@@ -35,7 +35,7 @@ test('CLI trace reads durable SQLite action audit without mutating it',()=>{
 
 test('CLI audits every executable graph action without bypassing guards', () => {
  const catalog=workflowCliResult(['actions']);
- assert.equal(catalog.count,48);
+ assert.equal(catalog.count,51);
  assert.equal(catalog.actions.length,catalog.count);
  assert.ok(catalog.actions.every(action=>action.graphReferences.length>0 && action.cli.includes('inspect-only')));
  assert.ok(catalog.actions.some(action=>action.id==='effect.launchTask'));

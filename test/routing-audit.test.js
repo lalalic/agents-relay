@@ -55,7 +55,8 @@ test('model re-decision refreshes usage, updates routing, and does not retry the
   assert.equal(snapshots, 1);
   assert.equal(result.freshUsageGeneratedAt, 'fresh');
   assert.equal(updated.target, task);
-  assert.notEqual(updated.routing.model, 'old', 're-decision must change the failed model regardless of current catalog');
+  assert.equal(updated.routing.model, result.routing.model);
+  assert.notEqual(updated.routing.model, 'old');
   assert.equal(task.attempt, 1);
 });
 

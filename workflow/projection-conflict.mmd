@@ -1,15 +1,66 @@
 ---
 title: Projection Conflict
-description: Detects and resolves conflicting workflow state projections against authoritative facts.
+description: Recover local-main and origin-main divergence after a completed Job's GitHub projection fails.
+name: projection-conflict
+authority: SQLite Relay Job snapshot
+trigger: projection.delivery_failed
+idempotency: job-id plus observed origin/main SHA
+actions:
+  - projection.createRecoveryTask
+  - projection.escalate
+effects:
+  - effect.projectLocalMerge
+guards:
+  - deterministicDefinitionConflict
+  - projection.recoveryEligible
+  - projection.recoveryExhausted
+  - projection.recoveryInProgress
+  - projection.retryAvailable
+  - projection.repairReviewed
+  - projection.repairFailed
 ---
 flowchart LR
 %% relay: initial classify
 classify["state: classify"]
-retry["state: retry"]
 conflict["state: conflict"]
+repairing["state: repairing"]
+retry["state: retry"]
+escalated["state: escalated"]
+projected["state: projected"]
 
+eligible["guard: projection.recoveryEligible"]
+inProgress["guard: projection.recoveryInProgress"]
 deterministic["guard: deterministicDefinitionConflict"]
+exhausted["guard: projection.recoveryExhausted"]
+retryAvailable["guard: projection.retryAvailable"]
+reviewed["guard: projection.repairReviewed"]
+repairFailed["guard: projection.repairFailed"]
+createTask["action: projection.createRecoveryTask"]
+retryProjection["action: effect.projectLocalMerge"]
+escalate["action: projection.escalate"]
 
+classify -->|on: projection.delivery_failed| inProgress
+inProgress -->|true| classify
+inProgress -->|false| eligible
 classify -->|on: projection.failed| deterministic
 deterministic -->|true| conflict
 deterministic -->|false| retry
+eligible -->|true| createTask
+eligible -->|false| exhausted
+exhausted -->|true| escalate
+exhausted -->|false| classify
+createTask --> repairing
+
+repairing -->|on: reconcile| reviewed
+retry -->|on: reconcile| retryAvailable
+reviewed -->|true| retryAvailable
+retryAvailable -->|true| retryProjection
+retryAvailable -->|false| escalate
+reviewed -->|false| repairFailed
+repairFailed -->|true| escalate
+repairFailed -->|false| repairing
+retryProjection --> retry
+escalate --> escalated
+
+retry -->|on: projection.delivered| projected
+retry -->|on: projection.delivery_failed| eligible

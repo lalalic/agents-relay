@@ -58,8 +58,8 @@ const jobCases = [
   ['ACTIVE','review.approved',{},'ACTIVE'],
   ['ACTIVE','implementation.completed',{},'ACTIVE'],
   ['ACTIVE','cancel',{},'CANCELLED'],
-  ['ACTIVE','local.completed',{localCompletionAllowed:true},'COMPLETED'],
-  ['ACTIVE','local.merge.requested',{localMergeReady:true},'ACTIVE'],
+  ['ACTIVE','local.completed',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true},'COMPLETED'],
+  ['ACTIVE','local.merge.requested',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true,localMergePresent:true,reviewHeadCurrent:true,mergeAttemptReady:true},'ACTIVE'],
   ['ACTIVE','effect.deliverLocalMerge.failed',{},'ACTIVE'],
   ['COMPLETED','effect.cleanupJobWorktree.failed',{},'COMPLETED'],
   ['CANCELLED','effect.cancelActiveTasks.failed',{},'CANCELLED'],
@@ -95,8 +95,15 @@ const jobRuntime = new GraphRuntime(jobSource, {
     implementationComplete: boolGuard('implementationComplete'),
     headAvailable: boolGuard('headAvailable'),
     mergeCapable: boolGuard('mergeCapable'),
-    localCompletionAllowed: boolGuard('localCompletionAllowed'),
-    localMergeReady: boolGuard('localMergeReady'),
+    localCompletionAllowed: facts => facts.durableFacts.jobActive === true && facts.durableFacts.autoMergeEnabled === true
+      && facts.durableFacts.schedulePresent !== true && facts.durableFacts.implementationComplete === true
+      && facts.durableFacts.completionGateSatisfied === true && facts.durableFacts.reviewSatisfied === true
+      && (facts.durableFacts.localMergeRequired !== true || facts.durableFacts.localMergeSucceeded === true),
+    localMergeReady: facts => facts.durableFacts.jobActive === true && facts.durableFacts.autoMergeEnabled === true
+      && facts.durableFacts.schedulePresent !== true && facts.durableFacts.implementationComplete === true
+      && facts.durableFacts.completionGateSatisfied === true && facts.durableFacts.reviewSatisfied === true
+      && facts.durableFacts.localMergePresent === true && facts.durableFacts.reviewHeadCurrent === true
+      && facts.durableFacts.mergeAttemptReady === true,
   },
   events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
   actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.deliverLocalMerge','effect.cleanupJobWorktree']),

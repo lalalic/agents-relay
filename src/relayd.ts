@@ -19,6 +19,7 @@ import { projectAuthoritativeLocalMerge } from './local-merge-projection.js';
 import { archiveDisplayPullRequest } from './github-pr-archive.js';
 import { orderGitHubBindingCandidates } from './github-binding-order.js';
 import { ProjectionFailureDeduplicator } from './projection-failure-dedupe.js';
+import { handleGitHubProjectionFailure, projectBindingLocalMerge } from './projection-failure-recovery.js';
 import { authoritativeBranchPushArgs } from './github-branch-projection.js';
 import { githubAuthContext } from './github-auth.js';
 import { GhApiClient } from './github-client.js';
@@ -270,8 +271,15 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       const github = new GitHubStore(client, job.repository, prNumber, trusted);
       projectionWriters.set(`job:${job.id}`, new GitHubProjectionWriter(relay, github, undefined, true, effect));
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
-        const injection = await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge');
-        const projectedMerge = await withTestInjection('github.projectLocalMerge',injection,()=>projectAuthoritativeLocalMerge(canonical, job));
+        const projection = await projectBindingLocalMerge(job, relay, {
+          projectPath: canonical,
+          project: async projectedJob => withTestInjection('github.projectLocalMerge', await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge'), () => projectAuthoritativeLocalMerge(canonical, projectedJob)),
+          verifyObservedRemote: async sha => { try { await gitText(canonical, ['merge-base','--is-ancestor',sha,'refs/heads/main']); }
+            catch { throw new Error(`Projection recovery did not preserve observed origin/main ${sha} in local main`); } }, eventBus: bus,
+        });
+        if (projection.skip) continue;
+        const projectedMerge = projection.projectedMerge;
+        if (!projectedMerge) continue;
         await bus?.publish(eventFor(job.id,'projection',null,'projection.delivered','succeeded',
           `GitHub local merge projection ${projectedMerge.status}`,'orchestrator',
           {operation:'github.projectLocalMerge',deliveryStatus:projectedMerge.status,mergedCommitSha:projectedMerge.localMergedCommitSha},
@@ -291,18 +299,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         });
       }
       } catch (error) {
-        const reason = errorMessage(error), classification = classifyFailure(error).classification;
-        if (!projectionFailureDeduplicator.shouldReport(discovered.id, discovered.updatedAt, reason, classification)) continue;
-        await bus?.publish(eventFor(discovered.id,'projection',null,'projection.delivery_failed','failed',
-          `GitHub projection failed: ${errorMessage(error)}`,'orchestrator',
-          {operation:'github.projectLocalMerge',error:reason},
-          {agent:'relay',component:'github-projection'}))?.catch(()=>{});
-        observability().record({
-          stage: 'projection', event: 'github.binding_job_failed', level: 'warn', outcome: 'failed',
-          message: `GitHub binding/projection failed for ${discovered.id}: ${reason}`,
-          correlation: { repository: discovered.repository, prNumber: discovered.prNumber, jobId: discovered.id },
-          data: { classification, reason },
-        });
+        await handleGitHubProjectionFailure(error, discovered, snapshot.path, { relayStores, repositoryPaths,
+          explicitProjectPath, workspaceRoot, gitText, reconcileLocalJob: (jobId, reason) => pool.reconcileLocalJob(jobId, reason),
+          eventBus: bus, deduplicator: projectionFailureDeduplicator });
       }
     }
     cachedOverviews = await inventoryFromLocal();
