@@ -198,7 +198,7 @@ export function parseDriverJson(output: string): BrowserWorkerResponse {
   throw new Error('browser-worker driver returned no submitted receipt');
 }
 type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
-function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
+function browserWorkspaceCli(override = process.env.AGENTS_RELAY_WEBHELM_COMMAND): BrowserWorkspaceCli {
   return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['--from', 'browser-workspace', 'webhelm'] };
 }
 const browserWorkspaceInjection = new AsyncLocalStorage<InjectionConfig>();
@@ -295,7 +295,7 @@ async function accessiblePromptReferences(prompt: string): Promise<Array<PromptM
 type BrowserWorkspaceStatus = { admin_helper?: unknown };
 type BrowserWorkspaceAdminModule = { ensureWorkspace?: (name: string, size?: number) => Promise<unknown> | unknown };
 
-export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
+export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_WEBHELM_COMMAND): Promise<void> {
   const status = parseWorkspaceJson(await browserWorkspaceCommand(browserWorkspaceCli(command), ['status'])) as BrowserWorkspaceStatus;
   if (typeof status.admin_helper !== 'string' || !status.admin_helper.startsWith('/')) {
     throw new Error('webhelm status returned no absolute admin_helper path');
