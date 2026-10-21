@@ -16,7 +16,7 @@ test('L3 CLI enumerates all 45 canonical Graph Actions and can locate each ownin
  const dir=mkdtempSync(join(tmpdir(),'relay-cli-actions-l3-'));
  try {
   const {count,actions}=JSON.parse(run(['actions'],dir));
-  assert.equal(count,45);
+  assert.equal(count,47);
   for(const entry of actions){
    assert.ok(entry.graphReferences.length,entry.id);
    const refs=JSON.parse(run(['where','--id',entry.id],dir));

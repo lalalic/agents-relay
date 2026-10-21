@@ -3,6 +3,7 @@ import type { Job, Task } from './types.js';
 import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from './scheduler.js';
 import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
 import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
+import { classifyTaskResolution, type TaskResolutionClassification } from './workflow/task-resolution.js';
 
 export const TASK_RETRY_ACTION = 'task.retry' as const;
 export const TASK_RECOVER_ACTION = 'task.recover' as const;
@@ -23,6 +24,21 @@ export type TaskActionRequest = {
 
 export type TaskActionResult = { job: Job; task: Task };
 export type TaskRetryPolicy = { extendBudget?: boolean };
+
+export async function classifyFailedTask(store: DurableStore, jobId: string, taskId: string, classification: TaskResolutionClassification): Promise<TaskActionResult> {
+  if (!store.mutateJob) throw new Error('Task resolution classification requires atomic SQLite mutation');
+  let changed: Task | undefined;
+  const job = await store.mutateJob(jobId, current => {
+    const task = current.tasks.find(item => item.id === taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (classification.targetTaskId === task.id || !current.tasks.some(item => item.id === classification.targetTaskId)) throw new Error('Task classification targetTaskId must identify a different durable Task in this Job');
+    classifyTaskResolution(task, classification);
+    changed = structuredClone(task);
+    return current;
+  });
+  if (!changed) throw new Error(`Task ${taskId} classification was not committed`);
+  return { job, task: changed };
+}
 
 function lifecycleRejection(task: Task, action: string): Error {
   return new Error(`Task ${task.id} is not ${action} (${task.state})`);

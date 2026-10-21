@@ -144,14 +144,15 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reviewPrNumber > 0 ? `Review PR #${reviewPrNumber} at exactly head SHA ${headSha}.` : `Review the local Job artifact at exactly head SHA ${headSha}.`,
       `Review head SHA: ${headSha}`,
       'Job objective: ' + (job.objective ?? job.description ?? job.title),
+      'Review the complete PR diff at this exact immutable head SHA, not only the dependency Tasks.',
       'Use the selected reviewer agent contract as the authoritative review protocol.',
       'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
       'Do not block approval because automatic merge, Job COMPLETED, or post-merge E2E evidence has not occurred yet.',
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: `Review ${headSha.slice(0, 8)}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
-      parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
+      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
+      parentTaskId: reviewGateTasks.find(item => !item.parentTaskId)?.id ?? null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
@@ -161,7 +162,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
     });
     await this.store.appendTask(task);
-    await this.emit(eventFor(job.id, id, null, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
+    await this.emit(eventFor(job.id, id, task.parentTaskId, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     return id;
   }
 

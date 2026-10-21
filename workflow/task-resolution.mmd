@@ -23,6 +23,12 @@ fresh["guard: freshRecoveryExecution"]
 blocker["guard: blockerJobDependency"]
 gate["guard: escalationGate"]
 obsoleteGuard["guard: genuinelyObsolete"]
+classifiable["guard: classifiableFailure"]
+classificationKind["guard: classificationSuperseded"]
+classifySuperseded["action: resolution.classifySuperseded"]
+classifyInvalid["action: resolution.classifyInvalid"]
+supersededEvidence["guard: supersededEvidenceComplete"]
+invalidEvidence["guard: invalidEvidenceComplete"]
 
 unresolved -->|on: resolution.propose| checkOwner
 checkOwner -->|on: resolution.propose| recoveryOwner
@@ -49,3 +55,12 @@ sameJob -->|to: resolved| resolved
 blockerJob -->|to: resolved| resolved
 escalate -->|to: resolved| resolved
 obsolete -->|to: resolved| resolved
+unresolved -->|on: resolution.classify| classifiable
+classifiable -->|true| classificationKind
+classifiable -->|false| rejected
+classificationKind -->|true| supersededEvidence
+classificationKind -->|false| invalidEvidence
+supersededEvidence -->|true| classifySuperseded
+invalidEvidence -->|true| classifyInvalid
+classifySuperseded --> resolved
+classifyInvalid --> resolved

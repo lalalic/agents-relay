@@ -114,6 +114,18 @@ A tag must describe something specific to the Job contract, not Relay lifecycle.
 For the ChatGPT Browser Worker guardian, for example, the Job defines `pass -> ✅` and `fail -> ❌`; each hourly E2E child Task reports `data.tag` after running the fixed deterministic E2E, while the Task lifecycle independently records whether Relay execution itself completed, failed, or became blocked.
 
 
+### Task resolution classifications
+
+`Task.resolutionClassification` is durable diagnostic metadata, separate from
+`Task.state` and the recovery `Task.resolution` path. The canonical Task
+Resolution Graph and `task classify` CLI action may classify a known FAILED
+work Task as `superseded` or `invalid`; each record requires a different
+durable target Task, evidence, and reason. Classification never changes the
+FAILED lifecycle state, execution history, or result and never proves success.
+Unknown outcomes, active executions, and Tasks with active recovery ownership
+cannot be classified. Planners must preserve these fields in their assessment
+and may treat classified history as covered when validating a fresh Plan.
+
 ### Optional Review Chair Tasks
 
 Projects may use the shared `review-chair` agent as a normal Task or Agent

@@ -29,7 +29,7 @@ import { normalizeThreadId } from './reviewer-thread.js';
 import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, startService, SERVICE_DEFAULTS } from './cli.js';
 import { eventBusResolutionMessage, publishTaskBlocked, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
-import { dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
+import { classifyFailedTask, dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
 import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { registerBlockerDependency } from './blockers.js';
@@ -138,7 +138,7 @@ export function createWorkspaceControl(deps: any) {
     }
     if (command === 'job.plan') {
       const reconciler = makeReconciler(store, concurrency);
-      try { const planned = await reconciler.planJob(jobId, typeof body.guidance === 'string' && body.guidance.trim() ? body.guidance : undefined); await pool.reconcileLocalJob(jobId, 'control.job.plan'); return planned.round; }
+      try { const cleanHistory = Array.isArray(body.cleanHistory) ? body.cleanHistory as Array<import('./workflow/task-resolution.js').TaskResolutionClassification & { taskId: string }> : undefined; const planned = await reconciler.planJob(jobId, typeof body.guidance === 'string' && body.guidance.trim() ? body.guidance : undefined, cleanHistory); await pool.reconcileLocalJob(jobId, 'control.job.plan'); return planned.round; }
       finally { await reconciler.close(); }
     }
     if (command === 'job.unblock') {
@@ -166,6 +166,14 @@ export function createWorkspaceControl(deps: any) {
       if (!taskId || !reason.trim()) throw new Error('task supersede requires taskId and reason');
       await supersedeCancelledTask(store, jobId, taskId, reason);
       await pool.reconcileLocalJob(jobId, 'control.task.supersede');
+      return await store.load(jobId);
+    }
+    if (command === 'task.classify') {
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      const raw = body.classification as Record<string, unknown> | undefined;
+      if (!taskId || !raw || (raw.kind !== 'superseded' && raw.kind !== 'invalid') || typeof raw.targetTaskId !== 'string' || typeof raw.evidence !== 'string' || typeof raw.reason !== 'string') throw new Error('task classify requires taskId, classification, targetTaskId, evidence, and reason');
+      await classifyFailedTask(store, jobId, taskId, { kind: raw.kind, targetTaskId: raw.targetTaskId, evidence: raw.evidence, reason: raw.reason });
+      await pool.reconcileLocalJob(jobId, 'control.task.classify');
       return await store.load(jobId);
     }
     if (command === 'task.recover') {

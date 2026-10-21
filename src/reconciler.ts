@@ -115,7 +115,7 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       for (const recovery of pendingTroubleshooterTasks(await this.store.load(jobId))) {
         await this.store.appendTask(recovery);
-        await this.emit(eventFor(job.id, recovery.id, null, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter" }));
+        await this.emit(eventFor(job.id, recovery.id, recovery.parentTaskId, "troubleshooter.created", "queued", "Troubleshooter task " + recovery.id + " created for failed/blocked work", "orchestrator", { agentName: "troubleshooter", originalTaskId: recovery.parentTaskId }));
       }
       {
         const recoveryJob = await this.store.load(jobId);
@@ -238,8 +238,8 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return this.store.load(jobId);
   }
-  async planJob(jobId: string, guidance?: string): Promise<{ job: Job; round: Plan }> {
-    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan));
+  async planJob(jobId: string, guidance?: string, cleanHistory?: readonly (import('./workflow/task-resolution.js').TaskResolutionClassification & { taskId: string })[]): Promise<{ job: Job; round: Plan }> {
+    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan), cleanHistory);
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     const pending = pendingPlan(job);

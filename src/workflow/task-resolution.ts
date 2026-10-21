@@ -10,16 +10,45 @@ export const TASK_RESOLUTION_PATHS: readonly TaskResolutionPath[] = [
 const source = readFileSync(new URL('../../workflow/task-resolution.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean => facts.durableFacts[name] === true;
 export const taskResolutionV2 = new GraphRuntime(source, {
-  states: new Set(['unresolved', 'check_owner', 'check_path', 'check_fresh_execution', 'resolved', 'rejected']),
+  states: new Set(['unresolved', 'check_owner', 'check_path', 'check_fresh_execution', 'check_classification', 'classificationKind', 'resolved', 'rejected']),
   guards: {
     recoveryOwnerAvailable: boolGuard('recoveryOwnerAvailable'), plannerOwnerAvailable: boolGuard('plannerOwnerAvailable'),
     exactOriginalRetry: boolGuard('exactOriginalRetry'), sameJobDependency: boolGuard('sameJobDependency'),
     blockerJobDependency: boolGuard('blockerJobDependency'), escalationGate: boolGuard('escalationGate'), genuinelyObsolete: boolGuard('genuinelyObsolete'),
     freshRecoveryExecution: boolGuard('freshRecoveryExecution'),
+    classifiableFailure: boolGuard('classifiableFailure'),
+    classificationSuperseded: boolGuard('classificationSuperseded'),
+    supersededEvidenceComplete: boolGuard('supersededEvidenceComplete'),
+    invalidEvidenceComplete: boolGuard('invalidEvidenceComplete'),
   },
-  actions: Object.fromEntries(['resolution.activateRecovery','resolution.attachSameJobDependency','resolution.registerBlockerDependency','resolution.createEscalationGate','resolution.cancelSupersede'].map(id => [id, { id }])),
-  events: { 'resolution.propose': { id: 'resolution.propose' } },
+  actions: Object.fromEntries(['resolution.activateRecovery','resolution.attachSameJobDependency','resolution.registerBlockerDependency','resolution.createEscalationGate','resolution.cancelSupersede','resolution.classifySuperseded','resolution.classifyInvalid'].map(id => [id, { id }])),
+  events: { 'resolution.propose': { id: 'resolution.propose' }, 'resolution.classify': { id: 'resolution.classify' } },
 });
+
+export type TaskResolutionClassification = { kind: 'superseded' | 'invalid'; targetTaskId: string; evidence: string; reason: string };
+export function classifyTaskResolution(task: Task, classification: TaskResolutionClassification, now = new Date().toISOString()): NonNullable<Task['resolutionClassification']> {
+  const complete = Boolean(classification.targetTaskId.trim() && classification.evidence.trim() && classification.reason.trim());
+  let applied: NonNullable<Task['resolutionClassification']> | undefined;
+  const decision = dispatchWorkflowGraphSync(taskResolutionV2, {
+    initialState: 'unresolved', input: { transport: 'event', id: 'resolution.classify', payload: classification },
+    durableFacts: {
+      classifiableFailure: task.kind !== 'planner' && task.state === 'FAILED' && task.failureReason !== 'worker_outcome_unknown' && !task.executionId && !task.leaseOwner && !task.leaseExpiresAt && !task.resolutionClassification && !['active','waiting'].includes(task.resolution?.state ?? ''),
+      classificationSuperseded: classification.kind === 'superseded',
+      supersededEvidenceComplete: classification.kind === 'superseded' && complete,
+      invalidEvidenceComplete: classification.kind === 'invalid' && complete,
+    }, graphName: 'task-resolution', isTransientState: state => state === 'check_classification' || state === 'classificationKind', maxSteps: 6,
+    executeAction: actionId => {
+      const expectedAction = classification.kind === 'superseded' ? 'resolution.classifySuperseded' : 'resolution.classifyInvalid';
+      if (actionId !== expectedAction) throw new Error(`Unexpected Task Resolution action ${actionId}`);
+      applied = { ...classification, updatedAt: now };
+      task.resolutionClassification = applied;
+      task.updatedAt = now;
+      return {};
+    },
+  });
+  if (!decision.accepted || decision.target !== 'resolved' || !applied) throw new Error(`Task resolution graph rejected ${classification.kind} classification for ${task.id}`);
+  return applied;
+}
 
 export function unresolvedTask(task: Task): boolean { return task.kind !== 'planner' && !['SUCCEEDED', 'CANCELLED'].includes(task.state); }
 export function validateResolutionProposal(job: Job, original: Task, proposal: TaskResolutionProposal): void {

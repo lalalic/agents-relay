@@ -3,6 +3,14 @@ import { taskOverallTimeoutMs } from './types.js';
 import { arg, hasArg, textOption, integerArg, chatGptTabClosePolicy, storySize, priority, continuation } from './cli-support.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
+export function recoveryDiagnosisFromArgs(args: string[]) {
+  const failureKind = arg(args, '--failure-kind');
+  if (!failureKind) return undefined;
+  const reason = arg(args, '--reason');
+  if (!reason.trim()) throw new Error('--failure-kind requires --reason');
+  if (!['adapter_failure', 'model_failure', 'provider_failure', 'task_failure', 'unknown'].includes(failureKind)) throw new Error('Invalid --failure-kind');
+  return { failureKind, reason, evidence: arg(args, '--evidence') || undefined, reroute: hasArg(args, '--reroute'), excludeCurrentRoute: hasArg(args, '--exclude-current-route') };
+}
 export async function workerTaskFromArgs(job: Job, args: string[], now: string): Promise<Task> {
   const model = arg(args, '--model');
   const adapterValue = arg(args, '--adapter');

@@ -373,39 +373,32 @@ test('default planner uses the production reference-first prompt and preserves P
     await writeFile(command, `#!/usr/bin/env node
 const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv.at(-1));
-process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]})}}) + '\\n');
+process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'PLAN_APPLIED:plan-1:execution-1'}}) + '\\n');
 `, { mode: 0o700 });
     await chmod(command, 0o700);
     const planner = new AgentObjectivePlanner(command);
-    assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null }, new AbortController().signal)).objective_status, 'satisfied');
+    assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal)).cliApplied, true);
     const prompt = await readFile(promptFile, 'utf8');
     const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
     assert.ok(reference);
-    assert.match(await readFile(reference[1], 'utf8'), /plan apply --repo/);
+    assert.match(await readFile(reference[1], 'utf8'), /agents-relay plan apply/);
     assert.match(prompt, /Verify its SHA-256/);
     assert.match(prompt, /## Durable planner input/);
     assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('agent planner retries invalid JSON with bounded validation feedback', async () => {
+test('agent planner rejects text proposals that were not committed with the CLI action', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-json-retry-'));
   try {
     const command = join(root, 'model-runtime');
     const agentFile = join(root, 'planner.agent.md');
     await writeFile(agentFile, '# Planner\nJSON only');
     await writeFile(command, `#!/usr/bin/env node
-const fs = require('node:fs');
-const marker = ${'`'}${root}/once${'`'};
-const first = !fs.existsSync(marker);
-if (first) fs.writeFileSync(marker, '1');
-else if (!process.argv.join(' ').includes('Fix validation error (correction 1 of 3)')) process.exit(4);
-const payload = first ? '{} {}' : JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]});
-process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:payload}}) + String.fromCharCode(10));
+process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]})}}) + String.fromCharCode(10));
 `, {mode:0o700});
     const planner = new AgentObjectivePlanner(command, agentFile);
-    const result = await planner.plan({job:job(),tasks:[],objective:'finish',previousPlannerTaskId:null},new AbortController().signal);
-    assert.equal(result.objective_status,'satisfied');
+    await assert.rejects(planner.plan({job:job(),tasks:[],objective:'finish',previousPlannerTaskId:null,planExecution:{planId:'plan-1',executionId:'execution-1'}},new AbortController().signal),/must commit its proposal with the authorized/);
   } finally {await rm(root,{recursive:true,force:true});}
 });
 
@@ -415,7 +408,7 @@ test('default planner agent runs from the resolved project working directory', a
     const command = join(root, 'model-runtime');
     const agentFile = join(root, 'planner.agent.md');
     await writeFile(agentFile, '# Planner Agent\nReturn JSON only.\n');
-    await writeFile(command, ['#!/bin/sh', 'pwd > planner.cwd', "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"objective_status\\\":\\\"satisfied\\\",\\\"assessment\\\":\\\"done\\\",\\\"next_tasks\\\":[]}\"}}'"].join('\n'), { mode: 0o700 });
+    await writeFile(command, ['#!/bin/sh', 'pwd > planner.cwd', "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"PLAN_APPLIED:plan-1:execution-1\"}}'"].join('\n'), { mode: 0o700 });
     await chmod(command, 0o700);
     const planner = new AgentObjectivePlanner(command, agentFile);
     const executionContext = {
@@ -427,8 +420,8 @@ test('default planner agent runs from the resolved project working directory', a
       runtimes: [],
       delegation: { mode: 'relay-child-task', parentTaskIdRequired: false }
     };
-    const result = await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, executionContext }, new AbortController().signal);
-    assert.equal(result.objective_status, 'satisfied');
+    const result = await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, executionContext, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal);
+    assert.equal(result.cliApplied, true);
     assert.equal((await readFile(join(root, 'planner.cwd'), 'utf8')).trim(), await realpath(root));
   } finally { await rm(root, { recursive: true, force: true }); }
 });

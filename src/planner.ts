@@ -38,16 +38,16 @@ export type PlannerTaskSpec = {
   resolution?: TaskResolutionProposal;
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
-export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[] };
+export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[]; cliApplied?: true };
 export type PlannerContext = { planExecution?: { planId: string; executionId: string }; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
-export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata };
+export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata; resolution_classification?: Task['resolutionClassification'] };
 
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
   const work = tasks.filter(task => task.kind !== 'planner');
   const ids = new Set(work.map(task => task.id));
   return {
     roots: work.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId)).map(task => task.id),
-    tasks: work.map(task => ({ id: task.id, title: task.title, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review })),
+    tasks: work.map(task => ({ id: task.id, title: task.title, parent_task_id: task.parentTaskId, state: task.state, dependencies: [...task.dependencies], planning_decision_id: task.planningDecisionId, planning_round: task.planningRound, review: task.review, resolution_classification: task.resolutionClassification })),
   };
 }
 
@@ -136,6 +136,7 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   const round = 'round' in planner ? planner.round : planner.planningRound ?? 1;
   const plannerHeadSha = 'round' in planner ? planner.headSha : undefined;
   const reviewHeadSha = spec.agentName === 'reviewer' && !(spec.dependencies?.length) ? plannerHeadSha ?? job.headSha : undefined;
+  const objectiveRoot = spec.agentName === 'reviewer' ? job.tasks.find(task => task.kind !== 'planner' && task.agentName !== 'reviewer' && task.agentName !== 'troubleshooter' && !task.parentTaskId) : undefined;
   const resolution = spec.resolution;
   if (resolution) {
     const target = resolution.targetTaskId ? job.tasks.find(task => task.id === resolution.targetTaskId) : undefined;
@@ -143,7 +144,7 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
     validateResolutionProposal(job, target, resolution);
   }
   const reviewerThread = spec.agentName === 'reviewer' ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.agentName === 'reviewer' ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: objectiveRoot?.id ?? spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
@@ -363,7 +364,7 @@ export function validatePlannerHierarchy(existing: readonly Task[], specs: reado
 /** Planner may only materialize a new business Task while unresolved work is either
  * explicitly resolved in this round or already owned by an active resolution path. */
 export function validatePlannerResolutionMaterialization(existing: readonly Task[], specs: readonly PlannerTaskSpec[]): void {
-  const unresolved = existing.filter(task => unresolvedTask(task) && ['FAILED', 'BLOCKED'].includes(task.state));
+  const unresolved = existing.filter(task => unresolvedTask(task) && ['FAILED', 'BLOCKED'].includes(task.state) && !task.resolutionClassification);
   if (unresolved.length === 0) return;
   const resolvedIds = new Set(specs.map(spec => spec.resolution?.targetTaskId).filter((id): id is string => Boolean(id)));
   const owned = unresolved.filter(task => task.resolution && ['active', 'waiting'].includes(task.resolution.state));
@@ -393,6 +394,7 @@ export function plannerInput(context: PlannerContext): string {
   const project = context.executionContext?.project;
   return JSON.stringify({
     objective: context.objective,
+    apply_cli: context.planExecution ? `agents-relay plan apply --repo ${context.job.repository} --pr ${context.job.prNumber} --id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
     plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     previous_planner_task_id: context.previousPlannerTaskId,
@@ -426,6 +428,7 @@ export function plannerInput(context: PlannerContext): string {
         assessment: boundedText(task.plannerResult.assessment),
         next_task_ids: task.plannerResult.next_tasks.map(item => item.id),
       } : undefined,
+      resolution_classification: task.resolutionClassification,
       error: boundedText(task.error, 2000),
       blocked_baseline: task.blockedBaseline,
       unblock: task.unblock,
@@ -442,7 +445,7 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
       child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
       child.on('error', reject);
-      child.on('close', code => code === 0 ? (() => { try { resolve(parsePlannerOutput(stdout)); } catch (error) { reject(error); } })() : reject(new Error(stderr.trim() || `Planner exited ${code}`)));
+      child.on('close', code => code === 0 ? (() => { const expected = context.planExecution ? `PLAN_APPLIED:${context.planExecution.planId}:${context.planExecution.executionId}` : ''; if (stdout.trim() !== expected || !expected) { reject(new Error('Planner command must commit its proposal through agents-relay plan apply and return the matching PLAN_APPLIED receipt')); return; } resolve({ objective_status: 'satisfied', assessment: 'Plan committed through the authorized CLI action.', next_tasks: [], unblocks: [], cliApplied: true }); })() : reject(new Error(stderr.trim() || `Planner exited ${code}`)));
       child.stdin?.end(plannerInput(context));
     });
   }
@@ -487,13 +490,10 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         resolve(finalMessage);
       });
     });
-    const parseAndCheck = (raw: string): PlannerResult => { const result = parsePlannerOutput(raw); validatePlannerResolutionMaterialization(context.tasks, result.next_tasks); return result; };
-    let response = await runAgent(prompt); for (let retry = 0; retry <= 3; retry++) {
-      try { return parseAndCheck(response); }
-      catch (error) {
-        if (signal.aborted || retry === 3) throw new Error(`Planner validation failed after ${retry} corrections: ${error instanceof Error ? error.message : String(error)}`);
-        response = await runAgent(`${prompt}\n\n## Fix validation error (correction ${retry + 1} of 3)\n${error instanceof Error ? error.message : String(error)}\nPrevious JSON:\n${response.slice(0, 12000)}\nReturn exactly one complete Planner JSON object. Correct all schema, title, resolution, and dependency requirements; do not remove valid work or bypass safeguards.`);
-      }
-    } throw new Error('Planner correction exhausted');
+    if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
+    const response = await runAgent(prompt);
+    const expected = `PLAN_APPLIED:${context.planExecution.planId}:${context.planExecution.executionId}`;
+    if (response !== expected) throw new Error('Planner must commit its proposal with the authorized `agents-relay plan apply` CLI action and return only the matching PLAN_APPLIED receipt');
+    return { objective_status: 'satisfied', assessment: 'Plan committed through the authorized CLI action.', next_tasks: [], unblocks: [], cliApplied: true };
   }
 }

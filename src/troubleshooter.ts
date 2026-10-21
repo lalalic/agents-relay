@@ -96,7 +96,7 @@ export function pendingTroubleshooterTasks(job: Job): Task[] {
     recoveries.push(createTaskEntity(job, {
       jobId: job.id,
       id,
-      title: `Recover task ${task.id}`,
+      title: 'Troubleshoot',
       recoveryForAttempt: task.attempt,
       kind: 'work',
       priority: 'P0',

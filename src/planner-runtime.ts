@@ -86,7 +86,7 @@ export async function finishPlanner(
   const releaseLive = () => { if (ports.live.get(planId)?.executionId === executionId) ports.live.delete(planId); };
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
-  if (!plan || plan.status !== "PLANNING" || plan.executionId !== executionId) { releaseLive(); if (cliApply) throw new Error(`Plan ${planId} is not owned by this active execution`); return; }
+  if (!plan || (plan.executionId !== executionId && !(raw?.cliApplied && plan.status === 'SUCCEEDED'))) { releaseLive(); if (cliApply) throw new Error(`Plan ${planId} is not owned by this active execution`); return; }
 
   const failOrRetry = async (message: string): Promise<void> => {
     let retry = false;
@@ -123,7 +123,11 @@ export async function finishPlanner(
     await ports.emit(eventFor(jobId, planId, null, retry ? 'planner.retry' : 'planner.failed', retry ? 'queued' : 'failed', `Planner ${planId}: ${message}`, 'user'));
     if (retry && !plan.manualPlanning) ports.detach(ports.reconcile(jobId), jobId, planId, 'planner retry reconciliation');
   };
-
+  if (raw?.cliApplied) {
+    if (plan.status !== 'SUCCEEDED') { releaseLive(); throw new Error(`Planner reported CLI application, but Plan ${planId} is ${plan.status}`); }
+    releaseLive();
+    return;
+  }
   if (error) { if (cliApply) throw error; await failOrRetry(error.message); releaseLive(); return; }
   let planCommitted = false;
   try {

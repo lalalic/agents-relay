@@ -282,7 +282,7 @@ test('task marker metadata round-trips while legacy markers remain compatible', 
   assert.equal(parsed.agentName, 'codex');
   assert.equal(parsed.parentTaskId, 'orchestrator');
 });
-test('CLI plan accepts prompt-file on a zero-task DRAFT job and persists plan-1', async () => {
+test('CLI plan rejects a text-only Planner proposal and cleans its owned process group', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-plan-cli-'));
   const file = join(directory, 'job.json');
   const promptFile = join(directory, 'prompt.md');
@@ -300,13 +300,11 @@ process.stdout.write(JSON.stringify({objective_status:"satisfied",assessment:"co
   await chmod(plannerCommand, 0o755);
   const result = spawn(process.execPath, [join('dist','cli.js'),'plan','--file',file,'--project-path',process.cwd(),'--prompt-file',promptFile,'--planner-command',plannerCommand], { cwd: process.cwd() });
   const [code] = await once(result, 'exit');
-  assert.equal(code, 0);
+assert.notEqual(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
-  assert.equal(saved.state, 'ACTIVE');
-  assert.equal(saved.tasks.some(item => item.kind === 'planner'), false);
-  assert.equal(saved.plans[0].id, 'plan-1');
-  assert.equal(saved.plans[0].guidance, 'additional planning guidance');
-  assert.equal(saved.plans[0].plannerResult.objective_status, 'satisfied');
+  assert.equal(saved.state, 'DRAFT');
+  assert.deepEqual(saved.tasks, []);
+  assert.equal(saved.plans, undefined);
   const descendantPid = Number(await readFile(descendantFile, 'utf8'));
   assert.throws(() => process.kill(descendantPid, 0), error => error?.code === 'ESRCH');
 });

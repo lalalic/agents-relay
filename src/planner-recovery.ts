@@ -10,7 +10,7 @@ export function createFailedPlanRecovery(job:Job, plan:Plan):Task {
     throw Error('Plan recovery identity already exists');
   const now=new Date().toISOString();
   return createTaskEntity(job,{
-    jobId:job.id,id,title:'Diagnose and recover failed Planner round',
+    jobId:job.id,id,title:'Troubleshoot',
     recoveryPlanId:plan.id,
     kind:'work',priority:'P0',storySize:'M',projectName:job.title,
     agentName:'troubleshooter',parentTaskId:null,dependencies:[],

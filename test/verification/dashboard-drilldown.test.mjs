@@ -17,6 +17,12 @@ test('dashboard has history, deep link, maximize, zoom and safe SVG handling',()
  assert.match(html,/const elements=new Set\(/);
  assert.match(html,/attr\.namespaceURI\|\|!attributes\.has/);
 });
+test('dashboard exposes durable resolution classification target, evidence and reason',()=>{
+ assert.match(html,/task\.resolutionClassification/);
+ assert.match(html,/Resolution target/);
+ assert.match(html,/Resolution evidence/);
+ assert.match(html,/Resolution reason/);
+});
 test('interactive labels stay blue after graph palette and edge backgrounds remain transparent',()=>{
  assert.match(html,/node\.classList\.contains\('drillable'\)\?'#2367b1'/);
  assert.match(css,/\.edgeLabel[^\n]+fill:transparent !important/);

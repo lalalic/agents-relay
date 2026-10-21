@@ -5,10 +5,10 @@ import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ExecutionMode, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { parseJobSchedule, transitionJobEvent } from './scheduler.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
-import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
+import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { classifyFailedTask } from './task-actions.js'; import { cleanHistoryOption } from './cli-plan-clean-history.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { defaultWorkspaceRoot, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, executionMode, chatGptTabClosePolicy, requestedExecutionMode, continuation, scheduleFromArgs, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, executionMode, chatGptTabClosePolicy } from './cli-support.js';
-import { workerTaskFromArgs } from './cli-worker-task.js';
+import { recoveryDiagnosisFromArgs, workerTaskFromArgs } from './cli-worker-task.js';
 import { taskExecutionContext } from './task-context.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
@@ -32,17 +32,8 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   if (!task) throw new Error(`Task ${id} missing after ${action}`);
   console.log(JSON.stringify(task, null, 2));
 }
-function recoveryDiagnosisFromArgs(args: string[]) {
-  const failureKind = arg(args, '--failure-kind');
-  if (!failureKind) return undefined;
-  const reason = arg(args, '--reason');
-  if (!reason.trim()) throw new Error('--failure-kind requires --reason');
-  if (!['adapter_failure', 'model_failure', 'provider_failure', 'task_failure', 'unknown'].includes(failureKind)) throw new Error('Invalid --failure-kind');
-  const reroute = args.includes('--reroute');
-  return { failureKind, reason, evidence: arg(args, '--evidence') || undefined, reroute, excludeCurrentRoute: args.includes('--exclude-current-route') };
-}
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede', 'classify'].includes(action)) throw new Error(usage);
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
@@ -52,6 +43,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
     if (action === 'comments') { if (!taskId) throw new Error('task comments requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task.comments ?? [], null, 2)); return; }
     if (action === 'context') { if (!taskId) throw new Error('task context requires --task-id'); const job = await relayControlJob(args, jobId); console.log(JSON.stringify(taskExecutionContext(job, taskId, arg(args, '--execution-id')), null, 2)); return; }
     if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
+    if (action === 'classify') { if (!taskId) throw new Error('task classify requires --task-id'); const kind = arg(args, '--classification'); if (kind !== 'superseded' && kind !== 'invalid') throw new Error('--classification must be superseded or invalid'); const result = await relayControlCommand<Job>(args, { command: 'task.classify', jobId, taskId, classification: { kind, targetTaskId: arg(args, '--target-task-id'), evidence: await textOption(args, '--evidence', '--evidence-file'), reason: await textOption(args, '--reason', '--reason-file') } }); console.log(JSON.stringify(result.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
     if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (action === 'recover') { if (!taskId) throw new Error('task recover requires --task-id'); const recoveryTaskId = arg(args, '--recovery-task-id'); if (!recoveryTaskId) throw new Error('task recover requires --recovery-task-id'); const job = await relayControlCommand<Job>(args, { command: 'task.recover', jobId, taskId, recoveryTaskId, recoveryDiagnosis: recoveryDiagnosisFromArgs(args) }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
@@ -95,6 +87,7 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   const task = job.tasks.find(item => item.id === id);
   if (!task) throw new Error(`Task ${id} not found`);
   if (action === 'show') { console.log(JSON.stringify(task, null, 2)); return; }
+  if (action === 'classify') { const kind = arg(args, '--classification'); if (kind !== 'superseded' && kind !== 'invalid') throw new Error('--classification must be superseded or invalid'); const result = await classifyFailedTask(store, job.id, id, { kind, targetTaskId: arg(args, '--target-task-id'), evidence: await textOption(args, '--evidence', '--evidence-file'), reason: await textOption(args, '--reason', '--reason-file') }); await saveLocal(localFile, result.job); console.log(JSON.stringify(result.task, null, 2)); return; }
   if (action === 'unblock') { await runTaskUnblockCommand(args, store, job, task, localFile); return; }
   if (action === 'escalate') {
     const result = await requestTroubleshooterEscalation(store, job.id, id, { requiredAction: arg(args, '--required-action'), resolutionCondition: arg(args, '--resolution-condition'), context: arg(args, '--context') });
@@ -449,7 +442,7 @@ async function main(): Promise<void> {
   }
   if (!arg(args, '--file') && ['plan','reconcile','agent-register','agent-discover'].includes(command)) {
     const jobId = arg(args, '--id'); if (!jobId) throw new Error(`${command} requires --repo and --id`);
-    if (command === 'plan') { const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined; console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.plan', jobId, ...(guidance?.trim() ? { guidance: guidance.trim() } : {}) }), null, 2)); return; }
+    if (command === 'plan') { const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined; const cleanHistory = await cleanHistoryOption(args); console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.plan', jobId, ...(guidance?.trim() ? { guidance: guidance.trim() } : {}), ...(cleanHistory ? { cleanHistory } : {}) }), null, 2)); return; }
     if (command === 'reconcile') { console.log(JSON.stringify(await relayControlCommand(args, { command: 'job.reconcile', jobId }), null, 2)); return; }
     if (command === 'agent-register') {
       const now = new Date().toISOString(); const agent: AgentRegistration = { id: arg(args, '--agent-id', randomUUID()), name: arg(args, '--name'), responsibility: arg(args, '--responsibility'), role: arg(args, '--role'), capabilities: arg(args, '--capabilities').split(',').filter(Boolean), boundaries: arg(args, '--boundaries').split('|').filter(Boolean), endpoint: { kind: arg(args, '--endpoint-kind', 'adapter') as 'adapter' | 'command' | 'http', target: arg(args, '--endpoint') }, runtime: { adapter: arg(args, '--runtime', arg(args, '--adapter', 'shell')), provider: arg(args, '--provider') || undefined, model: arg(args, '--model') || undefined }, availability: arg(args, '--availability', 'available') as AgentRegistration['availability'], routing: { labels: arg(args, '--labels').split(',').filter(Boolean).reduce<Record<string, string>>((out, item) => { const [key, value] = item.split('=', 2); if (key && value) out[key] = value; return out; }, {}), trustDomains: arg(args, '--trust-domains').split(',').filter(Boolean), regions: arg(args, '--regions').split(',').filter(Boolean) }, evidence: { evaluations: [], outcomes: { succeeded: 0, failed: 0, timedOut: 0 }, lastObservedAt: null }, registeredAt: now, updatedAt: now };
@@ -460,10 +453,11 @@ async function main(): Promise<void> {
   const loaded = await storeFor(args); const { store, job, localFile } = loaded;
   if (command === 'plan') {
     const guidance = hasArg(args, '--prompt') || hasArg(args, '--prompt-file') ? await textOption(args, '--prompt', '--prompt-file') : undefined;
+    const cleanHistory = await cleanHistoryOption(args);
     await withEventBus(args, async bus => {
       const reconciler = runtime(store, args, bus);
       try {
-        const result = await reconciler.planJob(job.id, guidance?.trim() || undefined);
+        const result = await reconciler.planJob(job.id, guidance?.trim() || undefined, cleanHistory);
         await saveLocal(localFile, result.job); await publishWake(bus, result.job, result.round.id, `Planning round ${result.round.id} completed`);
         console.log(JSON.stringify(result.round, null, 2));
       } finally { await reconciler.close(); await shutdownOwnedProcesses('parent-shutdown'); }

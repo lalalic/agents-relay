@@ -9,7 +9,7 @@ Usage:
 
 Commands:
   job create|update|show|list|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
-  task create|update|show|list|complete|retry|unblock|cancel  Manage durable tasks
+  task create|update|show|list|classify|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
@@ -166,15 +166,14 @@ Optional: --failure-kind adapter_failure|model_failure|provider_failure|task_fai
   'task cancel': `Cancel one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,
-  'task supersede': `Mark an already-CANCELLED durable Task as superseded by later corrected work through the Task Resolution Graph.
-
-Required: --task-id ID, --reason TEXT, and the normal managed Job storage options. This does not change Task state and cannot supersede FAILED/BLOCKED/runnable work.`,
+  'task supersede': `Mark an already-CANCELLED durable Task as superseded by later corrected work through the Task Resolution Graph.\n\nRequired: --task-id ID, --reason TEXT, and the normal managed Job storage options. This does not change Task state and cannot supersede FAILED/BLOCKED/runnable work.`,
+  'task classify': `Classify a FAILED work Task as superseded or invalid without changing its Task lifecycle.\n\nRequired: --task-id ID --classification superseded|invalid --target-task-id ID --evidence TEXT --reason TEXT and the normal Job storage options. Unknown or active execution outcomes are rejected.`,
   plan: `Invoke the Planner against the current durable Job state.
 
 Agent submit: agents-relay plan apply --repo OWNER/REPO --pr PR_NUMBER --id JOB_ID --plan-id PLAN_ID --execution-id EXECUTION_ID --file plan.json. Validation errors reject without partial task writes and can be corrected inside the same Planner execution.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt is additional guidance for this planning round and never replaces the durable Job objective.
+Optional: --prompt TEXT or --prompt-file PATH|- (mutually exclusive). The prompt is additional guidance for this planning round and never replaces the durable Job objective. --force-clean-history --clean-history-file PATH requires explicit {taskId,kind,targetTaskId,evidence,reason} records for every unclassified FAILED work Task; it applies graph-authorized classifications and creates the new Plan in one SQLite mutation. Unknown execution outcomes fail closed. Planner proposals must be committed with plan apply; final text is never applied as a Plan.
 
 The command persists one real plan-N round, materializes validated next_tasks with planner provenance, and wakes normal reconciliation. It works for zero-task DRAFT Jobs. Historical planner-N rounds remain readable, but new rounds use plan-N.
 
