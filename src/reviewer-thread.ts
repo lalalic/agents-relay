@@ -61,7 +61,7 @@ export function prepareReviewerThreadDelivery(
 
 export function chatgptThreadRequirements(configured: WorkerRequirements | undefined): WorkerRequirements {
   const base = configured ?? { capabilities: ['model'] };
-  const capabilities = new Set([...base.capabilities, 'model', 'chatgpt', 'browser-workspace']);
+  const capabilities = new Set([...base.capabilities, 'model', 'chatgpt', 'webhelm']);
   return { ...base, capabilities: [...capabilities], runtime: 'chatgpt' };
 }
 

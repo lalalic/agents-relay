@@ -53,10 +53,10 @@ test('reviewer new-turn receipt persists once across reloaded store and reconcil
 test('planner-created primary work bound to implementation thread is materialized as ChatGPT', () => {
   const task = materializePlannerChild(job(), plan, {
     id: 'implementation-planned', agentName: null, input: 'Implement.', adapter: 'codex',
-    workerRequirements: { runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
+    workerRequirements: { runtime: 'chatgpt', capabilities: ['model', 'chatgpt', 'webhelm'] },
     output: { kind: 'task_pr' },
   }, context);
   assert.equal(task.adapter, 'chatgpt');
   assert.equal(task.workerRequirements.runtime, 'chatgpt');
-  assert.ok(task.workerRequirements.capabilities.includes('browser-workspace'));
+  assert.ok(task.workerRequirements.capabilities.includes('webhelm'));
 });

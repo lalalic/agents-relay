@@ -224,7 +224,7 @@ export abstract class ReconcilerRuntimeBase {
     const currentTask = currentJob.tasks.find(task => task.id === taskId);
     const platformFailure = currentTask?.adapter === 'chatgpt' ? classifyChatGptPlatformFailure(failure, phase) : undefined;
     const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
-      : /BROWSER_WORKSPACE_UNAVAILABLE|browser-workspace runtime dependency unavailable|browser-workspace session start returned no session_id|no close frame received or sent/i.test(message)
+      : /WEBHELM_UNAVAILABLE|webhelm runtime dependency unavailable|webhelm session start returned no session_id|no close frame received or sent/i.test(message)
         ? 'browser_workspace_unavailable'
         : undefined;
     const claim = executionId ?? `${jobId}:${taskId}`;
@@ -290,7 +290,7 @@ export abstract class ReconcilerRuntimeBase {
         'task.rerouting', 'queued', 'ChatGPT platform rejection recorded; routing the same Task through Execution Router',
         'orchestrator', { previousFailure: transition.task.platformFailure?.classification, executionId, attempt: runtimeRetry.attempt, maxAttempts: runtimeRetry.maxAttempts })),
       jobId, taskId, 'runtime retry event');
-      this.detach(this.eventCoordinator.accept({ jobId, reason: 'browser-workspace-runtime-retry' }), jobId, taskId, 'runtime retry reconcile wake');
+      this.detach(this.eventCoordinator.accept({ jobId, reason: 'webhelm-runtime-retry' }), jobId, taskId, 'runtime retry reconcile wake');
       return;
     }
     this.detach(this.eventCoordinator.accept({ jobId, reason: `worker-${phase}-failure` }), jobId, taskId, 'worker failure reconcile wake');

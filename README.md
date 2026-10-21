@@ -168,7 +168,7 @@ Review destinations are durable Job facts. `job create` and `job update` accept
 `--reviewer-thread-id` and `--creator-thread-id`; a reviewer ID takes precedence
 over the creator/origin ID. A local runtime invocation may pass
 `--thread-id` as an explicit one-run review override. When a destination exists,
-final-review routing requires a ChatGPT/browser-workspace worker and submits the
+final-review routing requires a ChatGPT/webhelm worker and submits the
 review request as a verified `new-turn` to that existing thread with the Job ID,
 PR number, and immutable review head SHA. Failure still follows the ordinary
 review task retry/recovery path; a transport failure is never treated as
@@ -255,7 +255,7 @@ Every model-backed task declares a durable output with `--output task-pr` or `--
 
 For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
-The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract and invokes Browser Workspace exactly as a one-shot platform action: `browser-workspace platform run chatgpt temporary-submit --auto-session --config <file>`. Browser Workspace owns creation/release of the fresh Temporary Chat session, selectors, attachments, and submit verification; Relay does not self-heal browser failures and instead lets delivery failures enter its normal retry/recovery lifecycle. Legacy `--chatgpt-tab-close-policy` values remain accepted for compatibility around Relay's event barriers, but they do not control the Browser Workspace auto-session lifetime. The adapter never uses a pre-existing user tab, polls for the assistant response, resumes/reopens a thread, or treats conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
+The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract and invokes Browser Workspace exactly as a one-shot platform action: `webhelm platform run chatgpt temporary-submit --auto-session --config <file>`. Browser Workspace owns creation/release of the fresh Temporary Chat session, selectors, attachments, and submit verification; Relay does not self-heal browser failures and instead lets delivery failures enter its normal retry/recovery lifecycle. Legacy `--chatgpt-tab-close-policy` values remain accepted for compatibility around Relay's event barriers, but they do not control the Browser Workspace auto-session lifetime. The adapter never uses a pre-existing user tab, polls for the assistant response, resumes/reopens a thread, or treats conversation text as the result channel. Any observed ChatGPT thread ID is diagnostic only.
 
 ~~~sh
 npx agents-relay task create --repo OWNER/REPO --pr 5 --id job-1 \
@@ -306,7 +306,7 @@ For autonomous Jobs, `UNBLOCKED` is historical: Relay does not retry that old Ta
 
 ### Browser Workspace product boundary
 
-Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `browser-workspace status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. This bootstrap is best-effort: Browser Workspace discovery/helper failures are logged and skipped so they do not prevent `agents-relayd` from starting; ChatGPT browser work may remain unavailable until Browser Workspace recovers. Ordinary ChatGPT worker activity uses the public Browser Workspace one-shot `platform run ... --auto-session` command; orchestrator-owned self-healing flows may still use explicit session commands. Relay does not create or delete workspaces through CLI lifecycle commands.
+Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `webhelm status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. This bootstrap is best-effort: Browser Workspace discovery/helper failures are logged and skipped so they do not prevent `agents-relayd` from starting; ChatGPT browser work may remain unavailable until Browser Workspace recovers. Ordinary ChatGPT worker activity uses the public Browser Workspace one-shot `platform run ... --auto-session` command; orchestrator-owned self-healing flows may still use explicit session commands. Relay does not create or delete workspaces through CLI lifecycle commands.
 
 ## Shared publication reporting
 
