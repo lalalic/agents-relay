@@ -198,8 +198,8 @@ export function parseDriverJson(output: string): BrowserWorkerResponse {
   throw new Error('browser-worker driver returned no submitted receipt');
 }
 type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
-function browserWorkspaceCli(override = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): BrowserWorkspaceCli {
-  return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['browser-workspace'] };
+function browserWorkspaceCli(override = process.env.AGENTS_RELAY_WEBHELM_COMMAND): BrowserWorkspaceCli {
+  return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['--from', 'browser-workspace', 'webhelm'] };
 }
 const browserWorkspaceInjection = new AsyncLocalStorage<InjectionConfig>();
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
@@ -208,7 +208,7 @@ function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string
 function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnOwnedProcess(cli.command, [...cli.prefix, ...args], {
-      invocation: 'browser-workspace.command',
+      invocation: 'webhelm.command',
       signal,
       spawn: { shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] },
     });
@@ -225,7 +225,7 @@ function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly str
       else {
         // Browser Workspace reports a compact code/message JSON on nonzero exit.
         // Preserve existing Relay failure behavior; only simplify the error text.
-        let reason = stderr.trim() || stdout.trim() || `browser-workspace exited ${code}`;
+        let reason = stderr.trim() || stdout.trim() || `webhelm exited ${code}`;
         try {
           const envelope = parseWorkspaceJson(stdout);
           const result = envelope.result as Record<string, unknown> | undefined;
@@ -254,7 +254,7 @@ function parseWorkspaceJson(output: string): Record<string, unknown> {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try { return JSON.parse(lines[index]) as Record<string, unknown>; } catch { /* diagnostics may precede JSON */ }
   }
-  throw new Error('browser-workspace returned no JSON result');
+  throw new Error('webhelm returned no JSON result');
 }
 
 type PromptManifestEntry = { role: string; path: string; sha256: string };
@@ -295,14 +295,14 @@ async function accessiblePromptReferences(prompt: string): Promise<Array<PromptM
 type BrowserWorkspaceStatus = { admin_helper?: unknown };
 type BrowserWorkspaceAdminModule = { ensureWorkspace?: (name: string, size?: number) => Promise<unknown> | unknown };
 
-export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND): Promise<void> {
+export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_WEBHELM_COMMAND): Promise<void> {
   const status = parseWorkspaceJson(await browserWorkspaceCommand(browserWorkspaceCli(command), ['status'])) as BrowserWorkspaceStatus;
   if (typeof status.admin_helper !== 'string' || !status.admin_helper.startsWith('/')) {
-    throw new Error('browser-workspace status returned no absolute admin_helper path');
+    throw new Error('webhelm status returned no absolute admin_helper path');
   }
   const admin = await import(pathToFileURL(status.admin_helper).href) as BrowserWorkspaceAdminModule;
   if (typeof admin.ensureWorkspace !== 'function') {
-    throw new Error('browser-workspace admin helper does not export ensureWorkspace');
+    throw new Error('webhelm admin helper does not export ensureWorkspace');
   }
   await admin.ensureWorkspace(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE);
 }
@@ -311,7 +311,7 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
 async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'temporary-submit' | 'new-turn' = 'temporary-submit'): Promise<string> {
   const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
   const sessionId = session.session_id;
-  if (typeof sessionId !== 'string' || !sessionId) throw new Error('browser-workspace session start returned no session_id');
+  if (typeof sessionId !== 'string' || !sessionId) throw new Error('webhelm session start returned no session_id');
   try {
     return await browserWorkspaceCommand(
       cli,
@@ -372,7 +372,7 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
 export class ChatGptAdapter implements WorkerAdapter {
   readonly name = 'chatgpt' as const;
   readonly id = 'chatgpt/browser-worker';
-  readonly capabilities = ['model', 'chatgpt', 'browser-workspace'] as const;
+  readonly capabilities = ['model', 'chatgpt', 'webhelm'] as const;
   private readonly runner?: ChatGptAgentRunner;
   readonly tabClosePolicy: ChatGptTabClosePolicy;
 

@@ -399,7 +399,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const runtime = summarizeRuntime(cachedOverviews.map(item => item.job));
     const workers = workerCandidates([
       { name: 'codex', id: 'codex', capabilities: ['model', 'codex'] },
-      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'browser-workspace'] },
+      { name: 'chatgpt', id: 'chatgpt/browser-worker', capabilities: ['model', 'chatgpt', 'webhelm'] },
     ], [], usage);
     const result = await routeExecution(workers, task.workerRequirements ?? { capabilities: task.capabilities ?? [] }, {
       decisionEngine: executionDecisionEngine(),

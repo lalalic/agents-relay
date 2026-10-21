@@ -376,9 +376,9 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     "else process.exit(13);",
   ].join('\n');
   await writeFile(command, script, { mode: 0o700 });
-  const oldCommand=process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;
+  const oldCommand=process.env.AGENTS_RELAY_WEBHELM_COMMAND;
   const oldLog=process.env.FAKE_REVIEW_CALLS;
-  process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND=command;
+  process.env.AGENTS_RELAY_WEBHELM_COMMAND=command;
   process.env.FAKE_REVIEW_CALLS=log;
   try {
     for (const threadSource of ['creator','implementation']) {
@@ -390,7 +390,7 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     assert.equal((calls.match(/platform run/g)||[]).length,2);
     assert.equal((calls.match(/session exec/g)||[]).length,0);
   } finally {
-    if(oldCommand===undefined)delete process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;else process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND=oldCommand;
+    if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;
     if(oldLog===undefined)delete process.env.FAKE_REVIEW_CALLS;else process.env.FAKE_REVIEW_CALLS=oldLog;
     await rm(root,{recursive:true,force:true});
   }

@@ -227,7 +227,7 @@ export abstract class ReconcilerRuntimeBase {
     const unknownOutcome = phase === 'start-ack' || ['outcome_unknown', 'start_ack_timeout'].includes(platformFailure?.classification ?? '')
       || (phase === 'delivery' && activeExecution?.executionId === executionId && activeExecution.workerStarted);
     const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
-      : /BROWSER_WORKSPACE_UNAVAILABLE|browser-workspace runtime dependency unavailable|browser-workspace session start returned no session_id|no close frame received or sent/i.test(message)
+      : /WEBHELM_UNAVAILABLE|webhelm runtime dependency unavailable|webhelm session start returned no session_id|no close frame received or sent/i.test(message)
         ? 'browser_workspace_unavailable'
         : undefined;
     const claim = executionId ?? `${jobId}:${taskId}`;
@@ -282,6 +282,7 @@ export abstract class ReconcilerRuntimeBase {
       { agent: 'relay', component: 'agents-relay', watchdog: true },
     );
     this.detach(this.emit(event), jobId, taskId, 'worker failure event');
+
     this.detach(this.eventCoordinator.accept({ jobId, reason: `worker-${phase}-failure` }), jobId, taskId, 'worker failure reconcile wake');
   }
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {

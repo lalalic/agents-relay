@@ -1,8 +1,8 @@
 import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
-import { readFile, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { handleTroubleshooterQa } from './troubleshooter-qa-api.js';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DurableStore, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
@@ -18,14 +18,13 @@ import type { DecisionAuditRecord } from './decision-audit.js';
 import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory } from './dashboard-data.js';
 export { dashboardWorkflowGraphs, githubPrUrl } from './dashboard-data.js';
 const SSE_HEARTBEAT_MS = 15000;
-const TROUBLESHOOTER_QA_FILE = fileURLToPath(new URL('../skills/agents-relay/troubleshooter-qa.md', import.meta.url));
-const qaHash = (content: string): string => createHash('sha256').update(content).digest('hex');
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
 
 function isTaskId(candidate: string): boolean {
   return candidate.length > 0;
 }
+
 
 
 export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
@@ -159,39 +158,7 @@ export function serveDashboard(
       }
       return;
     }
-    if (req.url === '/api/troubleshooter-qa') {
-      try {
-        const current = await readFile(TROUBLESHOOTER_QA_FILE, 'utf8');
-        if (req.method === 'GET') {
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-          res.end(JSON.stringify({ text: current, hash: qaHash(current) }));
-          return;
-        }
-        if (req.method === 'PUT') {
-          if (req.headers['content-type']?.split(';')[0] !== 'application/json') { res.writeHead(415); res.end('Expected JSON'); return; }
-          const chunks: Buffer[] = [];
-          let size = 0;
-          for await (const chunk of req) {
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            size += buffer.length;
-            if (size > 128 * 1024) { res.writeHead(413); res.end('Q&A too large'); return; }
-            chunks.push(buffer);
-          }
-          const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (!body || typeof body !== 'object' || !('text' in body) || !('hash' in body) || typeof body.text !== 'string' || typeof body.hash !== 'string') { res.writeHead(400); res.end('Invalid Q&A payload'); return; }
-          if (body.hash !== qaHash(current)) { res.writeHead(409); res.end('Q&A changed on disk; reload before saving'); return; }
-          if (Buffer.byteLength(body.text) > 128 * 1024) { res.writeHead(413); res.end('Q&A too large'); return; }
-          await writeFile(TROUBLESHOOTER_QA_FILE, body.text, 'utf8');
-          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-          res.end(JSON.stringify({ hash: qaHash(body.text) }));
-          return;
-        }
-        res.writeHead(405, { allow: 'GET, PUT' }); res.end('Method not allowed');
-      } catch (error) {
-        res.writeHead(500); res.end(error instanceof Error ? error.message : String(error));
-      }
-      return;
-    }
+    if (req.url === '/api/troubleshooter-qa') { await handleTroubleshooterQa(req, res); return; }
     if (req.url === '/api/graphs') {
       try {
         const graphs = await dashboardWorkflowGraphs();

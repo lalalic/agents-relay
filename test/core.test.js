@@ -1162,7 +1162,7 @@ test('ambiguous ChatGPT Browser Workspace delivery failure is quarantined withou
   t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
   t.executionHistory=[{id:'browser-exec-1',attempt:1,startedAt:now()}];
   t.routing={provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()};
-  t.workerRequirements={runtime:'chatgpt',capabilities:['model','browser-workspace']};
+  t.workerRequirements={runtime:'chatgpt',capabilities:['model','webhelm']};
   const store=new InMemoryStore(job([t]));
   const bus=new MemoryEventBus();
   const events=[];
