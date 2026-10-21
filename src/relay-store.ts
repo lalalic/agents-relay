@@ -7,6 +7,7 @@ import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { DurableWorkflowPublication } from './workflow/durable-publication.js';
 import type { EventRecord } from './types.js';
 import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
+import { migrateLegacyBlockedTasks } from './legacy-blocked-task-migration.js';
 import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
 import type { PullRequestState } from './store.js';
 import type { PackagePublication, PackagePublishFailure } from './github-webhook.js';
@@ -133,6 +134,7 @@ export class SQLiteRelayStore implements RelayStore {
         if (schema?.value !== 'single-sqlite-staging-v1') throw new Error('Unified Relay schema is missing or unsupported');
       }
     } else this.migrate();
+    migrateLegacyBlockedTasks(this.db);
     this.outbox = new ProjectionOutbox(this.db, scopeJobId);
     this.outbox.resetProcessing(new Date().toISOString());
   }
@@ -494,5 +496,4 @@ export class SQLiteRelayStore implements RelayStore {
   close(): void { this.db.close(); }
 }
 export { relayStoreDirectory } from './local-job-path.js';
-export { relayUnifiedStorePath, resolveUnifiedJobScope, discoverLocalRelayStoreSnapshots } from './relay-store-discovery.js';
-export type { LocalRelayStoreSnapshot } from './relay-store-discovery.js';
+export { relayUnifiedStorePath, resolveUnifiedJobScope, discoverLocalRelayStoreSnapshots } from './relay-store-discovery.js'; export type { LocalRelayStoreSnapshot } from './relay-store-discovery.js';

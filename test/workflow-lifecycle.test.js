@@ -13,6 +13,7 @@ const task = state => ({
   jobId: 'job-graph',
   id: 'task-graph',
   state,
+  agentName: state === 'BLOCKED' ? 'troubleshooter' : 'implementation',
   dependencies: [],
   error: null,
   updatedAt: '2026-09-23T00:00:00.000Z',
@@ -34,7 +35,7 @@ const job = state => ({
 const taskCases = [
   ['DRAFT','release',{},'QUEUED'],
   ['DRAFT','reconcile',{dependenciesSatisfied:true},'QUEUED'],
-  ['DRAFT','block',{},'BLOCKED'],
+  ['DRAFT','block',{},'FAILED'],
   ['DRAFT','cancel',{},'CANCELLED'],
   ['QUEUED','hold',{},'DRAFT'],
   ['QUEUED','reconcile',{dependenciesUnsatisfied:true},'DRAFT'],
@@ -43,20 +44,20 @@ const taskCases = [
   ['QUEUED','review.started',{},'RUNNING'],
   ['QUEUED','review.approved',{},'SUCCEEDED'],
   ['QUEUED','review.changes_required',{},'SUCCEEDED'],
-  ['QUEUED','review.blocked',{},'BLOCKED'],
-  ['QUEUED','block',{},'BLOCKED'],
+  ['QUEUED','review.blocked',{},'FAILED'],
+  ['QUEUED','block',{},'FAILED'],
   ['QUEUED','fail',{},'FAILED'],
   ['QUEUED','watchdog.failed',{},'FAILED'],
   ['QUEUED','worker.delivery_failed',{},'FAILED'],
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
-  ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
-  ['QUEUED','worker.platform_failure',{platformFallbackSafe:false},'BLOCKED'],
-  ['RUNNING','worker.platform_failure',{platformFallbackSafe:true},'BLOCKED'],
+  ['QUEUED','worker.platform_failure',{},'FAILED'],
+  ['RUNNING','worker.platform_failure',{},'FAILED'],
   ['QUEUED','cancel',{},'CANCELLED'],
-  ['RUNNING','task.blocked',{},'BLOCKED'],
+  ['RUNNING','task.blocked',{},'FAILED'],
+  ['RUNNING','interactive.waiting',{awaitingInteractiveDecision:true},'DRAFT'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
   ['RUNNING','review.changes_required',{},'SUCCEEDED'],
-  ['RUNNING','review.blocked',{},'BLOCKED'],
+  ['RUNNING','review.blocked',{},'FAILED'],
   ['RUNNING','task.completed',{},'SUCCEEDED'],
   ['RUNNING','task.failed',{},'FAILED'],
   ['RUNNING','watchdog.failed',{},'FAILED'],
@@ -67,7 +68,7 @@ const taskCases = [
   ['FAILED','retry',{},'QUEUED'],
   ['FAILED','task.started',{recoverableExecution:true},'RUNNING'],
   ['FAILED','task.completed',{recoverableExecution:true},'SUCCEEDED'],
-  ['FAILED','task.blocked',{recoverableExecution:true},'BLOCKED'],
+  ['FAILED','task.blocked',{recoverableExecution:true},'FAILED'],
   ['FAILED','task.failed',{recoverableExecution:true},'FAILED'],
   ['FAILED','task.cancelled',{recoverableExecution:true},'CANCELLED'],
   ['FAILED','cancel',{},'CANCELLED'],
@@ -107,6 +108,14 @@ test('Graph Engine is authoritative for the lifecycle transition corpus', () => 
   ]) assert.equal(decideTaskLifecycle(task(from),event,facts).accepted,false);
 });
 
+test('only a Troubleshooter may block and authoritative unblock queues that same role', () => {
+  for (const [state, event] of [['DRAFT','block'],['QUEUED','block'],['RUNNING','task.blocked'],['FAILED','task.blocked']]) {
+    assert.equal(decideTaskLifecycle(task(state), event, { recoverableExecution: true }).target, 'FAILED');
+    assert.equal(decideTaskLifecycle({ ...task(state), agentName: 'troubleshooter' }, event, { recoverableExecution: true }).target, 'BLOCKED');
+  }
+  assert.equal(decideTaskLifecycle(task('BLOCKED'), 'task.unblocked').target, 'QUEUED');
+});
+
 test('graph decisions drive durable transition mutations', async () => {
   const current=task('QUEUED');
   current.error='stale';
@@ -128,20 +137,21 @@ test('planner unavailable is a canonical Task graph failure without attempt mani
   assert.equal(current.error,'No objective planner configured');
 });
 
-test('platform fallback graph clears routing while preserving identity and execution history', async () => {
+test('platform failure graph fails the task and clears execution while preserving identity history', async () => {
   const current={...task('QUEUED'),attempt:1,maxAttempts:3,leaseOwner:'relay',leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionId:'exec-chat',executionHistory:[{id:'exec-chat',attempt:1,startedAt:'2026-09-23T00:00:00.000Z'}],routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:'2026-09-23T00:00:00.000Z'},workerSelection:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',capabilities:['model'],selectedBy:'test',selectedAt:'2026-09-23T00:00:00.000Z'},error:'platform rejected'};
-  const decision=await transitionTaskEvent(current,'worker.platform_failure',{platformFallbackSafe:true});
-  assert.equal(decision.target,'QUEUED');
+  current.platformFailure={classification:'model_unavailable',executionId:'exec-chat',route:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',provider:'chatgpt',model:'account-defaults'},evidence:'rejected',safeToReroute:true,at:'2026-09-23T00:00:00.000Z'};
+  const decision=await transitionTaskEvent(current,'worker.platform_failure');
+  assert.equal(decision.target,'FAILED');
   assert.equal(current.id,'task-graph');
   assert.equal(current.executionId,null);
   assert.equal(current.routing,undefined);
   assert.equal(current.workerSelection,undefined);
   assert.equal(current.executionHistory[0].id,'exec-chat');
-  assert.equal(current.error,null);
+  assert.equal(current.error,'platform rejected');
 
   const unknown={...current,state:'QUEUED',attempt:1,maxAttempts:3,executionId:'exec-unknown',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:'2026-09-23T00:00:00.000Z'},workerSelection:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',capabilities:['model'],selectedBy:'test',selectedAt:'2026-09-23T00:00:00.000Z'},platformFailure:{classification:'start_ack_timeout',executionId:'exec-unknown',route:{workerId:'chatgpt/browser-worker',adapter:'chatgpt',provider:'chatgpt',model:'account-defaults'},evidence:'start ack expired',safeToReroute:false,at:'2026-09-23T00:00:00.000Z'}};
-  const quarantined=await transitionTaskEvent(unknown,'worker.platform_failure',{platformFallbackSafe:false});
-  assert.equal(quarantined.target,'BLOCKED');
+  const quarantined=await transitionTaskEvent(unknown,'worker.platform_failure');
+  assert.equal(quarantined.target,'FAILED');
   assert.equal(unknown.failureReason,'worker_outcome_unknown');
   assert.equal(unknown.executionId,null);
   assert.equal(unknown.routing,undefined);

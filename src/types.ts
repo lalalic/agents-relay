@@ -100,9 +100,10 @@ export type TaskResolution = {
   solution?: string;
   deviations?: string[];
   validationEvidence?: string[];
+  recoveryExecutionId?: string;
   updatedAt: string;
 };
-export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence'>;
+export type TaskResolutionProposal = Pick<TaskResolution, 'path' | 'targetTaskId' | 'targetJobId' | 'mode' | 'rootCause' | 'solution' | 'deviations' | 'validationEvidence' | 'recoveryExecutionId'>;
 export type TaskEscalation = {
   id: string;
   fingerprint?: string;
@@ -186,12 +187,19 @@ export type Task = {
 };
 /** Normalize snapshots written before UNBLOCKED was removed from the lifecycle graph. */
 export function normalizeLegacyTaskLifecycle(task: Task, executionMode: ExecutionMode): Task {
+  void executionMode;
   const legacy = task as Task & { state: string };
-  if ((legacy as { state: string }).state !== 'UNBLOCKED') return task;
-  legacy.state = executionMode === 'autonomous' ? 'DRAFT' : 'QUEUED';
-  // Preserve the historical execution count when upgrading old snapshots.
-  task.maxAttempts = Math.max(3, task.maxAttempts ?? 0, task.attempt + 1);
-  task.unblock = task.unblock ? { ...task.unblock, event: 'task.unblocked' } : undefined;
+  if ((legacy.state as string) === 'UNBLOCKED') {
+    legacy.state = task.agentName === 'troubleshooter' ? 'QUEUED' : 'FAILED';
+    task.failureReason ??= 'legacy_unblocked_task_requires_recovery';
+    task.maxAttempts = Math.max(3, task.maxAttempts ?? 0, task.attempt + 1);
+    task.unblock = task.unblock ? { ...task.unblock, event: 'task.unblocked' } : undefined;
+  }
+  if (legacy.state === 'BLOCKED' && task.kind !== 'planner' && task.agentName !== 'troubleshooter') {
+    legacy.state = 'FAILED';
+    task.failureReason ??= task.failureReason === 'worker_outcome_unknown' ? task.failureReason : 'legacy_ordinary_blocked';
+    task.error ??= 'Legacy ordinary Task was BLOCKED; preserved as FAILED pending Troubleshooter diagnosis.';
+  }
   return task;
 }
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };

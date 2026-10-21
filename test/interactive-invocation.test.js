@@ -127,7 +127,7 @@ test('interactive decision events are normalized and fingerprints bind decision 
   assert.notEqual(interactiveDecisionFingerprint(delivery), interactiveDecisionFingerprint({ ...delivery, feedback: 'different' }));
 });
 
-test('external decision releases a BLOCKED interactive Task and requeues the same Task', async () => {
+test('external decision releases a DRAFT interactive Task and requeues the same Task', async () => {
   const fixture = await temporaryStore();
   const job = makeJob();
   await fixture.store.saveJob(job);
@@ -145,7 +145,7 @@ test('external decision releases a BLOCKED interactive Task and requeues the sam
     data: {},
   };
   assert.equal((await reconciler.applyEvent(blocked)).applied, true);
-  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'BLOCKED');
+  assert.equal((await fixture.store.loadJob(job.id)).tasks[0].state, 'DRAFT');
   const result = await reconciler.applyEvent(decisionEvent(job.id, task.id, 'inv-1', 'sha256:v1', 'changes_requested', 'revise narration'));
   assert.equal(result.reconcile, true);
   assert.equal(result.reason, 'task.interactive_decision.accepted');

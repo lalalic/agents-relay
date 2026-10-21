@@ -11,7 +11,7 @@ const actionRegistry = ids => Object.fromEntries([...new Set(ids)].map(id => [id
 const taskCases = [
   ['DRAFT','release',{},'QUEUED'],
   ['DRAFT','reconcile',{dependenciesSatisfied:true},'QUEUED'],
-  ['DRAFT','block',{},'BLOCKED'],
+  ['DRAFT','block',{},'FAILED'],
   ['DRAFT','cancel',{},'CANCELLED'],
   ['QUEUED','hold',{},'DRAFT'],
   ['QUEUED','reconcile',{dependenciesUnsatisfied:true},'DRAFT'],
@@ -21,32 +21,31 @@ const taskCases = [
   ['QUEUED','review.started',{},'RUNNING'],
   ['QUEUED','review.approved',{},'SUCCEEDED'],
   ['QUEUED','review.changes_required',{},'SUCCEEDED'],
-  ['QUEUED','review.blocked',{},'BLOCKED'],
-  ['QUEUED','block',{},'BLOCKED'],
+  ['QUEUED','review.blocked',{},'FAILED'],
+  ['QUEUED','block',{},'FAILED'],
   ['QUEUED','fail',{},'FAILED'],
   ['QUEUED','effect.launchTask.failed',{},'FAILED'],
   ['QUEUED','watchdog.failed',{},'FAILED'],
   ['QUEUED','worker.delivery_failed',{},'FAILED'],
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
-  ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
-  ['QUEUED','worker.platform_failure',{platformFallbackSafe:false},'BLOCKED'],
-  ['RUNNING','worker.platform_failure',{platformFallbackSafe:true},'BLOCKED'],
+  ['QUEUED','worker.platform_failure',{},'FAILED'],
+  ['RUNNING','worker.platform_failure',{},'FAILED'],
   ['QUEUED','cancel',{},'CANCELLED'],
-  ['RUNNING','task.blocked',{},'BLOCKED'],
+  ['RUNNING','task.blocked',{},'FAILED'],
   ['RUNNING','task.progress',{},'RUNNING'],
   ['RUNNING','review.approved',{},'SUCCEEDED'],
   ['RUNNING','review.changes_required',{},'SUCCEEDED'],
-  ['RUNNING','review.blocked',{},'BLOCKED'],
+  ['RUNNING','review.blocked',{},'FAILED'],
   ['RUNNING','task.completed',{},'SUCCEEDED'],
   ['RUNNING','task.failed',{},'FAILED'],
   ['RUNNING','watchdog.failed',{},'FAILED'],
   ['RUNNING','task.cancelled',{},'CANCELLED'],
-  ['BLOCKED','task.unblocked',{},'QUEUED'],
+  ['BLOCKED','task.unblocked',{troubleshooterTask:true},'QUEUED'],
   ['BLOCKED','cancel',{},'CANCELLED'],
   ['FAILED','retry',{},'QUEUED'],
   ['FAILED','task.started',{recoverableExecution:true},'RUNNING'],
   ['FAILED','task.completed',{recoverableExecution:true},'SUCCEEDED'],
-  ['FAILED','task.blocked',{recoverableExecution:true},'BLOCKED'],
+  ['FAILED','task.blocked',{recoverableExecution:true},'FAILED'],
   ['FAILED','task.failed',{recoverableExecution:true},'FAILED'],
   ['FAILED','task.cancelled',{recoverableExecution:true},'CANCELLED'],
   ['FAILED','cancel',{},'CANCELLED'],
@@ -78,12 +77,13 @@ const taskRuntime = new GraphRuntime(taskSource, {
     dispatchable: boolGuard('dispatchable'),
     recoverableExecution: boolGuard('recoverableExecution'),
     troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
+    troubleshooterTask: boolGuard('troubleshooterTask'),
+    awaitingInteractiveDecision: boolGuard('awaitingInteractiveDecision'),
     retryAvailable: boolGuard('retryAvailable'),
     autonomousJob: boolGuard('autonomousJob'),
-    platformFallbackSafe: boolGuard('platformFallbackSafe'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
-  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markPlannerUnavailable','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
+  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask']),
 });
 
 const jobRuntime = new GraphRuntime(jobSource, {
@@ -112,7 +112,7 @@ const jobRuntime = new GraphRuntime(jobSource, {
 
 test('canonical Task lifecycle flowchart matches lifecycle API targets across the canonical corpus', () => {
   for (const [from,event,facts,target] of taskCases) {
-    const v1 = decideTaskLifecycle({ id: 't', state: from }, event, facts);
+    const v1 = decideTaskLifecycle({ id: 't', state: from, agentName: from === 'BLOCKED' ? 'troubleshooter' : 'implementation' }, event, facts);
     const v2 = taskRuntime.evaluateSync({ currentState: from, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts });
     assert.equal(v1.accepted, true, `v1 ${from} ${event}`);
     assert.equal(v2.accepted, true, `v2 ${from} ${event}`);

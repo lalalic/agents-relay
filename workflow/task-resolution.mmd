@@ -7,16 +7,19 @@ flowchart LR
 unresolved["state: unresolved"]
 checkOwner["state: check_owner"]
 checkPath["state: check_path"]
+checkFreshExecution["state: check_fresh_execution"]
 activeRecovery["action: resolution.activateRecovery"]
 sameJob["action: resolution.attachSameJobDependency"]
 blockerJob["action: resolution.registerBlockerDependency"]
 escalate["action: resolution.createEscalationGate"]
 obsolete["action: resolution.cancelSupersede"]
 resolved["state: resolved"]
+rejected["state: rejected"]
 recoveryOwner["guard: recoveryOwnerAvailable"]
 plannerOwner["guard: plannerOwnerAvailable"]
 exact["guard: exactOriginalRetry"]
 same["guard: sameJobDependency"]
+fresh["guard: freshRecoveryExecution"]
 blocker["guard: blockerJobDependency"]
 gate["guard: escalationGate"]
 obsoleteGuard["guard: genuinelyObsolete"]
@@ -26,8 +29,11 @@ checkOwner -->|on: resolution.propose| recoveryOwner
 recoveryOwner -->|true| checkPath
 recoveryOwner -->|false| plannerOwner
 plannerOwner -->|true| checkPath
-plannerOwner -->|false| resolved
-checkPath -->|on: resolution.propose| exact
+plannerOwner -->|false| rejected
+checkPath -->|on: resolution.propose| fresh
+fresh -->|true| checkFreshExecution
+fresh -->|false| rejected
+checkFreshExecution -->|on: resolution.propose| exact
 exact -->|true| activeRecovery
 exact -->|false| same
 same -->|true| sameJob
@@ -37,7 +43,7 @@ blocker -->|false| gate
 gate -->|true| escalate
 gate -->|false| obsoleteGuard
 obsoleteGuard -->|true| obsolete
-obsoleteGuard -->|false| resolved
+obsoleteGuard -->|false| rejected
 activeRecovery -->|to: resolved| resolved
 sameJob -->|to: resolved| resolved
 blockerJob -->|to: resolved| resolved

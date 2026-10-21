@@ -32,9 +32,9 @@ The complete cross-boundary illustration lives in [`diagrams/unblock-resolution-
 
 ## Authority and state semantics
 
-- `unblock` is an **action**, and `task.unblocked` is an **event/record**, **not** a persisted lifecycle state. The current Task states exclude `UNBLOCKED` (`src/types.ts`, `workflow/task-lifecycle.mmd`). Older SQLite snapshots are normalized on read/mutation; the former autonomous state maps to `DRAFT`, fixed to `QUEUED`.
-- An authoritative autonomous unblock is `BLOCKED -> DRAFT`. Persist `task.unblock` facts (source, reason, blocked baseline, HEAD changes) and wake the Planner; dependency reconciliation must not accidentally release that `DRAFT` as ordinary work.
-- A fixed-mode unblock is `BLOCKED -> QUEUED`, clearing prior execution/lease and reopening retry capacity. Interactive decision resume has a separate validated path (`src/interactive-resume.ts`) and is not an autonomous planner trigger.
+- `unblock` is an **action**, and `task.unblocked` is an **event/record**, **not** a persisted lifecycle state. The current Task states exclude `UNBLOCKED` (`src/types.ts`, `workflow/task-lifecycle.mmd`). Startup migration converts historical ordinary `BLOCKED` tasks to `FAILED`, preserving unknown worker outcomes and leaving append-only event history untouched. Historical `UNBLOCKED` snapshots map to `QUEUED` only for Troubleshooters and otherwise to `FAILED`.
+- An authoritative unblock applies only to a Troubleshooter in `BLOCKED` and queues that same task with its existing identity. It must run again, verify the current blocker condition, and issue a fresh resolution tied to its new execution before touching the original failed task.
+- Ordinary dependency waits remain `DRAFT`; ordinary execution or semantic failures become `FAILED`. Interactive decision waits use `DRAFT` and resume to `QUEUED` after an accepted decision.
 - `FAILED` describes execution outcome, whereas missing resolution means **planning cannot proceed**. Do **not** relabel a `FAILED` Task as `BLOCKED` simply because its missing resolution blocks a Plan.
 - Job/Plan/Task snapshots in SQLite are authoritative; EventBus emissions request wake-ups and provide observability. Never treat external event delivery as an atomic substitute for the stored record.
 

@@ -12,11 +12,11 @@ import {WorkflowActionLedger} from '../../dist/workflow/action-ledger.js';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const cli=join(root,'dist/cli.js');
 const run=(args,env)=>execFileSync(process.execPath,[cli,'workflow',...args],{cwd:root,encoding:'utf8',timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:env}});
-test('L3 CLI enumerates all 51 canonical Graph Actions and can locate each owning graph',()=>{
+test('L3 CLI enumerates all 45 canonical Graph Actions and can locate each owning graph',()=>{
  const dir=mkdtempSync(join(tmpdir(),'relay-cli-actions-l3-'));
  try {
   const {count,actions}=JSON.parse(run(['actions'],dir));
-  assert.equal(count,51);
+  assert.equal(count,45);
   for(const entry of actions){
    assert.ok(entry.graphReferences.length,entry.id);
    const refs=JSON.parse(run(['where','--id',entry.id],dir));
@@ -45,7 +45,7 @@ test('L3 CLI reads real SQLite action ledger trace and fails closed against dire
   assert.deepEqual(again,trace,'failed CLI attempt must not modify ledger');
  } finally {rmSync(dir,{recursive:true,force:true});}
 });
-for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLED'},{action:'task.retry',initial:'FAILED',expected:'BLOCKED'},{action:'task.unblock',initial:'BLOCKED',expected:'BLOCKED',args:['--reason','manual blocker resolution']}]) test(`L3 CLI ${scenario.action} reaches production service, executes Graph transition and persists SQLite`,async()=>{
+for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLED'},{action:'task.retry',initial:'FAILED',expected:'QUEUED'},{action:'task.unblock',initial:'BLOCKED',agentName:'troubleshooter',expected:'QUEUED',args:['--reason','manual blocker resolution']}]) test(`L3 CLI ${scenario.action} reaches production service, executes Graph transition and persists SQLite`,async()=>{
  const {SQLiteRelayStore}=await import('../../dist/relay-store.js');
  const {createService}=await import('../../dist/cli.js');
  const {createServer}=await import('node:net');
@@ -54,8 +54,8 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
  const {mkdirSync}=await import('node:fs');mkdirSync(stores);
  const sqlite=new SQLiteRelayStore(join(dir,'relay.sqlite'),'cli-action-job');
  const at=new Date().toISOString();
- const task={id:'task-1',jobId:'cli-action-job',parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',input:'isolated',state:scenario.initial,attempt:scenario.initial==='FAILED'?1:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null};
- const job={id:'cli-action-job',title:'CLI action L3',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[task]};
+ const task={id:'task-1',jobId:'cli-action-job',parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',agentName:scenario.agentName,input:'isolated',state:scenario.initial,attempt:scenario.initial==='FAILED'?1:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null};
+ const job={id:'cli-action-job',title:'CLI action L3',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:scenario.action==='task.cancel'?'ACTIVE':'DRAFT',continuation:null,createdAt:at,updatedAt:at,tasks:[task]};
  let service;
  const original=process.env.AGENTS_RELAY_STORE_DIR;
  const originalNoGithub=process.env.AGENTS_RELAY_NO_GITHUB;
@@ -79,7 +79,7 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
   const persisted=(await sqlite.loadJob('cli-action-job')).tasks[0];
   assert.equal(persisted.state,scenario.expected);
   if (scenario.action==='task.unblock') {
-   assert.equal(persisted.unblock?.event,'task.unblocked','a BLOCKED -> BLOCKED runtime re-block must preserve unblock evidence');
+   assert.equal(persisted.unblock?.event,'task.unblocked','the Troubleshooter unblock fact is durable');
    assert.equal(persisted.unblock?.reason,'manual blocker resolution');
   }
   if (scenario.action==='task.cancel') {

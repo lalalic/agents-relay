@@ -15,12 +15,12 @@ export async function resumeInteractiveTask(
   await store.mutateJob(jobId, job => {
     const task: Task | undefined = job.tasks.find(item => item.id === taskId);
     const invocation = task?.interactiveInvocation;
-    if (!task || task.state !== 'BLOCKED' || !invocation ||
+    if (!task || task.state !== 'DRAFT' || !invocation ||
         invocation.invocationId !== invocationId || invocation.revision !== revision ||
         invocation.status !== decision || !invocation.decidedAt) return job;
-    // Both state transitions and retry eligibility are owned by task-lifecycle.mmd.
-    if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) {
-      throw new Error('Interactive Task unblock rejected by canonical lifecycle Graph');
+    // Accepted interactive decisions release the same waiting Task from DRAFT.
+    if (!tryTransitionTaskEvent(task, 'release').accepted) {
+      throw new Error('Interactive Task release rejected by canonical lifecycle Graph');
     }
     applyTaskUnblockRetrySnapshot(task);
     task.error = null;
@@ -37,7 +37,7 @@ export async function recoverInteractiveDecisions(store: DurableStore, jobId: st
   const job = await store.load(jobId);
   let recovered = false;
   for (const task of job.tasks) {
-    if (task.state !== 'BLOCKED' || !task.interactiveInvocation?.decidedAt) continue;
+    if (task.state !== 'DRAFT' || !task.interactiveInvocation?.decidedAt) continue;
     const invocation = task.interactiveInvocation;
     if (invocation.status === 'awaiting_decision' || !await shouldRecoverInteractiveDecision(invocation.status)) continue;
     recovered = await resumeInteractiveTask(store, job.id, task.id, invocation.invocationId, invocation.revision, invocation.status) || recovered;

@@ -61,7 +61,7 @@ export async function requestTroubleshooterEscalation(
     }
     if (!['QUEUED', 'RUNNING', 'FAILED'].includes(recovery.state)) throw new Error(`Troubleshooter ${recoveryTaskId} cannot escalate from ${recovery.state}`);
     if (original) {
-      const proposal = { path: 'escalation_gate' as const, targetTaskId: original.id, rootCause: request.context.trim(), solution: request.requiredAction.trim() };
+      const proposal = { path: 'escalation_gate' as const, targetTaskId: original.id, recoveryExecutionId: recovery.executionId ?? undefined, rootCause: request.context.trim(), solution: request.requiredAction.trim() };
       const decision = dispatchTaskResolutionSync(original, proposal, 'troubleshooter', {
         createEscalationGate: () => { original.resolution = materializeResolution(original, proposal, 'troubleshooter', now); },
       });

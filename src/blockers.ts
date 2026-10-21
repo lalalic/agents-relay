@@ -1,7 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockerDependent, BlockerReference, BlockerResolutionMode, Job, Task } from './types.js';
-import { applyTaskReleaseAction, applyTaskUnblockRetryAction, dispatchTaskAction } from './task-actions.js';
-import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { applyTaskReleaseAction } from './task-actions.js';
+import { isEffectivelyBlocked } from './unblock.js';
 import { dispatchBlockerResolution } from './workflow/blocker-resolution-v2.js';
 import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 
@@ -116,31 +116,20 @@ export async function resolveBlockerDependencies(options: {
     }
 
     const targetMatches = !!task && ['DRAFT', 'FAILED', 'BLOCKED', 'QUEUED'].includes(task.state) && task.attempt === relation.blockedAttempt;
-    let note = 'dependent task requeued';
+    let note = 'dependent task released from dependency wait';
     const decision = await dispatchBlockerResolution({
       resolutionAllowed: !(mode === 'verified' && options.resolution !== 'verified'),
       targetMatches,
       autonomousJob: targetJob?.executionMode === 'autonomous',
       effectivelyBlocked: !!task && isEffectivelyBlocked(task),
       alreadyUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),
-      isDraft: task?.state === 'DRAFT', isBlocked: task?.state === 'BLOCKED',
+      isDraft: task?.state === 'DRAFT', isBlocked: Boolean(task && isEffectivelyBlocked(task)),
       isFailed: task?.state === 'FAILED', isUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),
     }, async actionId => {
       if (!targetJob || !task) throw new Error('Blocker graph requested action without a matching dependent task');
-      if (actionId === 'blocker.autonomousUnblock') {
-        await unblockAutonomousTasks({ store, job: targetJob, tasks: [task], trigger: { source: 'blocker_job', reason: 'Blocker Job ' + blocker.id + ' resolved (' + options.resolution + ')', blockerJobId: blocker.id, resolution: options.resolution }, now });
-        unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-        note = 'dependent task unblocked for replanning';
-      } else if (actionId === 'blocker.acceptExistingUnblock') note = 'dependent Job already unblocked for replanning';
-      else if (actionId === 'blocker.releaseDraft') {
+      if (actionId === 'blocker.releaseDraft') {
         await applyTaskReleaseAction(task); task.error = null; task.updatedAt = now; delete task.blockedBy; await store.saveTask(task);
-      } else if (actionId === 'blocker.unblockTask') {
-        await unblockTask({ store, job: targetJob, task, trigger: { source: 'blocker_job', reason: 'Blocker Job ' + blocker.id + ' resolved (' + options.resolution + ')', blockerJobId: blocker.id, resolution: options.resolution }, now });
-        unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-      } else if (actionId === 'blocker.retryFailed') {
-        const result = await dispatchTaskAction(store, { id: 'task.retry', jobId: targetJob.id, taskId: task.id }); delete result.task.blockedBy; result.task.updatedAt = now; await store.saveTask(result.task);
-      } else if (actionId === 'blocker.retryUnblocked') { await applyTaskUnblockRetryAction(task); task.updatedAt = now; await store.saveTask(task); }
-      else throw new Error('Unsupported blocker graph action ' + actionId);
+      } else throw new Error('Unsupported blocker graph action ' + actionId);
       return {};
     });
     if (!decision.accepted || decision.target === 'wait') continue;
@@ -153,6 +142,7 @@ export async function resolveBlockerDependencies(options: {
     relation.resolvedAt = now;
     relation.resolution = options.resolution;
     relation.note = note;
+    unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
     resumed += 1;
   }
 

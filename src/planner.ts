@@ -56,7 +56,7 @@ export type PlannerRoundOptions = { guidance?: string; manual?: boolean; timeout
 
 function plannerTrigger(job: Job, manual = false): PlanTrigger {
   const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
-  const unblocked = job.tasks.filter(task => ['DRAFT', 'QUEUED', 'UNBLOCKED'].includes((task as Task & { state: string }).state) && task.unblock && !consumed.has(task.id));
+  const unblocked = job.tasks.filter(task => ['DRAFT', 'QUEUED'].includes(task.state) && task.unblock && !consumed.has(task.id));
   const hasUnblock = unblocked.length > 0 || Boolean(job.changeCycle && !job.changeCycle.consumedByPlannerTaskId);
   const decision = dispatchPlannerTrigger({
     manualPlan: manual && !hasUnblock,

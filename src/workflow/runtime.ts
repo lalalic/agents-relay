@@ -36,6 +36,10 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
   if (mutation === 'mutation.clearExecution') task.executionId = null;
   if (mutation === 'mutation.markLeaseExpired') task.error = 'Lease expired after maximum attempts';
   if (mutation === 'mutation.markStartupOrphanedExhausted') task.error = 'Orphaned after relayd restart after maximum attempts';
+  if (mutation === 'mutation.markUnknownOutcome') {
+    task.error = 'Worker execution outcome is unknown; Troubleshooter diagnosis is required before retry.';
+    task.failureReason = 'worker_outcome_unknown';
+  }
   if (mutation === 'mutation.markPlannerUnavailable') task.error = 'No objective planner configured';
   if (mutation === 'mutation.preparePlatformFallback') {
     task.error = null;
@@ -52,12 +56,16 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
     task.leaseOwner = null;
     task.leaseExpiresAt = null;
     task.executionId = null;
-    task.failureReason = task.platformFailure?.safeToReroute ? 'worker_platform_fallback_unavailable' : 'worker_outcome_unknown';
+    task.failureReason = ['outcome_unknown', 'start_ack_timeout'].includes(task.platformFailure?.classification ?? '')
+      ? 'worker_outcome_unknown' : 'worker_platform_failure';
   }
 }
 
 
-export function applyTaskGraphTarget(task: Task, target: TaskState, timestamp = new Date().toISOString()): void {
+export function applyTaskGraphTarget(task: Task, target: TaskState, timestamp = new Date().toISOString(), authoritativeUnblock = false): void {
+  if (target === 'BLOCKED' && task.agentName !== 'troubleshooter') throw new Error(`Only a Troubleshooter Task may become BLOCKED (${task.id})`);
+  if (task.state === 'BLOCKED' && target === 'QUEUED' && (!authoritativeUnblock || task.agentName !== 'troubleshooter')) throw new Error(`Blocked Task ${task.id} requires an authoritative Troubleshooter unblock before transition`);
+  if (task.state === 'BLOCKED' && target !== 'QUEUED' && target !== 'CANCELLED' && target !== 'BLOCKED') throw new Error(`Blocked Task ${task.id} requires an authoritative Troubleshooter unblock before transition`);
   const previous = Date.parse(task.updatedAt), candidate = Date.parse(timestamp);
   task.state = target;
   task.updatedAt = Number.isFinite(previous)

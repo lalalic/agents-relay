@@ -5,15 +5,12 @@ description: Validates authoritative unblock requests and safely resumes blocked
 flowchart LR
 %% relay: initial blocked
 blocked["state: blocked"]
-autonomous["state: autonomous_replan"]
-fixed["state: fixed_retry"]
+queued["state: troubleshooter_queued"]
 
-autonomousJob["guard: autonomousJob"]
-replan["action: unblock.replan"]
+eligible["guard: blockedTroubleshooter"]
 retry["action: unblock.retry"]
 
-blocked -->|on: task.authoritative_unblock| autonomousJob
-autonomousJob -->|true| replan
-replan --> autonomous
-autonomousJob -->|false| retry
-retry --> fixed
+blocked -->|on: task.authoritative_unblock| eligible
+eligible -->|true| retry
+eligible -->|false| blocked
+retry --> queued

@@ -11,7 +11,13 @@ blocked["state: BLOCKED"]
 succeeded["state: SUCCEEDED"]
 failed["state: FAILED"]
 cancelled["state: CANCELLED"]
-platformFallbackSafe["guard: platformFallbackSafe"]
+draftBlockAllowed["guard: troubleshooterTask"]
+queuedReviewBlockAllowed["guard: troubleshooterTask"]
+queuedBlockAllowed["guard: troubleshooterTask"]
+runningBlockAllowed["guard: troubleshooterTask"]
+unblockAllowed["guard: troubleshooterTask"]
+interactiveWaitAllowed["guard: awaitingInteractiveDecision"]
+recoverBlockAllowed["guard: troubleshooterTask"]
 
 depSat["guard: dependenciesSatisfied"]
 depUnsat["guard: dependenciesUnsatisfied"]
@@ -28,14 +34,9 @@ recoveryReopenClearReason["action: mutation.clearFailureReason"]
 recoveryReopenClearLease["action: mutation.clearLease"]
 recoveryReopenClearExecution["action: mutation.clearExecution"]
 
-retryAvailableRunning["guard: retryAvailable"]
 plannerRetryAvailable["guard: retryAvailable"]
 plannerUnavailableMark["action: mutation.markPlannerUnavailable"]
-orphanRetryAvailable["guard: retryAvailable"]
-orphanRetryClearError["action: mutation.clearError"]
-orphanRetryClearLease["action: mutation.clearLease"]
-orphanRetryClearExecution["action: mutation.clearExecution"]
-orphanFailMark["action: mutation.markStartupOrphanedExhausted"]
+orphanFailMark["action: mutation.markUnknownOutcome"]
 orphanFailClearLease["action: mutation.clearLease"]
 orphanFailClearExecution["action: mutation.clearExecution"]
 plannerRetryClearError["action: mutation.clearError"]
@@ -43,17 +44,10 @@ plannerRetryClearLease["action: mutation.clearLease"]
 plannerRetryClearExecution["action: mutation.clearExecution"]
 plannerFailClearLease["action: mutation.clearLease"]
 plannerFailClearExecution["action: mutation.clearExecution"]
-retryAvailableQueued["guard: retryAvailable"]
-leaseRetryRunningClearError["action: mutation.clearError"]
-leaseRetryRunningClearLease["action: mutation.clearLease"]
-leaseRetryRunningClearExecution["action: mutation.clearExecution"]
-leaseFailRunningMark["action: mutation.markLeaseExpired"]
+leaseFailRunningMark["action: mutation.markUnknownOutcome"]
 leaseFailRunningClearLease["action: mutation.clearLease"]
 leaseFailRunningClearExecution["action: mutation.clearExecution"]
-leaseRetryQueuedClearError["action: mutation.clearError"]
-leaseRetryQueuedClearLease["action: mutation.clearLease"]
-leaseRetryQueuedClearExecution["action: mutation.clearExecution"]
-leaseFailQueuedMark["action: mutation.markLeaseExpired"]
+leaseFailQueuedMark["action: mutation.markUnknownOutcome"]
 leaseFailQueuedClearLease["action: mutation.clearLease"]
 leaseFailQueuedClearExecution["action: mutation.clearExecution"]
 
@@ -80,8 +74,6 @@ completeClearError["action: mutation.clearError"]
 completeClearReason["action: mutation.clearFailureReason"]
 unblockRetryClearError["action: mutation.clearError"]
 unblockRetryClearReason["action: mutation.clearFailureReason"]
-unblockDraftClearError["action: mutation.clearError"]
-unblockDraftClearReason["action: mutation.clearFailureReason"]
 failedRetryClearError["action: mutation.clearError"]
 failedRetryClearReason["action: mutation.clearFailureReason"]
 recoverStartClearError["action: mutation.clearError"]
@@ -97,7 +89,9 @@ draft -->|on: reconcile| depSat
 depSat -->|true| reconcileDraftClearError
 reconcileDraftClearError --> reconcileDraftClearReason
 reconcileDraftClearReason --> queued
-draft -->|on: block| blocked
+draft -->|on: block| draftBlockAllowed
+draftBlockAllowed -->|true| blocked
+draftBlockAllowed -->|false| failed
 draft -->|on: cancel| cancelled
 
 queued -->|on: hold| draft
@@ -122,35 +116,41 @@ reviewApproveQueuedClearReason --> succeeded
 queued -->|on: review.changes_required| reviewChangesQueuedClearError
 reviewChangesQueuedClearError --> reviewChangesQueuedClearReason
 reviewChangesQueuedClearReason --> succeeded
-queued -->|on: review.blocked| blocked
-queued -->|on: block| blocked
+queued -->|on: review.blocked| queuedReviewBlockAllowed
+queuedReviewBlockAllowed -->|true| blocked
+queuedReviewBlockAllowed -->|false| failed
+queued -->|on: block| queuedBlockAllowed
+queuedBlockAllowed -->|true| blocked
+queuedBlockAllowed -->|false| failed
 queued -->|on: fail| failed
 queued -->|on: effect.launchTask.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
-queued -->|on: worker.platform_failure| platformFallbackSafe
-platformFallbackSafe -->|true| platformFallbackClearFailure
-platformFallbackClearFailure["action: mutation.preparePlatformFallback"]
-platformFallbackClearFailure --> queued
-platformFallbackSafe -->|false| platformFallbackQuarantine
+queued -->|on: worker.platform_failure| platformFallbackQuarantine
 platformFallbackQuarantine["action: mutation.quarantinePlatformFailure"]
-platformFallbackQuarantine --> blocked
+platformFallbackQuarantine --> failed
 queued -->|on: planner.unavailable| plannerUnavailableMark
 plannerUnavailableMark --> failed
-queued -->|on: execution.orphaned| orphanRetryAvailable
-queued -->|on: lease.expired| retryAvailableQueued
-retryAvailableQueued -->|true| leaseRetryQueuedClearError
-leaseRetryQueuedClearError --> leaseRetryQueuedClearLease
-leaseRetryQueuedClearLease --> leaseRetryQueuedClearExecution
-leaseRetryQueuedClearExecution --> queued
-retryAvailableQueued -->|false| leaseFailQueuedMark
+queued -->|on: execution.orphaned| orphanFailMark
+orphanFailMark --> orphanFailClearLease
+orphanFailClearLease --> orphanFailClearExecution
+orphanFailClearExecution --> failed
+queued -->|on: lease.expired| leaseFailQueuedMark
 leaseFailQueuedMark --> leaseFailQueuedClearLease
 leaseFailQueuedClearLease --> leaseFailQueuedClearExecution
 leaseFailQueuedClearExecution --> failed
 queued -->|on: cancel| cancelled
 
-running -->|on: task.blocked| blocked
+running -->|on: interactive.waiting| interactiveWaitAllowed
+interactiveWaitAllowed -->|true| runningWaitClearLease
+runningWaitClearLease["action: mutation.clearLease"]
+runningWaitClearLease --> runningWaitClearExecution
+runningWaitClearExecution["action: mutation.clearExecution"]
+runningWaitClearExecution --> draft
+running -->|on: task.blocked| runningBlockAllowed
+runningBlockAllowed -->|true| blocked
+runningBlockAllowed -->|false| failed
 running -->|on: task.progress| running
 running -->|on: review.approved| reviewApproveRunningClearError
 reviewApproveRunningClearError --> reviewApproveRunningClearReason
@@ -158,25 +158,17 @@ reviewApproveRunningClearReason --> succeeded
 running -->|on: review.changes_required| reviewChangesRunningClearError
 reviewChangesRunningClearError --> reviewChangesRunningClearReason
 reviewChangesRunningClearReason --> succeeded
-running -->|on: review.blocked| blocked
+running -->|on: review.blocked| runningBlockAllowed
 running -->|on: task.completed| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
 running -->|on: worker.platform_failure| runningPlatformFailureQuarantine
 runningPlatformFailureQuarantine["action: mutation.quarantinePlatformFailure"]
-runningPlatformFailureQuarantine --> blocked
+runningPlatformFailureQuarantine --> failed
 running -->|on: watchdog.failed| failed
 running -->|on: planner.failed| plannerRetryAvailable
-running -->|on: execution.orphaned| orphanRetryAvailable
-orphanRetryAvailable -->|true| orphanRetryClearError
-orphanRetryClearError --> orphanRetryClearLease
-orphanRetryClearLease --> orphanRetryClearExecution
-orphanRetryClearExecution --> queued
-orphanRetryAvailable -->|false| orphanFailMark
-orphanFailMark --> orphanFailClearLease
-orphanFailClearLease --> orphanFailClearExecution
-orphanFailClearExecution --> failed
+running -->|on: execution.orphaned| orphanFailMark
 plannerRetryAvailable -->|true| plannerRetryClearError
 plannerRetryClearError --> plannerRetryClearLease
 plannerRetryClearLease --> plannerRetryClearExecution
@@ -184,12 +176,7 @@ plannerRetryClearExecution --> queued
 plannerRetryAvailable -->|false| plannerFailClearLease
 plannerFailClearLease --> plannerFailClearExecution
 plannerFailClearExecution --> failed
-running -->|on: lease.expired| retryAvailableRunning
-retryAvailableRunning -->|true| leaseRetryRunningClearError
-leaseRetryRunningClearError --> leaseRetryRunningClearLease
-leaseRetryRunningClearLease --> leaseRetryRunningClearExecution
-leaseRetryRunningClearExecution --> queued
-retryAvailableRunning -->|false| leaseFailRunningMark
+running -->|on: lease.expired| leaseFailRunningMark
 leaseFailRunningMark --> leaseFailRunningClearLease
 leaseFailRunningClearLease --> leaseFailRunningClearExecution
 leaseFailRunningClearExecution --> failed
@@ -197,12 +184,9 @@ running -->|on: task.cancelled| cancelled
 running -->|on: pause| queued
 running -->|on: cancel| cancelled
 
-autonomousJob["guard: autonomousJob"]
-blocked -->|on: task.unblocked| autonomousJob
-autonomousJob -->|true| unblockDraftClearError
-unblockDraftClearError --> unblockDraftClearReason
-unblockDraftClearReason --> draft
-autonomousJob -->|false| unblockRetryClearError
+blocked -->|on: task.unblocked| unblockAllowed
+unblockAllowed -->|true| unblockRetryClearError
+unblockAllowed -->|false| blocked
 unblockRetryClearError --> unblockRetryClearReason
 unblockRetryClearReason --> queued
 blocked -->|on: cancel| cancelled
@@ -220,7 +204,9 @@ recoverComplete -->|true| recoverCompleteClearError
 recoverCompleteClearError --> recoverCompleteClearReason
 recoverCompleteClearReason --> succeeded
 failed -->|on: task.blocked| recoverBlocked
-recoverBlocked -->|true| blocked
+recoverBlocked -->|true| recoverBlockAllowed
+recoverBlockAllowed -->|true| blocked
+recoverBlockAllowed -->|false| failed
 failed -->|on: task.failed| recoverFailed
 recoverFailed -->|true| failed
 failed -->|on: task.cancelled| recoverCancelled

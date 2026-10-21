@@ -93,7 +93,7 @@ Example:
   'job merge': `Request an idempotent external pull-request merge; return QUEUED until confirmed, when the Graph Engine completes the Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. The current PR head SHA is pinned into the merge request.`,
-  'job unblock': `Authoritatively unblock the effective BLOCKED work Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Autonomous Jobs move blocked work to planner-waiting DRAFT with durable unblock facts; fixed Jobs resume directly as QUEUED with a reset retry budget.`,
+  'job unblock': `Authoritatively unblock BLOCKED Troubleshooter Tasks in one Job.\n\nRequired: --repo OWNER/REPO --pr NUMBER --id JOB_ID --reason TEXT. Each unblocked Troubleshooter is queued as the same Task and must rerun, verify the condition, and issue a fresh resolution before retrying an original failed Task.`,
   'job cancel': `Cancel the durable Job and close its backing pull request.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID. Nonterminal Tasks are cancelled before the PR is closed.`,

@@ -10,11 +10,12 @@ export const TASK_RESOLUTION_PATHS: readonly TaskResolutionPath[] = [
 const source = readFileSync(new URL('../../workflow/task-resolution.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean => facts.durableFacts[name] === true;
 export const taskResolutionV2 = new GraphRuntime(source, {
-  states: new Set(['unresolved', 'check_owner', 'check_path', 'resolved']),
+  states: new Set(['unresolved', 'check_owner', 'check_path', 'check_fresh_execution', 'resolved', 'rejected']),
   guards: {
     recoveryOwnerAvailable: boolGuard('recoveryOwnerAvailable'), plannerOwnerAvailable: boolGuard('plannerOwnerAvailable'),
     exactOriginalRetry: boolGuard('exactOriginalRetry'), sameJobDependency: boolGuard('sameJobDependency'),
     blockerJobDependency: boolGuard('blockerJobDependency'), escalationGate: boolGuard('escalationGate'), genuinelyObsolete: boolGuard('genuinelyObsolete'),
+    freshRecoveryExecution: boolGuard('freshRecoveryExecution'),
   },
   actions: Object.fromEntries(['resolution.activateRecovery','resolution.attachSameJobDependency','resolution.registerBlockerDependency','resolution.createEscalationGate','resolution.cancelSupersede'].map(id => [id, { id }])),
   events: { 'resolution.propose': { id: 'resolution.propose' } },
@@ -24,16 +25,22 @@ export function unresolvedTask(task: Task): boolean { return task.kind !== 'plan
 export function validateResolutionProposal(job: Job, original: Task, proposal: TaskResolutionProposal): void {
   if (!TASK_RESOLUTION_PATHS.includes(proposal.path)) throw new Error(`Unknown task resolution path ${proposal.path}`);
   if (proposal.path === 'exact_original_retry' && original.state !== 'FAILED') throw new Error('Exact-original retry requires a FAILED original Task');
-  if (proposal.path === 'same_job_dependency' && (!proposal.targetTaskId || !job.tasks.some(task => task.id === proposal.targetTaskId && task.jobId === job.id))) throw new Error('Same-Job dependency resolution requires an existing target Task in the same Job');
+  if (proposal.path === 'same_job_dependency' && (!proposal.targetTaskId || proposal.targetTaskId === original.id || !job.tasks.some(task => task.id === proposal.targetTaskId && task.jobId === job.id && !['SUCCEEDED','CANCELLED'].includes(task.state)))) throw new Error('Same-Job dependency resolution requires an existing unresolved target Task in the same Job');
   if (proposal.path === 'blocker_job_dependency' && (!proposal.targetJobId || !proposal.mode)) throw new Error('Blocker-Job dependency resolution requires targetJobId and merge or verified mode');
   if (proposal.path === 'escalation_gate' && (!proposal.rootCause || !proposal.solution)) throw new Error('Escalation gate resolution requires rootCause and solution');
   if (proposal.path === 'cancel_supersede' && !proposal.rootCause) throw new Error('Cancellation/supersession requires an explicit obsolescence rootCause');
 }
 export function resolutionFacts(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): Readonly<Record<string, unknown>> {
-  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry', sameJobDependency: proposal.path === 'same_job_dependency', blockerJobDependency: proposal.path === 'blocker_job_dependency', escalationGate: proposal.path === 'escalation_gate', genuinelyObsolete: proposal.path === 'cancel_supersede', unresolved: unresolvedTask(task) };
+  const freshRecoveryExecution = owner !== 'troubleshooter' || proposal.path !== 'exact_original_retry' || (Boolean(proposal.recoveryExecutionId)
+    && proposal.recoveryExecutionId !== task.resolution?.recoveryExecutionId);
+  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry' && task.state === 'FAILED', sameJobDependency: proposal.path === 'same_job_dependency' && owner !== null && proposal.targetTaskId !== task.id, blockerJobDependency: proposal.path === 'blocker_job_dependency' && owner !== null && Boolean(proposal.targetJobId && proposal.mode), escalationGate: proposal.path === 'escalation_gate' && owner === 'troubleshooter' && Boolean(proposal.rootCause && proposal.solution), genuinelyObsolete: proposal.path === 'cancel_supersede' && Boolean(proposal.rootCause), freshRecoveryExecution, unresolved: unresolvedTask(task) };
 }
 export function decideTaskResolution(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): GraphDecision {
-  return dispatchWorkflowGraphSync(taskResolutionV2, { initialState: 'unresolved', input: { transport: 'event', id: 'resolution.propose', payload: proposal }, durableFacts: resolutionFacts(task, proposal, owner), graphName: 'task-resolution', isTransientState: state => state === 'check_owner' || state === 'check_path', maxSteps: 4 });
+  return checkedResolutionDecision(dispatchWorkflowGraphSync(taskResolutionV2, { initialState: 'unresolved', input: { transport: 'event', id: 'resolution.propose', payload: proposal }, durableFacts: resolutionFacts(task, proposal, owner), graphName: 'task-resolution', isTransientState: state => ['check_owner','check_path','check_fresh_execution'].includes(state), maxSteps: 8 }));
+}
+
+function checkedResolutionDecision(decision: GraphDecision): GraphDecision {
+  return decision.accepted && decision.target === 'rejected' ? { ...decision, accepted: false, reason: 'no_transition' } : decision;
 }
 
 export type TaskResolutionEffects = {
@@ -54,12 +61,12 @@ export function dispatchTaskResolutionSync(
     'resolution.createEscalationGate': effects.createEscalationGate as (() => void) | undefined,
     'resolution.cancelSupersede': effects.cancelSupersede as (() => void) | undefined,
   };
-  return dispatchWorkflowGraphSync(taskResolutionV2, {
+  return checkedResolutionDecision(dispatchWorkflowGraphSync(taskResolutionV2, {
     initialState: 'unresolved', input: { transport: 'event', id: 'resolution.propose', payload: proposal },
     durableFacts: resolutionFacts(task, proposal, owner), graphName: 'task-resolution',
-    isTransientState: state => state === 'check_owner' || state === 'check_path', maxSteps: 6,
+    isTransientState: state => ['check_owner','check_path','check_fresh_execution'].includes(state), maxSteps: 8,
     executeAction: actionId => { const handler=handlers[actionId]; if(!handler) throw new Error(`Task resolution effect ${actionId} is unavailable`); handler(); return {}; },
-  });
+  }));
 }
 
 export async function dispatchTaskResolution(
@@ -72,20 +79,20 @@ export async function dispatchTaskResolution(
     'resolution.createEscalationGate': effects.createEscalationGate,
     'resolution.cancelSupersede': effects.cancelSupersede,
   };
-  return dispatchWorkflowGraph(taskResolutionV2, {
+  return checkedResolutionDecision(await dispatchWorkflowGraph(taskResolutionV2, {
     initialState: 'unresolved',
     input: { transport: 'event', id: 'resolution.propose', payload: proposal },
     durableFacts: resolutionFacts(task, proposal, owner),
     graphName: 'task-resolution',
-    isTransientState: state => state === 'check_owner' || state === 'check_path',
-    maxSteps: 6,
+    isTransientState: state => ['check_owner','check_path','check_fresh_execution'].includes(state),
+    maxSteps: 8,
     executeAction: async actionId => {
       const handler = handlers[actionId];
       if (!handler) throw new Error(`Task resolution effect ${actionId} is unavailable`);
       await handler();
       return {} as ActionReceipt;
     },
-  });
+  }));
 }
 
 export function materializeResolution(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner'], now = new Date().toISOString()): TaskResolution {
@@ -109,5 +116,6 @@ export function attachResolutionOwnership(job: Job, child: Task, proposal: TaskR
 }
 
 export function claimExactOriginalRecovery(original: Task, recovery: Task): void {
-  original.resolution = materializeResolution(original, { path: 'exact_original_retry', targetTaskId: original.id, rootCause: original.failureReason ?? original.error ?? 'durable failure', solution: `Troubleshooter ${recovery.id} diagnosis and exact-original recovery` }, 'troubleshooter');
+  if (!recovery.executionId) throw new Error(`Troubleshooter ${recovery.id} has no current execution for a fresh resolution`);
+  original.resolution = materializeResolution(original, { path: 'exact_original_retry', targetTaskId: original.id, recoveryExecutionId: recovery.executionId, rootCause: original.failureReason ?? original.error ?? 'durable failure', solution: `Troubleshooter ${recovery.id} diagnosis and exact-original recovery` }, 'troubleshooter');
 }

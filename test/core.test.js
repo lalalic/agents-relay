@@ -238,30 +238,16 @@ test('dashboard job lifecycle override cannot invent a transition absent from th
   assert.equal((await store.load('j')).state, 'ACTIVE');
 });
 
-test('dashboard direct task state override is durable, audited, and does not reconcile', async () => {
-  const manual = task('manual', 'FAILED');
-  manual.error = 'historical failure';
-  manual.executionId = 'old-execution';
-  manual.leaseOwner = 'old-owner';
-  manual.leaseExpiresAt = new Date(Date.now() + 10000).toISOString();
-  const store = new InMemoryStore(job([manual]));
-  const durable = await dashboardTaskSetState(store)('j', 'manual', 'SUCCEEDED');
-  const updatedTask = durable.tasks.find(item => item.id === 'manual');
-  assert.equal(updatedTask.state, 'SUCCEEDED');
-  assert.equal(updatedTask.executionId, null);
-  assert.equal(updatedTask.leaseOwner, null);
-  assert.equal(updatedTask.leaseExpiresAt, null);
-  assert.equal(updatedTask.manualStateOverrides.length, 1);
-  assert.equal(updatedTask.manualStateOverrides[0].from, 'FAILED');
-  assert.equal(updatedTask.manualStateOverrides[0].to, 'SUCCEEDED');
-  assert.equal(updatedTask.manualStateOverrides[0].actor, 'dashboard-user');
-  assert.equal(updatedTask.error, 'historical failure');
+test('dashboard cannot directly override task lifecycle state', async () => {
+  const store = new InMemoryStore(job([task('manual', 'FAILED')]));
+  await assert.rejects(() => dashboardTaskSetState(store)('j', 'manual', 'SUCCEEDED'), /lifecycle state is managed by Relay/);
+  assert.equal((await store.load('j')).tasks[0].state, 'FAILED');
 });
 
 test('dashboard task state override cannot invent a transition absent from the canonical graph', async () => {
   const manual = task('manual-invalid', 'SUCCEEDED');
   const store = new InMemoryStore(job([manual]));
-  await assert.rejects(() => dashboardTaskSetState(store)('j', 'manual-invalid', 'RUNNING'), /Invalid task transition SUCCEEDED -> RUNNING/);
+  await assert.rejects(() => dashboardTaskSetState(store)('j', 'manual-invalid', 'RUNNING'), /lifecycle state is managed by Relay/);
   assert.equal((await store.load('j')).tasks[0].state, 'SUCCEEDED');
 });
 
@@ -446,8 +432,9 @@ test('reconciler quarantines RUNNING legacy orphan without an execution identity
   const durable=(await store.load('j')).tasks[0];
   assert.equal(durable.adapter,'orchestrator');
   assert.equal(durable.workerRequirements,undefined);
-  assert.equal(durable.state,'BLOCKED');
-  assert.match(durable.error,/automatic replay is unsafe/);
+  assert.equal(durable.state,'FAILED');
+  assert.match(durable.error,/outcome is unknown/);
+  assert.equal(durable.failureReason,'worker_outcome_unknown');
   assert.equal(durable.executionId,null);
   assert.equal(durable.leaseOwner,null);
   assert.equal(durable.threadId,null);
@@ -462,7 +449,7 @@ test('reconciler preserves active ownership and terminal legacy records', async 
   const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
   await reconciler.reconcile('j');
-  { const durable=(await store.load('j')).tasks; assert.deepEqual(durable.map(item => item.adapter), ['orchestrator','orchestrator','orchestrator']); assert.deepEqual(durable.map(item=>item.state), ['RUNNING','BLOCKED','SUCCEEDED']); }
+  { const durable=(await store.load('j')).tasks; assert.deepEqual(durable.map(item => item.adapter), ['orchestrator','orchestrator','orchestrator','codex']); assert.deepEqual(durable.map(item=>item.state), ['RUNNING','FAILED','SUCCEEDED','QUEUED']); }
 });
 
 test('CLI no longer exposes manual orchestrator task start or complete', async () => {
@@ -514,7 +501,7 @@ test('manual retry budget advances in three-attempt windows without resetting hi
   assert.equal(extendRetryBudget({attempt:6,maxAttempts:6}),9);
   assert.equal(extendRetryBudget({attempt:8,maxAttempts:9}),12);
 });
-test('schedules dependencies but leaves BLOCKED manual', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
+test('schedules dependencies while preserving only Troubleshooter BLOCKED state', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); b.agentName='troubleshooter'; const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
 test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=schedule(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
 test('RUNNING tasks cannot return to DRAFT', async () => { const current=task('running','RUNNING'); await assert.rejects(transitionTaskEvent(current,'hold'),/No enabled workflow transition from RUNNING on hold/); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
@@ -561,30 +548,32 @@ test('expired durable execution lease is reclaimable after relay owner change', 
   const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],projectPathForJob:()=>process.cwd()});
   await reconciler.reconcile('j');
   const saved=(await store.load('j')).tasks.find(item=>item.id==='expired-owner');
-  assert.equal(saved.state,'BLOCKED');
+  assert.equal(saved.state,'FAILED');
   assert.equal(saved.executionId,null);
   assert.equal(saved.leaseOwner,null);
   assert.equal(saved.attempt,1);
-  assert.match(saved.error,/event bus/);
+  assert.match(saved.error,/outcome is unknown/);
+  assert.equal(saved.failureReason,'worker_outcome_unknown');
   assert.equal(adapter.launches,0);
 });
-test('startup recovery graph retries an old-owner Codex execution', async () => {
+test('startup recovery fails closed for an old-owner Codex execution with unknown outcome', async () => {
   const running=task('restart-codex','RUNNING');
   running.attempt=1; running.maxAttempts=3; running.executionId='old-execution'; running.leaseOwner='relayd-old'; running.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([running])); const adapter=new FakeAdapter();
   const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[adapter],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
-  assert.equal(saved.state,'QUEUED'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
+  assert.equal(saved.state,'FAILED'); assert.equal(saved.failureReason,'worker_outcome_unknown'); assert.equal(saved.attempt,1); assert.equal(saved.leaseOwner,null); assert.equal(saved.executionId,null); assert.equal(adapter.launches,0);
 });
-test('startup recovery reclaims a claimed QUEUED execution owned by a previous daemon', async () => {
+test('startup recovery fails closed for a claimed QUEUED execution owned by a previous daemon', async () => {
   const queued=task('orphan-queued','QUEUED');
   queued.attempt=1; queued.maxAttempts=3; queued.executionId='old-queued-execution'; queued.leaseOwner='relayd-old'; queued.leaseExpiresAt='2099-09-25T17:00:00.000Z';
   const store=new InMemoryStore(job([queued]));
   const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
-  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.state,'FAILED');
+  assert.equal(saved.failureReason,'worker_outcome_unknown');
   assert.equal(saved.executionId,null);
   assert.equal(saved.leaseOwner,null);
   assert.equal(saved.attempt,1);
@@ -608,7 +597,7 @@ test('startup recovery graph terminalizes an exhausted orphan without a new gene
   const reconciler=managedReconciler(store,{owner:'relayd-new',now:new Date('2026-09-25T16:45:00.000Z'),adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),projectPathForJob:()=>process.cwd()});
   await reconciler.recoverStartupOrphans('j');
   const saved=(await store.load('j')).tasks[0];
-  assert.equal(saved.state,'FAILED'); assert.equal(saved.attempt,3); assert.match(saved.error,/Orphaned after relayd restart after maximum attempts/); assert.equal(saved.executionId,null);
+  assert.equal(saved.state,'FAILED'); assert.equal(saved.attempt,3); assert.match(saved.error,/outcome is unknown/); assert.equal(saved.failureReason,'worker_outcome_unknown'); assert.equal(saved.executionId,null);
 });
 test('completed jobs remain behind the runnable gate even if stale task data appears', () => { const review=task('review','QUEUED'); const completed={...job([review]),id:'completed-with-new-work',state:'COMPLETED'}; const item={job:completed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]),[]); });
 test('ACTIVE jobs with failed tasks remain eligible for reconciliation', () => { const failedTask=task('failed-task','FAILED'); const failed={...job([failedTask]),id:'failed'}; const item={job:failed,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null}; assert.deepEqual(runnableManagedJobs([item]).map(x=>x.id),['failed']); });
@@ -913,7 +902,7 @@ test('model task requires an event bus before launch', async () => {
   await reconciler.reconcile('j');
   const durable=(await store.load('j')).tasks[0];
   assert.equal(adapter.launches,0);
-  assert.equal(durable.state,'BLOCKED');
+  assert.equal(durable.state,'FAILED');
   assert.match(durable.error,/event bus/);
 });
 
@@ -974,7 +963,7 @@ test('ChatGPT start acknowledgement timeout is explicit and worker-owned', async
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:20});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,50));
-  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'BLOCKED'); assert.equal(durable.failureReason,'worker_outcome_unknown'); assert.equal(durable.platformFailure?.classification,'start_ack_timeout'); assert.match(durable.error,/worker_start_timeout/); await stop();
+  const durable=(await store.load('j')).tasks[0]; assert.equal(durable.state,'FAILED'); assert.equal(durable.failureReason,'worker_outcome_unknown'); assert.equal(durable.platformFailure?.classification,'start_ack_timeout'); assert.match(durable.error,/worker_start_timeout/); await stop();
 });
 
 test('ChatGPT reviewer uses the same start acknowledgement policy as normal ChatGPT tasks', async () => {
@@ -1013,11 +1002,12 @@ test('reviewer start acknowledgement timeout quarantines the unknown ChatGPT sub
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j'); await new Promise(resolve=>setTimeout(resolve,100));
   const saved=await store.load('j');
   const review=saved.tasks.find(item=>item.agentName==='reviewer');
-  assert.equal(review?.state,'BLOCKED');
+  assert.equal(review?.state,'FAILED');
   assert.equal(review?.failureReason,'worker_outcome_unknown');
   assert.equal(review?.platformFailure?.executionId,review?.executionHistory?.[0]?.id);
   const recovery=saved.tasks.find(item=>item.agentName==='troubleshooter'&&item.parentTaskId===review?.id);
-  assert.equal(recovery,undefined,'unknown ChatGPT submission outcome is quarantined without automatic replay or unnecessary Troubleshooter work');
+  assert.ok(recovery,'unknown ChatGPT submission outcome must be diagnosed before any retry');
+  assert.equal((await store.load('j')).tasks.find(item => item.id === review.id).failureReason,'worker_outcome_unknown');
   await stop(); await reconciler.close(); await rm(contextRoot,{recursive:true,force:true});
 });
 
@@ -1185,7 +1175,7 @@ test('ambiguous ChatGPT Browser Workspace delivery failure is quarantined withou
   await new Promise(resolve=>setTimeout(resolve,20));
   const durable=await store.load('j');
   const original=durable.tasks.find(item=>item.id===t.id);
-  assert.equal(original.state,'BLOCKED');
+  assert.equal(original.state,'FAILED');
   assert.equal(original.attempt,1);
   assert.equal(original.executionId,null);
   assert.match(original.error,/browser-workspace runtime dependency unavailable/);
@@ -1212,7 +1202,7 @@ test('running ChatGPT delivery rejection is quarantined and cannot reroute after
   reconciler.live.set(t.id,{jobId:'j',taskId:t.id,executionId:t.executionId,execution:{id:'old',promise:new Promise(()=>{}),cancel(){cancelled++;}},controller:new AbortController(),launchBarrier:0,workerStarted:true,processSettled:false});
   await reconciler.trigger();
   const saved=(await store.load('j')).tasks[0];
-  assert.equal(saved.state,'BLOCKED');
+  assert.equal(saved.state,'FAILED');
   assert.equal(saved.failureReason,'worker_outcome_unknown');
   assert.equal(saved.platformFailure.safeToReroute,true);
   assert.equal(cancelled,1);
@@ -1236,7 +1226,7 @@ test('stale old-generation failure cannot cancel or mutate the current execution
   await reconciler.close();
 });
 
-test('confirmed ChatGPT platform rejection routes the same Task to a compatible Codex worker', async () => {
+test('confirmed ChatGPT platform rejection fails the same Task without automatic rerouting', async () => {
   const t=task('chat-platform-reroute');
   t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
   t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
@@ -1248,31 +1238,27 @@ test('confirmed ChatGPT platform rejection routes the same Task to a compatible 
   const adapter=new FakeAdapter(); const stopEvents=await bus.subscribe('j',async event=>events.push(event));
   class FailureHarness extends Reconciler {
     trigger(){return this.failLaunch('j',t.id,t.executionId,PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:'MODEL_UNAVAILABLE',message:'unsupported'}),'delivery');}
-    routeForRetry(task){return this.routeTaskForExecution(job([task]),task);}
   }
   const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter(),adapter],eventBus:bus,maxConcurrent:0});
   await reconciler.trigger(); await new Promise(resolve=>setTimeout(resolve,30));
-  let saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
-  assert.equal(saved.state,'QUEUED');
-  assert.equal(saved.routing,undefined);
-  await reconciler.routeForRetry(saved);
-  saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
+  const saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
   assert.equal(saved.id,t.id);
-  assert.equal(saved.state,'QUEUED');
-  assert.equal(saved.adapter,'codex');
-  assert.equal(saved.routing?.provider,'openai');
-  assert.equal(saved.workerSelection?.adapter,'codex');
+  assert.equal(saved.state,'FAILED');
+  assert.equal(saved.failureReason,'worker_platform_failure');
+  assert.equal(saved.adapter,'chatgpt');
+  assert.equal(saved.routing,undefined);
+  assert.equal(saved.workerSelection,undefined);
   assert.equal(saved.executionHistory?.length,1);
   assert.equal(saved.executionHistory?.[0]?.id,'chat-platform-exec');
   assert.equal(saved.platformFailure?.classification,'model_unavailable');
   assert.equal(saved.platformFailure?.executionId,'chat-platform-exec');
   assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
-  assert.equal(events.filter(event=>event.type==='task.rerouting').length,1);
-  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
+  assert.equal(events.filter(event=>event.type==='task.rerouting').length,0);
+  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),true);
   await reconciler.close(); await stopEvents();
 });
 
-test('confirmed ChatGPT rejection with no Codex route follows the graph BLOCKED quarantine edge', async () => {
+test('confirmed ChatGPT rejection with no Codex route follows the FAILED quarantine edge', async () => {
   const t=task('chat-platform-no-codex'); t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
   t.executionId='chat-platform-no-codex-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
   t.executionHistory=[{id:t.executionId,attempt:1,startedAt:now()}];
@@ -1283,8 +1269,8 @@ test('confirmed ChatGPT rejection with no Codex route follows the graph BLOCKED 
   const reconciler=new FailureHarness(store,{owner:'test',adapters:[new FakeChatGptAdapter()],eventBus:bus,maxConcurrent:0});
   await reconciler.trigger();
   const saved=(await store.load('j')).tasks[0];
-  assert.equal(saved.state,'BLOCKED');
-  assert.equal(saved.failureReason,'worker_platform_fallback_unavailable');
+  assert.equal(saved.state,'FAILED');
+  assert.equal(saved.failureReason,'worker_platform_failure');
   assert.equal(saved.executionId,null);
   assert.ok(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'));
   await reconciler.close(); await stopEvents();
@@ -1669,14 +1655,14 @@ test('ChatGPT delivery failure after correlated task.started quarantines and can
   rejectRun(new LaunchFailure('DOM receipt missed the submitted user turn'));
   await new Promise(resolve=>setTimeout(resolve,20));
   let durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'BLOCKED');
+  assert.equal(durable.state,'FAILED');
   assert.equal(durable.failureReason,'worker_outcome_unknown');
   assert.equal(events.some(event=>event.type==='task.failed' && event.data?.workflowEvent==='worker.platform_failure'),true);
   assert.equal(events.some(event=>event.type==='task.process.delivery_failed' && event.data?.authoritative===false),false);
   await bus.publish(eventFor('j',durable.id,null,'task.completed','succeeded','review finished','user',undefined,eventSource('j',durable.id,durable.executionId)));
   await new Promise(resolve=>setTimeout(resolve,20));
   durable=(await store.load('j')).tasks[0];
-  assert.equal(durable.state,'BLOCKED');
+  assert.equal(durable.state,'FAILED');
   assert.equal(durable.failureReason,'worker_outcome_unknown');
   await stop();
 });
@@ -1802,7 +1788,7 @@ test('async launch and delivery rejection emits exactly one task.failed', async 
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,emit:event=>{events.push(event);}});
   await reconciler.reconcile('j'); await reconciler.idle(); await new Promise(resolve=>setTimeout(resolve,50));
   assert.equal(events.filter(event=>event.type==='task.failed').length,1);
-  assert.equal((await store.load('j')).tasks[0].state,'BLOCKED');
+  assert.equal((await store.load('j')).tasks[0].state,'FAILED');
   assert.equal((await store.load('j')).tasks[0].failureReason,'worker_outcome_unknown');
 });
 test('late worker events recover a watchdog timeout failure', async () => {

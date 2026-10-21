@@ -15,13 +15,11 @@ test('Planner orchestration v2 graph owns wait/recover/create decisions', () => 
   assert.deepEqual(create.actions.map(action=>action.id),['planner.createRound']);
 });
 
-test('unconsumed unblock permits planning despite an unrelated BLOCKED task', () => {
-  const job={executionMode:'autonomous',tasks:[{id:'25',kind:'work',state:'BLOCKED'},{id:'30',kind:'work',state:'UNBLOCKED',planningDecisionId:'plan-3',unblock:{at:'2026-10-15T01:20:24Z',source:'cli',reason:'retry',baseline:{blockedAt:'2026-10-15T01:10:00Z'}}}],plans:[{id:'plan-3',round:3,status:'SUCCEEDED',trigger:{source:'continuation'},objectiveStatus:'in_progress'}]};
+test('a blocked Troubleshooter keeps Planner waiting despite historical ordinary unblock metadata', () => {
+  const job={executionMode:'autonomous',tasks:[{id:'25',kind:'work',agentName:'troubleshooter',state:'BLOCKED'},{id:'30',kind:'work',state:'FAILED',planningDecisionId:'plan-3',unblock:{at:'2026-10-15T01:20:24Z',source:'cli',reason:'legacy unblock',baseline:{blockedAt:'2026-10-15T01:10:00Z'}}}],plans:[{id:'plan-3',round:3,status:'SUCCEEDED',trigger:{source:'continuation'},objectiveStatus:'in_progress'}]};
   const facts=plannerOrchestrationFacts(job,false);
-  assert.equal(facts.noBlockedWork,true);
-  assert.equal(decidePlannerOrchestration(facts).target,'created');
-  job.plans.push({id:'plan-4',round:4,status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']},objectiveStatus:'in_progress'});
   assert.equal(plannerOrchestrationFacts(job,false).noBlockedWork,false);
+  assert.equal(decidePlannerOrchestration(facts).target,'wait');
 });
 
 

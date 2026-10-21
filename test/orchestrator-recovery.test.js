@@ -56,9 +56,10 @@ test('legacy repair clears orphan ownership once and external completion exactly
 
   const running = task('running', 'RUNNING', { leaseOwner: 'gone', leaseExpiresAt: '2026-10-04T06:00:00.000Z', executionId: 'lost', threadId: 'lost' });
   const quarantined = prepareOrchestratorRepair(running, Date.parse('2026-10-04T06:00:00.000Z'));
-  assert.equal(quarantined.blocked, true);
-  assert.equal(running.state, 'BLOCKED');
-  assert.match(running.error, /automatic replay is unsafe/);
+  assert.equal(quarantined.failed, true);
+  assert.equal(running.state, 'FAILED');
+  assert.equal(running.failureReason, 'worker_outcome_unknown');
+  assert.match(running.error, /outcome is unknown/);
   assert.equal(running.executionId, null);
   assert.equal(running.leaseOwner, null);
   assert.equal(running.threadId, null);
@@ -97,9 +98,10 @@ test('legacy repair never reclaims a non-orchestrator live execution', async () 
 test('unverified legacy RUNNING result is quarantined instead of trusted or replayed', () => {
   const ambiguous = task('ambiguous', 'RUNNING', { result: { summary: 'claimed done' } });
   const repaired = prepareOrchestratorRepair(ambiguous, Date.now());
-  assert.equal(repaired.blocked, true);
+  assert.equal(repaired.failed, true);
   assert.equal(repaired.externallyCompleted, false);
-  assert.equal(ambiguous.state, 'BLOCKED');
+  assert.equal(ambiguous.state, 'FAILED');
+  assert.equal(ambiguous.failureReason, 'worker_outcome_unknown');
   assert.equal(ambiguous.adapter, 'orchestrator');
 });
 test('atomic repair serializes concurrent reconcilers and launches once', async () => {

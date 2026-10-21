@@ -7,7 +7,7 @@ flowchart LR
 idle["state: idle"]
 check["state: check"]
 external["state: external_completed"]
-blocked["state: blocked"]
+failed["state: failed"]
 skip["state: skip"]
 rescued["state: rescued"]
 legacyActive["guard: legacyActive"]
@@ -16,7 +16,7 @@ unknownStartedOutcome["guard: unknownStartedOutcome"]
 rescuable["guard: rescuable"]
 rescue["action: task.rescueOrchestrator"]
 externalCompletion["action: task.applyExternalCompletion"]
-quarantine["action: task.blockLegacyOrchestrator"]
+quarantine["action: task.failLegacyOrchestrator"]
 idle -->|on: orchestrator.rescue.reconcile| check
 check -->|on: orchestrator.rescue.reconcile| legacyActive
 legacyActive -->|false| skip
@@ -25,7 +25,7 @@ verifiedExternalCompletion -->|true| externalCompletion
 externalCompletion -->|to: external_completed| external
 verifiedExternalCompletion -->|false| unknownStartedOutcome
 unknownStartedOutcome -->|true| quarantine
-quarantine -->|to: blocked| blocked
+quarantine -->|to: failed| failed
 unknownStartedOutcome -->|false| rescuable
 rescuable -->|false| skip
 rescuable -->|true| rescue

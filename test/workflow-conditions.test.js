@@ -16,6 +16,6 @@ test('shared guard/postcondition uses tri-state condition without mutations', ()
 });
 test('registry rejects duplicates and graph guards resolve against shared registry', () => {
   assert.throws(() => new ConditionRegistry([booleanCondition('x'), booleanCondition('x')]), /duplicate/);
-  assert.ok(lifecycleConditions.discover().includes('platformFallbackSafe'));
-  assert.equal(lifecycleConditions.check('platformFallbackSafe', {}), 'Unknown');
+  assert.ok(lifecycleConditions.discover().includes('awaitingInteractiveDecision'));
+  assert.equal(lifecycleConditions.check('awaitingInteractiveDecision', {}), 'Unknown');
 });

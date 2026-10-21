@@ -1,11 +1,11 @@
 import { inspectWorkflowSymbol } from './dashboard-workflow-inspection.js';
 import { createServer, Server } from 'node:http';
 import { subscribeLocalCommits } from './local-commit-events.js';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DurableStore, GitHubRateLimitBucket, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
+import { DurableStore, GitHubRateLimitSnapshot, ManagedJobOverview } from './store.js';
 import { EventBus } from './events.js';
 import { readUsageSnapshot, UsageSnapshotProvider } from './usage.js';
 import { Job, JobLifecycleState, Task, TaskState } from './types.js';
@@ -14,61 +14,19 @@ import { DeliveryDeduper, parseGitHubWebhook, verifyGitHubWebhook } from './gith
 import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-policy.js';
 import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
-import { eventsBusHistory } from './events-bus-runtime.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
-const GITHUB_REPOSITORY_PATTERN = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,36}[A-Za-z0-9])?)\/([A-Za-z0-9._-]{1,100})$/;
+import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory } from './dashboard-data.js';
+export { dashboardWorkflowGraphs, githubPrUrl } from './dashboard-data.js';
 const SSE_HEARTBEAT_MS = 15000;
-const WORKFLOW_DIR = fileURLToPath(new URL('../workflow/', import.meta.url));
 const TROUBLESHOOTER_QA_FILE = fileURLToPath(new URL('../skills/agents-relay/troubleshooter-qa.md', import.meta.url));
 const qaHash = (content: string): string => createHash('sha256').update(content).digest('hex');
-export type DashboardWorkflowGraph = { id: string; name: string; description: string; path: string; source: string };
-export async function dashboardWorkflowGraphs(): Promise<DashboardWorkflowGraph[]> {
-  const names = (await readdir(WORKFLOW_DIR)).filter(name => name.endsWith('.mmd')).sort(); return Promise.all(names.map(async name => {
-    const source = await readFile(join(WORKFLOW_DIR, name), 'utf8'); const metadata = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source)?.[1] ?? '';
-    const field = (key: string) => metadata.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() ?? ''; return {
-      id: name.replace(/\.mmd$/, ''),
-      name: field('title') || (name === 'main.mmd' ? 'Main / Happy Path' : name.replace(/\.mmd$/, '').split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')),
-      description: field('description'),
-      path: `workflow/${name}`, source,
-    };
-  }));
-}
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
-type EffectiveGitHubUsage = Pick<GitHubRateLimitBucket, 'limit' | 'remaining' | 'reset'>;
-
-function effectiveGitHubUsage(snapshot: GitHubRateLimitSnapshot | null, runtime: GitHubRuntimeRateUsage | null): EffectiveGitHubUsage | null {
-  const candidates = [snapshot?.resources.core, snapshot?.resources.graphql, snapshot?.resources.search, runtime?.resources.core, runtime?.resources.graphql, runtime?.resources.search]
-    .filter((candidate): candidate is GitHubRateLimitBucket | NonNullable<GitHubRuntimeRateUsage['resources']['core']> => candidate !== undefined && candidate !== null)
-    .filter(candidate => Number.isFinite(candidate.limit) && Number(candidate.limit) > 0 && Number.isFinite(candidate.remaining) && Number.isFinite(candidate.reset));
-  const lowest = candidates.reduce<typeof candidates[number] | null>((current, candidate) => !current || Number(candidate.remaining) / Number(candidate.limit) < Number(current.remaining) / Number(current.limit) ? candidate : current, null);
-  return lowest ? { limit: Number(lowest.limit), remaining: Number(lowest.remaining), reset: Number(lowest.reset) } : null;
-}
-
-function isPositiveInteger(candidate: unknown): candidate is number {
-  return typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
-}
 
 function isTaskId(candidate: string): boolean {
   return candidate.length > 0;
 }
 
-function isSafeRepositorySegment(segment: string): boolean {
-  return segment !== '.' && segment !== '..';
-}
-
-export function githubPrUrl(repository: unknown, prNumber: unknown): string | null {
-  if (typeof repository !== 'string' || !isPositiveInteger(prNumber)) return null;
-  const match = GITHUB_REPOSITORY_PATTERN.exec(repository);
-  if (!match) return null;
-  const [, owner, repo] = match;
-  if (!isSafeRepositorySegment(owner) || !isSafeRepositorySegment(repo)) return null;
-  return `https://github.com/${owner}/${repo}/pull/${prNumber}`;
-}
-
-async function eventHistory(jobId: string, taskId: string | null, limit: number): Promise<import('./types.js').EventRecord[]> {
-  try { return await eventsBusHistory(jobId, taskId, limit); } catch { return []; }
-}
 
 export { dashboardHtml, dashboardVersion, dashboardSourceRevision } from './dashboard-html.js';
 import { dashboardHtml, dashboardVersion } from './dashboard-html.js';

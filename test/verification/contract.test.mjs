@@ -17,7 +17,8 @@ test('agent instruction contract stays aligned with canonical terminal ownership
   assert.match(contract,/task\.blocked.*task\.unblocked/);
   assert.match(reviewer,/task\.completed/);assert.match(reviewer,/data\.head_sha/);
   assert.match(worker,/task\.completed.*task\.failed/);
-  assert.match(troubleshooter,/do not publish `task\.blocked`/i);
+  assert.match(troubleshooter,/only a Troubleshooter can become BLOCKED/i);
+  assert.match(troubleshooter,/ordinary Tasks never enter BLOCKED or UNBLOCKED/i);
   assert.doesNotMatch(contract,/task\.heartbeat/);
   assert.doesNotMatch(read('src/managed-worker-input.ts'),/task\.heartbeat/);
   assert.match(contract,/exact current execution/);

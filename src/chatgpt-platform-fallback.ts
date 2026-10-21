@@ -55,7 +55,7 @@ export async function quarantineUnavailableCodexFallback(
     facts: () => ({ platformFallbackSafe: false }),
     mutate: (_job, task) => { task.error = `Codex fallback route became unavailable: ${error instanceof Error ? error.message : String(error)}`; },
   });
-  if (transition?.decision.accepted) await emit(eventFor(jobId, taskId, transition.task.parentTaskId, 'task.blocked', 'blocked', transition.task.error ?? 'Codex fallback route unavailable', 'user', { reason: transition.task.failureReason, phase: 'fallback-routing' }));
+  if (transition?.decision.accepted) await emit(eventFor(jobId, taskId, transition.task.parentTaskId, 'task.failed', 'failed', transition.task.error ?? 'Codex fallback route unavailable', 'user', { reason: transition.task.failureReason, phase: 'fallback-routing' }));
 }
 
 export function persistChatGptPlatformFailure(

@@ -33,8 +33,8 @@ function verifyProductionOutboxCrash() {
    env,
   });
   const output=result.stdout??'';
-  const pass=Number(output.match(/(?:^|\n)ℹ pass (\d+)/)?.[1]??-1);
-  const skip=Number(output.match(/(?:^|\n)ℹ skipped (\d+)/)?.[1]??-1);
+  const pass=Number(output.match(/(?:^|\n)(?:ℹ pass |# pass )(\d+)/)?.[1]??-1);
+  const skip=Number(output.match(/(?:^|\n)(?:ℹ skipped |# skipped )(\d+)/)?.[1]??-1);
   const ok=result.status===0&&pass===check.expected&&skip===0;
   evidence.push({file:check.file,passed:pass,skipped:skip,exitCode:result.status});
   if(!ok)return {outcome:'FAIL',reason:`Production outbox regression missing/failing: ${check.file}: ${String(result.stderr??'').slice(-500)}`,evidence};

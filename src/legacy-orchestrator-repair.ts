@@ -17,9 +17,9 @@ export async function repairLegacyOrchestrators(
   ports: LegacyOrchestratorRepairPorts,
 ): Promise<void> {
   const { store } = ports;
-  const repairOne = async (taskId: string): Promise<{ repaired: boolean; externallyCompleted: boolean; blocked: boolean; ageMs: number } | null> => {
+  const repairOne = async (taskId: string): Promise<{ repaired: boolean; externallyCompleted: boolean; failed: boolean; ageMs: number } | null> => {
     if (store.mutateJob) {
-      let outcome = { repaired: false, externallyCompleted: false, blocked: false, ageMs: 0 };
+      let outcome = { repaired: false, externallyCompleted: false, failed: false, ageMs: 0 };
       return await store.mutateJob(jobId, current => {
         const task = current.tasks.find(item => item.id === taskId);
         if (!task) return current;
@@ -45,15 +45,15 @@ export async function repairLegacyOrchestrators(
     const job = await store.load(jobId);
     const task = job.tasks.find(item => item.id === stale.id)!;
     const type = repair.externallyCompleted ? 'task.external_completion_applied'
-      : repair.blocked ? 'task.orchestrator_quarantined' : 'task.orchestrator_rescued';
-    const status = repair.externallyCompleted ? 'succeeded' : repair.blocked ? 'blocked' : 'queued';
+      : repair.failed ? 'task.orchestrator_quarantined' : 'task.orchestrator_rescued';
+    const status = repair.externallyCompleted ? 'succeeded' : repair.failed ? 'failed' : 'queued';
     await ports.emit(eventFor(job.id, task.id, task.parentTaskId, type, status,
       repair.externallyCompleted
         ? `Applied durable external completion for legacy orchestrator task ${task.id}`
-        : repair.blocked
-          ? `Quarantined legacy RUNNING orchestrator task ${task.id}; external outcome must be verified before replacement work`
+        : repair.failed
+          ? `Failed legacy RUNNING orchestrator task ${task.id}; worker outcome is unknown and Troubleshooter diagnosis is required`
           : `Recovered legacy orchestrator task ${task.id} through Execution Router`,
-      'orchestrator', { ageMs: repair.ageMs, adapter: repair.externallyCompleted || repair.blocked ? undefined : 'execution-router' },
+      'orchestrator', { ageMs: repair.ageMs, adapter: repair.externallyCompleted || repair.failed ? undefined : 'execution-router' },
       { agent: 'relay', component: 'agents-relay' }));
   }
 }

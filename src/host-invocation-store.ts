@@ -77,8 +77,8 @@ export function recordHostInvocationDecision(
     const job = snapshot?.json ? JSON.parse(snapshot.json) as Job : null;
     const task = job?.tasks.find(item => item.id === delivery.taskId);
     const invocation = task?.interactiveInvocation;
-    if (!job || !task || !invocation || !(['RUNNING','BLOCKED'].includes(task.state)) || invocation.executionId !== delivery.executionId ||
-        (task.executionId !== delivery.executionId && task.state !== 'BLOCKED') ||
+    if (!job || !task || !invocation || !(['RUNNING','DRAFT'].includes(task.state)) || invocation.executionId !== delivery.executionId ||
+        (task.executionId !== delivery.executionId && task.state !== 'DRAFT') ||
         invocation.status !== 'awaiting_decision' || invocation.invocationId !== delivery.invocationId || invocation.revision !== delivery.revision) {
       recordHostInvocationEvent(db, delivery, 'stale', fingerprint);
       db.exec('COMMIT');

@@ -1,0 +1,34 @@
+import test from './test-runtime.js';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { SQLiteRelayStore } from '../dist/relay-store.js';
+
+test('SQLite startup migrates ordinary BLOCKED snapshots to FAILED without rewriting event history', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-blocked-migration-'));
+  const path = join(dir, 'relay.sqlite');
+  const now = '2026-10-21T12:00:00.000Z';
+  const task = (id, agentName, failureReason) => ({ jobId: 'j', id, kind: 'work', agentName, priority: 'P1', storySize: 'S', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: id, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, state: 'BLOCKED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'historical block', failureReason, timeoutMs: 1000, createdAt: now, updatedAt: now });
+  const job = { id: 'j', title: 'migration', executionMode: 'fixed', prNumber: 1, repository: 'o/r', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task('ordinary', 'implementation', undefined), task('unknown', 'implementation', 'worker_outcome_unknown'), task('trouble', 'troubleshooter', 'human_action_required')] };
+  const first = new SQLiteRelayStore(path);
+  await first.saveJob(job);
+  first.close();
+  const historyDb = new DatabaseSync(path);
+  historyDb.exec('CREATE TABLE immutable_events (event_id TEXT PRIMARY KEY, body TEXT NOT NULL)');
+  historyDb.prepare('INSERT INTO immutable_events VALUES (?, ?)').run('legacy-block-event', '{"type":"task.blocked"}');
+  historyDb.close();
+  const reopened = new SQLiteRelayStore(path);
+  const migrated = await reopened.loadJob('j');
+  assert.equal(migrated?.tasks[0].state, 'FAILED');
+  assert.equal(migrated?.tasks[0].failureReason, 'legacy_ordinary_blocked');
+  assert.equal(migrated?.tasks[1].state, 'FAILED');
+  assert.equal(migrated?.tasks[1].failureReason, 'worker_outcome_unknown');
+  assert.equal(migrated?.tasks[2].state, 'BLOCKED');
+  reopened.close();
+  const verify = new DatabaseSync(path);
+  assert.deepEqual({ ...verify.prepare('SELECT event_id,body FROM immutable_events').get() }, { event_id: 'legacy-block-event', body: '{"type":"task.blocked"}' });
+  verify.close();
+  rmSync(dir, { recursive: true, force: true });
+});

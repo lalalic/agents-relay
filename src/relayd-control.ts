@@ -146,8 +146,7 @@ export function createWorkspaceControl(deps: any) {
       if (!reason.trim()) throw new Error('job unblock requires reason');
       const blocked = job.tasks.filter(isEffectivelyBlocked);
       if (!blocked.length) throw new Error(`Job ${job.id} has no effective BLOCKED work task`);
-      if (job.executionMode === 'autonomous') await unblockAutonomousTasks({ store, job, tasks: blocked, trigger: { source: 'cli', reason } });
-      else for (const task of blocked) await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
+      for (const task of blocked) await unblockTask({ store, job, task, trigger: { source: 'cli', reason } });
       const refreshed = await store.load(jobId);
       for (const task of blocked) await publishTaskUnblocked(bus, refreshed, task.id, reason);
       await pool.reconcileLocalJob(jobId, 'control.job.unblock');

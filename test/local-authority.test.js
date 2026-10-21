@@ -63,7 +63,7 @@ test('local authority never reads GitHub markers or creates lifecycle projection
   await rm(path, { recursive: true, force: true });
 });
 
-test('same-state QUEUED platform reroute persists with unchanged attempt in local SQLite authority', async () => {
+test('platform failure becomes FAILED in local SQLite authority without reroute', async () => {
   const sqlite = new SQLiteRelayStore(':memory:');
   const local = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
   const rerouting = {
@@ -75,8 +75,8 @@ test('same-state QUEUED platform reroute persists with unchanged attempt in loca
   await local.saveJob({ ...job(), tasks: [rerouting] });
   const fresh = (await local.load('local')).tasks[0];
   const previousUpdatedAt = fresh.updatedAt;
-  const decision = await transitionTaskEvent(fresh, 'worker.platform_failure', { platformFallbackSafe: true });
-  assert.equal(decision.target, 'QUEUED');
+  const decision = await transitionTaskEvent(fresh, 'worker.platform_failure');
+  assert.equal(decision.target, 'FAILED');
   await local.saveTask(fresh);
   const saved = (await local.load('local')).tasks[0];
   assert.equal(saved.attempt, 1);
@@ -457,7 +457,7 @@ test('UNKNOWN PR proceeds through local worker scheduling without GitHub reads',
     projectPathForJob: () => process.cwd(),
   });
   await reconciler.reconcile('local');
-  assert.equal((await local.load('local')).tasks[0].state, 'BLOCKED'); // reached dispatch; model worker requires EventBus
+  assert.equal((await local.load('local')).tasks[0].state, 'FAILED'); // reached dispatch; model worker requires EventBus
   assert.equal(await sqlite.pendingProjectionCount(), 0);
   sqlite.close();
 });

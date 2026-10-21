@@ -8,13 +8,22 @@ const job = (tasks) => ({ id: 'j', repository: 'o/r', prNumber: 0, title: 'j', e
 
 test('resolution graph exposes exact-original retry and never replacement_task', () => {
   const original = task('original');
-  const proposal = { path: 'exact_original_retry', targetTaskId: 'original', rootCause: 'transient runtime', solution: 'repair runtime' };
+  const proposal = { path: 'exact_original_retry', targetTaskId: 'original', recoveryExecutionId: 'recovery-exec-1', rootCause: 'transient runtime', solution: 'repair runtime' };
   validateResolutionProposal(job([original]), original, proposal);
   const decision = decideTaskResolution(original, proposal, 'troubleshooter');
   assert.equal(decision.accepted, true);
   assert.deepEqual(decision.actions.map(action => action.id), ['resolution.activateRecovery']);
   assert.equal(JSON.stringify(decision).includes('replacement_task'), false);
   assert.equal(materializeResolution(original, proposal, 'troubleshooter').owner, 'troubleshooter');
+});
+
+test('a prior resolved recovery cannot authorize a second attempt without a fresh execution identity', () => {
+  const original = task('original');
+  original.resolution = { path: 'exact_original_retry', state: 'resolved', owner: 'troubleshooter', recoveryExecutionId: 'recovery-exec-1', updatedAt: '2026-01-01T00:00:00Z' };
+  const stale = { path: 'exact_original_retry', targetTaskId: original.id, recoveryExecutionId: 'recovery-exec-1' };
+  const fresh = { ...stale, recoveryExecutionId: 'recovery-exec-2' };
+  assert.equal(decideTaskResolution(original, stale, 'troubleshooter').accepted, false);
+  assert.equal(decideTaskResolution(original, fresh, 'troubleshooter').actions[0].id, 'resolution.activateRecovery');
 });
 
 test('planner cannot materialize an unresolved sibling without a graph resolution', () => {
@@ -27,7 +36,9 @@ test('planner cannot materialize an unresolved sibling without a graph resolutio
 test('resolution guards validate same-job and blocker-job targets deterministically', () => {
   const original = task('blocked', 'BLOCKED');
   assert.doesNotThrow(() => validateResolutionProposal(job([original, task('repair', 'QUEUED')]), original, { path: 'same_job_dependency', targetTaskId: 'repair' }));
-  assert.throws(() => validateResolutionProposal(job([original]), original, { path: 'same_job_dependency', targetTaskId: 'missing' }), /existing target/);
+  assert.throws(() => validateResolutionProposal(job([original]), original, { path: 'same_job_dependency', targetTaskId: 'missing' }), /existing unresolved target/);
+  assert.throws(() => validateResolutionProposal(job([original]), original, { path: 'same_job_dependency', targetTaskId: original.id }), /existing unresolved target/);
+  assert.throws(() => validateResolutionProposal(job([original, task('done', 'SUCCEEDED')]), original, { path: 'same_job_dependency', targetTaskId: 'done' }), /existing unresolved target/);
   assert.doesNotThrow(() => validateResolutionProposal(job([original]), original, { path: 'blocker_job_dependency', targetJobId: 'blocker', mode: 'verified' }));
 });
 
@@ -35,10 +46,10 @@ test('resolution guards validate same-job and blocker-job targets deterministica
 test('troubleshooter resolution owner does not override selected path', () => {
   const original = task('blocked', 'BLOCKED');
   const cases = [
-    [{ path: 'same_job_dependency', targetTaskId: 'repair' }, 'resolution.attachSameJobDependency'],
-    [{ path: 'blocker_job_dependency', targetJobId: 'blocker-job', mode: 'verified' }, 'resolution.registerBlockerDependency'],
-    [{ path: 'escalation_gate', rootCause: 'human approval', solution: 'request approval' }, 'resolution.createEscalationGate'],
-    [{ path: 'cancel_supersede', rootCause: 'objective obsolete' }, 'resolution.cancelSupersede'],
+    [{ path: 'same_job_dependency', targetTaskId: 'repair', recoveryExecutionId: 'recovery-exec-1' }, 'resolution.attachSameJobDependency'],
+    [{ path: 'blocker_job_dependency', targetJobId: 'blocker-job', mode: 'verified', recoveryExecutionId: 'recovery-exec-1' }, 'resolution.registerBlockerDependency'],
+    [{ path: 'escalation_gate', recoveryExecutionId: 'recovery-exec-1', rootCause: 'human approval', solution: 'request approval' }, 'resolution.createEscalationGate'],
+    [{ path: 'cancel_supersede', rootCause: 'objective obsolete', recoveryExecutionId: 'recovery-exec-1' }, 'resolution.cancelSupersede'],
   ];
   const context = job([original, task('repair', 'QUEUED')]);
   for (const [proposal, action] of cases) {
@@ -51,7 +62,7 @@ test('troubleshooter resolution owner does not override selected path', () => {
 
 test('planner and troubleshooter owners share the same path selection graph', () => {
   const original = task('blocked', 'BLOCKED');
-  const proposal = { path: 'blocker_job_dependency', targetJobId: 'blocker-job', mode: 'merge' };
+  const proposal = { path: 'blocker_job_dependency', targetJobId: 'blocker-job', mode: 'merge', recoveryExecutionId: 'recovery-exec-1' };
   const trouble = decideTaskResolution(original, proposal, 'troubleshooter');
   const planner = decideTaskResolution(original, proposal, 'planner');
   assert.deepEqual(trouble.actions.map(item => item.id), ['resolution.registerBlockerDependency']);
@@ -62,10 +73,10 @@ test('planner and troubleshooter owners share the same path selection graph', ()
 test('dispatches graph-selected production effect exactly once', async () => {
   const original = task('blocked', 'BLOCKED');
   const cases = [
-    [{ path: 'same_job_dependency', targetTaskId: 'repair' }, 'same'],
-    [{ path: 'blocker_job_dependency', targetJobId: 'blocker', mode: 'verified' }, 'blocker'],
-    [{ path: 'escalation_gate', rootCause: 'human', solution: 'ask' }, 'gate'],
-    [{ path: 'cancel_supersede', rootCause: 'obsolete' }, 'cancel'],
+    [{ path: 'same_job_dependency', targetTaskId: 'repair', recoveryExecutionId: 'recovery-exec-1' }, 'same'],
+    [{ path: 'blocker_job_dependency', targetJobId: 'blocker', mode: 'verified', recoveryExecutionId: 'recovery-exec-1' }, 'blocker'],
+    [{ path: 'escalation_gate', recoveryExecutionId: 'recovery-exec-1', rootCause: 'human', solution: 'ask' }, 'gate'],
+    [{ path: 'cancel_supersede', rootCause: 'obsolete', recoveryExecutionId: 'recovery-exec-1' }, 'cancel'],
   ];
   for (const [proposal, expected] of cases) {
     const calls=[];
@@ -80,5 +91,5 @@ test('dispatches graph-selected production effect exactly once', async () => {
 
 test('task resolution fails closed when selected effect is unavailable', async () => {
   const original=task('failed','FAILED');
-  await assert.rejects(()=>dispatchTaskResolution(original,{path:'exact_original_retry',targetTaskId:'failed'},'troubleshooter',{}),/effect resolution.activateRecovery is unavailable/);
+  await assert.rejects(()=>dispatchTaskResolution(original,{path:'exact_original_retry',targetTaskId:'failed',recoveryExecutionId:'recovery-exec-1'},'troubleshooter',{}),/effect resolution.activateRecovery is unavailable/);
 });

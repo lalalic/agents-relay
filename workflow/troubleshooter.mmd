@@ -1,6 +1,6 @@
 ---
 title: Troubleshooter
-description: Coordinates diagnosis, recovery, escalation, and resolution of failed Tasks.
+description: Re-runs diagnosis after authoritative unblock, requires fresh resolution evidence, then authorizes recovery of FAILED work.
 ---
 flowchart LR
 %% relay: initial idle
@@ -12,6 +12,9 @@ checkId["state: check_id"]
 checkBarrier["state: check_barrier"]
 skip["state: skip"]
 create["state: create"]
+resume["state: resumed_after_authoritative_unblock"]
+freshProposal["state: fresh_resolution_proposed"]
+failClosed["state: remain_failed_without_original_mutation"]
 
 failed["guard: failedWork"]
 ordinary["guard: ordinaryWork"]
@@ -20,8 +23,13 @@ needsRecovery["guard: needsRecovery"]
 idUnused["guard: idUnused"]
 noBarrier["guard: noRecoveryBarrier"]
 createAction["action: troubleshooter.create"]
+verifyFresh["guard: freshConditionVerification"]
+proposeResolution["action: troubleshooter.proposeFreshResolution"]
+resolutionFresh["guard: resolutionForCurrentExecution"]
+actOnOriginal["action: troubleshooter.applyAuthorizedResolution"]
 
 idle -->|on: troubleshooter.reconcile| failed
+idle -->|on: troubleshooter.resumed| resume
 failed -->|false| skip
 failed -->|true| checkOrdinary
 
@@ -45,3 +53,14 @@ checkBarrier -->|on: troubleshooter.reconcile| noBarrier
 noBarrier -->|false| skip
 noBarrier -->|true| createAction
 createAction --> create
+
+%% A human response only queues this same Troubleshooter. It must start a new
+%% execution, reverify the condition, and create a new resolution before acting.
+resume -->|on: task.started| verifyFresh
+verifyFresh -->|true| proposeResolution
+verifyFresh -->|false| failClosed
+proposeResolution --> freshProposal
+freshProposal -->|on: resolution.propose| resolutionFresh
+resolutionFresh -->|true| actOnOriginal
+resolutionFresh -->|false| failClosed
+actOnOriginal --> resume

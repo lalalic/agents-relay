@@ -1,6 +1,6 @@
 ---
 title: Blocker Resolution
-description: Resolves blockers through verified recovery evidence and graph-authorized decisions.
+description: Releases dependency-waiting work; failed work and blocked Troubleshooters require their own fresh recovery flow.
 ---
 flowchart LR
 %% relay: initial waiting
@@ -27,12 +27,7 @@ isBlocked["guard: isBlocked"]
 isFailed["guard: isFailed"]
 isUnblocked["guard: isUnblocked"]
 
-autonomousUnblock["action: blocker.autonomousUnblock"]
-acceptExisting["action: blocker.acceptExistingUnblock"]
 releaseDraft["action: blocker.releaseDraft"]
-unblockTask["action: blocker.unblockTask"]
-retryFailed["action: blocker.retryFailed"]
-retryUnblocked["action: blocker.retryUnblocked"]
 
 waiting -->|on: blocker.resolved| resolutionAllowed
 resolutionAllowed -->|false| wait
@@ -47,13 +42,11 @@ autonomousJob -->|true| checkEffective
 autonomousJob -->|false| checkDraft
 
 checkEffective -->|on: blocker.resolved| effectivelyBlocked
-effectivelyBlocked -->|true| autonomousUnblock
-autonomousUnblock --> resumed
+effectivelyBlocked -->|true| wait
 effectivelyBlocked -->|false| checkAlreadyUnblocked
 
 checkAlreadyUnblocked -->|on: blocker.resolved| alreadyUnblocked
-alreadyUnblocked -->|true| acceptExisting
-acceptExisting --> resumed
+alreadyUnblocked -->|true| resumed
 alreadyUnblocked -->|false| checkDraft
 
 checkDraft -->|on: blocker.resolved| isDraft
@@ -62,16 +55,13 @@ releaseDraft --> resumed
 isDraft -->|false| checkBlocked
 
 checkBlocked -->|on: blocker.resolved| isBlocked
-isBlocked -->|true| unblockTask
-unblockTask --> resumed
+isBlocked -->|true| wait
 isBlocked -->|false| checkFailed
 
 checkFailed -->|on: blocker.resolved| isFailed
-isFailed -->|true| retryFailed
-retryFailed --> resumed
+isFailed -->|true| wait
 isFailed -->|false| checkUnblocked
 
 checkUnblocked -->|on: blocker.resolved| isUnblocked
-isUnblocked -->|true| retryUnblocked
-retryUnblocked --> resumed
+isUnblocked -->|true| wait
 isUnblocked -->|false| obsolete

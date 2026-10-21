@@ -236,7 +236,7 @@ export class HostInteractiveInvocationCoordinator {
     const job = await this.options.store.loadJob(delivery.jobId);
     const task = job?.tasks.find((item: Task) => item.id === delivery.taskId);
     if (!job || !task || task.interactiveInvocation?.executionId !== delivery.executionId ||
-        (task.executionId !== delivery.executionId && task.state !== 'BLOCKED')) {
+        (task.executionId !== delivery.executionId && task.state !== 'DRAFT')) {
       await this.options.store.recordHostInvocationEvent?.(delivery, 'stale', interactiveDecisionFingerprint(delivery));
       return { outcome: 'stale', reason: 'execution_not_bound' };
     }

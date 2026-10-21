@@ -7,7 +7,7 @@ import { hasPendingTroubleshooterEscalation } from './task-recovery.js';
 
 export type UnblockSource = { source: 'cli' | 'blocker_job'; reason: string; blockerJobId?: string; resolution?: 'merge' | 'verified' };
 
-export function isEffectivelyBlocked(task: Task): boolean { return task.kind !== 'planner' && task.state === 'BLOCKED'; }
+export function isEffectivelyBlocked(task: Task): boolean { return task.kind !== 'planner' && task.agentName === 'troubleshooter' && task.state === 'BLOCKED'; }
 function assertNoPendingHumanEscalation(tasks: Task[]): void {
   if (tasks.some(task => task.agentName === 'troubleshooter' && task.escalation?.status === 'pending')) throw new Error('Blocked Troubleshooter requires an authorized human response; use task unblock --response');
 }
@@ -35,7 +35,7 @@ function unblockFacts(job: Job, tasks: Task[], currentHeadSha: string | null, re
 
 export function unconsumedUnblockTrigger(job: Job): PlanTrigger | undefined {
   const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
-  const tasks = job.tasks.filter(task => task.unblock && !consumed.has(task.id) && ['DRAFT', 'QUEUED', 'UNBLOCKED'].includes((task as Task & { state: string }).state));
+  const tasks = job.tasks.filter(task => task.agentName !== 'troubleshooter' && task.unblock && !consumed.has(task.id) && ['DRAFT', 'QUEUED'].includes(task.state));
   if (tasks.length === 0) {
     const legacy = job.changeCycle;
     if (!legacy || legacy.consumedByPlannerTaskId) return undefined;
@@ -63,38 +63,8 @@ export function unblockNeedsNewPlan(job: Job): boolean {
 }
 
 export async function unblockAutonomousTasks(options: { store: DurableStore; job: Job; tasks: Task[]; trigger: UnblockSource; now?: string }): Promise<PlanTrigger> {
-  const { store, job, trigger } = options;
-  const tasks = options.tasks.filter(isEffectivelyBlocked);
-  if (tasks.length === 0) throw new Error('No effective BLOCKED work task is available to unblock');
-  assertNoPendingHumanEscalation(tasks);
-  const now = options.now ?? new Date().toISOString();
-  const currentHeadSha = await store.headSha?.() ?? job.headSha ?? null;
-  const facts = unblockFacts(job, tasks, currentHeadSha, trigger.reason);
-  const apply = (current: Job): void => {
-    for (const requested of tasks) {
-      const task = current.tasks.find(item => item.id === requested.id);
-      if (!task || !isEffectivelyBlocked(task)) throw new Error(`Task ${requested.id} changed before authoritative unblock`);
-      const baseline = baselineFor(task);
-      if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: true }).accepted) throw new Error(`Task ${task.id} cannot be authoritatively unblocked`);
-      task.blockedBaseline = baseline;
-      task.unblock = { event: 'task.unblocked', at: now, source: trigger.source, reason: trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: trigger.blockerJobId, resolution: trigger.resolution };
-      task.updatedAt = now;
-      delete task.blockedBy;
-    }
-    current.updatedAt = now;
-  };
-  if (store.mutateJob) {
-    const committed = await store.mutateJob(job.id, current => { apply(current); return current; });
-    Object.assign(job, structuredClone(committed));
-  } else {
-    apply(job);
-    for (const task of tasks) await store.saveTask(task);
-  }
-  const planTrigger = unconsumedUnblockTrigger(job) ?? {
-    source: 'unblock' as const, taskIds: tasks.map(task => task.id), reason: trigger.reason,
-    facts, currentHeadSha: currentHeadSha ?? undefined, unblockSource: trigger.source,
-  };
-  return planTrigger;
+  void options;
+  throw new Error('Ordinary Tasks cannot be authoritatively unblocked; only a blocked Troubleshooter can resume');
 }
 
 export async function unblockTask(options: { store: DurableStore; job: Job; task: Task; trigger: UnblockSource; now?: string }): Promise<{ replanning: boolean; planTrigger?: PlanTrigger }> {
@@ -104,11 +74,7 @@ export async function unblockTask(options: { store: DurableStore; job: Job; task
     throw new Error(`Task ${options.task.id} cannot be directly unblocked while its Troubleshooter is awaiting human action`);
   }
   let result: { replanning: boolean; planTrigger?: PlanTrigger } | undefined;
-  const decision = await dispatchAuthoritativeUnblock(options.job.executionMode === 'autonomous', async actionId => {
-    if (actionId === 'unblock.replan') {
-      result = { replanning: true, planTrigger: await unblockAutonomousTasks({ store: options.store, job: options.job, tasks: [options.task], trigger: options.trigger, now: options.now }) };
-      return {};
-    }
+  const decision = await dispatchAuthoritativeUnblock(options.task.agentName === 'troubleshooter', async actionId => {
     if (actionId === 'unblock.retry') {
       const now = options.now ?? new Date().toISOString();
       const currentHeadSha = await options.store.headSha?.() ?? options.job.headSha ?? null;

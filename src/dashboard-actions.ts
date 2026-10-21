@@ -1,8 +1,8 @@
 import type { DurableStore } from './store.js';
 import { type Job, type JobLifecycleState, type TaskState } from './types.js';
 import type { Reconciler } from './reconciler.js';
-import { applyJobGraphTarget, applyTaskGraphTarget } from './workflow/runtime.js';
-import { jobLifecycleV2, taskLifecycleV2 } from './workflow/definitions-v2.js';
+import { applyJobGraphTarget } from './workflow/runtime.js';
+import { jobLifecycleV2 } from './workflow/definitions-v2.js';
 import { dispatchWorkflowTargetOverride } from './workflow/dispatcher.js';
 import { dispatchTaskAction } from './task-actions.js';
 import { applyJobCancelAction } from './job-actions.js';
@@ -49,22 +49,12 @@ export function dashboardTaskSetState(store: DurableStore): (jobId: string, task
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.state === state) return job;
-    if (task.state === 'BLOCKED' && state !== 'CANCELLED') throw new Error(`Task ${task.id} is BLOCKED; only authoritative unblock may resume it`);
+    if (state !== 'CANCELLED') throw new Error('Task lifecycle state is managed by Relay; use retry, cancel, or the Troubleshooter response flow');
+    if (task.state !== 'CANCELLED') {
+      await dispatchTaskAction(store, { id: 'task.cancel', jobId, taskId });
+      return await store.load(job.id);
+    }
 
-    const now = new Date().toISOString();
-    const from = task.state;
-    await dispatchWorkflowTargetOverride(taskLifecycleV2, {
-      currentState: from, targetState: state, kind: 'task',
-      persistTransition: (_source, target) => { applyTaskGraphTarget(task, target as TaskState, now); },
-    });
-    task.manualStateOverrides = [
-      ...(task.manualStateOverrides ?? []),
-      { from, to: state, at: now, actor: 'dashboard-user' as const },
-    ].slice(-20);
-    task.leaseOwner = null;
-    task.leaseExpiresAt = null;
-    task.executionId = null;
-    await store.saveTask(task);
-    return await store.load(job.id);
+    return job;
   };
 }

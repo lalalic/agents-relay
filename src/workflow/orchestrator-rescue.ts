@@ -6,13 +6,13 @@ import { tryTransitionTaskEvent } from '../scheduler.js';
 import { taskOverallTimeoutMs } from '../types.js';
 
 export const STALE_ORCHESTRATOR_TASK_MS = 30 * 60 * 1000;
-export type OrchestratorRescueState = 'idle' | 'check' | 'external_completed' | 'blocked' | 'skip' | 'rescued';
+export type OrchestratorRescueState = 'idle' | 'check' | 'external_completed' | 'failed' | 'skip' | 'rescued';
 
 const source = readFileSync(new URL('../../workflow/orchestrator-rescue.mmd', import.meta.url), 'utf8');
 const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }): boolean => facts.durableFacts[name] === true;
 
 export const orchestratorRescueV2 = new GraphRuntime(source, {
-  states: new Set<OrchestratorRescueState>(['idle', 'check', 'external_completed', 'blocked', 'skip', 'rescued']),
+  states: new Set<OrchestratorRescueState>(['idle', 'check', 'external_completed', 'failed', 'skip', 'rescued']),
   guards: {
     legacyActive: boolGuard('legacyActive'),
     verifiedExternalCompletion: boolGuard('verifiedExternalCompletion'),
@@ -21,7 +21,7 @@ export const orchestratorRescueV2 = new GraphRuntime(source, {
   },
   actions: {
     'task.applyExternalCompletion': { id: 'task.applyExternalCompletion' },
-    'task.blockLegacyOrchestrator': { id: 'task.blockLegacyOrchestrator' },
+    'task.failLegacyOrchestrator': { id: 'task.failLegacyOrchestrator' },
     'task.rescueOrchestrator': { id: 'task.rescueOrchestrator' },
   },
   events: { 'orchestrator.rescue.reconcile': { id: 'orchestrator.rescue.reconcile' } },
@@ -51,14 +51,14 @@ export function decideOrchestratorRescue(task: Task, now: number): GraphDecision
 }
 
 export function prepareOrchestratorRepair(task: Task, now: number): {
-  repaired: boolean; externallyCompleted: boolean; blocked: boolean; ageMs: number;
+  repaired: boolean; externallyCompleted: boolean; failed: boolean; ageMs: number;
 } {
   const decision = decideOrchestratorRescue(task, now);
   const externallyCompleted = decision.accepted
     && decision.actions.some(action => action.id === 'task.applyExternalCompletion');
-  const blocked = decision.accepted
-    && decision.actions.some(action => action.id === 'task.blockLegacyOrchestrator');
-  const rescued = externallyCompleted || blocked
+  const failed = decision.accepted
+    && decision.actions.some(action => action.id === 'task.failLegacyOrchestrator');
+  const rescued = externallyCompleted || failed
     || (decision.accepted && decision.actions.some(action => action.id === 'task.rescueOrchestrator'));
   const ageMs = now - Date.parse(task.createdAt);
   if (decision.accepted && externallyCompleted) {
@@ -68,15 +68,16 @@ export function prepareOrchestratorRepair(task: Task, now: number): {
     task.executionId = null;
     task.threadId = null;
     task.updatedAt = new Date(now).toISOString();
-    return { repaired: true, externallyCompleted: true, blocked: false, ageMs };
+    return { repaired: true, externallyCompleted: true, failed: false, ageMs };
   }
-  if (!rescued) return { repaired: false, externallyCompleted: false, blocked: false, ageMs };
-  if (blocked) {
-    tryTransitionTaskEvent(task, 'task.blocked');
-    task.error = 'Legacy orchestrator execution outcome is unknown; automatic replay is unsafe. Verify external effects and create replacement validation/recovery work before unblocking.';
+  if (!rescued) return { repaired: false, externallyCompleted: false, failed: false, ageMs };
+  if (failed) {
+    tryTransitionTaskEvent(task, 'task.failed');
+    task.error = 'Legacy orchestrator execution outcome is unknown; Troubleshooter diagnosis is required before retry.';
+    task.failureReason = 'worker_outcome_unknown';
     task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null; task.threadId = null;
     task.updatedAt = new Date(now).toISOString();
-    return { repaired: true, externallyCompleted: false, blocked: true, ageMs };
+    return { repaired: true, externallyCompleted: false, failed: true, ageMs };
   }
   task.adapter = 'codex';
   task.workerRequirements = { capabilities: [...task.capabilities] };
@@ -88,5 +89,5 @@ export function prepareOrchestratorRepair(task: Task, now: number): {
   task.threadId = null;
   task.timeoutMs = taskOverallTimeoutMs(task.storySize ?? 'M');
   task.updatedAt = new Date(now).toISOString();
-  return { repaired: true, externallyCompleted: false, blocked: false, ageMs };
+  return { repaired: true, externallyCompleted: false, failed: false, ageMs };
 }

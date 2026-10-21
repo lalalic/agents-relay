@@ -111,7 +111,7 @@ export type ProjectionOutboxPort = {
   recordReceipt(operationKey: string, status: 'succeeded' | 'failed', attempts: number, detail: unknown, now: string): void;
 };
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 const UNSAFE_QUEUED_KEY_SUFFIX = /:(?:queued|lost):\d+$/;
 
 /** Logical operation key recovered from a possibly queued/lost idempotency key. */

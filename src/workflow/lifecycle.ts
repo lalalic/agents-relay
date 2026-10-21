@@ -38,11 +38,11 @@ function v2WorkflowDecision<State extends string>(
 }
 
 export function decideTaskLifecycle(
-  task: Pick<{ id: string; state: TaskState }, 'id' | 'state'>,
+  task: Pick<{ id: string; state: TaskState; agentName?: string }, 'id' | 'state' | 'agentName'>,
   event: string,
   facts: WorkflowContext = {},
 ): WorkflowDecision<TaskState> {
-  return v2WorkflowDecision(taskLifecycleV2, task.state, event, facts);
+  return v2WorkflowDecision(taskLifecycleV2, task.state, event, { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' });
 }
 
 export function decideJobLifecycle(
@@ -64,9 +64,9 @@ export function dispatchTaskLifecycleSync(
   const result = dispatchWorkflowGraphSync(taskLifecycleV2, {
     initialState: task.state,
     input: { transport: 'event', id: event, payload: {} },
-    durableFacts: facts,
+    durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' },
     graphName: 'task-lifecycle',
-    persistTransition: (_source, target) => applyTaskGraphTarget(task as never, target as TaskState),
+    persistTransition: (_source, target) => applyTaskGraphTarget(task as never, target as TaskState, new Date().toISOString(), event === 'task.unblocked' && task.agentName === 'troubleshooter'),
     executeAction: actionId => { actions.push(actionId); if (actionId.startsWith('mutation.')) applyTaskMutation(task as never, actionId as WorkflowMutationName); return {}; },
   });
   if (!result.accepted) return emptyWorkflowDecision<TaskState>(result.reason === 'ambiguous' ? 'ambiguous' : 'no_transition');
@@ -82,9 +82,9 @@ export async function dispatchTaskLifecycle(
 ): Promise<WorkflowDecision<TaskState>> {
   const actions: string[] = [];
   const result = await dispatchWorkflowGraph(taskLifecycleV2, {
-    initialState: task.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: facts,
+    initialState: task.state, input: { transport: 'event', id: event, payload: {} }, durableFacts: { ...facts, troubleshooterTask: task.agentName === 'troubleshooter' },
     graphName: 'task-lifecycle',
-    persistTransition: async (_source, target) => { applyTaskGraphTarget(task as never, target as TaskState); await persist?.(); },
+    persistTransition: async (_source, target) => { applyTaskGraphTarget(task as never, target as TaskState, new Date().toISOString(), event === 'task.unblocked' && task.agentName === 'troubleshooter'); await persist?.(); },
     executeAction: async actionId => {
       actions.push(actionId);
       if (actionId.startsWith('mutation.')) applyTaskMutation(task as never, actionId as WorkflowMutationName);

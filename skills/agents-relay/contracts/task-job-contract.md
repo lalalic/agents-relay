@@ -70,7 +70,7 @@ Keep these concepts distinct: observation is not root cause; hypothesis is not r
 
 ### Job-defined Task tag
 
-`Task.state` is reserved for Relay lifecycle only: `DRAFT`, `QUEUED`, `RUNNING`, `BLOCKED`, `SUCCEEDED`, `FAILED`, and `CANCELLED`. A Job may additionally define one optional `tag` contract for a Job-specific result or classification that should be visible on each Task without changing its lifecycle state.
+`Task.state` is reserved for Relay lifecycle only: `DRAFT`, `QUEUED`, `RUNNING`, `BLOCKED`, `SUCCEEDED`, `FAILED`, and `CANCELLED`. `BLOCKED` is exclusive to Tasks whose `agentName` is exactly `troubleshooter`; ordinary Tasks never enter `BLOCKED` or an `UNBLOCKED` lifecycle state. A Job may additionally define one optional `tag` contract for a Job-specific result or classification that should be visible on each Task without changing its lifecycle state.
 
 The Job owns the meaning of the tag. Its trusted Job marker declares a human-readable `description` explaining what the tag means and when workers should set it, plus the allowed durable values and their dashboard display strings:
 
@@ -164,14 +164,14 @@ forbids it.
 
 ## Dependency vs block and authoritative unblock
 
-`dependencies` describe normal DAG ordering. Dependency completion does not create an unblock lifecycle event or Planner unblock trigger; Relay simply releases dependent work when its prerequisites succeed. `BLOCKED` is different: it records that execution reached a runtime/external condition that invalidates normal progress.
+`dependencies` describe normal DAG ordering. An unmet dependency keeps ordinary work in `DRAFT`; dispatchable work is `QUEUED`. Dependency completion does not create an unblock lifecycle event or Planner unblock trigger; Relay releases dependent work when its prerequisites succeed. Worker, platform, semantic, and unknown-outcome failures are `FAILED`. Unknown worker outcome fails closed and never justifies rerouting. Only a Troubleshooter waiting for an authoritative human response may become `BLOCKED`.
 
-A BLOCKED Task cannot be resumed through retry, queue, dashboard state editing, PR push, webhook, ordinary task update, or troubleshooter inference. Except for blocker-Job resolution, the authoritative entry points are `task unblock --reason ...` and `job unblock --reason ...`. Authoritative unblock records the blocked baseline and current evidence, then transitions `BLOCKED -> UNBLOCKED` through the durable `task.unblocked` lifecycle event. `BLOCKED` therefore always means the blocker is still effective; `UNBLOCKED` means the old blocked attempt is historical and its blocker was explicitly cleared.
+A BLOCKED Troubleshooter cannot be resumed through retry, queue, dashboard state editing, PR push, webhook, ordinary task update, or Troubleshooter inference. The authoritative entry point records the response and transitions that same Troubleshooter `BLOCKED -> QUEUED` through `task.unblocked`. The queued Troubleshooter must execute again, verify the condition from fresh evidence, and issue a fresh resolution before Relay may retry or replan the original FAILED Task. Prior `resolved` metadata never authorizes another attempt. Historical ordinary BLOCKED snapshots migrate to FAILED while their append-only event history remains unchanged; they are never silently converted to success.
 
-For autonomous Jobs, an UNBLOCKED Task is never silently retried. Its unblock metadata becomes the trigger/change context for the next Planner round, which decides whether to replace, split, wait, or otherwise re-plan the objective. For fixed Jobs, authoritative unblock records the UNBLOCKED transition first and may then requeue the same Task according to fixed-job retry semantics.
+The old `UNBLOCKED` state is compatibility-only input. It normalizes to QUEUED only for Troubleshooter Tasks and to FAILED for ordinary Tasks, pending diagnosis.
 
 Each Planner round is also a first-class durable Plan entity stored in its own `agents-relay:plan:v1` PR comment. Relay creates the Plan comment before the internal planner execution record and before any generated Task comments, then updates that same Plan comment with the final assessment and generated Task IDs. Unblock/change facts belong to the Plan trigger/context, not to new Job-level Change Cycle state. Historical `kind=planner` Task records and legacy Job `changeCycle` fields remain readable for compatibility only.
 
-A blocker Job owns reverse `unblocks` references. When it resolves, Relay checks the dependent Job. If that autonomous Job has an effective BLOCKED work Task, resolution uses the same authoritative `BLOCKED -> UNBLOCKED -> Planner` path. If it does not have BLOCKED work (for example the registered Task is DRAFT or FAILED), existing release/retry behavior remains unchanged.
+A blocker Job owns reverse `unblocks` references. When it resolves, Relay releases matching dependency-waiting Tasks through their ordinary DRAFT/QUEUED path. It cannot unblock ordinary work or resume a Troubleshooter without the authoritative response flow.
 
-Automatic Planner creation treats only a Task whose lifecycle state is exactly `BLOCKED` as a block gate. `UNBLOCKED` and FAILED history do not themselves gate a new Planner round; active DRAFT/QUEUED/RUNNING work still prevents a competing planning round.
+Automatic Planner creation treats a currently BLOCKED Troubleshooter as a recovery gate. FAILED history alone does not authorize resolution or success; active DRAFT/QUEUED/RUNNING work still prevents a competing planning round.
