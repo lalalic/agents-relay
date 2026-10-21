@@ -12,6 +12,8 @@ import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { prepareReviewerThreadDelivery, chatgptThreadRequirements } from './reviewer-thread.js';
 import { spawnOwnedProcess } from './owned-process.js'; import { requiredPlannerTaskTitle } from './planner-task-title.js';
+import { parsePlannerHistoryCleanup, type PlannerHistoryCleanup } from './planner-history-cleanup.js';
+import { plannerTaskContext } from './planner-task-context.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -38,8 +40,8 @@ export type PlannerTaskSpec = {
   resolution?: TaskResolutionProposal;
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
-export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[]; cliApplied?: true };
-export type PlannerContext = { planExecution?: { planId: string; executionId: string }; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
+export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[]; history_cleanup?: PlannerHistoryCleanup[]; cliApplied?: true };
+export type PlannerContext = { planExecution?: { planId: string; executionId: string }; forceCleanHistory?: boolean; cleanHistoryTaskIds?: readonly string[]; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata; resolution_classification?: Task['resolutionClassification'] };
 
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
@@ -260,6 +262,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     unblockKeys.add(key);
     return { repository, prNumber: Number(prNumber), jobId, taskId, resolutionMode: resolutionMode as 'merge' | 'verified' | undefined };
   });
+  const history_cleanup = parsePlannerHistoryCleanup(root.history_cleanup);
   const ids = new Set<string>();
   const next_tasks = root.next_tasks.map((item, index): PlannerTaskSpec => {
     const task = record(item, `next_tasks[${index}]`);
@@ -302,7 +305,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs, resolution: resolutionProposal(task.resolution, `next_tasks[${index}].resolution`)
     };
   });
-  return { objective_status: status, assessment: root.assessment, next_tasks, unblocks };
+  return { objective_status: status, assessment: root.assessment, next_tasks, unblocks, ...(history_cleanup ? { history_cleanup } : {}) };
 }
 
 
@@ -397,6 +400,8 @@ export function plannerInput(context: PlannerContext): string {
     apply_cli: context.planExecution ? `agents-relay plan apply --repo ${context.job.repository} --pr ${context.job.prNumber} --id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
     plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
+    force_clean_history: context.forceCleanHistory === true,
+    clean_history_task_ids: context.cleanHistoryTaskIds ?? [],
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
     legacy_change_cycle: context.job.changeCycle,
@@ -415,24 +420,11 @@ export function plannerInput(context: PlannerContext): string {
     })),
     project: project ? { name: project.name, path: project.path } : undefined,
     visible_agents: visibleAgents ?? [],
-    tasks: context.tasks.map(task => ({
-      id: task.id,
-      title: task.title,
-      kind: task.kind ?? 'work',
-      parent_task_id: task.parentTaskId,
-      state: task.state,
-      input: task.kind === 'planner' ? undefined : boundedText(task.input),
-      result_summary: boundedText(task.result?.summary),
-      planner_result: task.plannerResult ? {
-        objective_status: task.plannerResult.objective_status,
-        assessment: boundedText(task.plannerResult.assessment),
-        next_task_ids: task.plannerResult.next_tasks.map(item => item.id),
-      } : undefined,
-      resolution_classification: task.resolutionClassification,
-      error: boundedText(task.error, 2000),
-      blocked_baseline: task.blockedBaseline,
-      unblock: task.unblock,
-    })),
+    tasks: context.tasks.map(task => ({ ...plannerTaskContext(task), planner_result: task.plannerResult ? {
+      objective_status: task.plannerResult.objective_status,
+      assessment: boundedText(task.plannerResult.assessment),
+      next_task_ids: task.plannerResult.next_tasks.map(item => item.id),
+    } : undefined })),
   });
 }
 

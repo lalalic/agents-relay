@@ -232,6 +232,16 @@ test('planner input carries explicit retry feedback for corrective retries', () 
   assert.equal(payload.retry_feedback, 'Planner next_tasks[0].output is required');
 });
 
+test('forced cleanup Planner context includes durable failure dependencies and evidence', () => {
+  const failed = { ...task('failed'), state: 'FAILED', dependencies: ['prerequisite'], failureReason: 'task_failure', comments: [{ id: 'c1', text: 'replacement evidence was checked', author: 'operator', createdAt: now() }] };
+  const payload = JSON.parse(plannerInput({ job: job([failed]), tasks: [failed], objective: 'replan', previousPlannerTaskId: null, forceCleanHistory: true, cleanHistoryTaskIds: ['failed'] }));
+  assert.equal(payload.force_clean_history, true);
+  assert.deepEqual(payload.clean_history_task_ids, ['failed']);
+  assert.deepEqual(payload.tasks[0].dependencies, ['prerequisite']);
+  assert.equal(payload.tasks[0].failure_reason, 'task_failure');
+  assert.equal(payload.tasks[0].comments[0].text, 'replacement evidence was checked');
+});
+
 test('planner input stays compact with a large execution context and planner history', () => {
   const huge = 'x'.repeat(70000);
   const context = {
@@ -277,6 +287,15 @@ test('planner parses authoritative reverse cross-job unblocks and rejects malfor
   assert.deepEqual(result.unblocks,[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}]);
   assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'bad',prNumber:42,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/repository must be OWNER\/REPO/);
   assert.throws(()=>parsePlannerResult({objective_status:'in_progress',assessment:'bad',unblocks:[{repository:'org/app',prNumber:0,jobId:'dependent',taskId:'consume'}],next_tasks:[]}),/positive integer/);
+});
+
+test('planner parses only explicit failed-history dispositions', () => {
+  const result = parsePlannerResult({ objective_status: 'satisfied', assessment: 'history preserved', next_tasks: [], history_cleanup: [
+    { taskId: 'failed-1', outcome: 'unresolved', evidence: 'No replacement or root-cause evidence is available.', reason: 'Leave the failure visible for future evidence.' },
+  ] });
+  assert.equal(result.history_cleanup[0].outcome, 'unresolved');
+  assert.throws(() => parsePlannerResult({ objective_status: 'satisfied', assessment: 'bad', next_tasks: [], history_cleanup: [{ taskId: 'failed-1', outcome: 'superseded', evidence: '', reason: '', targetTaskId: 'new' }] }), /history_cleanup\[0\]\.evidence must be a non-empty string/);
+  assert.throws(() => parsePlannerResult({ objective_status: 'satisfied', assessment: 'bad', next_tasks: [], history_cleanup: [{ taskId: 'failed-1', outcome: 'success', evidence: 'done', reason: 'done' }] }), /history_cleanup\[0\]\.outcome is invalid/);
 });
 
 test('planner persistence delegates reverse unblock registration to durable store', async () => {

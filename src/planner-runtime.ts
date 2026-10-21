@@ -132,6 +132,19 @@ export async function finishPlanner(
   let planCommitted = false;
   try {
     const parsed = parsePlannerResult(raw);
+    if (plan.forceCleanHistory) {
+      const cleanup = parsed.history_cleanup ?? [];
+      const expected = new Set(plan.cleanHistoryTaskIds ?? []);
+      if (cleanup.length !== expected.size || cleanup.some(item => !expected.delete(item.taskId)) || expected.size) throw new Error('--force-clean-history requires exactly one Planner disposition for each failed Task in its durable snapshot');
+      for (const item of cleanup) {
+        const task = job.tasks.find(candidate => candidate.id === item.taskId);
+        if (!task) throw new Error(`Clean history Task ${item.taskId} disappeared`);
+        if (task.failureReason === 'worker_outcome_unknown' && item.outcome !== 'unresolved') throw new Error(`Unknown execution outcome for ${item.taskId} must remain unresolved without graph-verified proof`);
+        if ((item.outcome === 'superseded' || item.outcome === 'invalid') && (task.resolutionClassification?.kind !== item.outcome || task.resolutionClassification.targetTaskId !== item.targetTaskId || task.resolutionClassification.evidence !== item.evidence || task.resolutionClassification.reason !== item.reason)) throw new Error(`Clean history classification for ${item.taskId} was not applied through task classify with matching evidence`);
+        if (item.outcome === 'cancelled_review' && (task.agentName !== 'reviewer' || task.state !== 'CANCELLED')) throw new Error(`Failed review ${item.taskId} must be cancelled through task cancel before Plan apply`);
+        if (item.outcome === 'unresolved' && (task.state !== 'FAILED' || task.resolutionClassification)) throw new Error(`Unresolved history item ${item.taskId} changed after Planner assessment`);
+      }
+    }
     const result = assignPlannerTaskIds(parsed, job.repository, job.id, plan.id);
     const executionContext = await ports.plannerContext(job, plan);
     validatePlannerHierarchy(job.tasks, result.next_tasks);
@@ -297,7 +310,7 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
   let promise: Promise<import('./planner.js').PlannerResult>;
   try {
     const executionContext = await ports.plannerContext(job, plan);
-    const context = { planExecution: { planId: plan.id, executionId }, job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
+    const context = { planExecution: { planId: plan.id, executionId }, forceCleanHistory: plan.forceCleanHistory, cleanHistoryTaskIds: plan.cleanHistoryTaskIds, job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
     promise = planner.plan(context, controller.signal);
   } catch (error) {
     await finishPlanner(ports, job.id, plan.id, executionId, error instanceof Error ? error : new Error(String(error)));

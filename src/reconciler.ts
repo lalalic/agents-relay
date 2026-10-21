@@ -238,8 +238,8 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return this.store.load(jobId);
   }
-  async planJob(jobId: string, guidance?: string, cleanHistory?: readonly (import('./workflow/task-resolution.js').TaskResolutionClassification & { taskId: string })[]): Promise<{ job: Job; round: Plan }> {
-    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan), cleanHistory);
+  async planJob(jobId: string, guidance?: string, forceCleanHistory = false): Promise<{ job: Job; round: Plan }> {
+    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan), forceCleanHistory);
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     const pending = pendingPlan(job);

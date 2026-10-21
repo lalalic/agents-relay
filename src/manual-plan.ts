@@ -3,7 +3,6 @@ import { createPlanRound, pendingPlan } from './planner.js';
 import { applyJobActivateAction } from './job-actions.js';
 import { DurableStore } from './store.js';
 import { Job, Plan } from './types.js';
-import { classifyTaskResolution, type TaskResolutionClassification } from './workflow/task-resolution.js';
 
 export async function executeManualPlan(
   store: DurableStore,
@@ -11,8 +10,9 @@ export async function executeManualPlan(
   guidance: string | undefined,
   timeoutMs: number,
   launchPlanner: (job: Job, plan: Plan) => Promise<void>,
-  cleanHistory?: readonly (TaskResolutionClassification & { taskId: string })[],
+  forceCleanHistory = false,
 ): Promise<{ job: Job; round: Plan }> {
+  if (forceCleanHistory && !store.mutateJob) throw new Error('--force-clean-history requires atomic durable SQLite mutations');
   let job = await store.load(jobId);
   if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot plan terminal job ${job.id} (${job.state})`);
   if (job.pause) throw new Error(`Cannot plan paused Job ${job.id}; resume it first`);
@@ -24,24 +24,16 @@ export async function executeManualPlan(
       if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot plan terminal job ${current.id} (${current.state})`);
       if (current.pause) throw new Error(`Cannot plan paused Job ${current.id}; resume it first`);
       const concurrent = pendingPlan(current);
-      if (cleanHistory) {
-        if (concurrent) throw new Error(`--force-clean-history requires no pending Plan (${concurrent.id})`);
-        const failed = current.tasks.filter(task => task.kind !== 'planner' && task.state === 'FAILED' && !task.resolutionClassification);
-        const provided = new Map(cleanHistory.map(item => [item.taskId, item]));
-        if (provided.size !== cleanHistory.length || failed.length !== provided.size || failed.some(task => !provided.has(task.id))) throw new Error('--force-clean-history requires exactly one explicit classification for every FAILED work Task');
-        for (const task of failed) {
-          const item = provided.get(task.id)!;
-          if (item.targetTaskId === task.id || !current.tasks.some(target => target.id === item.targetTaskId)) throw new Error(`Classification for ${task.id} must target a different durable Task in this Job`);
-          classifyTaskResolution(task, item);
-        }
-        const unknown = current.tasks.filter(task => task.kind !== 'planner' && task.state === 'FAILED' && task.failureReason === 'worker_outcome_unknown');
-        if (unknown.length) throw new Error(`--force-clean-history cannot proceed while FAILED Task execution outcomes are unknown: ${unknown.map(task => task.id).join(', ')}`);
-      }
+      if (forceCleanHistory && concurrent) throw new Error(`--force-clean-history requires no pending Plan (${concurrent.id})`);
       if (concurrent) {
         if (concurrent.executionId) throw new Error(`Planning round ${concurrent.id} is already PLANNING`);
         round = structuredClone(concurrent);
       } else {
         round = createPlanRound(current, { guidance, manual: true, timeoutMs });
+        if (forceCleanHistory) {
+          round.forceCleanHistory = true;
+          round.cleanHistoryTaskIds = current.tasks.filter(task => task.kind !== 'planner' && task.state === 'FAILED' && !task.resolutionClassification).map(task => task.id);
+        }
         current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
       }
       if (current.state === 'DRAFT') {

@@ -138,7 +138,7 @@ export function createWorkspaceControl(deps: any) {
     }
     if (command === 'job.plan') {
       const reconciler = makeReconciler(store, concurrency);
-      try { const cleanHistory = Array.isArray(body.cleanHistory) ? body.cleanHistory as Array<import('./workflow/task-resolution.js').TaskResolutionClassification & { taskId: string }> : undefined; const planned = await reconciler.planJob(jobId, typeof body.guidance === 'string' && body.guidance.trim() ? body.guidance : undefined, cleanHistory); await pool.reconcileLocalJob(jobId, 'control.job.plan'); return planned.round; }
+      try { const planned = await reconciler.planJob(jobId, typeof body.guidance === 'string' && body.guidance.trim() ? body.guidance : undefined, body.forceCleanHistory === true); await pool.reconcileLocalJob(jobId, 'control.job.plan'); return planned.round; }
       finally { await reconciler.close(); }
     }
     if (command === 'job.unblock') {
