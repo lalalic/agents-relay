@@ -604,23 +604,23 @@ test('manual planner atomically activates a DRAFT job in SQLite before launching
   }
 });
 
-test('force-clean plan records the failed Task snapshot durably before Planner work', async () => {
+test('force-restate plan records the failed Task snapshot durably before Planner work', async () => {
   const { executeManualPlan } = await import('../dist/manual-plan.js');
-  const path = await mkdtemp(join(tmpdir(), 'relay-force-clean-plan-'));
+  const path = await mkdtemp(join(tmpdir(), 'relay-force-restate-plan-'));
   const sqlite = new SQLiteRelayStore(join(path, 'state.db'));
   try {
     const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore());
-    const failed = { ...task('FAILED'), id: 'failed', jobId: 'force-clean', kind: 'work' };
-    await store.saveJob({ ...job('force-clean'), state: 'ACTIVE', plans: [], tasks: [failed] });
-    const result = await executeManualPlan(store, 'force-clean', undefined, 30000, async (_job, plan) => {
-      assert.equal(plan.forceCleanHistory, true);
-      assert.deepEqual(plan.cleanHistoryTaskIds, ['failed']);
-      assert.deepEqual((await store.load('force-clean')).plans[0].cleanHistoryTaskIds, ['failed']);
+    const failed = { ...task('FAILED'), id: 'failed', jobId: 'force-restate', kind: 'work' };
+    await store.saveJob({ ...job('force-restate'), state: 'ACTIVE', plans: [], tasks: [failed] });
+    const result = await executeManualPlan(store, 'force-restate', undefined, 30000, async (_job, plan) => {
+      assert.equal(plan.forceRestate, true);
+      assert.deepEqual(plan.restateTaskIds, ['failed']);
+      assert.deepEqual((await store.load('force-restate')).plans[0].restateTaskIds, ['failed']);
       await store.savePlan({ ...plan, status: 'SUCCEEDED', updatedAt: new Date().toISOString() });
     }, true);
-    assert.equal(result.round.forceCleanHistory, true);
+    assert.equal(result.round.forceRestate, true);
     const restarted = new SQLiteRelayStore(join(path, 'state.db'));
-    try { assert.deepEqual((await restarted.loadJob('force-clean')).plans[0].cleanHistoryTaskIds, ['failed']); }
+    try { assert.deepEqual((await restarted.loadJob('force-restate')).plans[0].restateTaskIds, ['failed']); }
     finally { restarted.close(); }
   } finally {
     sqlite.close();

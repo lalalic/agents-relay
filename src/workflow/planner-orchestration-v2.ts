@@ -67,10 +67,10 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
   const latestId = latestPlan?.id ?? legacyLatest?.id;
   const latestObjective = latestPlan?.objectiveStatus ?? legacyLatest?.plannerResult?.objective_status;
   return {
-    autonomousJob: job.executionMode === 'autonomous',
+    autonomousJob: job.executionMode === 'autonomous' || latestPlan?.forceRestate === true,
     legacyPlanningPending: job.initialPlanning?.status === 'pending',
     recoverablePendingPlan,
-    terminalPlanFailure: Boolean(failedPlan && !failedPlan.manualPlanning && failedPlan.trigger.source !== 'unblock'),
+    terminalPlanFailure: Boolean(failedPlan && (!failedPlan.manualPlanning || failedPlan.forceRestate) && failedPlan.trigger.source !== 'unblock'),
     planRecoveryExists: Boolean(recovery),
     planRecoveryVerified: recoveryVerified,
     hasSeedWork: !((job.plans?.length ?? 0) === 0 && job.tasks.filter(task => task.kind !== 'planner').length === 0),

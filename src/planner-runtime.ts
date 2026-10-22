@@ -132,10 +132,10 @@ export async function finishPlanner(
   let planCommitted = false;
   try {
     const parsed = parsePlannerResult(raw);
-    if (plan.forceCleanHistory) {
+    if (plan.forceRestate) {
       const cleanup = parsed.history_cleanup ?? [];
-      const expected = new Set(plan.cleanHistoryTaskIds ?? []);
-      if (cleanup.length !== expected.size || cleanup.some(item => !expected.delete(item.taskId)) || expected.size) throw new Error('--force-clean-history requires exactly one Planner disposition for each failed Task in its durable snapshot');
+      const expected = new Set(plan.restateTaskIds ?? []);
+      if (cleanup.length !== expected.size || cleanup.some(item => !expected.delete(item.taskId)) || expected.size) throw new Error('--force-restate requires exactly one Planner disposition for each failed Task in its durable snapshot');
       for (const item of cleanup) {
         const task = job.tasks.find(candidate => candidate.id === item.taskId);
         if (!task) throw new Error(`Clean history Task ${item.taskId} disappeared`);
@@ -310,7 +310,7 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
   let promise: Promise<import('./planner.js').PlannerResult>;
   try {
     const executionContext = await ports.plannerContext(job, plan);
-    const context = { planExecution: { planId: plan.id, executionId }, forceCleanHistory: plan.forceCleanHistory, cleanHistoryTaskIds: plan.cleanHistoryTaskIds, job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
+    const context = { planExecution: { planId: plan.id, executionId }, forceRestate: plan.forceRestate, restateTaskIds: plan.restateTaskIds, job, tasks: job.tasks, objective: job.objective ?? job.description ?? job.title, previousPlannerTaskId: plan.previousPlanId, trigger: plan.trigger, executionContext, retryFeedback: plan.retryFeedback, guidance: plan.guidance };
     promise = planner.plan(context, controller.signal);
   } catch (error) {
     await finishPlanner(ports, job.id, plan.id, executionId, error instanceof Error ? error : new Error(String(error)));

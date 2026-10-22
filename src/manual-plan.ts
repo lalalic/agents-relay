@@ -10,9 +10,9 @@ export async function executeManualPlan(
   guidance: string | undefined,
   timeoutMs: number,
   launchPlanner: (job: Job, plan: Plan) => Promise<void>,
-  forceCleanHistory = false,
+  forceRestate = false,
 ): Promise<{ job: Job; round: Plan }> {
-  if (forceCleanHistory && !store.mutateJob) throw new Error('--force-clean-history requires atomic durable SQLite mutations');
+  if (forceRestate && !store.mutateJob) throw new Error('--force-restate requires atomic durable SQLite mutations');
   let job = await store.load(jobId);
   if (['COMPLETED', 'CANCELLED'].includes(job.state)) throw new Error(`Cannot plan terminal job ${job.id} (${job.state})`);
   if (job.pause) throw new Error(`Cannot plan paused Job ${job.id}; resume it first`);
@@ -24,15 +24,15 @@ export async function executeManualPlan(
       if (['COMPLETED', 'CANCELLED'].includes(current.state)) throw new Error(`Cannot plan terminal job ${current.id} (${current.state})`);
       if (current.pause) throw new Error(`Cannot plan paused Job ${current.id}; resume it first`);
       const concurrent = pendingPlan(current);
-      if (forceCleanHistory && concurrent) throw new Error(`--force-clean-history requires no pending Plan (${concurrent.id})`);
+      if (forceRestate && concurrent) throw new Error(`--force-restate requires no pending Plan (${concurrent.id})`);
       if (concurrent) {
         if (concurrent.executionId) throw new Error(`Planning round ${concurrent.id} is already PLANNING`);
         round = structuredClone(concurrent);
       } else {
         round = createPlanRound(current, { guidance, manual: true, timeoutMs });
-        if (forceCleanHistory) {
-          round.forceCleanHistory = true;
-          round.cleanHistoryTaskIds = current.tasks.filter(task => task.kind !== 'planner' && task.state === 'FAILED' && !task.resolutionClassification).map(task => task.id);
+        if (forceRestate) {
+          round.forceRestate = true;
+          round.restateTaskIds = current.tasks.filter(task => task.kind !== 'planner' && task.state === 'FAILED' && !task.resolutionClassification).map(task => task.id);
         }
         current.plans = [...(current.plans ?? []), structuredClone(round)].sort((a, b) => a.round - b.round);
       }

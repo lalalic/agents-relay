@@ -12,11 +12,11 @@ import {WorkflowActionLedger} from '../../dist/workflow/action-ledger.js';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const cli=join(root,'dist/cli.js');
 const run=(args,env)=>execFileSync(process.execPath,[cli,'workflow',...args],{cwd:root,encoding:'utf8',timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:env}});
-test('L3 CLI enumerates all 45 canonical Graph Actions and can locate each owning graph',()=>{
+test('L3 CLI enumerates all 46 canonical Graph Actions and can locate each owning graph',()=>{
  const dir=mkdtempSync(join(tmpdir(),'relay-cli-actions-l3-'));
  try {
   const {count,actions}=JSON.parse(run(['actions'],dir));
-  assert.equal(count,47);
+  assert.equal(count,48);
   for(const entry of actions){
    assert.ok(entry.graphReferences.length,entry.id);
    const refs=JSON.parse(run(['where','--id',entry.id],dir));

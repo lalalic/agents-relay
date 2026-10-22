@@ -3,6 +3,7 @@ import {createFailedPlanRecovery} from './planner-recovery.js';
 import { recoverPlannerChildren } from './planner-child-recovery.js';
 import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js';
 import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
+import { executeForceRestate } from './force-restate.js';
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
 import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, refreshTroubleshooterInput } from './troubleshooter.js';
@@ -168,7 +169,7 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.ensureFinalReview(scheduled, headSha);
         scheduled = schedule(await this.store.load(jobId));
       }
-      if (scheduled.executionMode === 'autonomous') {
+      if (scheduled.executionMode === 'autonomous' || (scheduled.plans ?? []).some(plan => plan.forceRestate && plan.status === 'FAILED')) {
         scheduled = schedule(await this.maybeCreatePlanner(scheduled));
       }
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
@@ -238,8 +239,11 @@ export class Reconciler extends ReconcilerReviewBase {
     }
     return this.store.load(jobId);
   }
-  async planJob(jobId: string, guidance?: string, forceCleanHistory = false): Promise<{ job: Job; round: Plan }> {
-    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan), forceCleanHistory);
+  async planJob(jobId: string, guidance?: string, forceRestate = false): Promise<{ job: Job; round: Plan }> {
+    if (forceRestate) return executeForceRestate({ store: this.store, jobId, guidance,
+      timeoutMs: this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'),
+      launchPlanner: (job, plan) => this.launchPlanner(job, plan), reconcile: id => this.reconcile(id) });
+    return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan));
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
     const pending = pendingPlan(job);
@@ -380,9 +384,6 @@ export class Reconciler extends ReconcilerReviewBase {
     }) ?? null;
     if (!claimedTask) return;
     task = claimedTask;
-    // After the durable execution claim, fence this Graph-selected launch
-    // before invoking the adapter. An Unknown previous attempt must never be
-    // re-launched speculatively. Legacy test stores have no SQLite ledger.
     if (this.store.reserveWorkflowLaunch && task.executionId && task.leaseOwner) {
       const reserved=await this.store.reserveWorkflowLaunch({jobId:job.id,taskId:task.id,executionId:task.executionId,attempt:task.attempt,leaseOwner:task.leaseOwner});
       if (!reserved) throw new Error('already reserved launch attempt: reconcile existing generation');

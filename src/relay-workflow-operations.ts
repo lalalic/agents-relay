@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Job, EventRecord, TaskResolution, TaskEscalation } from './types.js';
 import { normalizeLegacyTaskLifecycle } from './types.js';
-import { normalizeLegacyJobPrNumber } from './job-pr-number-migration.js';
+import { normalizeRelayJob } from './relay-job-snapshot-reads.js';
 import { taskLifecycleV2 } from './workflow/definitions-v2.js';
 import { dispatchWorkflowGraphSync } from './workflow/dispatcher.js';
 import { WorkflowActionLedger } from './workflow/action-ledger.js';
@@ -48,7 +48,7 @@ export class SQLiteWorkflowOperations {
     new DurableWorkflowPublication(this.db).commitTransitionAndEvents(() => {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as {json?:string}|undefined;
       if (!row?.json) throw new Error(`Unknown Job ${jobId}`);
-      const current = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
+      const current = normalizeRelayJob(row.json);
       current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task,current.executionMode));
       const previous = structuredClone(current);
       const next = mutation(current);
@@ -109,7 +109,7 @@ export class SQLiteWorkflowOperations {
     try {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
       if (!row?.json) throw new Error(`Local authoritative Job ${jobId} not found`);
-      const current = normalizeLegacyJobPrNumber(JSON.parse(row.json) as Job);
+      const current = normalizeRelayJob(row.json);
       current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task, current.executionMode));
       const previous = structuredClone(current);
       const before = JSON.stringify(current);

@@ -1,0 +1,29 @@
+---
+title: Force Restate Validation
+description: Accepts only verified post-reconcile outcomes and rejects invalid forced Plans into Planner recovery.
+---
+flowchart LR
+%% relay: initial idle
+idle["state: idle"]
+checkCompleted["state: check_completed"]
+checkRunnable["state: check_runnable"]
+checkBlocked["state: check_blocked"]
+accepted["state: accepted"]
+blocked["state: blocked"]
+rejected["state: rejected"]
+completed["guard: authoritativeCompleted"]
+runnable["guard: runnableWork"]
+troubleshooterBlocked["guard: verifiedTroubleshooterBlock"]
+reject["action: forceRestate.rejectPlan"]
+
+idle -->|on: forceRestate.validate| checkCompleted
+checkCompleted -->|on: forceRestate.validate| completed
+completed -->|true| accepted
+completed -->|false| checkRunnable
+checkRunnable -->|on: forceRestate.validate| runnable
+runnable -->|true| accepted
+runnable -->|false| checkBlocked
+checkBlocked -->|on: forceRestate.validate| troubleshooterBlocked
+troubleshooterBlocked -->|true| blocked
+troubleshooterBlocked -->|false| reject
+reject --> rejected

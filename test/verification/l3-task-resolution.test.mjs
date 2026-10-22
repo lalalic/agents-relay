@@ -27,7 +27,7 @@ test('L3 guarded cleanup and Plan receipt survive SQLite restart',async()=>{
  const at=new Date().toISOString();
  const failed={id:'failed-old',jobId,parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',input:'old implementation',state:'FAILED',attempt:1,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,executionHistory:[{id:'known-failed-execution',attempt:1,startedAt:at}],threadId:null,result:null,error:'semantic gap',failureReason:'task_failure',timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null};
  const failedDuringPlan={...failed,id:'failed-during-plan',input:'invalid task contract'};
- const failedReview={...failed,id:'failed-review',agentName:'reviewer',input:'stale review'};
+ const failedReview={...failed,id:'failed-review',agentName:'reviewer',reviewHeadSha:'old-head',input:'stale review'};
  const replacement={...failed,id:'replacement',input:'verified replacement',state:'SUCCEEDED',error:null,failureReason:undefined,executionHistory:[]};
  const job={id:jobId,title:'Resolution classification test',objective:'Preserve and classify a failed attempt',repository:'local/isolated',prNumber:0,state:'DRAFT',executionMode:'fixed',autoMerge:false,reviewEnabled:false,continuation:null,createdAt:at,updatedAt:at,tasks:[failed,failedDuringPlan,failedReview,replacement]};
  let sqlite=openLocalManagedStore('local/isolated',0,{directory:stores,noGitHub:true,jobId}).relay; await sqlite.saveJob(job); sqlite.close();
@@ -58,8 +58,8 @@ test('L3 guarded cleanup and Plan receipt survive SQLite restart',async()=>{
   let runtime;
   runtime=new Reconciler(store,{owner:'resolution-clean-l3',adapters:[],maxConcurrent:0,noGitHub:true,projectPathForJob:()=>process.cwd(),planner:{plan:async context=>{
    const {planId,executionId}=context.planExecution;
-   assert.equal(context.forceCleanHistory,true);
-   assert.deepEqual(context.cleanHistoryTaskIds,['failed-during-plan','failed-review']);
+   assert.equal(context.forceRestate,true);
+   assert.deepEqual(context.restateTaskIds,['failed-during-plan','failed-review']);
    const classifyArgs=[cli,'task','classify','--repo','local/isolated','--id',jobId,'--task-id','failed-during-plan','--classification','invalid','--target-task-id','replacement','--evidence','its declared output contract was malformed','--reason','the failed task definition cannot produce the required output','--host','127.0.0.1','--port',String(port),'--events','none','--no-github'];
    await execFileAsync(process.execPath,classifyArgs,{cwd:root,timeout:12000,env:{...process.env,AGENTS_RELAY_STORE_DIR:stores,AGENTS_RELAY_NO_GITHUB:'1'}});
    const cancelArgs=[cli,'task','cancel','--repo','local/isolated','--id',jobId,'--task-id','failed-review','--host','127.0.0.1','--port',String(port),'--events','none','--no-github'];
@@ -69,9 +69,7 @@ test('L3 guarded cleanup and Plan receipt survive SQLite restart',async()=>{
    return {objective_status:'satisfied',assessment:'applied by CLI action',next_tasks:[],unblocks:[],history_cleanup:proposal.history_cleanup,cliApplied:true};
   }}});
   try {
-   const planned=await runtime.planJob(jobId,undefined,true);
-   assert.equal(planned.round.status,'SUCCEEDED');
-   assert.equal(planned.job.plans.at(-1).id,'plan-1');
+   await assert.rejects(runtime.planJob(jobId,undefined,true),/Force Restate validation failed after durable Plan apply and reconciliation/);
    current=await sqlite.loadJob(jobId);
    assert.equal(current.tasks[0].state,originalFailure.state);
    assert.deepEqual(current.tasks[0].executionHistory,originalFailure.executionHistory);
@@ -80,11 +78,19 @@ test('L3 guarded cleanup and Plan receipt survive SQLite restart',async()=>{
    assert.equal(current.tasks[1].resolutionClassification.kind,'invalid');
    assert.equal(current.tasks[1].state,'FAILED','clean planning classifies history without claiming Task success');
    assert.equal(current.tasks[2].state,'CANCELLED','the guarded task command cancels failed review work');
-   assert.equal(current.plans[0].status,'SUCCEEDED');
+   assert.equal(current.plans[0].status,'FAILED','invalid convergence is durably failed');
+   assert.match(current.plans[0].error,/Force Restate validation failed/);
+   const recovery=current.tasks.find(task=>task.agentName==='troubleshooter'&&task.recoveryPlanId===current.plans[0].id);
+   assert.ok(recovery,'Planner Orchestration creates durable recovery after rejection');
+   const recoveryId=recovery.id;
+   await runtime.reconcile(jobId);
+   current=await sqlite.loadJob(jobId);
+   assert.equal(current.tasks.filter(task=>task.recoveryPlanId===current.plans[0].id).length,1,'reconciliation reuses the same recovery after replay');
+   assert.equal(current.tasks.find(task=>task.recoveryPlanId===current.plans[0].id).id,recoveryId);
    await service.stop();service=undefined;sqlite.close();
    sqlite=openLocalManagedStore('local/isolated',0,{directory:stores,noGitHub:true,jobId}).relay;
    current=await sqlite.loadJob(jobId);
-   assert.equal(current.plans[0].forceCleanHistory,true,'force mode survives SQLite restart');
+   assert.equal(current.plans[0].forceRestate,true,'force mode survives SQLite restart');
    assert.deepEqual(current.plans[0].plannerResult.history_cleanup,[{taskId:'failed-during-plan',outcome:'invalid',targetTaskId:'replacement',evidence:'its declared output contract was malformed',reason:'the failed task definition cannot produce the required output'},{taskId:'failed-review',outcome:'cancelled_review',evidence:'the review was tied to an obsolete artifact version',reason:'the review target is stale and no longer actionable'}]);
   } finally {await runtime.close();}
   sqlite.close();
@@ -97,7 +103,7 @@ test('L3 guarded cleanup and Plan receipt survive SQLite restart',async()=>{
  }
 });
 
-test('force-clean rejects an unproved unknown outcome without changing FAILED history',async()=>{
+test('force-restate rejects an unproved unknown outcome without changing FAILED history',async()=>{
  const env=createIsolatedEnvironment('relay-force-clean-negative-');
  const jobId='force-clean-negative-l3',at=new Date().toISOString();
  const failed={id:'unknown-failure',jobId,parentTaskId:null,dependencies:[],capabilities:[],input:'uncertain attempt',state:'FAILED',attempt:1,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,executionHistory:[{id:'unknown-execution',attempt:1,startedAt:at}],threadId:null,result:null,error:'worker exited without a terminal event',failureReason:'worker_outcome_unknown',timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null};
@@ -111,4 +117,19 @@ test('force-clean rejects an unproved unknown outcome without changing FAILED hi
   assert.equal(current.tasks[0].state,'FAILED');assert.equal(current.tasks[0].resolutionClassification,undefined);
   assert.equal(current.plans[0].status,'FAILED','invalid Planner claim fails its round without a fake success');
  }finally{await runtime.close();sqlite.close();env.cleanup();}
+});
+
+test('legacy forceCleanHistory Plan state is safely read as forceRestate and rewritten on mutation',async()=>{
+ const env=createIsolatedEnvironment('relay-force-restate-migration-');
+ const dbPath=join(env.storeDir,'relay.sqlite');
+ const sqlite=new SQLiteRelayStore(dbPath,'legacy-restate');
+ const at=new Date().toISOString();
+ const legacy={id:'legacy-restate',title:'Migration',repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'fixed',createdAt:at,updatedAt:at,tasks:[],plans:[{jobId:'legacy-restate',id:'plan-1',round:1,source:'model-planner',previousPlanId:null,trigger:{source:'manual'},status:'SUCCEEDED',assessment:'old',generatedTaskIds:[],forceCleanHistory:true,cleanHistoryTaskIds:['old-failed'],createdAt:at,updatedAt:at}]};
+ await sqlite.createJobIfAbsent(legacy);
+ const loaded=await sqlite.loadJob('legacy-restate');
+ assert.equal(loaded.plans[0].forceRestate,true);assert.deepEqual(loaded.plans[0].restateTaskIds,['old-failed']);
+ assert.equal('forceCleanHistory' in loaded.plans[0],false);
+ const updated=await sqlite.mutateJob('legacy-restate',current=>current);
+ assert.equal(updated.plans[0].forceRestate,true);assert.equal('forceCleanHistory' in updated.plans[0],false);
+ sqlite.close();env.cleanup();
 });

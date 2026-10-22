@@ -42,7 +42,7 @@ export type PlannerTaskSpec = {
 };
 export type PlannerUnblockSpec = { repository: string; prNumber: number; jobId: string; taskId: string; resolutionMode?: 'merge' | 'verified' };
 export type PlannerResult = { objective_status: ObjectiveStatus; assessment: string; next_tasks: PlannerTaskSpec[]; unblocks: PlannerUnblockSpec[]; history_cleanup?: PlannerHistoryCleanup[]; cliApplied?: true };
-export type PlannerContext = { planExecution?: { planId: string; executionId: string }; forceCleanHistory?: boolean; cleanHistoryTaskIds?: readonly string[]; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
+export type PlannerContext = { planExecution?: { planId: string; executionId: string }; forceRestate?: boolean; restateTaskIds?: readonly string[]; job: Job; tasks: readonly Task[]; objective: string; previousPlannerTaskId: string | null; trigger?: PlanTrigger; executionContext?: ExecutionContext; retryFeedback?: string; guidance?: string };
 export type SemanticTaskTreeEntry = { id: string; title?: string; parent_task_id: string | null; state: Task['state']; dependencies: string[]; planning_decision_id?: string; planning_round?: number; review?: ReviewTaskMetadata; resolution_classification?: Task['resolutionClassification'] };
 
 export function semanticTaskTree(tasks: readonly Task[]): { roots: string[]; tasks: SemanticTaskTreeEntry[] } {
@@ -401,8 +401,8 @@ export function plannerInput(context: PlannerContext): string {
     apply_cli: context.planExecution ? `agents-relay plan apply --repo ${context.job.repository} --pr ${context.job.prNumber} --id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
     plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
-    force_clean_history: context.forceCleanHistory === true,
-    clean_history_task_ids: context.cleanHistoryTaskIds ?? [],
+    force_restate: context.forceRestate === true,
+    restate_task_ids: context.restateTaskIds ?? [],
     previous_planner_task_id: context.previousPlannerTaskId,
     plan_trigger: context.trigger,
     legacy_change_cycle: context.job.changeCycle,

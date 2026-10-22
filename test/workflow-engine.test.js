@@ -19,6 +19,7 @@ import { taskResolutionV2 } from '../dist/workflow/task-resolution.js';
 import { projectionConflictV2 } from '../dist/workflow/projection-conflict-v2.js';
 import { orchestratorRescueV2 } from '../dist/workflow/orchestrator-rescue.js';
 import { interactiveInvocationGraph } from '../dist/interactive-invocation.js';
+import { forceRestateValidationV2 } from '../dist/workflow/force-restate-validation-v2.js';
 import { assertJobLifecycleTransition, assertTaskTransition } from '../dist/types.js';
 
 test('minimal profile supports named guard and action references', async () => {
@@ -98,6 +99,7 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['projection-conflict.mmd', projectionConflictV2],
         ['orchestrator-rescue.mmd', orchestratorRescueV2],
         ['interactive-invocation.mmd', interactiveInvocationGraph],
+        ['force-restate-validation.mmd', forceRestateValidationV2],
       ]);
       const runtime = runtimes.get(file);
       assert.ok(runtime, file+' must have a production runtime');

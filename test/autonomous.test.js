@@ -234,9 +234,9 @@ test('planner input carries explicit retry feedback for corrective retries', () 
 
 test('forced cleanup Planner context includes durable failure dependencies and evidence', () => {
   const failed = { ...task('failed'), state: 'FAILED', dependencies: ['prerequisite'], failureReason: 'task_failure', comments: [{ id: 'c1', text: 'replacement evidence was checked', author: 'operator', createdAt: now() }] };
-  const payload = JSON.parse(plannerInput({ job: job([failed]), tasks: [failed], objective: 'replan', previousPlannerTaskId: null, forceCleanHistory: true, cleanHistoryTaskIds: ['failed'] }));
-  assert.equal(payload.force_clean_history, true);
-  assert.deepEqual(payload.clean_history_task_ids, ['failed']);
+  const payload = JSON.parse(plannerInput({ job: job([failed]), tasks: [failed], objective: 'replan', previousPlannerTaskId: null, forceRestate: true, restateTaskIds: ['failed'] }));
+  assert.equal(payload.force_restate, true);
+  assert.deepEqual(payload.restate_task_ids, ['failed']);
   assert.deepEqual(payload.tasks[0].dependencies, ['prerequisite']);
   assert.equal(payload.tasks[0].failure_reason, 'task_failure');
   assert.equal(payload.tasks[0].comments[0].text, 'replacement evidence was checked');
