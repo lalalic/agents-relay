@@ -6,7 +6,7 @@ import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCo
 import { executeForceRestate } from './force-restate.js';
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
-import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, refreshTroubleshooterInput } from './troubleshooter.js';
+import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries, refreshTroubleshooterInput } from './troubleshooter.js';
 import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree, taskUsesCanonicalProjectRun } from './workspace.js';
 import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
@@ -120,10 +120,7 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       {
         const recoveryJob = await this.store.load(jobId);
-        for (const recovery of recoveryJob.tasks) {
-          if (recovery.agentName !== 'troubleshooter' || recovery.state !== 'FAILED' || recovery.attempt >= recovery.maxAttempts) continue;
-          const original = recoveryJob.tasks.find(task => task.id === recovery.parentTaskId);
-          if (!original || !['FAILED','BLOCKED'].includes(original.state)) continue;
+        for (const { original, recovery } of pendingTroubleshooterRetries(recoveryJob)) {
           await applyTaskRetryAction(recovery);
           recovery.routing = undefined;
           recovery.workerSelection = undefined;

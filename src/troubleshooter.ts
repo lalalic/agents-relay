@@ -69,6 +69,14 @@ export function pendingTroubleshooterReopens(job: Job): Array<{ original: Task; 
   return pending;
 }
 
+export function pendingTroubleshooterRetries(job: Job): Array<{ original: Task; recovery: Task }> {
+  return job.tasks.flatMap(recovery => {
+    if (recovery.agentName !== 'troubleshooter' || recovery.state !== 'FAILED' || recovery.attempt >= recovery.maxAttempts) return [];
+    const original = job.tasks.find(task => task.id === recovery.parentTaskId);
+    return original && ['FAILED', 'BLOCKED'].includes(original.state) ? [{ original, recovery }] : [];
+  });
+}
+
 export function refreshTroubleshooterInput(job: Job, original: Task, recovery: Task): void {
   recovery.input = failureInput(job, original, recovery.id);
   recovery.recoveryForAttempt = original.attempt;

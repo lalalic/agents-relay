@@ -10,6 +10,7 @@ import type { EventRecord } from './types.js';
 import { errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
 import { unblockNeedsNewPlan } from './unblock.js';
+import { pendingTroubleshooterRetries } from './troubleshooter.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
 type HydratableStore = DurableStore & { hydrate?: (job: Job) => Promise<void> };
@@ -22,6 +23,7 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
   if (job.state === 'ACTIVE' && job.localMerge?.status === 'failed' &&
       (!job.localMerge.nextAttemptAt || Date.parse(job.localMerge.nextAttemptAt) <= now)) return true;
   if (job.executionMode === 'autonomous' && unblockNeedsNewPlan(job)) return true;
+  if (pendingTroubleshooterRetries(job).length > 0) return true;
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
     || (task.state === 'DRAFT' && task.dependencies.length > 0))) return true;
