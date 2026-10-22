@@ -2,7 +2,7 @@ import { buildReferenceFirstPrompt, renderAgentPrompt } from './agent-prompt-bui
 import { readFile } from 'node:fs/promises';
 import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
 import { validateResolutionProposal, unresolvedTask } from './workflow/task-resolution.js';
 import { ExecutionContext, executionContextPrompt, BUNDLED_AGENTS_ROOT } from './execution-context.js';
@@ -14,6 +14,7 @@ import { prepareReviewerThreadDelivery, chatgptThreadRequirements } from './revi
 import { spawnOwnedProcess } from './owned-process.js'; import { requiredPlannerTaskTitle } from './planner-task-title.js';
 import { parsePlannerHistoryCleanup, type PlannerHistoryCleanup } from './planner-history-cleanup.js';
 import { plannerTaskContext } from './planner-task-context.js';
+import { relayStoreDirectory } from './local-job-path.js';
 
 export type ObjectiveStatus = 'in_progress' | 'satisfied';
 export type PlannerTaskSpec = {
@@ -465,7 +466,8 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
     const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
-      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
+      // Plan apply writes unified relay.sqlite beside AGENTS_RELAY_STORE_DIR.
+      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--sandbox', 'workspace-write', '--add-dir', resolvePath(dirname(relayStoreDirectory())), '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '', finalMessage = '', stderrTail = '';
       const consume = (line: string): void => {
         const message = parsePlannerAgentMessage(line); if (message) finalMessage = message;

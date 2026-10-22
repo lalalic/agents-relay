@@ -389,9 +389,11 @@ test('default planner uses the production reference-first prompt and preserves P
   try {
     const command = join(root, 'model-runtime');
     const promptFile = join(root, 'assembled-prompt.txt');
+    const argsFile = join(root, 'runtime-args.json');
     await writeFile(command, `#!/usr/bin/env node
 const fs = require('node:fs');
 fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv.at(-1));
+fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));
 process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'PLAN_APPLIED:plan-1:execution-1'}}) + '\\n');
 `, { mode: 0o700 });
     await chmod(command, 0o700);
@@ -404,6 +406,9 @@ process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_mes
     assert.match(prompt, /Verify its SHA-256/);
     assert.match(prompt, /## Durable planner input/);
     assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
+    const args = JSON.parse(await readFile(argsFile, 'utf8'));
+    assert.ok(args.includes('--sandbox') && args[args.indexOf('--sandbox') + 1] === 'workspace-write');
+    assert.ok(args.includes('--add-dir') && args[args.indexOf('--add-dir') + 1].startsWith('/'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -419,6 +424,20 @@ process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_mes
     const planner = new AgentObjectivePlanner(command, agentFile);
     await assert.rejects(planner.plan({job:job(),tasks:[],objective:'finish',previousPlannerTaskId:null,planExecution:{planId:'plan-1',executionId:'execution-1'}},new AbortController().signal),/must commit its proposal with the authorized/);
   } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test('agent planner rejects missing, mismatched, and decorated CLI receipts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-receipt-'));
+  try {
+    const command = join(root, 'model-runtime');
+    const agentFile = join(root, 'planner.agent.md');
+    await writeFile(agentFile, '# Planner\nUse plan apply and return its receipt.');
+    for (const receipt of ['', 'PLAN_APPLIED:other-plan:execution-1', 'PLAN_APPLIED:plan-1:other-execution', 'Applied PLAN_APPLIED:plan-1:execution-1']) {
+      await writeFile(command, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(receipt)}}}) + String.fromCharCode(10));\n`, { mode: 0o700 });
+      const planner = new AgentObjectivePlanner(command, agentFile);
+      await assert.rejects(planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal), /must commit its proposal with the authorized|returned no final message/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('default planner agent runs from the resolved project working directory', async () => {
