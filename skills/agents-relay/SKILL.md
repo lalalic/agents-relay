@@ -1,6 +1,9 @@
 ---
 name: agents-relay
 description: Use when work needs durable, multi-agent orchestration across turns or processes: plan and execute Jobs/Tasks, coordinate dependencies and reviews, recover failures, and track authoritative lifecycle events. Also use for content-generation workflows (research, story, production, human review, publication) that need explicit agent roles and handoff boundaries. Not for simple one-shot tasks with no durable coordination.
+requires:
+  skills:
+    - daemon-service-manage
 ---
 
 # Agents Relay
@@ -124,3 +127,7 @@ Keep secrets, credentials, private prompts, and large private payloads out of du
 When an ACTIVE Job contains a current-run `FAILED` task, reconciliation may create one P0-priority `troubleshooter` recovery task for that exact failed attempt. `BLOCKED` is resolved only through authoritative unblock, which records evidence and transitions the Task to `UNBLOCKED`. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Autonomous `UNBLOCKED` Tasks are historical and feed the next Planner round instead of being retried or sent through Troubleshooter. Each Planner round is durably represented by an `agents-relay:plan:v1` PR comment created before generated Task comments and updated in place with its assessment and generated Task IDs. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
 
 The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
+
+## Persistent service bootstrap
+
+This Skill owns `agents-relay/daemon`, `agents-relay/dashboard-tunnel`. The `daemon-service-manage` Skill is required. Run `node skills/agents-relay/bin/services.mjs setup` for idempotent registration through `serviceman`; run `status` to inspect or `doctor` to fail if a service is not online. Existing process configuration is preserved. Do not create unqualified legacy PM2 names.
