@@ -1,29 +1,37 @@
 ---
-title: Force Restate Validation
-description: Accepts only verified post-reconcile outcomes and rejects invalid forced Plans into Planner recovery.
+title: Plan Apply Convergence Validation
+description: Validates hypothetical Plan application and, for Force Restate, historical consistency before the atomic commit action.
 ---
 flowchart LR
 %% relay: initial idle
 idle["state: idle"]
-checkCompleted["state: check_completed"]
-checkRunnable["state: check_runnable"]
-checkBlocked["state: check_blocked"]
-accepted["state: accepted"]
-blocked["state: blocked"]
+checkHistoryMode["state: check_history_mode"]
+checkHistory["state: check_history"]
+checkNormalHistory["state: check_normal_history"]
+checkForward["state: check_forward"]
+commit["action: plan.apply.commit"]
 rejected["state: rejected"]
-completed["guard: authoritativeCompleted"]
-runnable["guard: runnableWork"]
-troubleshooterBlocked["guard: verifiedTroubleshooterBlock"]
-reject["action: forceRestate.rejectPlan"]
+committed["state: committed"]
+forceRestate["guard: forceRestateRequested"]
+historyConsistent["guard: historyConsistencyValid"]
+forwardConverged["guard: forwardConvergenceValid"]
+normalHistoryClean["guard: normalHistoryMutationAbsent"]
+rejectHistory["action: plan.apply.rejectHistory"]
+rejectForward["action: plan.apply.rejectForward"]
 
-idle -->|on: forceRestate.validate| checkCompleted
-checkCompleted -->|on: forceRestate.validate| completed
-completed -->|true| accepted
-completed -->|false| checkRunnable
-checkRunnable -->|on: forceRestate.validate| runnable
-runnable -->|true| accepted
-runnable -->|false| checkBlocked
-checkBlocked -->|on: forceRestate.validate| troubleshooterBlocked
-troubleshooterBlocked -->|true| blocked
-troubleshooterBlocked -->|false| reject
-reject --> rejected
+idle -->|on: plan.apply| checkHistoryMode
+checkHistoryMode -->|on: plan.apply| forceRestate
+forceRestate -->|true| checkHistory
+forceRestate -->|false| checkNormalHistory
+checkNormalHistory -->|on: plan.apply| normalHistoryClean
+normalHistoryClean -->|true| checkForward
+normalHistoryClean -->|false| rejectHistory
+checkHistory -->|on: plan.apply| historyConsistent
+historyConsistent -->|true| checkForward
+historyConsistent -->|false| rejectHistory
+rejectHistory --> rejected
+checkForward -->|on: plan.apply| forwardConverged
+forwardConverged -->|true| commit
+forwardConverged -->|false| rejectForward
+commit --> committed
+rejectForward --> rejected

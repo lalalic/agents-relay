@@ -1703,7 +1703,7 @@ test('late completed recovers legacy delivery-after-start failure', async () => 
   assert.equal(durable.error,null);
 });
 
-test('scheduled autonomous cycle ignores failures from older slots and creates a fresh planner', async () => {
+test('scheduled autonomous cycle keeps an empty candidate retryable for the active Planner execution', async () => {
   const oldFailed=task('old-failed','FAILED'); oldFailed.createdAt='2026-09-21T16:00:00.000Z'; oldFailed.updatedAt=oldFailed.createdAt;
   const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
   const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
@@ -1715,7 +1715,8 @@ test('scheduled autonomous cycle ignores failures from older slots and creates a
   const fresh=saved.plans?.find(item=>item.id==='plan-2');
   assert.ok(fresh);
   assert.equal(fresh.previousPlanId,'planner-1');
-  assert.equal(fresh.status,'SUCCEEDED');
+  assert.equal(fresh.status,'PLANNING');
+  assert.ok(fresh.executionId);
   assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history only
   assert.notEqual(saved.state,'FAILED');
 });
@@ -2344,6 +2345,7 @@ test('review changes-required creates one routable implementation fix task conta
   assert.ok(reviewer);
   const payload={review:{headSha:'sha-fix-12345678',issues:['first bug','second bug',{summary:'third bug'}]}};
   await reconciler.handleEvent(eventFor('j',reviewer.id,null,'review.changes_required','failed','changes required','orchestrator',payload));
+  await reconciler.idle();
   let saved=await store.load('j');
   const fixes=saved.tasks.filter(item=>item.id.startsWith('review-fix-'));
   assert.equal(fixes.length,1);

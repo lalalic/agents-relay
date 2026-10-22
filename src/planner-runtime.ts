@@ -11,6 +11,35 @@ import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runti
 import type { DurableStore } from './store.js';
 import { storySizeTimeoutMs, type EventRecord, type Job, type Plan } from './types.js';
 import { tryTransitionTaskEvent } from './scheduler.js';
+import { applyPlannerHistoryCleanup, forceRestateConverged } from './force-restate-validation.js';
+import { decideForceRestateValidation } from './workflow/force-restate-validation-v2.js';
+import type { PlannerHistoryCleanup } from './planner-history-cleanup.js';
+import { workerCandidates } from './worker-routing.js';
+import { createHash } from 'node:crypto';
+
+export class PlannerApplyValidationError extends Error {
+  readonly code = 'PLAN_APPLY_VALIDATION_FAILED';
+  constructor(readonly phase: 'candidate' | 'history_consistency' | 'forward_convergence' | 'fencing', readonly issues: string[], readonly retryable = phase !== 'fencing') {
+    super(JSON.stringify({ code: 'PLAN_APPLY_VALIDATION_FAILED', phase, retryable, issues }));
+    this.name = 'PlannerApplyValidationError';
+  }
+}
+
+function candidateFingerprint(result: import('./planner.js').PlannerResult): string {
+  return createHash('sha256').update(JSON.stringify(result)).digest('hex');
+}
+
+function durableJobVersion(job: Job): string {
+  const normalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, normalize(child)]));
+    return value;
+  };
+  const snapshot = Object.fromEntries(Object.entries(job).filter(([key]) => key !== 'updatedAt'));
+  // updatedAt is a display timestamp and can advance on heartbeat/reconcile
+  // writes with no state change. The normalized content hash is the version.
+  return createHash('sha256').update(JSON.stringify(normalize(snapshot))).digest('hex');
+}
 
 /** Activate queued planner work inside the same authoritative SQLite mutation. */
 export function activateCommittedPlannerWork(job: Job): boolean {
@@ -82,10 +111,23 @@ export async function finishPlanner(
   cliApply = false,
 ): Promise<void> {
   const live = ports.live.get(planId);
-  if (live?.executionId === executionId) clearTimeout(live.timer);
-  const releaseLive = () => { if (ports.live.get(planId)?.executionId === executionId) ports.live.delete(planId); };
+  const releaseLive = () => {
+    const current = ports.live.get(planId);
+    if (current?.executionId !== executionId) return;
+    clearTimeout(current.timer);
+    ports.live.delete(planId);
+  };
   const job = await ports.store.load(jobId);
   const plan = (job.plans ?? []).find(item => item.id === planId);
+  if (plan?.status === 'SUCCEEDED' && plan.appliedExecutionId === executionId && raw && !raw.cliApplied) {
+    const repeated = parsePlannerResult(raw);
+    if (candidateFingerprint(repeated) !== plan.appliedCandidateFingerprint) {
+      releaseLive();
+      throw new Error(`Plan ${planId} already committed a different candidate for execution ${executionId}`);
+    }
+    releaseLive();
+    return;
+  }
   if (!plan || (plan.executionId !== executionId && !(raw?.cliApplied && plan.status === 'SUCCEEDED'))) { releaseLive(); if (cliApply) throw new Error(`Plan ${planId} is not owned by this active execution`); return; }
 
   const failOrRetry = async (message: string): Promise<void> => {
@@ -132,23 +174,11 @@ export async function finishPlanner(
   let planCommitted = false;
   try {
     const parsed = parsePlannerResult(raw);
-    if (plan.forceRestate) {
-      const cleanup = parsed.history_cleanup ?? [];
-      const expected = new Set(plan.restateTaskIds ?? []);
-      if (cleanup.length !== expected.size || cleanup.some(item => !expected.delete(item.taskId)) || expected.size) throw new Error('--force-restate requires exactly one Planner disposition for each failed Task in its durable snapshot');
-      for (const item of cleanup) {
-        const task = job.tasks.find(candidate => candidate.id === item.taskId);
-        if (!task) throw new Error(`Clean history Task ${item.taskId} disappeared`);
-        if (task.failureReason === 'worker_outcome_unknown' && item.outcome !== 'unresolved') throw new Error(`Unknown execution outcome for ${item.taskId} must remain unresolved without graph-verified proof`);
-        if ((item.outcome === 'superseded' || item.outcome === 'invalid') && (task.resolutionClassification?.kind !== item.outcome || task.resolutionClassification.targetTaskId !== item.targetTaskId || task.resolutionClassification.evidence !== item.evidence || task.resolutionClassification.reason !== item.reason)) throw new Error(`Clean history classification for ${item.taskId} was not applied through task classify with matching evidence`);
-        if (item.outcome === 'cancelled_review' && (task.agentName !== 'reviewer' || task.state !== 'CANCELLED')) throw new Error(`Failed review ${item.taskId} must be cancelled through task cancel before Plan apply`);
-        if (item.outcome === 'unresolved' && (task.state !== 'FAILED' || task.resolutionClassification)) throw new Error(`Unresolved history item ${item.taskId} changed after Planner assessment`);
-      }
-    }
+    const historyCleanup: PlannerHistoryCleanup[] = parsed.history_cleanup ?? [];
     const result = assignPlannerTaskIds(parsed, job.repository, job.id, plan.id);
     const executionContext = await ports.plannerContext(job, plan);
     validatePlannerHierarchy(job.tasks, result.next_tasks);
-    validatePlannerResolutionMaterialization(job.tasks, result.next_tasks);
+    if (!plan.forceRestate) validatePlannerResolutionMaterialization(job.tasks, result.next_tasks);
     validatePlannerLifecycleOwnership(job, result.next_tasks);
     validatePlannerProgress(job, result);
     if (result.unblocks.length > 0 && !ports.store.registerBlockerDependent) throw new Error('Durable store does not support Planner cross-Job unblock registration');
@@ -158,83 +188,88 @@ export async function finishPlanner(
       if (existing && !samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
     }
     const now = new Date().toISOString();
-    if (ports.store.mutateJob) {
-      let committedPlan = false;
-      const committed = await ports.store.mutateJob(job.id, current => {
-        const durablePlan = (current.plans ?? []).find(item => item.id === plan.id);
-        if (!durablePlan || durablePlan.status !== 'PLANNING' || durablePlan.executionId !== executionId) return current;
-        durablePlan.status = 'SUCCEEDED';
-        durablePlan.objectiveStatus = result.objective_status;
-        durablePlan.plannerResult = result;
-        durablePlan.assessment = result.assessment;
-        durablePlan.generatedTaskIds = result.next_tasks.map(item => item.id);
-        durablePlan.pendingUnblocks = result.unblocks.length > 0 ? structuredClone(result.unblocks) : undefined;
-        durablePlan.error = undefined;
-        durablePlan.retryFeedback = undefined;
-        durablePlan.leaseOwner = null;
-        durablePlan.leaseExpiresAt = null;
-        durablePlan.executionId = null;
-        durablePlan.updatedAt = now;
-        if (current.changeCycle && !current.changeCycle.consumedByPlannerTaskId && durablePlan.trigger.source === 'unblock') {
-          current.changeCycle.consumedByPlannerTaskId = durablePlan.id;
-        }
-        for (const child of children) {
-          const spec = result.next_tasks.find(item => item.id === child.id);
-          if (spec?.resolution) attachResolutionOwnership(current, child, spec.resolution, 'planner');
-          const existing = current.tasks.find(item => item.id === child.id);
-          if (!existing) current.tasks.push(structuredClone(child));
-          else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
-        }
-        const consumedUnblocks = new Set(durablePlan.trigger.source === 'unblock' ? durablePlan.trigger.taskIds ?? [] : []);
-        for (const task of current.tasks) {
-          if (!consumedUnblocks.has(task.id) || !task.unblock || task.state === 'CANCELLED' || durablePlan.generatedTaskIds.includes(task.id)) continue;
-          if (tryTransitionTaskEvent(task, 'cancel').accepted) {
-            task.error = `Superseded by successful unblock plan ${durablePlan.id}`;
-            task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
-          }
-        }
-        // Planner children are committed atomically with Job activation.
-        // Otherwise the DRAFT Job is invisible to the ACTIVE-only dispatcher.
-        activateCommittedPlannerWork(current);
-        current.updatedAt = now;
-        committedPlan = true;
-        return current;
-      });
-      Object.assign(job, structuredClone(committed));
-      if (!committedPlan) {
-        releaseLive();
-        return;
+    if (!ports.store.mutateJob) throw new Error('Plan apply requires one atomic durable SQLite mutation');
+    const routeCandidates = workerCandidates(ports.options.adapters, await ports.store.listAgents());
+    const expectedJobVersion = durableJobVersion(job);
+    const committed = await ports.store.mutateJob(job.id, current => {
+      const durablePlan = (current.plans ?? []).find(item => item.id === plan.id);
+      const changedKeys = Object.keys({ ...job, ...current }).filter(key => key !== 'updatedAt' && JSON.stringify(job[key as keyof Job]) !== JSON.stringify(current[key as keyof Job]));
+      if (!durablePlan || durablePlan.status !== 'PLANNING' || durablePlan.executionId !== executionId
+        || durablePlan.updatedAt !== plan.updatedAt || durableJobVersion(current) !== expectedJobVersion) {
+        throw new PlannerApplyValidationError('fencing', [`The Job or Planner execution changed while this candidate was being validated (plan=${Boolean(durablePlan)}, status=${durablePlan?.status ?? 'missing'}, execution=${durablePlan?.executionId === executionId}, planVersion=${durablePlan?.updatedAt === plan.updatedAt}, jobVersion=${durableJobVersion(current) === expectedJobVersion}, changed=${changedKeys.join(',')}). Refresh the Planner context and retry with the active execution.`,], durablePlan?.status === 'PLANNING' && durablePlan.executionId === executionId);
       }
-    } else {
-      plan.status = 'SUCCEEDED';
-      plan.objectiveStatus = result.objective_status;
-      plan.plannerResult = result;
-      plan.assessment = result.assessment;
-      plan.generatedTaskIds = result.next_tasks.map(item => item.id);
-      plan.pendingUnblocks = result.unblocks.length > 0 ? structuredClone(result.unblocks) : undefined;
-      plan.error = undefined;
-      plan.retryFeedback = undefined;
-      plan.leaseOwner = null;
-      plan.leaseExpiresAt = null;
-      plan.executionId = null;
-      plan.updatedAt = now;
-      await ports.store.savePlan(plan);
-      if (job.changeCycle && !job.changeCycle.consumedByPlannerTaskId && plan.trigger.source === 'unblock') {
-        job.changeCycle.consumedByPlannerTaskId = plan.id;
-        job.updatedAt = now;
-        await ports.store.saveJob(job);
+      const candidate = structuredClone(current);
+      const candidatePlan = (candidate.plans ?? []).find(item => item.id === plan.id)!;
+      const history = candidatePlan.forceRestate
+        ? applyPlannerHistoryCleanup(candidate, candidatePlan.restateTaskIds ?? [], historyCleanup, now)
+        : (historyCleanup.length ? { valid: false as const, issues: ['history_cleanup is only allowed for a Force Restate Plan. Remove it and submit the Plan again.'] } : { valid: true as const });
+      if (history.valid && candidatePlan.forceRestate) {
+        try { validatePlannerResolutionMaterialization(candidate.tasks, result.next_tasks); }
+        catch (error) {
+          throw new PlannerApplyValidationError('history_consistency', [error instanceof Error ? error.message : String(error)]);
+        }
       }
-      const consumedUnblocks = new Set(plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []);
-      for (const task of job.tasks) {
-        if (!consumedUnblocks.has(task.id) || !task.unblock || task.state === 'CANCELLED' || plan.generatedTaskIds.includes(task.id)) continue;
-        if (tryTransitionTaskEvent(task, 'cancel').accepted) { task.error = `Superseded by successful unblock plan ${plan.id}`; await ports.store.saveTask(task); }
+
+      candidatePlan.status = 'SUCCEEDED';
+      candidatePlan.objectiveStatus = result.objective_status;
+      candidatePlan.plannerResult = result;
+      candidatePlan.appliedCandidateFingerprint = candidateFingerprint(parsed);
+      candidatePlan.assessment = result.assessment;
+      candidatePlan.generatedTaskIds = result.next_tasks.map(item => item.id);
+      candidatePlan.pendingUnblocks = result.unblocks.length > 0 ? structuredClone(result.unblocks) : undefined;
+      candidatePlan.error = undefined;
+      candidatePlan.retryFeedback = undefined;
+      candidatePlan.leaseOwner = null;
+      candidatePlan.leaseExpiresAt = null;
+      candidatePlan.executionId = null;
+      candidatePlan.appliedExecutionId = executionId ?? undefined;
+      candidatePlan.updatedAt = now;
+      if (candidate.changeCycle && !candidate.changeCycle.consumedByPlannerTaskId && candidatePlan.trigger.source === 'unblock') {
+        candidate.changeCycle.consumedByPlannerTaskId = candidatePlan.id;
       }
-      for (const child of children) if (!job.tasks.some(item => item.id === child.id)) {
+      for (const child of children) {
         const spec = result.next_tasks.find(item => item.id === child.id);
-        if (spec?.resolution) await ports.store.saveTask(attachResolutionOwnership(job, child, spec.resolution, 'planner'));
-        await ports.store.appendTask(child);
+        if (spec?.resolution) attachResolutionOwnership(candidate, child, spec.resolution, 'planner');
+        const existing = candidate.tasks.find(item => item.id === child.id);
+        if (!existing) candidate.tasks.push(structuredClone(child));
+        else if (!samePlannerChildDefinition(existing, child)) throw new Error(`Planner child ${child.id} already exists with a different definition`);
       }
-    }
+      const consumedUnblocks = new Set(candidatePlan.trigger.source === 'unblock' ? candidatePlan.trigger.taskIds ?? [] : []);
+      for (const task of candidate.tasks) {
+        if (!consumedUnblocks.has(task.id) || !task.unblock || task.state === 'CANCELLED' || candidatePlan.generatedTaskIds.includes(task.id)) continue;
+        if (tryTransitionTaskEvent(task, 'cancel').accepted) {
+          task.error = `Superseded by successful unblock plan ${candidatePlan.id}`;
+          task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+        }
+      }
+      activateCommittedPlannerWork(candidate);
+      candidate.updatedAt = now;
+
+      const forwardValid = forceRestateConverged(candidate, candidatePlan.id, routeCandidates);
+      const decision = decideForceRestateValidation({
+        forceRestateRequested: candidatePlan.forceRestate === true,
+        historyConsistencyValid: history.valid,
+        normalHistoryMutationAbsent: !candidatePlan.forceRestate && historyCleanup.length === 0,
+        forwardConvergenceValid: forwardValid,
+      });
+      if (!decision.accepted) {
+        throw new PlannerApplyValidationError('forward_convergence', [`Plan Apply graph rejected the candidate: ${decision.reason}.`]);
+      }
+      if (decision.target === 'rejected') {
+        const historyRejected = decision.actions.some(action => action.id === 'plan.apply.rejectHistory');
+        const issues = historyRejected && history.valid === false ? history.issues : [
+          'The proposed Plan does not converge to executable, dependency-accounted work, an evidence-backed blocked Troubleshooter owned by this Plan, or a completed Job.',
+          'Add a queued/running Task with an eligible worker route, make each dependency path lead to eligible work, provide the Troubleshooter evidence and unblock conditions, or preserve verified completion.',
+          `Candidate work: ${candidate.tasks.filter(task => task.kind !== 'planner').map(task => `${task.id}:${task.state}/${task.adapter}${task.dependencies.length ? ` deps=${task.dependencies.join(',')}` : ''}`).join('; ') || '(none)'}. Eligible worker adapters: ${[...new Set(routeCandidates.map(item => item.adapter))].join(', ') || '(none)'}.`,
+        ];
+        throw new PlannerApplyValidationError(historyRejected ? 'history_consistency' : 'forward_convergence', issues);
+      }
+      if (!decision.actions.some(action => action.id === 'plan.apply.commit')) {
+        throw new PlannerApplyValidationError('forward_convergence', ['The Plan Apply graph did not select the atomic commit action.']);
+      }
+      return candidate;
+    });
+    Object.assign(job, structuredClone(committed));
     planCommitted = true;
     // Cross-Job registrations cannot join this Job's SQLite transaction. The
     // committed Plan keeps replay intent until each external registration is
@@ -243,16 +278,20 @@ export async function finishPlanner(
     await ports.emit(eventFor(job.id, plan.id, null, 'planner.completed', 'succeeded', `Plan ${plan.id} completed: ${result.objective_status}`, 'orchestrator', { objective_status: result.objective_status, pendingUnblocks }));
   } catch (caught) {
     if (planCommitted) { releaseLive(); throw caught; }
-    if (cliApply) throw caught;
-    await failOrRetry(caught instanceof Error ? caught.message : String(caught));
-    releaseLive();
-    return;
+    if (caught instanceof PlannerApplyValidationError) {
+      if (!(cliApply && caught.retryable)) releaseLive();
+      throw caught;
+    }
+    const message = caught instanceof Error ? caught.message : String(caught);
+    const validationError = new PlannerApplyValidationError('candidate', [message, 'Correct the candidate and retry plan apply with the same active Planner execution.']);
+    if (!(cliApply && validationError.retryable)) releaseLive();
+    throw validationError;
   }
   releaseLive();
   if (!plan.manualPlanning) ports.detach(ports.reconcile(jobId), jobId, plan.id, 'planner follow-up reconciliation');
 }
 
-export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, plan: Plan): Promise<void> {
+export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, plan: Plan, waitForCompletion = false): Promise<void> {
   const planner = ports.options.planner;
   if (!planner) {
     let failed = false;
@@ -305,7 +344,10 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
   const controller = new AbortController();
   const executionId = plan.executionId!;
   const timeoutMs = plan.timeoutMs ?? ports.options.plannerTimeoutMs ?? storySizeTimeoutMs('M');
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+    if (ports.live.get(plan.id)?.executionId === executionId) ports.live.delete(plan.id);
+  }, timeoutMs);
   ports.live.set(plan.id, { executionId, controller, timer });
   let promise: Promise<import('./planner.js').PlannerResult>;
   try {
@@ -314,6 +356,16 @@ export async function launchPlanExecution(ports: PlannerRuntimePorts, job: Job, 
     promise = planner.plan(context, controller.signal);
   } catch (error) {
     await finishPlanner(ports, job.id, plan.id, executionId, error instanceof Error ? error : new Error(String(error)));
+    return;
+  }
+  if (waitForCompletion) {
+    let result: import('./planner.js').PlannerResult;
+    try { result = await promise; }
+    catch (error) {
+      await finishPlanner(ports, job.id, plan.id, executionId, error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    await finishPlanner(ports, job.id, plan.id, executionId, null, result);
     return;
   }
   ports.detach(

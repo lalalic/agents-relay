@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { forceRestateBlocked, forceRestateConverged } from '../../dist/force-restate-validation.js';
 
 const base = { state: 'ACTIVE', tasks: [] };
+const candidate = { workerId: 'codex-test', adapter: 'codex', capabilities: ['model'] };
 test('Force Restate accepts completed, runnable routed work, or evidenced durable Troubleshooter block only', () => {
   assert.equal(forceRestateConverged({ ...base, state: 'COMPLETED' }), true);
-  assert.equal(forceRestateConverged({ ...base, tasks: [{ id: 'work', kind: 'work', state: 'QUEUED', dependencies: [], adapter: 'codex', routing: {}, workerSelection: { adapter: 'codex', capabilities: ['model'] }, workerRequirements: { capabilities: ['model'] } }] }), true);
+  assert.equal(forceRestateConverged({ ...base, state: 'COMPLETED', tasks: [{ id: 'late-work', kind: 'work', state: 'QUEUED', dependencies: [], adapter: 'codex' }] }), false);
+  assert.equal(forceRestateConverged({ ...base, tasks: [{ id: 'work', kind: 'work', state: 'QUEUED', dependencies: [], adapter: 'codex', routing: {}, workerSelection: { workerId: 'codex-test', adapter: 'codex', capabilities: ['model'] }, workerRequirements: { capabilities: ['model'] } }] }, undefined, [candidate]), true);
   assert.equal(forceRestateConverged({ ...base, tasks: [{ id: 'help', recoveryPlanId: 'plan-1', agentName: 'troubleshooter', state: 'BLOCKED', error: 'No worker is registered', result: { data: { evidence: 'Worker inventory is empty', unblock_conditions: 'Register a codex worker' } } }] }, 'plan-1'), true);
 });
 test('Force Restate rejects empty, dependency-blocked, unrouted, and fake queue states', () => {

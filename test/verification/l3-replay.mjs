@@ -40,7 +40,7 @@ export async function runReplay(scenario) {
    if(plannerCalls <= (scenario.plannerScript.failures??0))throw new Error('Injected isolated Planner provider failure '+plannerCalls);
    return scenario.plannerScript.result;
  }} : undefined;
- const runtimeOptions={owner:'l3-replay',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,
+ const runtimeOptions={owner:'l3-replay',adapters:[{name:'codex',id:'l3-replay-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,
    ...(planner?{planner,projectPathForJob:()=>process.cwd()}:{}),...(!planner?{now:new Date(mockNow)}:{}),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;

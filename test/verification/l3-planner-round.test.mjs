@@ -19,8 +19,9 @@ test('real Planner Plan round failure retries into committed child under isolate
  const bus=new MemoryEventBus();
  let attempts=0;
  const observations=[];
+ const failures=[];
  const unsubscribe=await bus.subscribeAll(event=>{observations.push(event.type)});
- const runtime=new Reconciler(store,{owner:'planner-l3',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true,projectPathForJob:()=>process.cwd(),planner:{plan:async()=>{
+ const runtime=new Reconciler(store,{owner:'planner-l3',adapters:[{name:'codex',id:'planner-l3-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,emit:async event=>{if(event.type==='runtime.persistence.failed')failures.push(event.message);},projectPathForJob:()=>process.cwd(),planner:{plan:async()=>{
   attempts++;
   if(attempts===1)throw Error('Injected transient Planner provider failure');
   return {objective_status:'satisfied',assessment:'Work required before objective is fulfilled',
@@ -36,7 +37,7 @@ test('real Planner Plan round failure retries into committed child under isolate
   }
   const current=await sqlite.loadJob(jobId);
   assert.equal(attempts,2,JSON.stringify({attempts,plan:current.plans?.[0],events:observations}));
-  assert.equal(current.plans?.[0]?.status,'SUCCEEDED',JSON.stringify({plan:current.plans?.[0],events:observations}));
+  assert.equal(current.plans?.[0]?.status,'SUCCEEDED',JSON.stringify({plan:current.plans?.[0],events:observations,failures}));
   assert.equal(current.plans?.[0]?.attempt,2);
   assert.ok(current.plans?.[0]?.generatedTaskIds?.length>0,'real Plan must record generated Task IDs');
   assert.ok(current.plans[0].generatedTaskIds.every(id=>current.tasks.some(item=>item.id===id)),JSON.stringify({plans:current.plans,tasks:current.tasks}));

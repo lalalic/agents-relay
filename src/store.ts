@@ -112,6 +112,14 @@ export class InMemoryStore implements DurableStore {
     }
   }
   async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId).map(task => normalizeLegacyTaskLifecycle(task, job.executionMode)); return job; }
+  async mutateJob(jobId: string, mutation: AtomicJobMutation): Promise<Job> {
+    const current = await this.load(jobId);
+    const next = mutation(structuredClone(current));
+    this.values.set(`${JOB_MARKER}:${jobId}`, renderJobComment(next));
+    for (const plan of next.plans ?? []) this.values.set(`${PLAN_MARKER}:${jobId}:${plan.id}`, renderPlanComment(plan));
+    for (const task of next.tasks) this.values.set(`${TASK_MARKER}:${task.jobId ?? jobId}:${task.id}`, renderTaskComment(task));
+    return structuredClone(next);
+  }
   async saveJob(job: Job): Promise<void> { this.values.set(`${JOB_MARKER}:${job.id}`, renderJobComment(job)); }
   async appendPlan(plan: Plan): Promise<void> { const key = `${PLAN_MARKER}:${plan.jobId}:${plan.id}`; const existing = this.values.get(key); if (existing) { const current = parsePlan(existing); if (current && samePlanDefinition(current, plan)) return; throw new DurableDefinitionConflictError('plan', 'append_plan', plan.jobId, plan.id, plan, current ?? null, current ? planDefinitionDivergence(current, plan) : []); } this.values.set(key, renderPlanComment(plan)); }
   async savePlan(plan: Plan): Promise<void> { this.values.set(`${PLAN_MARKER}:${plan.jobId}:${plan.id}`, renderPlanComment(plan)); }

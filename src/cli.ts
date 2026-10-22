@@ -402,7 +402,12 @@ async function main(): Promise<void> {
     await withEventBus(storageArgs, async bus => {
       const reconciler = runtime(store, storageArgs, bus);
       try { console.log(JSON.stringify(await reconciler.applyPlannerTree(jobId,planId,executionId,proposal),null,2)); }
-      catch (error) { console.error(JSON.stringify({ok:false,code:'PLAN_APPLY_REJECTED',message:error instanceof Error?error.message:String(error)})); process.exitCode=1; }
+      catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'PLAN_APPLY_VALIDATION_FAILED' && 'phase' in error && 'issues' in error) {
+          console.error(JSON.stringify({ ok: false, code: error.code, phase: error.phase, retryable: 'retryable' in error ? error.retryable : true, issues: error.issues }));
+        } else console.error(JSON.stringify({ok:false,code:'PLAN_APPLY_REJECTED',message:error instanceof Error?error.message:String(error)}));
+        process.exitCode=1;
+      }
       finally { await reconciler.close(); }
     });
     return;

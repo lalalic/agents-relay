@@ -59,7 +59,7 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   const store = new InMemoryStore(root);
   let observed;
   const planner = { plan: async context => { observed = context; return { objective_status: 'in_progress', assessment: 'need implementation', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'implement', input: 'implement the objective', output, storySize: 'S', workerRequirements: { capabilities: ['model'] } }] }; } };
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [{ name: 'codex', id: 'planner-worker', capabilities: ['model'] }], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto', 'focus on the durable objective');
   assert.equal(result.round.id, 'plan-1');
   assert.equal(result.round.status, 'SUCCEEDED');
@@ -87,7 +87,7 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
   store.headSha = async () => headSha;
   let observedTriggerHeadSha;
   const reconciler = managedReconciler(store, {
-    owner: 'test', adapters: [], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
+    owner: 'test', adapters: [{ name: 'codex', id: 'review-worker', capabilities: ['model'] }, { name: 'chatgpt', id: 'review-chatgpt', capabilities: ['model', 'chatgpt', 'webhelm'] }], maxConcurrent: 0, executionContextRoots: { globalRoot: contextRoot, neoRoot: null },
     planner: { plan: async context => { observedTriggerHeadSha = context.trigger.currentHeadSha; return { objective_status: 'in_progress', assessment: 'review required', next_tasks: [{title: 'Implement and verify durable task outputs',
       id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
     }] }; } },
@@ -117,7 +117,7 @@ test('planner can create business parent-child hierarchy without plan-N parents'
     {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
     {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
   ] }) };
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [], planner, maxConcurrent: 0 });
+  const reconciler = managedReconciler(store, { owner: 'test', adapters: [{ name: 'codex', id: 'planner-worker', capabilities: [] }], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto');
   const [dayId, hourId] = result.round.generatedTaskIds;
   const day = result.job.tasks.find(item => item.id === dayId);
@@ -127,13 +127,13 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   assert.equal(hour.planningDecisionId, 'plan-1');
 });
 
-test('manual satisfied plan persists the planning round without creating work', async () => {
+test('manual satisfied plan without authoritative completion is rejected before commit', async () => {
   const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'already complete', next_tasks: [] }) } });
-  const result = await reconciler.planJob('auto');
-  assert.equal(result.round.id, 'plan-1');
-  assert.equal(result.round.plannerResult.objective_status, 'satisfied');
-  assert.equal(result.job.tasks.filter(item => item.kind !== 'planner').length, 0);
+  await assert.rejects(() => reconciler.planJob('auto'), /PLAN_APPLY_VALIDATION_FAILED.*forward_convergence/);
+  const current = await store.load('auto');
+  assert.equal(current.plans[0].status, 'PLANNING');
+  assert.equal(current.tasks.filter(item => item.kind !== 'planner').length, 0);
 });
 
 test('manual plan rejects a concurrent active planning round', async () => {
@@ -155,14 +155,14 @@ test('malformed manual planner output fails the round without materializing chil
   const saved = await store.load('auto');
   assert.equal(saved.tasks.some(item => item.id === 'broken'), false);
   assert.equal(saved.tasks.some(item => item.kind === 'planner'), false);
-  assert.equal(saved.plans.find(item => item.id === 'plan-1')?.status, 'FAILED');
+  assert.equal(saved.plans.find(item => item.id === 'plan-1')?.status, 'PLANNING');
 });
 test('reconcile resumes a durable PLANNING Plan without creating a planner Task', async () => {
   const createdAt = '2026-09-29T12:00:00.000Z';
   const root = startedAutonomousJob();
   root.plans = [{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'continuation'}, status:'PLANNING', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }];
   const store = new InMemoryStore(root);
-  const reconciler = managedReconciler(store, { owner:'test', adapters:[], maxConcurrent:0, planner:{ plan:async()=>({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) } });
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[{ name:'codex', id:'planner-worker', capabilities:['model'] }], maxConcurrent:0, planner:{ plan:async()=>({ objective_status:'satisfied', assessment:'done', next_tasks:[spec('resume-work')] }) } });
   await reconciler.reconcile('auto');
   await reconciler.idle();
   const saved = await store.load('auto');
@@ -178,7 +178,7 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
   const root = { ...job([], 'fixed'), state:'DRAFT', plans:[{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'manual'}, status:'PLANNING', guidance:'original guidance', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }] };
   const store = new InMemoryStore(root);
   let observed;
-  const reconciler = managedReconciler(store, { owner:'test', adapters:[], maxConcurrent:0, planner:{ plan:async context=>{ observed=context; return { objective_status:'satisfied', assessment:'done', next_tasks:[] }; } } });
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[{ name:'codex', id:'planner-worker', capabilities:['model'] }], maxConcurrent:0, planner:{ plan:async context=>{ observed=context; return { objective_status:'satisfied', assessment:'done', next_tasks:[spec('recovered-manual-work')] }; } } });
   const result = await reconciler.planJob('auto', 'new guidance must not replace durable pending input');
   assert.equal(result.round.id, 'plan-1');
   assert.equal(result.round.createdAt, createdAt);
@@ -302,8 +302,8 @@ test('planner persistence delegates reverse unblock registration to durable stor
   const store=new InMemoryStore({...job([], 'fixed'),state:'DRAFT'});
   const seen=[];
   store.registerBlockerDependent=async (jobId, dependent)=>{ seen.push({jobId,dependent}); };
-  const planner={plan:async()=>({objective_status:'satisfied',assessment:'blocked relation only',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[]})};
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner});
+  const planner={plan:async()=>({objective_status:'satisfied',assessment:'work plus a blocked relation',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[spec('unblock-work')]})};
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[{name:'codex',id:'planner-worker',capabilities:['model']}],maxConcurrent:0,planner});
   await reconciler.planJob('auto');
   assert.deepEqual(seen,[{jobId:'auto',dependent:{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}}]);
 });
@@ -341,9 +341,9 @@ test('automatic planner retry carries prior failure and persists launch-time pla
   const planner = { plan: async context => {
     seen.push(context);
     if (seen.length === 1) throw new Error('Planner next_tasks[0].output is required');
-    return { objective_status:'satisfied', assessment:'done', next_tasks:[] };
+    return { objective_status:'satisfied', assessment:'done', next_tasks:[spec('retry-work')] };
   } };
-  const reconciler = managedReconciler(store, { owner:'test', adapters:[], planner });
+  const reconciler = managedReconciler(store, { owner:'test', adapters:[{name:'codex',id:'planner-worker',capabilities:['model']}], planner });
   await settle(reconciler, 6);
   const result = await store.load('auto');
   const round = result.plans?.find(item => item.id === 'plan-1');
@@ -359,7 +359,7 @@ test('planner result with a formatting-only priority variation creates a child t
   const bus = new MemoryEventBus();
   const store = new InMemoryStore(startedAutonomousJob());
   let calls = 0;
-  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'in_progress', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs',  ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
+  const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'satisfied', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs',  ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
   const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
   const stop = await reconciler.watch('auto');
   await settle(reconciler, 8);
@@ -469,7 +469,7 @@ test('fixed and autonomous work reaches runtime review after terminal events, no
     const bus = new MemoryEventBus();
     const store = new InMemoryStore(mode === 'fixed' ? job([task('fixed-work')], mode) : startedAutonomousJob());
     let calls = 0;
-    const planner = { plan: async () => { calls += 1; return calls === 1 ? { objective_status:'in_progress', assessment:'work', next_tasks:[spec('work-1')] } : { objective_status:'satisfied', assessment:'done', next_tasks:[] }; } };
+    const planner = { plan: async () => { calls += 1; return { objective_status:'satisfied', assessment:'work', next_tasks:[spec('work-1')] }; } };
     const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
     const stop = await reconciler.watch('auto');
     await settle(reconciler);
@@ -554,7 +554,7 @@ test('plan apply rejects invalid tree and corrects inside same durable Plan', as
   round.executionId = 'execution-1'; round.leaseOwner = 'planner-test';
   root.plans = [round];
   const store = new InMemoryStore(root);
-  const reconciler = managedReconciler(store, { owner: 'planner-test', adapters: [], maxConcurrent: 0 });
+  const reconciler = managedReconciler(store, { owner: 'planner-test', adapters: [{ name: 'codex', id: 'planner-test-worker', capabilities: [] }], maxConcurrent: 0 });
   const invalid = { objective_status: 'in_progress', assessment: 'Implement missing acceptance', next_tasks: [{ id: 'one', title: 'Implement and verify durable task outputs', input: 'real workflow tests', storySize: 'M' }] };
   await assert.rejects(() => reconciler.applyPlannerTree('auto', round.id, 'execution-1', invalid), /output is required/);
   let saved = await store.load('auto');
@@ -568,7 +568,8 @@ test('plan apply rejects invalid tree and corrects inside same durable Plan', as
   assert.equal(saved.plans.length, 1);
   assert.equal(saved.tasks.length, 1);
   assert.deepEqual(saved.plans[0].generatedTaskIds, [saved.tasks[0].id]);
-  await assert.rejects(() => reconciler.applyPlannerTree('auto', round.id, 'execution-1', accepted), /not owned by this active execution/);
+  assert.equal((await reconciler.applyPlannerTree('auto', round.id, 'execution-1', accepted)).status, 'SUCCEEDED', 'identical successful commit is idempotent');
+  await assert.rejects(() => reconciler.applyPlannerTree('auto', round.id, 'execution-1', { ...accepted, assessment: 'different candidate' }), /already committed a different candidate/);
   assert.equal((await store.load('auto')).tasks.length, 1);
   await reconciler.close();
 });
