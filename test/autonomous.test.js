@@ -242,6 +242,19 @@ test('forced cleanup Planner context includes durable failure dependencies and e
   assert.equal(payload.tasks[0].comments[0].text, 'replacement evidence was checked');
 });
 
+test('Planner contract makes forced cleanup an upfront audit and apply rejection actionable', async () => {
+  const prompt = await readFile(new URL('../skills/agents-relay/agents/planner.agent.md', import.meta.url), 'utf8');
+  assert.match(prompt, /end-to-end objective convergence/i);
+  assert.match(prompt, /exactly one `history_cleanup` entry for every ID in `restate_task_ids` in the first complete candidate/i);
+  assert.match(prompt, /PLAN_APPLY_VALIDATION_FAILED/);
+  assert.match(prompt, /same Plan and execution IDs/i);
+  assert.match(prompt, /missing, mismatched, or decorated receipt/);
+  assert.match(prompt, /unknown.*`unresolved`/i);
+  assert.match(prompt, /unresolved failure may still need safe recovery/i);
+  assert.match(prompt, /evidence-backed blocked Troubleshooter/i);
+  assert.doesNotMatch(prompt, /Do not create replacement work for an unresolved failure/);
+});
+
 test('planner input stays compact with a large execution context and planner history', () => {
   const huge = 'x'.repeat(70000);
   const context = {
@@ -422,7 +435,7 @@ test('agent planner rejects text proposals that were not committed with the CLI 
 process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({objective_status:'satisfied',assessment:'done',next_tasks:[]})}}) + String.fromCharCode(10));
 `, {mode:0o700});
     const planner = new AgentObjectivePlanner(command, agentFile);
-    await assert.rejects(planner.plan({job:job(),tasks:[],objective:'finish',previousPlannerTaskId:null,planExecution:{planId:'plan-1',executionId:'execution-1'}},new AbortController().signal),/must commit its proposal with the authorized/);
+    await assert.rejects(planner.plan({job:job(),tasks:[],objective:'finish',previousPlannerTaskId:null,planExecution:{planId:'plan-1',executionId:'execution-1'}},new AbortController().signal),/missing PLAN_APPLIED receipt/);
   } finally {await rm(root,{recursive:true,force:true});}
 });
 
@@ -435,7 +448,7 @@ test('agent planner rejects missing, mismatched, and decorated CLI receipts', as
     for (const receipt of ['', 'PLAN_APPLIED:other-plan:execution-1', 'PLAN_APPLIED:plan-1:other-execution', 'Applied PLAN_APPLIED:plan-1:execution-1']) {
       await writeFile(command, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(receipt)}}}) + String.fromCharCode(10));\n`, { mode: 0o700 });
       const planner = new AgentObjectivePlanner(command, agentFile);
-      await assert.rejects(planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal), /must commit its proposal with the authorized|returned no final message/);
+      await assert.rejects(planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal), /(?:missing|mismatched) PLAN_APPLIED receipt|returned no final message/);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

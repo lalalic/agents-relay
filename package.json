@@ -28,6 +28,7 @@
     "test:verification:l2": "npm run build && node --test test/verification/l2/*.test.mjs",
     "test:verification:l2:live": "node test/verification/l2/live-provider.mjs",
     "test:verification:l2:live-codex": "npm run build && node test/verification/l2/live-codex-agents.mjs",
+    "test:verification:l2:live-planner": "npm run build && RELAY_L2_LIVE=1 node --test test/verification/l2/live-planner-convergence.test.mjs",
     "test:l2:agents": "npm run build && node test/l2-agent-prompts/evaluate.mjs"
   },
   "devDependencies": {

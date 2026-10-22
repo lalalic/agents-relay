@@ -106,6 +106,43 @@ test('L3 rejected Force Restate apply has zero SQLite changes and same execution
   } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
 });
 
+test('L3 unknown execution stays unresolved while evidence-backed recovery commits after rejection', async () => {
+  const f = await fixture();
+  const unknown = task(f.job.id, 'unknown-outcome', 'FAILED', { failureReason: 'worker_outcome_unknown', error: 'Worker exited before a terminal event.' });
+  f.job.tasks = [unknown, f.job.tasks.find(item => item.id === 'verified')];
+  f.plan.restateTaskIds = ['unknown-outcome'];
+  await f.sqlite.saveJob(f.job);
+  const reconciler = runtime(f.store);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  reconciler.plannerLive.set(f.plan.id, { executionId: 'planner-execution-1', controller, timer });
+  try {
+    const before = JSON.stringify(await f.sqlite.loadJob(f.job.id));
+    const rejected = { objective_status: 'in_progress', assessment: 'The unknown outcome was not checked.', next_tasks: [
+      { id: 'recover-unknown', title: 'Recover unknown execution outcome safely', input: 'Inspect durable evidence and safely recover the unknown prior execution.', storySize: 'M', output: { kind: 'task_pr' }, resolution: { path: 'same_job_dependency', targetTaskId: 'unknown-outcome', rootCause: 'The execution ended without a terminal event; outcome is unknown.', solution: 'Continue with bounded recovery while preserving the original failed record.' } },
+    ], history_cleanup: [] };
+    await assert.rejects(reconciler.applyPlannerTree(f.job.id, f.plan.id, 'planner-execution-1', rejected), error =>
+      error.code === 'PLAN_APPLY_VALIDATION_FAILED' && error.phase === 'history_consistency' && /exactly one history_cleanup/.test(error.message));
+    assert.equal(JSON.stringify(await f.sqlite.loadJob(f.job.id)), before, 'rejected candidate persists no Plan, Task, or history mutation');
+
+    const corrected = { ...rejected, assessment: 'The historical execution remains unresolved; a routed recovery Task preserves uncertainty and advances the objective.', history_cleanup: [
+      { taskId: 'unknown-outcome', outcome: 'unresolved', evidence: 'No durable task.completed/task.failed event or execution result is present after the worker exit.', reason: 'The execution outcome cannot be inferred; preserve the original failure as unresolved.' },
+    ] };
+    const applied = await reconciler.applyPlannerTree(f.job.id, f.plan.id, 'planner-execution-1', corrected);
+    assert.equal(applied.status, 'SUCCEEDED');
+    const committed = await f.sqlite.loadJob(f.job.id);
+    const original = committed.tasks.find(item => item.id === 'unknown-outcome');
+    assert.equal(original.state, 'FAILED');
+    assert.equal(original.resolutionClassification, undefined);
+    assert.equal(original.failureReason, 'worker_outcome_unknown');
+    const recovery = committed.tasks.find(item => item.planningDecisionId === f.plan.id);
+    assert.ok(recovery);
+    assert.equal(recovery.state, 'QUEUED');
+    assert.equal(recovery.resolution.targetTaskId, 'unknown-outcome');
+    assert.equal(committed.plans[0].objectiveStatus, 'in_progress', 'unknown work cannot be reported complete');
+  } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
+});
+
 test('L3 normal plan validation rejects history cleanup and preserves SQLite state', async () => {
   const f = await fixture(false, false);
   const reconciler = runtime(f.store);

@@ -4,7 +4,7 @@ import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
-import { validateResolutionProposal, unresolvedTask } from './workflow/task-resolution.js';
+import { unresolvedTask } from './workflow/task-resolution.js';
 import { ExecutionContext, executionContextPrompt, BUNDLED_AGENTS_ROOT } from './execution-context.js';
 import { resolveAgentMarkdown } from './agent-content-resolver.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
@@ -144,7 +144,6 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
   if (resolution) {
     const target = resolution.targetTaskId ? job.tasks.find(task => task.id === resolution.targetTaskId) : undefined;
     if (!target || !unresolvedTask(target)) throw new Error(`Planner resolution for ${spec.id} must target one unresolved durable Task`);
-    validateResolutionProposal(job, target, resolution);
   }
   const reviewerThread = spec.agentName === 'reviewer' ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
   return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.agentName === 'reviewer' ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: objectiveRoot?.id ?? spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
@@ -155,7 +154,6 @@ export function planningSpec(task: Task): PlannerTaskSpec {
   if (!['codex', 'chatgpt'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
   return { id: task.id, title: task.title, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
-
 
 function record(value: unknown, field = 'result'): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Planner ${field} must be an object`);
@@ -492,7 +490,10 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
     const response = await runAgent(prompt);
     const expected = `PLAN_APPLIED:${context.planExecution.planId}:${context.planExecution.executionId}`;
-    if (response !== expected) throw new Error('Planner must commit its proposal with the authorized `agents-relay plan apply` CLI action and return only the matching PLAN_APPLIED receipt');
+    if (response !== expected) {
+      const kind = response.startsWith('PLAN_APPLIED:') ? 'mismatched' : 'missing';
+      throw new Error(`Planner returned a ${kind} PLAN_APPLIED receipt; must return only the matching PLAN_APPLIED receipt. Expected ${expected}, received ${response.slice(0, 200) || '(empty final message)'}. Inspect durable Plan state before retrying; only PLAN_APPLY_VALIDATION_FAILED authorizes same-execution candidate correction.`);
+    }
     return { objective_status: 'satisfied', assessment: 'Plan committed through the authorized CLI action.', next_tasks: [], unblocks: [], cliApplied: true };
   }
 }
