@@ -14,6 +14,7 @@ test('contradictory Job482 evidence uses one durable escalation across restart a
   assert.equal(result.accepted,true);
   assert.equal(result.duplicate,true);
   assert.deepEqual(result.states,{original:'QUEUED',recovery:'QUEUED'});
-  assert.deepEqual(result.recoveryExecution,{original:null,recovery:null});
+  assert.equal(result.recoveryExecution.original,null);
+  assert.ok(result.recoveryExecution.recovery);
  } finally { rmSync(work,{recursive:true,force:true}); }
 });

@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {SQLiteRelayStore} from '../../../dist/relay-store.js';
 import {requestTroubleshooterEscalation,resumeTroubleshooter} from '../../../dist/task-recovery.js';
 import {dispatchTaskAction} from '../../../dist/task-actions.js';
+import {randomUUID} from 'node:crypto';
 
 const requireText=(value,name)=> {
   if(typeof value!=='string'||!value.trim())throw Error(`Job482 recommendation requires ${name}`);
@@ -54,13 +55,26 @@ export async function verifyJob482EscalationLoop({work,recommendation,originalEx
     if(blocked?.state!=='BLOCKED'||blocked.escalation?.status!=='pending')throw Error('Job482 escalation did not survive SQLite restart');
     const resumed=await resumeTroubleshooter(store,jobId,recoveryId,'Human reports Neo app authorization completed; worker must independently verify status.');
     if(resumed.task.state!=='QUEUED'||resumed.task.escalation.status!=='responded')throw Error('Authorized human response did not resume the same Troubleshooter');
+    if(resumed.task.executionId!==null)throw Error('Human response must clear the blocked execution before Relay dispatches a fresh run');
+    const freshExecutionId=randomUUID();
+    await store.mutateJob(jobId,current=>{
+      const recovery=current.tasks.find(item=>item.id===recoveryId);
+      if(!recovery||recovery.state!=='QUEUED'||recovery.executionId!==null)throw Error('Resumed Troubleshooter is not eligible for a fresh Relay claim');
+      recovery.attempt+=1;
+      recovery.leaseOwner='isolated-l2';
+      recovery.leaseExpiresAt='2099-01-01T00:00:00.000Z';
+      recovery.executionId=freshExecutionId;
+      recovery.executionHistory=[...(recovery.executionHistory??[]),{id:freshExecutionId,attempt:recovery.attempt,startedAt:new Date().toISOString()}].slice(-8);
+      return current;
+    });
     const recovered=await dispatchTaskAction(store,{id:'task.recover',jobId,taskId:originalId,recoveryTaskId:recoveryId,
       recoveryDiagnosis:{failureKind:'task_failure',reason:'Contradictory MCP evidence made prior attempts semantically incomplete.',evidence:'Authoritative capture reported connected=false and permissions=false; human authorization now requires independent worker verification.',reroute:false}});
     const after=await store.loadJob(jobId);
     const original=after.tasks.find(item=>item.id===originalId);
     const recovery=after.tasks.find(item=>item.id===recoveryId);
-    if(original?.state!=='QUEUED'||original.executionId!==null||recovery?.state!=='QUEUED')
+    if(original?.state!=='QUEUED'||original.executionId!==null||recovery?.state!=='QUEUED'||recovery.executionId!==freshExecutionId)
       throw Error(`Job482 exact-original recovery postcondition failed: original=${original?.state}/${original?.executionId}, recovery=${recovery?.state}`);
+    if(original.resolution?.recoveryExecutionId!==freshExecutionId)throw Error('Exact-original recovery was not bound to the fresh Troubleshooter execution');
     return {accepted:true,escalationId,duplicate:true,states:{original:original.state,recovery:recovery.state},
       recoveryExecution:{original:original.executionId,recovery:recovery.executionId},
       comments:{original:original.comments?.length??0,recovery:recovery.comments?.length??0}};
