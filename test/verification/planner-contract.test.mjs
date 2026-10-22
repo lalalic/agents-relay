@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SQLiteRelayStore } from '../../dist/relay-store.js';
-import { AgentObjectivePlanner } from '../../dist/planner.js';
+import { AgentObjectivePlanner, buildPlannerCodexArgs } from '../../dist/planner.js';
 import { finishPlanner } from '../../dist/planner-runtime.js';
 import { createIsolatedEnvironment } from './harness.mjs';
 
@@ -17,6 +17,13 @@ const proposal = {
   next_tasks: [{ id: 'implementation', title: 'Create and verify one durable implementation task',
     input: 'Create the requested deliverable and report evidence.', output: { kind: 'task_pr' }, storySize: 'S' }],
 };
+
+test('Planner Codex launcher enables network only inside its workspace-write sandbox', () => {
+  const args = buildPlannerCodexArgs('/tmp/relay-store/jobs', 'planner prompt');
+  assert.deepEqual(args, ['exec', '--json', '--sandbox', 'workspace-write', '--add-dir', '/tmp/relay-store',
+    '-c', 'sandbox_workspace_write.network_access=true', '--', 'planner prompt']);
+  assert.equal(args.includes('--dangerously-bypass-approvals-and-sandbox'), false);
+});
 
 async function setup() {
   const env = createIsolatedEnvironment('relay-planner-contract-');

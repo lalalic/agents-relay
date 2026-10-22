@@ -447,6 +447,11 @@ export class CommandObjectivePlanner implements ObjectivePlanner {
 const DEFAULT_PLANNER_AGENT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'agents', 'planner.agent.md');
 const DEFAULT_TASK_JOB_CONTRACT = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'agents-relay', 'contracts', 'task-job-contract.md');
 
+export function buildPlannerCodexArgs(storeDirectory: string, input: string): string[] {
+  return ['exec', '--json', '--sandbox', 'workspace-write', '--add-dir', resolvePath(dirname(storeDirectory)),
+    '-c', 'sandbox_workspace_write.network_access=true', '--', input];
+}
+
 function parsePlannerAgentMessage(line: string): string | undefined {
   try {
     const value = JSON.parse(line) as Record<string, unknown>;
@@ -467,7 +472,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       // Plan apply writes unified relay.sqlite beside AGENTS_RELAY_STORE_DIR.
-      const child = spawnOwnedProcess(this.command, ['exec', '--json', '--sandbox', 'workspace-write', '--add-dir', resolvePath(dirname(relayStoreDirectory())), '--', input], { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
+      const child = spawnOwnedProcess(this.command, buildPlannerCodexArgs(relayStoreDirectory(), input), { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
       let stdoutBuffer = '', finalMessage = '', stderrTail = '';
       const consume = (line: string): void => {
         const message = parsePlannerAgentMessage(line); if (message) finalMessage = message;
