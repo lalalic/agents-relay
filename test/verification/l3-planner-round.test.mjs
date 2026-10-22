@@ -46,6 +46,51 @@ test('real Planner Plan round failure retries into committed child under isolate
  }finally{await runtime.close();await unsubscribe();sqlite.close();env.cleanup();}
 });
 
+test('SQLite reconcile preserves historical Plan child and reopens the same Troubleshooter for attempt 3',async()=>{
+ const env=createIsolatedEnvironment('relay-planner-child-recovery-');
+ const jobId='planner-child-recovery-l3';
+ const timestamp=new Date().toISOString();
+ const task=(id,state,extra={})=>({jobId,id,kind:'work',priority:'P1',storySize:'S',projectName:'Job 473',
+  parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:id,output:{kind:'task_pr'},state,
+  attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,
+  plannerResult:null,error:null,timeoutMs:10000,createdAt:timestamp,updatedAt:timestamp,
+  continuation:null,continuationDeliveredAt:null,...extra});
+ const original=task('original','FAILED',{attempt:3,error:'original attempt 3 failed'});
+ const dependencyTarget=task('dependency-target','CANCELLED');
+ const historicalResolution={path:'same_job_dependency',targetTaskId:'dependency-target',rootCause:'Historical dependency',solution:'Wait for target'};
+ const child=task('planned-child','FAILED',{attempt:2,result:'historical child result',error:'historical child failure',
+  resolution:{...historicalResolution,state:'active',owner:'planner',updatedAt:timestamp}});
+ const recovery=task('troubleshoot-original','SUCCEEDED',{agentName:'troubleshooter',parentTaskId:'original',
+  recoveryForAttempt:2,attempt:1,maxAttempts:3,input:'old successful recovery'});
+ const plan={jobId,id:'plan-1',round:1,source:'model-planner',previousPlanId:null,trigger:{source:'initial'},status:'SUCCEEDED',
+  generatedTaskIds:[child.id],assessment:'Continue work.',createdAt:timestamp,updatedAt:timestamp,
+  plannerResult:{objective_status:'in_progress',assessment:'Continue work.',next_tasks:[{id:child.id,title:'Planned work',
+   input:child.input,output:child.output,storySize:'S',resolution:historicalResolution}],unblocks:[]}};
+ const job={id:jobId,title:'Job 473 recovery',objective:'Recover failed work and preserve historical execution evidence',
+  repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'autonomous',autoMerge:false,reviewEnabled:false,
+  createdAt:timestamp,updatedAt:timestamp,plans:[plan],tasks:[original,dependencyTarget,child,recovery]};
+ const sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
+ const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
+ const runtime=new Reconciler(store,{owner:'planner-child-recovery-l3',adapters:[],eventBus:new MemoryEventBus(),
+  maxConcurrent:0,noGitHub:true,projectPathForJob:()=>process.cwd()});
+ try{
+  await store.saveJob(job);
+  await runtime.reconcile(jobId);
+  const current=await sqlite.loadJob(jobId);
+  assert.equal(current.tasks.filter(item=>item.id===child.id).length,1);
+  const persistedChild=current.tasks.find(item=>item.id===child.id);
+  assert.equal(persistedChild.attempt,2);
+  assert.equal(persistedChild.result,'historical child result');
+  assert.equal(persistedChild.error,'historical child failure');
+  assert.equal(persistedChild.resolution.targetTaskId,'dependency-target');
+  assert.equal(current.tasks.filter(item=>item.agentName==='troubleshooter'&&item.parentTaskId==='original').length,1);
+  const reopened=current.tasks.find(item=>item.id===recovery.id);
+  assert.equal(reopened.state,'QUEUED');
+  assert.equal(reopened.recoveryForAttempt,3);
+  assert.match(reopened.input,/original attempt 3 failed/);
+ }finally{await runtime.close();sqlite.close();env.cleanup();}
+});
+
 
 test('real Planner round retries, then Worker and Reviewer faults recover, Review fix, merge retry, objective verified in SQLite',async()=>{
  const {runReplay}=await import('./l3-replay.mjs');
