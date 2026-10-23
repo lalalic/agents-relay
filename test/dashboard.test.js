@@ -104,7 +104,7 @@ test('task rows append optional Job-defined tag display without replacing lifecy
   assert.match(dashboardHtml, /job\?\.tag\?\.values\?\.\[task\.tag\]/);
   assert.match(dashboardHtml, /'task-tag'/);
   assert.match(dashboardHtml, /const verdict=taskVerdict\(selected\(\),task\)/);
-  assert.match(dashboardHtml, /text\(verdict\|\|task\.state\)/);
+  assert.match(dashboardHtml, /text\(task\.state===\'FAILED\'\?taskStateLabel\(task\):\(verdict\|\|task\.state\)\)/);
 });
 
 test('task tree branches default-collapse complete subtrees and preserve manual fold overrides', () => {
@@ -1089,4 +1089,12 @@ test('Workflow graph centers labels and offers dialog pan/zoom controls', () => 
 test('linked graph node labels have blue text styling', async () => {
   const { dashboardStyles } = await import('../dist/dashboard-style.js');
   assert.match(dashboardStyles, /\.graph-canvas \.node\.drillable text.*fill:#2367b1/);
+});
+
+test('failed tasks retain failure and show resolution status in badge and details', () => {
+  assert.match(dashboardHtml, /function taskStateLabel\(task\)/);
+  assert.match(dashboardHtml, /task\?\.state==='FAILED'&&typeof resolution==='string'/);
+  assert.match(dashboardHtml, /task\.state\+' \/ '\+resolution/);
+  assert.match(dashboardHtml, /task\.state==='FAILED'\?taskStateLabel\(task\)/);
+  assert.match(dashboardHtml, /field\('Resolution state',task\.resolution\.state\)/);
 });
