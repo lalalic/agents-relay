@@ -21,9 +21,9 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     "else process.exit(12);",
   ].join('\n');
   await writeFile(executable, script, { mode: 0o700 });
-  const previousCommand = process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND;
+  const previousCommand = process.env.AGENTS_RELAY_WEBHELM_COMMAND;
   const previousTrace = process.env.RELAY_MCP_PROBE_TRACE;
-  process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND = executable;
+  process.env.AGENTS_RELAY_WEBHELM_COMMAND = executable;
   process.env.RELAY_MCP_PROBE_TRACE = trace;
   try {
     const adapter = new ChatGptAdapter();
@@ -43,7 +43,7 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     assert.equal(entries[1].config.file, undefined);
     assert.deepEqual(entries[2].args.slice(0,3), ['session','stop','owned-one']);
   } finally {
-    if (previousCommand === undefined) delete process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND; else process.env.AGENTS_RELAY_BROWSER_WORKSPACE_COMMAND = previousCommand;
+    if (previousCommand === undefined) delete process.env.AGENTS_RELAY_WEBHELM_COMMAND; else process.env.AGENTS_RELAY_WEBHELM_COMMAND = previousCommand;
     if (previousTrace === undefined) delete process.env.RELAY_MCP_PROBE_TRACE; else process.env.RELAY_MCP_PROBE_TRACE = previousTrace;
     await rm(root, {recursive:true,force:true});
   }
