@@ -60,7 +60,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
 });
 
 
-test('ChatGptAdapter forwards task attachments to the Temporary Chat runner', async () => {
+test('ChatGptAdapter passes file references to the browser worker request', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-browser-worker-files-'));
   try {
     const agentPath = join(root, 'browser-worker.agent.md');
@@ -96,8 +96,8 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
 test('ChatGptAdapter default runner uses Browser Workspace caller-owned session', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
-  assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'sync'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /thread_id: delivery\.threadId/);
   assert.match(source, /idempotency_key: delivery\.requestId/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
@@ -366,7 +366,7 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     '#!/usr/bin/env node',
     "const fs=require('node:fs');",
     "const a=process.argv.slice(2);",
-    "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,a.slice(0,3).join(' ')+'\\n');",
+    "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,a.join(' ')+'\\n');",
     "if(a[0]==='session'&&a[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
     "else if(a[0]==='platform'&&a[1]==='run') {",
     "const config=JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1]));",
@@ -388,6 +388,7 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     }
     const calls=await readFile(log,'utf8');
     assert.equal((calls.match(/platform run/g)||[]).length,2);
+    assert.equal((calls.match(/new-turn --mode sync --session-id/g)||[]).length,2);
     assert.equal((calls.match(/session exec/g)||[]).length,0);
   } finally {
     if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;

@@ -138,12 +138,12 @@ from the exact worker terminal event or the normal task timeout.
 12. Relay reconciles dependents and/or resumes the parent continuation.
 13. Periodic watchdog reconciliation only repairs missed wake-ups and expired leases; webhook mode uses targeted reconciliation for the normal path and cached dashboard reads do not trigger broad discovery.
 
-The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Browser execution itself is a one-shot `browser-workspace platform run chatgpt temporary-submit --auto-session --config <file>` action: Browser Workspace creates/releases the fresh Temporary Chat session and Relay does not perform browser self-heal. Stale or wrong-task lifecycle events never satisfy Relay's worker barriers, and start-ack failure remains an explicit `worker_start_timeout`. Process-exit events remain distinct from task terminal events.
+The ChatGPT adapter establishes its event cursor/barrier before submission and accepts only a post-barrier, worker-owned `task.started` for the exact job/task. Browser execution uses `webhelm platform run chatgpt new-thread --session-id SESSION_ID --config <file>` for new workers. Relay owns and closes the Session while retaining the regular ChatGPT thread for Neo MCP access. Existing-thread deliveries use `new-turn`. Stale or wrong-task lifecycle events never satisfy Relay's worker barriers, and start-ack failure remains an explicit `worker_start_timeout`. Process-exit events remain distinct from task terminal events.
 
 When a durable Job review thread exists (`reviewerThreadId`, then
 `creatorThreadId`, then a runtime `--thread-id` override), final-review routing
 requires ChatGPT Browser Workspace and uses the supported `new-turn` action
-against that existing thread instead of a fresh Temporary Chat. The request
+against that existing thread instead of a newly created regular thread. The request
 carries the Job/PR/review-head correlation and deterministic request ID. Browser
 Workspace verifies the accepted turn and exact thread; Relay persists
 `deliveredAt` only after that verified submission succeeds and never records

@@ -141,13 +141,14 @@ export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabCloseP
 export type BrowserWorkerResponse = {
   operation?: 'submit' | 'new-turn';
   status: 'submitted';
-  mode?: 'new-turn';
+  mode?: 'new-turn' | 'new-thread';
   project_id?: string | null;
   thread_id?: string | null;
+  thread_url?: string | null;
   temporary?: boolean;
   diagnostic_thread_id?: string | null;
   user_message_id?: string | null;
-  verified_by?: 'user-turn' | 'composer-cleared' | 'existing-user-turn';
+  verified_by?: 'user-turn' | 'composer-cleared' | 'existing-user-turn' | 'send-button-disabled';
   verified?: boolean;
   error?: { code?: string; message?: string; retryable?: boolean } | null;
 };
@@ -177,7 +178,7 @@ function findSubmittedReceipt(value: unknown): BrowserWorkerResponse | undefined
   }
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
-  if ((record.operation === 'submit' || record.operation === 'new-turn' || record.mode === 'new-turn') && record.status === 'submitted') return record as BrowserWorkerResponse;
+  if ((record.operation === 'submit' || record.operation === 'new-turn' || record.mode === 'new-turn' || record.mode === 'new-thread') && record.status === 'submitted') return record as BrowserWorkerResponse;
   for (const key of ['result', 'output', 'data', 'stdout']) {
     const nested = findSubmittedReceipt(record[key]);
     if (nested) return nested;
@@ -308,14 +309,14 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
 }
 
 
-async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'temporary-submit' | 'new-turn' = 'temporary-submit'): Promise<string> {
+async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'new-thread' | 'new-turn' = 'new-thread'): Promise<string> {
   const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
   const sessionId = session.session_id;
   if (typeof sessionId !== 'string' || !sessionId) throw new Error('webhelm session start returned no session_id');
   try {
     return await browserWorkspaceCommand(
       cli,
-      ['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile],
+      ['platform', 'run', 'chatgpt', action, ...(action === 'new-turn' ? ['--mode', 'sync'] : []), '--session-id', sessionId, '--config', configFile],
       undefined,
       signal,
     );
@@ -331,17 +332,22 @@ function browserWorkerRunner(): ChatGptAgentRunner {
       const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
       try {
         const delivery = request.thread;
+        // Temporary Chat lacks Neo MCP tools on this verified account.
+        // File paths remain accessible to normal workers through Neo MCP.
+        const message = request.files?.length
+          ? `${request.prompt}\n\nTask file paths (read with Neo MCP; files are not browser-uploaded):\n${request.files.map(file => `- ${JSON.stringify(file)}`).join('\n')}`
+          : request.prompt;
         await writeFile(configFile, JSON.stringify(delivery ? {
           project_id: delivery.projectId ?? _route.projectId ?? null,
           thread_id: delivery.threadId,
           message: `${request.prompt}\n\nRelay delivery ID: ${delivery.requestId}`,
           idempotency_key: delivery.requestId,
         } : {
-          prompt: request.prompt,
-          file: request.files ?? [],
+          message,
+          temporary: false,
         }));
         if (signal.aborted) throw new Error('browser-worker execution aborted');
-        const action = delivery ? 'new-turn' : 'temporary-submit';
+        const action = delivery ? 'new-turn' : 'new-thread';
         const output = await runBrowserWorker(cli, configFile, signal, action);
         return JSON.stringify(parseDriverJson(output));
       } finally {
@@ -362,6 +368,11 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
   }
   if (!value || typeof value !== 'object') throw new Error('browser-worker returned an invalid JSON response');
   const response = value as BrowserWorkerResponse;
+  if (response.mode === 'new-thread' && (
+    response.temporary !== false ||
+    typeof response.thread_id !== 'string' || !/^[A-Za-z0-9_-]{8,160}$/.test(response.thread_id) ||
+    typeof response.thread_url !== 'string' || !/^https:\/\/chatgpt\.com\/c\//.test(response.thread_url)
+  )) throw new Error('browser-worker did not return a durable ChatGPT thread');
   const verified = response.verified === true || response.verified_by !== undefined;
   if (response.status !== 'submitted' || !verified) {
     throw new Error('browser-worker did not return a submitted receipt');
@@ -453,7 +464,7 @@ export class ChatGptAdapter implements WorkerAdapter {
           summary: 'ChatGPT task submitted; terminal task state is event-owned',
           data: {
             submitted: true,
-            mode: response.mode ?? 'temporary-submit',
+            mode: response.mode ?? 'new-thread',
             threadId: response.thread_id ?? response.diagnostic_thread_id ?? null,
             diagnosticThreadId: response.diagnostic_thread_id ?? null,
             userMessageId: response.user_message_id ?? null,

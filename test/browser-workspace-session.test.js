@@ -57,11 +57,11 @@ test('default Browser Workspace CLI uses status discovery and no lifecycle CLI c
 test('ChatGPT adapter uses Browser Workspace caller-owned session platform run', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /browserWorkerRunner/);
-  assert.match(source, /const action = delivery \? 'new-turn' : 'temporary-submit';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'sync'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /browserWorkerRunner/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'sync'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /\['session', 'stop', sessionId\]/);
   assert.doesNotMatch(source, /\['session', 'exec', sessionId\]/);
