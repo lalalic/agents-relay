@@ -4,13 +4,15 @@
 
 ## Execution event source
 
-Every Task lifecycle event must identify the exact current Relay execution with:
+The Common Events Bus protocol (`<workspace>/neo/skills/events-bus/references/protocol.md`) owns the public `events.publish` input format. Its `source` field is a **string** identifying the exact current Relay execution:
 
 ```text
-source.id = job/<job-id>/task/<task-id>/execution/<execution-id>
+source = "job/<job-id>/task/<task-id>/execution/<execution-id>"
 ```
 
-Relay supplies this complete identity in the managed Task context. Agents must copy it unchanged; they must not infer a Job/Task ID, generate an execution ID, or reuse an identity from a previous attempt. The Neo `events.publish` tool accepts this value as its string `source` argument; the Events Bus event envelope represents it as `source.id`. Transport acceptance alone does not establish that Relay accepted the event for the current execution.
+When calling the Neo MCP command facade, pass `command: "publish"` and nest `type`, `source`, and `data` under `args`. Do not pass an object such as `{ "source": { "id": "..." } }`; `source.id` belongs only to the internal Events Bus envelope.
+
+Relay supplies the complete source string in the managed Task context. Agents must copy it unchanged; they must not infer a Job/Task ID, generate an execution ID, or reuse an identity from a previous attempt. Transport acceptance alone does not establish that Relay accepted the event for the current execution.
 
 ## Producer contract
 
