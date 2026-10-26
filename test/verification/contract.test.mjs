@@ -40,15 +40,15 @@ test('reviewer failure is not approval',()=>{
   assert.equal(normalized.type,'task.failed');
 });
 
-test('managed agent prompt requires canonical absolute contract read after start', async () => {
+test('managed agent prompt references canonical contracts without duplicating lifecycle rules', async () => {
   const { taskReferencePrompt } = await import('../../dist/task-context.js');
   const path='/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md';
-  const managed='[Execution event contract — mandatory]\nAs your FIRST execution action, publish task.started';
+  const managed='[Required event contracts]\nExecution source: job/481/task/46/execution/exec';
   const prompt=taskReferencePrompt('lalalic/agents-relay','481','46','exec',managed);
   const source=read('src/managed-worker-input.ts');
   assert.ok(prompt.includes(path));
-  assert.ok(prompt.includes('THEN read the entire authoritative event contract'));
-  assert.ok(source.includes('Immediately after task.started'));
+  assert.ok(prompt.includes('Read and follow both contracts before execution'));
+  assert.ok(source.includes('[Required event contracts]'));
   assert.ok(source.includes(path));
-  assert.ok(source.includes('publish task.failed'));
+  assert.ok(!source.includes('Every lifecycle event for this execution MUST set source.id'));
 });

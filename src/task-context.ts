@@ -31,20 +31,22 @@ export function taskAgentHistoryContext(job: Job, task: import('./types.js').Tas
 
 /** Browser new-turn envelope: the local Contract and durable Task Context are authoritative. */
 export function taskReferencePrompt(repository: string, jobId: string, taskId: string, executionId: string, managedInput?: string): string {
-  if (managedInput !== undefined && !managedInput.includes('[Execution event contract — mandatory]'))
-    throw new Error(`Missing managed execution event contract for ${jobId}/${taskId}/${executionId}`);
+  if (managedInput !== undefined && !managedInput.includes('[Required event contracts]'))
+    throw new Error(`Missing required event contract references for ${jobId}/${taskId}/${executionId}`);
   const source = `job/${jobId}/task/${taskId}/execution/${executionId}`;
   return `[Agents Relay managed task]
 Repository: ${repository}
 Job ID: ${jobId}
 Task ID: ${taskId}
 Execution ID: ${executionId}
-Exact event source.id: ${source}
+Execution source: ${source}
 
-FIRST publish exactly one task.started through the canonical Neo events-bus with this exact source.id.
-THEN read the entire authoritative event contract from /Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md before any task work. If unavailable publish task.failed and stop.
-THEN retrieve the authoritative Task Context:
+[Required event contracts]
+/Users/chengli/Workspace/neo/skills/events-bus/references/protocol.md
+/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md
+Read and follow both contracts before execution.
+
+Retrieve the authoritative Task Context:
   agents-relay task context --repo ${repository} --id ${jobId} --task-id ${taskId} --execution-id ${executionId}
-Verify the execution ID. Read Task input, dependencies, Plan, project context, and output requirements from that response. Never guess or create a new Job. Continue in this thread; Relay owns completion and review.
-Follow the file's lifecycle contract, including optional meaningful progress and exactly one task.completed or task.failed before exiting. Accepted current-execution task.started and newer task.progress events reset Task.timeoutMs; duplicate, stale, or out-of-order progress does not. If context is unavailable publish task.failed with the blocker.`;
+Verify the execution identity and follow the durable Task context. Relay owns completion and review.`;
 }

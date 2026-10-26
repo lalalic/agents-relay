@@ -22,7 +22,7 @@ test('production worker prompt assembly separates roles and snapshots each effec
       assert.match(prompt, new RegExp(`Relay agent: ${role}; adapter: ${adapter}`));
       assert.match(prompt, /\[Versioned local references\]/);
       assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
-      assert.ok(prompt.indexOf('[Execution event contract — mandatory]') < prompt.indexOf('As your FIRST execution action'));
+      assert.match(prompt, /\[Required event contracts\][\s\S]*Execution source: job\/prompt-test\/task\//);
       assert.match(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
       const match = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
       assert.ok(match, `${role}/${adapter} must carry an immutable contract reference`);

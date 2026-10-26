@@ -57,34 +57,9 @@ ${taskAgentHistoryContext(job, task)}\n\n${chairPlan ? `[Review Chair execution 
 ${output}
 ${taskTag}${mode === 'evaluation' ? `[Isolated prompt evaluation mode]
 This is a read-only evaluation of role guidance. Preserve and apply the role's reasoning and evidence standards, but do not call tools, publish lifecycle events, read or write files, or contact external services. Return the requested evaluation only.
-` : `[Execution event contract — mandatory]
-Use the canonical Neo events-bus with exactly Job ${job.id} and Task ${task.id}.
-Your exact event source identity is: ${sourceId}
-Every lifecycle event for this execution MUST set source.id to that exact string. Do not derive, rename, or replace it.
-Follow the events-bus skill/protocol. For sandboxed Codex or hosted ChatGPT,
-publish through the federated MCP tool events__publish; do not open NATS directly.
-For a direct non-sandbox local worker, use NEO_EVENTS_EMIT when the caller provides it.
-As your FIRST execution action, before reading files, editing code, running commands, or doing other work,
-you MUST publish exactly one canonical task.started event for this exact Job/Task.
-Immediately after task.started, BEFORE reading task context or doing any implementation/review/recovery work, read the full authoritative Relay event contract at absolute path /Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md. If it cannot be read, publish task.failed with the blocker and stop. Do not rely only on this prompt summary or a relative path.
-
-Publish task.progress only for meaningful work milestones. It is nonterminal; do not fabricate progress. Relay's Task.timeoutMs is an inactivity timeout reset only by accepted task.started or newer task.progress events for this exact execution.
-Before returning or allowing the worker process to exit, you MUST publish exactly one canonical terminal event:
-- task.completed only after the declared output is durable;
-- task.failed for implementation, tool, command, test, patch, commit, push, runtime, or other execution failure that prevents completion;
-- task.completed or task.failed is the only agent terminal result. Relay owns task.blocked/task.unblocked lifecycle transitions; never publish task.blocked for a recovery request;
-- Relay-owned cancellation is not an agent terminal result; if execution cannot continue, publish task.failed.
-
-If any execution step fails and you cannot continue, publish task.failed with the concrete reason BEFORE exiting.
-Never exit after task.started without publishing exactly one terminal task event.
-Do not publish duplicate terminal task events.
-The worker owns task.started and task terminal events. Relay-owned task.process.launched, task.process.exited,
-and task.process.async_exited are process lifecycle only and NEVER replace the worker task lifecycle.
-The ChatGPT/Codex conversation or process exit is never the task result.
-
-[Final event gate]
-Before your final return, verify that a terminal event for this exact Job/Task was published.
-If no terminal event has been published, publish task.failed before exiting.`}`;
+` : `[Required event contracts]
+Execution source: ${sourceId}
+Read and follow /Users/chengli/Workspace/neo/skills/events-bus/references/protocol.md and /Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md before execution. These contracts own event publishing and lifecycle requirements.`}`;
   const role = task.agentName === 'planner' || task.agentName === 'reviewer' || task.agentName === 'troubleshooter' ? task.agentName : 'worker';
   const safeAgent = mode === 'evaluation'
     ? selectedAgent.replace(/^.*(?:task\.started|task\.completed|task\.failed|events__publish|NEO_EVENTS_EMIT).*\n?/gm, '')

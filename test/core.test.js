@@ -1920,7 +1920,7 @@ test('managed model worker input contains durable links without duplicating stor
   assert.match(input,/Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7#issuecomment-5754690474/);
   assert.match(input,/Task ID: prompt-context/);
   assert.match(input,/Project: agents-relay/);
-  assert.doesNotMatch(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Execution event contract — mandatory\]/); assert.match(input,/FIRST execution action/); assert.match(input,/task\.started/); assert.match(input,/MUST publish exactly one canonical terminal event/); assert.match(input,/publish task\.failed with the concrete reason BEFORE exiting/); assert.match(input,/Never exit after task\.started without publishing exactly one terminal task event/); assert.match(input,/\[Final event gate\]/);
+  assert.doesNotMatch(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Required event contracts\]/); assert.match(input,/skills\/events-bus\/references\/protocol\.md/); assert.match(input,/contracts\/event-contract\.md/); assert.doesNotMatch(input,/source\.id|FIRST execution action|Final event gate/);
   assert.equal(t.input,'implement the change');
 });
 
@@ -1948,8 +1948,8 @@ test('local model worker input includes authoritative task input and event contr
   assert.match(input,/Task URL: local:j\/task\/local-worker/);
   assert.match(input,/Treat the following durable task input as the authoritative work contract; do not query GitHub\./);
   assert.match(input,/local durable work contract/);
-  assert.match(input,/\[Execution event contract — mandatory\]/);
-  assert.match(input,/Your exact event source identity is: job\/j\/task\/local-worker\/execution\/local-execution/);
+  assert.match(input,/\[Required event contracts\]/);
+  assert.match(input,/Execution source: job\/j\/task\/local-worker\/execution\/local-execution/);
   assert.doesNotMatch(input,/Retrieve the durable job and task from GitHub/);
   assert.equal(t.input,'local durable work contract');
 });
