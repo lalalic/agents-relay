@@ -2,6 +2,16 @@
 
 **Scope:** Relay-specific event meaning and validation. This does **not** define Events Bus transport. The bus only handles generic event identity, type, timestamp, routing as needed, and opaque `data`. No Events Bus change is required when Relay adds agent roles or payload fields.
 
+## Execution event source
+
+Every Task lifecycle event must identify the exact current Relay execution with:
+
+```text
+source.id = job/<job-id>/task/<task-id>/execution/<execution-id>
+```
+
+Relay supplies this complete identity in the managed Task context. Agents must copy it unchanged; they must not infer a Job/Task ID, generate an execution ID, or reuse an identity from a previous attempt. The Neo `events.publish` tool accepts this value as its string `source` argument; the Events Bus event envelope represents it as `source.id`. Transport acceptance alone does not establish that Relay accepted the event for the current execution.
+
 ## Producer contract
 
 Every Implementation, Reviewer, and Troubleshooter execution publishes `task.started`, optional `task.progress`, then **exactly one** agent terminal event:
