@@ -33,7 +33,7 @@ code change and classify it afterward.
 - **Graph** owns workflow policy: legal transitions, branching, eligibility, ordering, and decisions about **when**, **whether**, or **what happens next**. If existing workflow behavior changes, inspect the canonical `workflow/*.mmd` graphs first and change the owning graph when that policy belongs there.
 - **Action / effect** performs a concrete mutation or external side effect already selected by a graph. It may validate inputs and report success/failure, but it must not make a second workflow decision.
 - **TypeScript code** owns non-policy mechanics: facts, pure calculations, parsing/serialization, persistence primitives, leases/claims, I/O adapters, runtime projections, and concrete guard/action implementations.
-- Do not duplicate graph-owned policy in CLI, dashboard, reconciler, scheduler, webhook, daemon, API, helper, or runtime code.
+- Do not duplicate graph-owned policy in CLI, dashboard, reconciler, webhook, daemon, API, helper, or runtime code.
 - For the same intent, every entry point must converge on the same graph/action semantics.
 - Final Review must verify the applicable Design Principles, not only code correctness.
 - Canonical workflow graph filenames and identities do not use `v1`/`v2`/etc suffixes. Git history is the version history; keep one stable current graph name.
@@ -45,9 +45,9 @@ code change and classify it afterward.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
 
-## Production E2E
+## Verification levels
 
-Before starting, continuing, repairing, or reviewing any Agents Relay E2E run, read `e2e/README.md` and follow it as the canonical E2E operating procedure. Scenario definitions live under `e2e/scenarios/`. The E2E control plane belongs to this repository; workload repositories are disposable inputs and must not be hard-coded into runner behavior.
+Use L1 Graph branch and binding verification, L2 role/provider evidence, and L3 deterministic production-ingress/reconciliation/SQLite tests. Do not reference the retired standalone E2E runner or deleted `e2e/` directory. L1 and deterministic L3 passing do not imply a physical UI or provider integration was run; report those gates as `NOT_RUN` until independently verified. Keep negative, restart/dedupe, and false-completion coverage.
 
 ## Operational workflows
 
