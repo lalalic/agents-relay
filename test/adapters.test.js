@@ -97,7 +97,7 @@ test('ChatGptAdapter default runner uses Browser Workspace caller-owned session'
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
   assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'async'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'sync'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
   assert.match(source, /thread_id: delivery\.threadId/);
   assert.match(source, /idempotency_key: delivery\.requestId/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
@@ -388,7 +388,7 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     }
     const calls=await readFile(log,'utf8');
     assert.equal((calls.match(/platform run/g)||[]).length,2);
-    assert.equal((calls.match(/new-turn --mode async --session-id/g)||[]).length,2);
+    assert.equal((calls.match(/new-turn --mode sync --session-id/g)||[]).length,2);
     assert.equal((calls.match(/session exec/g)||[]).length,0);
   } finally {
     if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;

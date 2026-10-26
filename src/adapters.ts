@@ -311,7 +311,7 @@ async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, si
   try {
     return await browserWorkspaceCommand(
       cli,
-      ['platform', 'run', 'chatgpt', action, ...(action === 'new-turn' ? ['--mode', 'async'] : []), '--session-id', sessionId, '--config', configFile],
+      ['platform', 'run', 'chatgpt', action, ...(action === 'new-turn' ? ['--mode', 'sync'] : []), '--session-id', sessionId, '--config', configFile],
       undefined,
       signal,
     );
