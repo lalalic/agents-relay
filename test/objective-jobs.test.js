@@ -54,7 +54,7 @@ test('new planning rounds use plan-N while historical planner-N remains readable
 });
 
 test('manual plan runs on a zero-task DRAFT job and persists routed-later child provenance', async () => {
-  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const root = { ...job([]), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   let observed;
   const planner = { plan: async context => { observed = context; return { objective_status: 'in_progress', assessment: 'need implementation', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'implement', input: 'implement the objective', output, storySize: 'S', workerRequirements: { capabilities: ['model'] } }] }; } };
@@ -82,7 +82,7 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
   await mkdir(join(contextRoot, 'agents'));
   await writeFile(join(contextRoot, 'agents', 'reviewer.agent.md'), '---\nname: reviewer\n---\nReview the managed task.\n');
   const headSha = '059c84f00c46f15dbc8f52c571c0be435878601c';
-  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT', headSha: 'stale-head' });
+  const store = new InMemoryStore({ ...job([]), state: 'DRAFT', headSha: 'stale-head' });
   store.headSha = async () => headSha;
   let observedTriggerHeadSha;
   const reconciler = managedReconciler(store, {
@@ -110,7 +110,7 @@ test('planner hierarchy rejects planner parents, unknown parents, self parents, 
 });
 
 test('planner can create business parent-child hierarchy without plan-N parents', async () => {
-  const root = { ...job([], 'fixed'), state: 'DRAFT' };
+  const root = { ...job([]), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   const planner = { plan: async () => ({ objective_status: 'in_progress', assessment: 'hierarchy', next_tasks: [
     {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
@@ -127,7 +127,7 @@ test('planner can create business parent-child hierarchy without plan-N parents'
 });
 
 test('manual satisfied plan without authoritative completion is rejected before commit', async () => {
-  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
+  const store = new InMemoryStore({ ...job([]), state: 'DRAFT' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'already complete', next_tasks: [] }) } });
   await assert.rejects(() => reconciler.planJob('auto'), /PLAN_APPLY_VALIDATION_FAILED.*forward_convergence/);
   const current = await store.load('auto');
@@ -136,7 +136,7 @@ test('manual satisfied plan without authoritative completion is rejected before 
 });
 
 test('manual plan rejects a concurrent active planning round', async () => {
-  const root = { ...job([], 'fixed'), state: 'ACTIVE' };
+  const root = { ...job([]), state: 'ACTIVE' };
   const active = createPlanRound(root, { manual: true });
   active.executionId = 'active-plan-execution';
   active.leaseOwner = 'other-relay';
@@ -148,7 +148,7 @@ test('manual plan rejects a concurrent active planning round', async () => {
 });
 
 test('malformed manual planner output fails the round without materializing children', async () => {
-  const store = new InMemoryStore({ ...job([], 'fixed'), state: 'DRAFT' });
+  const store = new InMemoryStore({ ...job([]), state: 'DRAFT' });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, planner: { plan: async () => ({ objective_status: 'in_progress', assessment: 'bad', next_tasks: [{title: 'Implement and verify durable task outputs',  id: 'broken', input: 'work without output' }] }) } });
   await assert.rejects(() => reconciler.planJob('auto'), /output is required/);
   const saved = await store.load('auto');
@@ -174,7 +174,7 @@ test('reconcile resumes a durable PLANNING Plan without creating a planner Task'
 
 test('manual planning recovers an interrupted manual Plan instead of creating a new round', async () => {
   const createdAt = '2026-09-29T12:05:00.000Z';
-  const root = { ...job([], 'fixed'), state:'DRAFT', plans:[{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'manual'}, status:'PLANNING', guidance:'original guidance', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }] };
+  const root = { ...job([]), state:'DRAFT', plans:[{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'manual'}, status:'PLANNING', guidance:'original guidance', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }] };
   const store = new InMemoryStore(root);
   let observed;
   const reconciler = managedReconciler(store, { owner:'test', adapters:[{ name:'codex', id:'planner-worker', capabilities:['model'] }], maxConcurrent:0, planner:{ plan:async context=>{ observed=context; return { objective_status:'satisfied', assessment:'done', next_tasks:[spec('recovered-manual-work')] }; } } });
@@ -190,7 +190,7 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
 
 test('planner cannot leave objective Job idle with in_progress and no executable work before review', () => {
   const implemented={...task('implementation','SUCCEEDED'),agentName:'implementation'};
-  const root={...job([implemented],'autonomous'),prNumber:0,localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'}};
+  const root={...job([implemented]),prNumber:0,localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'}};
   const empty={objective_status:'in_progress',assessment:'only Relay-owned lifecycle remains',next_tasks:[],unblocks:[]};
   assert.throws(()=>validatePlannerProgress(root,empty),/no executable tasks or unblocks/);
   assert.doesNotThrow(()=>validatePlannerProgress(root,{...empty,objective_status:'satisfied'}));
@@ -199,7 +199,7 @@ test('planner cannot leave objective Job idle with in_progress and no executable
 });
 
 test('local-first planner cannot delegate Relay-owned merge and completion lifecycle to a worker task', () => {
-  const root = { ...job([], 'autonomous'), prNumber:0, localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'} };
+  const root = { ...job([]), prNumber:0, localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'} };
   const release = { id:'release', agentName:'release', input:'Perform the required local merge, verify Job COMPLETED, and merge the projected GitHub PR.', output:{kind:'task_pr'}, storySize:'S' };
   assert.throws(() => validatePlannerLifecycleOwnership(root, [release]), /Relay-owned effects/);
   assert.doesNotThrow(() => validatePlannerLifecycleOwnership(root, [{...release,id:'verify',input:'Verify the implementation tests and report findings without changing lifecycle state.'}]));
@@ -222,7 +222,7 @@ test('planner input exposes semantic ownership separately from plan provenance',
 
 test('planner input carries explicit retry feedback for corrective retries', () => {
   const payload = JSON.parse(plannerInput({
-    job: { id:'j', title:'j', executionMode:'autonomous', prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[] },
+    job: { id:'j', title:'j', prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[] },
     tasks: [],
     objective: 'make content',
     previousPlannerTaskId: null,
@@ -307,7 +307,7 @@ test('planner parses only explicit failed-history dispositions', () => {
 });
 
 test('planner persistence delegates reverse unblock registration to durable store', async () => {
-  const store=new InMemoryStore({...job([], 'fixed'),state:'DRAFT'});
+  const store=new InMemoryStore({...job([]),state:'DRAFT'});
   const seen=[];
   store.registerBlockerDependent=async (jobId, dependent)=>{ seen.push({jobId,dependent}); };
   const planner={plan:async()=>({objective_status:'satisfied',assessment:'work plus a blocked relation',unblocks:[{repository:'org/app',prNumber:42,jobId:'dependent',taskId:'consume',resolutionMode:'merge'}],next_tasks:[spec('unblock-work')]})};
@@ -539,7 +539,7 @@ test('Planner validation feedback identifies missing Resolution and a corrected 
 
 
 test('plan apply rejects invalid tree and corrects inside same durable Plan', async () => {
-  const root = job([], 'fixed');
+  const root = job([]);
   const round = createPlanRound(root, { manual: true });
   round.executionId = 'execution-1'; round.leaseOwner = 'planner-test';
   root.plans = [round];

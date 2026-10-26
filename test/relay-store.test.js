@@ -19,7 +19,7 @@ const makeTask = (state = 'QUEUED') => ({
   continuation: null, continuationDeliveredAt: null
 });
 const makeJob = () => ({
-  id: 'job-1', title: 'job', executionMode: 'fixed', prNumber: 1, repository: 'lalalic/agents-relay',
+  id: 'job-1', title: 'job', prNumber: 1, repository: 'lalalic/agents-relay',
   state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks: [makeTask()]
 });
 

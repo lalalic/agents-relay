@@ -11,7 +11,7 @@ test('L3 mismatched fixture ID is rejected',async()=>{
 });
 test('real isolated SQLite replay cannot pass a forged completed objective',async()=>{
  const scenario={...make('L3'),id:'impossible-objective'};
- const fixture={id:'impossible-objective',category:'L3',executionMode:'autonomous',steps:[{type:'task.completed'},{type:'reconcile'}],expected:{jobState:'ACTIVE',tasks:{a:'SUCCEEDED',b:'RUNNING'}}};
+ const fixture={id:'impossible-objective',category:'L3',steps:[{type:'task.completed'},{type:'reconcile'}],expected:{jobState:'ACTIVE',tasks:{a:'SUCCEEDED',b:'RUNNING'}}};
  const result=await evidenceGate(scenario,{fixture});
  assert.equal(result.outcome,'FAIL');
  assert.notEqual(result.actualTerminal,'COMPLETED');

@@ -104,29 +104,29 @@ The ChatGPT adapter uses Relay's `chatgpt-worker` agent contract and Browser Wor
 
 ChatGPT thread identity is diagnostic only. It is not persisted as a resumable task handle, and Relay does not poll, resume, retrieve a result from, or delete a ChatGPT conversation as part of task lifecycle.
 
-## Autonomous planner
+## Objective-driven Planner
 
 Direct orchestrator-created Tasks do not require a Plan. The orchestrator may create the initial batch with `task create`; those Tasks remain top-level unless the orchestrator explicitly gives them normal task parentage. When planner-driven decomposition is desired instead, use `agents-relay plan --repo OWNER/REPO --pr N --id JOB_ID [--prompt TEXT | --prompt-file PATH|-]`.
 
-For explicit `plan` and autonomous continuation, Relay invokes the same planner agent as a pure decision function. The planner receives durable Job/Task state, previous planner rounds, and resolved execution context, then returns structured `{ objective_status, assessment, next_tasks }` output. The planner does not call Relay CLI and does not persist Tasks itself.
+For explicit `plan` and automatic continuation, Relay invokes the same planner agent as a pure decision function. The planner receives durable Job/Task state, previous planner rounds, and resolved execution context, then returns structured `{ objective_status, assessment, next_tasks }` output. The planner does not call Relay CLI and does not persist Tasks itself.
 
 Each successful planner invocation is one real `plan-N` planning round. Relay persists that planner result, then creates returned work Tasks with provenance back to that planning round. `parentTaskId` expresses semantic ownership among work Tasks; it is not inherited from the Plan and must never point to a `plan-N` record. `dependencies` independently express execution prerequisites. Historical `planner-N` records remain readable. Only planner execution creates planner rounds; Relay never manufactures synthetic `plan-*` records for direct Task creation. In the dashboard, planner rounds remain provenance/grouping metadata, not semantic parents.
 
-A zero-task autonomous Job remains idle. After a direct orchestrator-created initial batch completes, Relay may start the first real planner round. Fixed Jobs do not automatically create planner rounds.
+A zero-task DRAFT Job remains idle until explicit first planning or direct Task creation. After initial work settles, every Job automatically replans until the latest successful Plan is `satisfied`; there is no fixed/autonomous mode or Job scheduler.
 
 Planner-created child Tasks remain descriptive agent work and must include the output contract and `storySize`; worker requirements are optional soft routing facts unless an explicit runtime constraint is known. Execution Router chooses the complete runtime route afterward.
 
 ## Durable truth
 
-GitHub PR/job/task markers remain durable workflow state. Events are the authoritative execution-state transition signal for model-backed tasks. Runtime events, process exits, browser submission receipts, and conversation text are evidence only.
+SQLite is the sole local durable lifecycle authority. GitHub PR/Job/Task markers are collaboration projections. Correlated model-worker events are inputs to Graph-selected, SQLite-committed transitions; runtime events, process exits, browser receipts, and conversation text are not themselves completion proof.
 
 Keep secrets, credentials, private prompts, and large private payloads out of durable markers and events.
 
 ### Automatic task troubleshooting
 
-When an ACTIVE Job contains a current-run `FAILED` task, reconciliation may create one P0-priority `troubleshooter` recovery task for that exact failed attempt. `BLOCKED` is resolved only through authoritative unblock, which records evidence and transitions the Task to `UNBLOCKED`. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Autonomous `UNBLOCKED` Tasks are historical and feed the next Planner round instead of being retried or sent through Troubleshooter. Each Planner round is durably represented by an `agents-relay:plan:v1` PR comment created before generated Task comments and updated in place with its assessment and generated Task IDs. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
+When an ACTIVE Job contains a current-run `FAILED` task, reconciliation may create one P0-priority `troubleshooter` recovery task for that exact failed attempt. `BLOCKED` is resolved only through authoritative unblock, which records evidence and transitions the Task to `UNBLOCKED`. The recovery task is routed to a local Codex-capable worker with repository/tool access and runs under the bundled Troubleshooter agent contract. Historical ordinary unblock evidence is Planner recovery context; only an effectively blocked Troubleshooter can be authoritatively resumed. Each Planner round is durably represented by an `agents-relay:plan:v1` PR comment created before generated Task comments and updated in place with its assessment and generated Task IDs. Troubleshooter diagnosis is event-first: it must inspect the failed task's task-scoped lifecycle event history (including ordering, duplicate/missing/late events, source and phase data) before classifying root cause or retrying.
 
-The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
+The Troubleshooter diagnoses before retrying. A task-local or transient blocker is repaired narrowly; a shared worker/runtime/tool defect is repaired through the owning repository's P0/self-job workflow. Only after the blocker is removed does it retry the original task and verify durable progress. Historical resolved failures do not spawn duplicate recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
 
 ## Persistent service bootstrap
 

@@ -28,7 +28,7 @@ async function fixture(forceRestate = true, includeFailed = true) {
   const reviewer = task(jobId, 'failed-review', 'FAILED', { agentName: 'reviewer' });
   const target = task(jobId, 'verified', 'SUCCEEDED', { error: null, failureReason: undefined });
   const job = { id: jobId, title: 'Atomic plan apply', objective: 'Apply only converged plans', repository: 'local/isolated', prNumber: 0,
-    state: 'ACTIVE', executionMode: 'fixed', autoMerge: false, reviewEnabled: false,
+    state: 'ACTIVE', autoMerge: false, reviewEnabled: false,
     createdAt: at, updatedAt: at, tasks: includeFailed ? [old, reviewer, target] : [target], plans: [] };
   const plan = createPlanRound(job, { manual: true, now: at });
   plan.forceRestate = forceRestate;

@@ -5,7 +5,7 @@ import { registerBlockerDependency, resolveBlockerDependencies } from '../dist/b
 
 const now='2026-09-25T18:00:00.000Z';
 function task(id,state='FAILED',attempt=1){return {jobId:'dependent',id,kind:'work',priority:'P1',storySize:'S',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:id,output:{kind:'task_pr'},continuation:null,continuationDeliveredAt:null,state,attempt,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:'boom',timeoutMs:300000,createdAt:now,updatedAt:now};}
-function job(id,repository,prNumber,tasks=[]){return {id,title:id,priority:'P1',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber,repository,state:'ACTIVE',continuation:null,createdAt:now,updatedAt:now,tasks};}
+function job(id,repository,prNumber,tasks=[]){return {id,title:id,priority:'P1',autoMerge:true,reviewEnabled:false,prNumber,repository,state:'ACTIVE',continuation:null,createdAt:now,updatedAt:now,tasks};}
 
 test('blocker registration is reverse, cross-job, and idempotent', async()=>{
   const blockerStore=new InMemoryStore(job('blocker','org/platform',10));

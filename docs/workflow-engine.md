@@ -64,7 +64,7 @@ not to a parallel graph file in the current workflow directory.
 
 The generic engine parses and validates the Mermaid graph, checks whether a state-to-state transition is legal, resolves transitions by event, evaluates named guards, and invokes named actions. Callers remain responsible for durable persistence, locking/claims, event delivery, and external side effects. Those primitives must not duplicate transition legality.
 
-The canonical graphs are the lifecycle authority. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same graph lifecycle event seam. Runtime-owned Task inputs use `DurableTaskTransitionRuntime` to serialize one Task, load fresh durable state, ask the graph about the event plus facts, and persist only an accepted graph decision. Runtime status remains a derived projection from Job/Task/Review/PR/schedule facts and is intentionally outside this state-machine engine.
+The canonical graphs are the lifecycle authority. CLI mutations, reconciliation, dependency release/hold, worker lifecycle events, planner lifecycle, review invalidation, and PR merge/close all feed the same graph lifecycle event seam. Runtime-owned Task inputs use `DurableTaskTransitionRuntime` to serialize one Task, load fresh durable state, ask the graph about the event plus facts, and persist only an accepted graph decision. Runtime status remains a derived projection from Job/Task/Review/local-merge facts and is intentionally outside this state-machine engine.
 
 ## Non-goals
 
@@ -83,7 +83,7 @@ The graph owns lifecycle policy: legal source/target states, event names, named 
 
 - durable persistence and GitHub marker serialization;
 - leases, execution IDs, and the lightweight atomic launch claim;
-- GitHub/NATS/process/browser I/O and scheduler clock handling;
+- GitHub/NATS/process/browser I/O and reconciliation watchdog;
 - concrete guard/action implementations and external side effects;
 - factual execution context used by graph guards, such as exact execution correlation and `recoverableExecution`;
 - serialization/fresh-read primitives used to apply one graph decision safely;
@@ -91,11 +91,11 @@ The graph owns lifecycle policy: legal source/target states, event names, named 
 - runtime-status projection across Job/Task/Review/PR/schedule facts;
 - explicit compatibility repair of legacy records that persisted invalid derived Job states.
 
-These boundaries keep the executable Mermaid profile small while preventing lifecycle policy from drifting across CLI, reconciler, scheduler, planner, worker, review, and PR paths.
+These boundaries keep the executable Mermaid profile small while preventing lifecycle policy from drifting across CLI, reconciler, planner, worker, review, and PR paths.
 
 ## Integration verification checklist
 
-- `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/schedule/recovery/related-task branching.
+- `workflow/job-lifecycle.mmd` and `workflow/task-lifecycle.mmd` are the production durable lifecycle transition sources; the orchestration-policy graphs listed above own review/planner/blocker/recovery/related-task branching.
 - Both canonical files parse through Relay's executable Mermaid engine and render directly with a standard Mermaid renderer.
 - The npm package includes both canonical `.mmd` files alongside `dist/`.
 - Worker process launch does not imply `RUNNING`; worker-owned `task.started` performs the semantic transition.

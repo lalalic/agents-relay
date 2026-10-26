@@ -22,7 +22,7 @@ Scope: Agents Relay PR #260. This is a source-level audit, not evidence that the
 | Orphan recovery | `src/execution-recovery.ts` | `lease.expired` and `execution.orphaned` | Retry/fail via canonical graph | Startup recovery only selects `RUNNING`, not `QUEUED` with executionId |
 | Pool startup / reconcile | `src/pool.ts:196-227` | Startup recovery and discovery | Reconcile job snapshots | Startup and periodic reconcile are fallback, not lifecycle event transport |
 | GitHub webhook | `src/pool.ts:281-314`, `src/relayd.ts:334-348` | Correlated target wake | Publishes wake / target reconcile | Possible duplicate wake paths require delivery-id dedup verification |
-| Scheduler and watchdog | `src/relayd.ts:446-479` | Timer signal/heartbeat | Periodic reconcile | Watchdog cadence cannot replace terminal event-triggered reconciliation |
+| Reconciler watchdog | `src/relayd.ts:446-479` | Timer signal/heartbeat | Periodic reconcile | Watchdog cadence cannot replace terminal event-triggered reconciliation |
 | Review events | `src/reconciler-review.ts`, `src/reconciler-runtime.ts:155-159` | Review SHA gate | Approve, changes-required/re-plan | Must ensure one SHA-bound fix action and idempotent receipt |
 | Graph effects | `src/workflow/contracts.ts`, `src/workflow/effects.ts` | Canonical graph decision | `effect.launchTask`, `effect.cancelActiveTasks`, `effect.mergePullRequest` | Timer, process ownership and projection plumbing belong to effect mechanics, not duplicated lifecycle policy |
 | Job / task reconcile | `src/workflow/job-reconcile-v2.ts`, `src/workflow/task-reconcile.ts` | Graph-owned policy | Durable transitions and effects | Verify no competing imperative state transitions in call sites |

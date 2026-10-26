@@ -9,7 +9,7 @@ const task = (id, state = 'RUNNING', executionId = 'exec-1') => ({
   jobId: id.split('-')[0], id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work',
   state, attempt: 2, maxAttempts: 3, leaseOwner: 'relay', leaseExpiresAt: now(), executionId, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(),
 });
-const job = (id, tasks) => ({ id, title: id, repository: 'local/test', prNumber: 0, state: 'ACTIVE', executionMode: 'fixed', continuation: null, createdAt: now(), updatedAt: now(), tasks });
+const job = (id, tasks) => ({ id, title: id, repository: 'local/test', prNumber: 0, state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 
 test('pause atomically gates dispatch and preserves resumable execution identity', async () => {
   const work = task('a-work');

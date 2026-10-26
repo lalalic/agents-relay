@@ -11,7 +11,7 @@ import { handleServicePublication } from '../dist/service-publication.js';
 
 const at = new Date().toISOString();
 const job = { id: 'publish-service', title: 'Release', repository: 'owner/repo', prNumber: 22,
-  state: 'ACTIVE', executionMode: 'fixed', reviewEnabled: false, autoMerge: false,
+  state: 'ACTIVE', reviewEnabled: false, autoMerge: false,
   createdAt: at, updatedAt: at, continuation: null, tasks: [] };
 
 test('single-job GitHub webhook records facts without changing lifecycle', async () => {

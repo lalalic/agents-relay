@@ -55,7 +55,7 @@ for (const scenario of [{action:'task.cancel',initial:'DRAFT',expected:'CANCELLE
  const sqlite=new SQLiteRelayStore(join(dir,'relay.sqlite'),'cli-action-job');
  const at=new Date().toISOString();
  const task={id:'task-1',jobId:'cli-action-job',parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',agentName:scenario.agentName,input:'isolated',state:scenario.initial,attempt:scenario.initial==='FAILED'?1:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null};
- const job={id:'cli-action-job',title:'CLI action L3',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:scenario.action==='task.cancel'?'ACTIVE':'DRAFT',continuation:null,createdAt:at,updatedAt:at,tasks:[task]};
+ const job={id:'cli-action-job',title:'CLI action L3',repository:'local/isolated',prNumber:0,state:scenario.action==='task.cancel'?'ACTIVE':'DRAFT',continuation:null,createdAt:at,updatedAt:at,tasks:[task]};
  let service;
  const original=process.env.AGENTS_RELAY_STORE_DIR;
  const originalNoGithub=process.env.AGENTS_RELAY_NO_GITHUB;
@@ -106,7 +106,7 @@ test('L3 CLI task.escalate and task.resume-troubleshooter preserve authoritative
  const base=(id,state)=>({id,jobId:'cli-human-job',parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',input:'isolate',state,attempt:state==='FAILED'?1:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:state==='FAILED'?'external login required':null,timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null});
  const original=base('original','FAILED');
  const recovery={...base('troubleshoot-original','QUEUED'),agentName:'troubleshooter',parentTaskId:'original'};
- const job={id:'cli-human-job',title:'CLI human recovery L3',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[original,recovery]};
+ const job={id:'cli-human-job',title:'CLI human recovery L3',repository:'local/isolated',prNumber:0,state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[original,recovery]};
  let service;
  const priorStore=process.env.AGENTS_RELAY_STORE_DIR,priorNoGithub=process.env.AGENTS_RELAY_NO_GITHUB;
  try {
@@ -151,7 +151,7 @@ test('L3 CLI task.recover requires active Troubleshooter and persists original G
  const base=(id,state)=>({id,jobId:'cli-recover-job',parentTaskId:null,dependencies:[],capabilities:[],adapter:'orchestrator',input:'isolate',state,attempt:1,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:state==='FAILED'?'fault':null,timeoutMs:10000,createdAt:at,updatedAt:at,continuation:null,continuationDeliveredAt:null});
  const original=base('original','FAILED');
  const recovery={...base('troubleshoot-original','RUNNING'),agentName:'troubleshooter',parentTaskId:'original',executionId:'recovery-exec',leaseOwner:'relay-test',leaseExpiresAt:new Date(Date.now()+3600000).toISOString(),executionHistory:[{id:'recovery-exec',attempt:1,startedAt:at}]};
- const job={id:'cli-recover-job',title:'CLI recovery L3',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[original,recovery]};
+ const job={id:'cli-recover-job',title:'CLI recovery L3',repository:'local/isolated',prNumber:0,state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[original,recovery]};
  let service;
  const priorStore=process.env.AGENTS_RELAY_STORE_DIR,priorNoGithub=process.env.AGENTS_RELAY_NO_GITHUB;
  try {

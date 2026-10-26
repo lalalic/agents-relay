@@ -37,8 +37,7 @@ async function setup() {
   };
   const job = {
     id: jobId, title: 'Planner receipt contract', objective: 'Create one verified Task',
-    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', executionMode: 'autonomous',
-    autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
+    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
     plans: [plan], tasks: [],
   };
   const store = new SQLiteRelayStore(join(env.root, 'relay.sqlite'), jobId);

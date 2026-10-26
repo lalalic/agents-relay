@@ -9,7 +9,7 @@ import {rejectRemovedJobOptions} from '../../dist/cli-support.js';
 // simulated final objective success. In particular injected merge receipts
 // are not authorization to terminalize an unfinished Job.
 test('false completion rejected after chained planner and worker faults and merge receipt',async()=>{
- const result=await runReplay({id:'impossible-objective-after-faults',executionMode:'autonomous',tasks:[
+ const result=await runReplay({id:'impossible-objective-after-faults',tasks:[
   {id:'planner'}, {id:'worker',dependencies:['planner']},
   {id:'reviewer',dependencies:['worker']}, {id:'merge',dependencies:['reviewer']}
  ],steps:[

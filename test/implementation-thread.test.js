@@ -4,7 +4,7 @@ import { marker, parseJob, renderJobBody } from '../dist/markers.js';
 import { recordThreadDelivery, resolveImplementationThreadDestination, resolveImplementationTaskThreadDestination, resolveReviewerThreadDestination } from '../dist/reviewer-thread.js';
 
 const now = () => new Date().toISOString();
-const baseJob = () => ({ id: 'job', title: 'job', prNumber: 0, repository: 'local/job', state: 'ACTIVE', executionMode: 'fixed', continuation: null, createdAt: now(), updatedAt: now(), tasks: [] });
+const baseJob = () => ({ id: 'job', title: 'job', prNumber: 0, repository: 'local/job', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks: [] });
 
 test('implementation thread metadata persists and remains distinct from creator/reviewer threads', () => {
   const job = { ...baseJob(), creatorThreadId: 'creator', reviewerThreadId: 'reviewer', implementationThreadId: ' implementation ' };

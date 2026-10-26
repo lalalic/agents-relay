@@ -6,26 +6,21 @@ This document is an **end-to-end explanatory view** of the current Relay impleme
 
 ```mermaid
 flowchart TD
-  B[Task BLOCKED] --> U[Unblock request: CLI or resolved blocker Job]
-  U --> V{Valid blocked Task?}
+  B[Blocked Troubleshooter] --> U[Authorized unblock request]
+  U --> V{Valid evidence and owner response?}
   V -->|No| X[Reject; no mutation]
-  V -->|Yes| R[Atomic mutation: durable unblock metadata and event]
-  R --> M{Execution mode}
-  M -->|Fixed| Q[QUEUED: clear lease/execution, retry budget]
-  M -->|Autonomous| D[DRAFT: wait for Planner; no worker dispatch]
-  D --> W[Wake / reconcile]
-  W --> G{Planner gates permit a round?}
-  G -->|No| P[Wait or terminal failure requiring explicit intervention]
-  G -->|Yes| L[Plan PLANNING, trigger unblock]
-  L --> O[Planner proposes next_tasks and resolution]
-  O --> C{Relay structural / lifecycle / resolution checks}
-  C -->|Invalid and attempt available| F[Persist retryFeedback; same Plan retry]
+  V -->|Yes| R[Persist unblock evidence and retry budget]
+  R --> Q[Queue same Troubleshooter]
+  Q --> W[Wake Reconciler]
+  W --> G{Planner recovery needed?}
+  G -->|No| P[Continue durable work]
+  G -->|Yes| L[Recover or create Plan]
+  L --> O[Planner proposes next Tasks]
+  O --> C{Graph and lifecycle validation}
+  C -->|Invalid| F[Save retry feedback]
   F --> O
-  C -->|Invalid, attempts exhausted| E[Plan FAILED; do not automatically spin new Plans]
-  C -->|Valid| S[Atomic Plan and Task commit]
-  S --> T[Supersede consumed obsolete Task; queue new work]
-  Q --> A[Scheduler dispatch]
-  T --> A
+  C -->|Valid| S[Commit Plan and Task tree]
+  S --> T[Dispatch ready work]
 ```
 
 The complete cross-boundary illustration lives in [`diagrams/unblock-resolution-end-to-end.mmd`](diagrams/unblock-resolution-end-to-end.mmd).
@@ -43,7 +38,7 @@ The complete cross-boundary illustration lives in [`diagrams/unblock-resolution-
 | Boundary | Executable graph | Implementation |
 | --- | --- | --- |
 | Decide autonomous replan vs fixed retry | [`authoritative-unblock.mmd`](../workflow/authoritative-unblock.mmd) | `src/unblock.ts`, `src/workflow/authoritative-unblock-v2.ts` |
-| Task state transitions | [`task-lifecycle.mmd`](../workflow/task-lifecycle.mmd) | `src/scheduler.ts`, `src/task-actions.ts` |
+| Task state transitions | [`task-lifecycle.mmd`](../workflow/task-lifecycle.mmd) | `src/task-transitions.ts`, `src/task-actions.ts` |
 | Resolve another Job's blockers | [`blocker-resolution.mmd`](../workflow/blocker-resolution.mmd) | `src/blockers.ts` |
 | Select Planner trigger | [`planner-trigger.mmd`](../workflow/planner-trigger.mmd) | `src/planner.ts` |
 | Decide create/recover/wait | [`planner-orchestration.mmd`](../workflow/planner-orchestration.mmd) | `src/workflow/planner-orchestration-v2.ts`, `src/reconciler.ts` |

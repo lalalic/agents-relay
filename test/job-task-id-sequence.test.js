@@ -89,7 +89,7 @@ test('daemon allocates Task IDs, returns the created ID, and does not duplicate 
   const root=await mkdtemp(join(tmpdir(),'relay-daemon-task-ids-'));
   const dir=join(root,'stores');
   try {
-    const job={id:'episode-1', repository:'lalalic/neo',prNumber:0, title:'Vlog Episode', objective:'Private content', executionMode:'fixed', state:'ACTIVE', tasks:[],plans:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const job={id:'episode-1', repository:'lalalic/neo',prNumber:0, title:'Vlog Episode', objective:'Private content', state:'ACTIVE', tasks:[],plans:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const store=new InMemoryStore(job);
     let wakes=0;
     const actions=createDashboardActions({
@@ -134,7 +134,7 @@ test('one-time offline migration rewrites Job snapshots and file identities, pre
   const dir=join(root,'stores');
   await mkdir(dir);
   const timestamp='2026-01-01T00:00:00.000Z';
-  const job=(id,prNumber,repository)=>({id,title:id,repository,prNumber,createdAt:timestamp,updatedAt:timestamp,state:'COMPLETED',executionMode:'fixed',continuation:null,tasks:[{id:'task',jobId:id,state:'SUCCEEDED',dependencies:[]}],plans:[{id:'plan-1',jobId:id,round:1,createdAt:timestamp,updatedAt:timestamp}]});
+  const job=(id,prNumber,repository)=>({id,title:id,repository,prNumber,createdAt:timestamp,updatedAt:timestamp,state:'COMPLETED',continuation:null,tasks:[{id:'task',jobId:id,state:'SUCCEEDED',dependencies:[]}],plans:[{id:'plan-1',jobId:id,round:1,createdAt:timestamp,updatedAt:timestamp}]});
   try {
     const a=new SQLiteRelayStore(relayStorePath(dir,'owner/repo',7));
     await a.saveJob(job('old-repo-seven',7,'owner/repo'));a.close();

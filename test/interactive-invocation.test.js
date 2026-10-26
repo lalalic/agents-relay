@@ -22,7 +22,7 @@ const makeTask = () => ({
   continuation: null, continuationDeliveredAt: null,
 });
 const makeJob = (task = makeTask()) => ({
-  id: task.jobId, title: 'Interactive contract', executionMode: 'fixed', prNumber: 0,
+  id: task.jobId, title: 'Interactive contract', prNumber: 0,
   repository: 'local/job', state: 'ACTIVE', continuation: null,
   createdAt: timestamp(), updatedAt: timestamp(), tasks: [task],
 });

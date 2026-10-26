@@ -7,7 +7,7 @@ const task = (id, state='FAILED', extra={}) => ({
   attempt:1, maxAttempts:3, leaseOwner:null, leaseExpiresAt:null, executionId:null, threadId:null,
   result:null, error:null, timeoutMs:0, createdAt:'', updatedAt:'', ...extra,
 });
-const job = tasks => ({ id:'j', title:'j', priority:'P1', executionMode:'fixed', autoMerge:false, reviewEnabled:false,
+const job = tasks => ({ id:'j', title:'j', priority:'P1', autoMerge:false, reviewEnabled:false,
   repository:'o/r', prNumber:1, state:'ACTIVE', objective:'x', tasks, plans:[], createdAt:'', updatedAt:'' });
 
 test('manual retry policy selects only active troubleshooter recoveries for the retried task', () => {

@@ -19,7 +19,7 @@ This PR does not build a public marketplace, broad multi-owner control plane, un
 
 ## Acceptance criteria
 
-- Existing task, scheduler, lease/recovery, continuation, dashboard, and ChatGPT adapter behavior remains green.
+- Existing task, reconciliation, lease/recovery, continuation, dashboard, and ChatGPT adapter behavior remains green.
 - Agents can be registered and discovered from the same durable PR-backed store.
 - Discovery rejects unmet capabilities/runtime/trust/availability requirements and exposes evidence rather than an opaque score.
 - Registration and discovery work without a human web form.

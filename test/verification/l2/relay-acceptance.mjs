@@ -13,7 +13,7 @@ export async function relayAcceptProviderEvents({work,jobId,taskId,executionId,r
  const timestamp=new Date().toISOString();
  const output={kind:'task_pr'};
  const task={jobId,id:taskId,kind:'work',agentName:role,adapter:'codex',output,input:'isolated L2',parentTaskId:null,dependencies:[],capabilities:[],state:'QUEUED',attempt:1,maxAttempts:3,leaseOwner:'isolated-l2',leaseExpiresAt:'2099-01-01T00:00:00.000Z',executionId,executionHistory:[{id:executionId,attempt:1,startedAt:timestamp}],threadId:null,result:null,error:null,timeoutMs:900000,createdAt:timestamp,updatedAt:timestamp,...(role==='reviewer'?{reviewHeadSha}:{})};
- const job={id:jobId,title:'real provider L2',repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'fixed',autoMerge:false,reviewEnabled:role==='reviewer',headSha:reviewHeadSha,createdAt:timestamp,updatedAt:timestamp,tasks:[task]};
+ const job={id:jobId,title:'real provider L2',repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:role==='reviewer',headSha:reviewHeadSha,createdAt:timestamp,updatedAt:timestamp,tasks:[task]};
  if(role==='reviewer')job.review={taskId,outcome:'pending',headSha:reviewHeadSha};
  const runtime=new Reconciler(store,{owner:'isolated-l2',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true});
  let stop;

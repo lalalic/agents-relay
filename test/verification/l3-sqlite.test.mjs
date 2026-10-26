@@ -7,7 +7,7 @@ import {refreshTaskDependencies, transitionTaskEvent} from '../../dist/task-tran
 
 const stamp='2026-10-17T00:00:00.000Z';
 const task=(id,dependencies=[])=>({jobId:'481-sim',id,parentTaskId:null,dependencies,capabilities:[],adapter:'orchestrator',input:'test',state:dependencies.length?'DRAFT':'QUEUED',attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:0,createdAt:stamp,updatedAt:stamp,continuation:null,continuationDeliveredAt:null});
-const job=tasks=>({id:'481-sim',title:'isolated graph sqlite replay',repository:'local/isolated',prNumber:0,executionMode:'fixed',state:'ACTIVE',continuation:null,createdAt:stamp,updatedAt:stamp,tasks});
+const job=tasks=>({id:'481-sim',title:'isolated graph sqlite replay',repository:'local/isolated',prNumber:0,state:'ACTIVE',continuation:null,createdAt:stamp,updatedAt:stamp,tasks});
 
 test('graph transitions, dependency reconciliation and restart derive authority from isolated SQLite',async()=>{
   const env=createIsolatedEnvironment('relay-l3-sqlite-');
@@ -49,7 +49,7 @@ test('graph rejects second and stale terminal transition without corrupting sqli
 
 test('unfinished autonomous objective cannot complete after one planner batch',async()=>{
   const {completionGateSatisfied}=await import('../../dist/task-transitions.js');
-  const state={...job([task('worker')]),executionMode:'autonomous',plans:[{id:'plan-1',round:1,status:'SUCCEEDED',objectiveStatus:'in_progress',plannerResult:{next_tasks:[{id:'next'}]}}]};
+  const state={...job([task('worker')]),plans:[{id:'plan-1',round:1,status:'SUCCEEDED',objectiveStatus:'in_progress',plannerResult:{next_tasks:[{id:'next'}]}}]};
   state.tasks[0].state='SUCCEEDED';
   assert.equal(completionGateSatisfied(state),false);
   assert.equal(state.state,'ACTIVE');

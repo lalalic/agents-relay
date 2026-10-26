@@ -131,7 +131,7 @@ test('representative wake -> graph -> store -> projection lifecycle is reconstru
       { repository: 'lalalic/agents-relay', prNumber: 228, jobId: 'job-1', taskId: 'task-1' },
       async () => {
         const job = {
-          id: 'job-1', title: 'job', executionMode: 'fixed', prNumber: 228, repository: 'lalalic/agents-relay',
+          id: 'job-1', title: 'job', prNumber: 228, repository: 'lalalic/agents-relay',
           state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(),
           tasks: [{
             jobId: 'job-1', id: 'task-1', parentTaskId: null, dependencies: [], capabilities: [],
@@ -173,7 +173,7 @@ test('ProjectedDurableStore records a store commit and projection enqueue for on
   try {
     const projected = new ProjectedDurableStore(relay, new InMemoryStore());
     const job = {
-      id: 'job-9', title: 'job', executionMode: 'fixed', prNumber: 228, repository: 'lalalic/agents-relay',
+      id: 'job-9', title: 'job', prNumber: 228, repository: 'lalalic/agents-relay',
       state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(),
       tasks: [{
         jobId: 'job-9', id: 'task-9', parentTaskId: null, dependencies: [], capabilities: [],

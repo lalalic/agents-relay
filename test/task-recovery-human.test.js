@@ -10,7 +10,7 @@ function fixture() {
   const now = new Date().toISOString();
   const original = { jobId: 'j', id: 'original', kind: 'work', agentName: 'implementation', state: 'FAILED', attempt: 2, maxAttempts: 3, executionId: 'original-exec', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do work', output: { kind: 'task_pr' }, leaseOwner: null, leaseExpiresAt: null, threadId: null, result: null, error: 'needs approval', failureReason: 'semantic_failure', timeoutMs: 100, createdAt: now, updatedAt: now };
   const recovery = { jobId: 'j', id: 'troubleshoot-original', kind: 'work', agentName: 'troubleshooter', state: 'RUNNING', attempt: 1, maxAttempts: 3, executionId: 'recovery-exec', parentTaskId: 'original', dependencies: [], capabilities: ['troubleshoot'], adapter: 'codex', input: 'diagnose', output: { kind: 'task_pr' }, leaseOwner: 'relay', leaseExpiresAt: now, threadId: null, result: null, error: null, timeoutMs: 100, createdAt: now, updatedAt: now };
-  return { id: 'j', title: 'recovery', repository: 'x/y', prNumber: 1, state: 'ACTIVE', executionMode: 'fixed', continuation: null, createdAt: now, updatedAt: now, tasks: [original, recovery] };
+  return { id: 'j', title: 'recovery', repository: 'x/y', prNumber: 1, state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [original, recovery] };
 }
 
 async function fixtureStore() { const sqlite = new SQLiteRelayStore(':memory:'); const store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore()); await store.saveJob(fixture()); return store; }

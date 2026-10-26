@@ -19,14 +19,14 @@ Event / Action request
 ```
 
 An **Event** is an observed fact (`task.completed`, `github.pr.merged`, or
-`schedule.due`). A **State** is durable truth (`Task=BLOCKED` or
+`planner.reconcile`). A **State** is durable truth (`Task=BLOCKED` or
 `Job.lifecycle=ACTIVE`). An **Action** is an intent or effect (`task.retry`,
 `worker.launch`, or `github.merge`). A graph is the deterministic policy that
 connects those concepts; it is not a process runner or a scripting language.
 
 The boundary is deliberately one-way:
 
-- adapters (CLI, API, webhook, scheduler, and event subscriptions) normalize
+- adapters (CLI, API, webhook, and event subscriptions) normalize
   input into an Event or Action request;
 - the Graph Engine validates topology, evaluates registered guards, and returns
   a transition plus declared effects;
@@ -360,7 +360,7 @@ CLI commands, relayd/dashboard handlers, and internal callers that express the
 same intent reuse the same typed Action implementation; they do not duplicate
 transition policy in adapter code.
 
-Observed facts are different: scheduler, webhook, worker, review, planner, and
+Observed facts are different: webhook, worker, review, planner, and
 reconcile facts enter as Events and are evaluated directly by the Graph
 Runtime. They are not wrapped as Actions merely for uniformity. Deterministic
 transition mutations declared by the graph are applied atomically with the
@@ -387,7 +387,7 @@ flowchart LR
 The ownership rule is deliberately asymmetric:
 
 - **Graph** owns deterministic workflow decisions.
-- **Relay Store** owns operational execution facts such as local snapshots, event idempotency/offsets, leases/attempt metadata, scheduler state and pending projection work. The local product backend is SQLite in WAL mode.
+- **Relay Store** owns operational execution facts such as local snapshots, event idempotency/offsets, leases/attempt metadata, Planner rounds and pending projection work. The local product backend is SQLite in WAL mode.
 - **Event Bus** carries wake-up and progress signals; it is not durable workflow truth by itself.
 - **GitHub** remains the durable collaboration and audit surface for Job Objective, Plan, Task/Result, Review, PR/code state and human decisions.
 
@@ -436,7 +436,7 @@ This is not symmetric database synchronization. Human GitHub changes enter throu
 
 SQLiteRelayStore and ProjectedDurableStore establish the first executable vertical slice. A managed Job bootstraps from GitHub once, then Job/Plan/Task runtime mutations can commit locally while GitHub is unavailable. Pending projection survives daemon restart and converges after GitHub recovers without changing the existing marker/comment representation.
 
-The storage boundary is intentionally adapter-shaped. SQLite is a permanent supported local backend, while a future Cloud/Postgres implementation may satisfy the same Relay Store contract without changing Graph Engine, Planner, Worker, Scheduler or Reconciler semantics.
+The storage boundary is intentionally adapter-shaped. SQLite is a permanent supported local backend, while a future Cloud/Postgres implementation may satisfy the same Relay Store contract without changing Graph Engine, Planner, Worker or Reconciler semantics.
 
 ## 4. Compatibility and migration
 

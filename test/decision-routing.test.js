@@ -310,7 +310,7 @@ test('reconciler emits worker.selected before model.selected after code routing'
     await writeFile(join(home, 'config.toml'), 'model = "gpt-test"\n');
     const now = new Date().toISOString();
     const task = { jobId: 'route-events', id: 'work', kind: 'work', parentTaskId: null, dependencies: [], capabilities: ['model'], workerRequirements: { capabilities: ['model'] }, adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'QUEUED', attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now, planningSource: 'model-planner' };
-    const job = { id: 'route-events', title: 'routing', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task] };
+    const job = { id: 'route-events', title: 'routing', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task] };
     const store = new InMemoryStore(job);
     const events = [];
     const adapter = { name: 'codex', id: 'codex', capabilities: ['model'], launch() { return { id: 'held', promise: new Promise(() => {}), cancel() {} }; } };
@@ -346,7 +346,7 @@ test('dependency-unblocked tasks are routed before launch', async () => {
     dependency.routing = { provider: 'openai', model: 'gpt-test', decidedBy: 'test', decidedAt: current };
     const child = complete('unlocked', 'DRAFT', ['dependency']);
     const job = {
-      id: 'route-unlock', title: 'routing', executionMode: 'fixed', prNumber: 1,
+      id: 'route-unlock', title: 'routing', prNumber: 1,
       repository: 'owner/repo', state: 'ACTIVE', continuation: null,
       createdAt: current, updatedAt: current, tasks: [dependency, child],
     };
@@ -518,7 +518,7 @@ test('final review uses normal Worker Router decision with current user guidance
     await writeFile(rulesPath, "[routing-instruction]\ndon't use chatgpt worker\n");
     const { InMemoryStore } = await import('../dist/store.js');
     const now = new Date().toISOString();
-    const store = new InMemoryStore({ id: 'review-route', title: 'review route', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] });
+    const store = new InMemoryStore({ id: 'review-route', title: 'review route', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] });
     const calls = [];
     const engine = {
       name: 'fake',

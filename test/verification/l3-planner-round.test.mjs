@@ -13,7 +13,7 @@ test('real Planner Plan round failure retries into committed child under isolate
  const jobId='planner-l3';
  const timestamp=new Date().toISOString();
  const plan={jobId,id:'plan-1',round:1,source:'model-planner',previousPlanId:null,trigger:{source:'initial'},status:'PLANNING',assessment:'Planning in progress.',generatedTaskIds:[],attempt:0,maxAttempts:2,manualPlanning:false,leaseOwner:null,leaseExpiresAt:null,executionId:null,timeoutMs:10000,createdAt:timestamp,updatedAt:timestamp};
- const job={id:jobId,title:'Planner recovery',objective:'Implement and verify a small change',repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'autonomous',autoMerge:false,reviewEnabled:false,createdAt:timestamp,updatedAt:timestamp,plans:[plan],tasks:[]};
+ const job={id:jobId,title:'Planner recovery',objective:'Implement and verify a small change',repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:false,createdAt:timestamp,updatedAt:timestamp,plans:[plan],tasks:[]};
  const sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
  const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  const bus=new MemoryEventBus();
@@ -68,7 +68,7 @@ test('SQLite reconcile preserves historical Plan child and reopens the same Trou
   plannerResult:{objective_status:'in_progress',assessment:'Continue work.',next_tasks:[{id:child.id,title:'Planned work',
    input:child.input,output:child.output,storySize:'S',resolution:historicalResolution}],unblocks:[]}};
  const job={id:jobId,title:'Job 473 recovery',objective:'Recover failed work and preserve historical execution evidence',
-  repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'autonomous',autoMerge:false,reviewEnabled:false,
+  repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:false,
   createdAt:timestamp,updatedAt:timestamp,plans:[plan],tasks:[original,dependencyTarget,child,recovery]};
  const sqlite=new SQLiteRelayStore(join(env.storeDir,'relay.sqlite'),jobId);
  const store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);

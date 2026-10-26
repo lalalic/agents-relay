@@ -288,7 +288,7 @@ test('CLI plan rejects a text-only Planner proposal and cleans its owned process
   const promptFile = join(directory, 'prompt.md');
   const plannerCommand = join(directory, 'planner.mjs');
   const descendantFile = join(directory, 'planner-descendant.pid');
-  const root = { ...job([]), objective: 'durable objective', executionMode: 'fixed', state: 'DRAFT' };
+  const root = { ...job([]), objective: 'durable objective', state: 'DRAFT' };
   await writeFile(file, JSON.stringify(root));
   await writeFile(promptFile, 'additional planning guidance');
   await writeFile(plannerCommand, `#!/usr/bin/env node
@@ -326,7 +326,7 @@ test('CLI task create stores optional project and agent metadata with parent', a
 test('CLI direct task creation can omit routing and reconciler selects one complete execution route', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-direct-auto-route-'));
   const file = join(directory, 'job.json');
-  const root = { ...job([]), executionMode: 'fixed', state: 'ACTIVE', reviewEnabled: false, autoMerge: false };
+  const root = { ...job([]), state: 'ACTIVE', reviewEnabled: false, autoMerge: false };
   await writeFile(file, JSON.stringify(root));
   const child = spawn(process.execPath, [join('dist','cli.js'),'task','create','--file',file,'--task-id','auto-route','--output','task-pr','--input','route this task'], {cwd:process.cwd()});
   assert.equal(await new Promise(resolve=>child.on('close',resolve)),0);
@@ -400,7 +400,7 @@ test('reconciler rescues queued legacy orchestrator work for Execution Router', 
   const self = task('legacy-queued');
   self.adapter = 'orchestrator'; self.routing = undefined; self.workerSelection = undefined; self.workerRequirements = undefined; self.timeoutMs = 0; self.capabilities = ['implementation'];
   self.createdAt = at; self.updatedAt = at;
-  const store = new InMemoryStore({ ...job([self]), executionMode: 'fixed' });
+  const store = new InMemoryStore({ ...job([self]) });
   const events = [];
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at), emit: event => events.push(event) });
   await reconciler.reconcile('j');
@@ -423,7 +423,7 @@ test('reconciler quarantines RUNNING legacy orphan without an execution identity
   self.capabilities = ['implementation'];
   self.createdAt = at;
   self.updatedAt = self.createdAt;
-  const store = new InMemoryStore({ ...job([self]), executionMode:'fixed' });
+  const store = new InMemoryStore({ ...job([self]) });
   const events=[];
   const reconciler = managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,emit:event=>events.push(event)});
   await reconciler.reconcile('j');
@@ -444,7 +444,7 @@ test('reconciler preserves active ownership and terminal legacy records', async 
   const young = task('active', 'RUNNING'); young.adapter = 'orchestrator'; young.routing = undefined; young.createdAt = at; young.executionId = 'active'; young.leaseOwner = 'other'; young.leaseExpiresAt = '2099-01-01T00:00:00.000Z'; young.threadId = 'thread';
   const running = task('running', 'RUNNING'); running.adapter = 'orchestrator'; running.routing = undefined; running.createdAt = '2026-10-04T04:00:00.000Z'; running.executionId = 'active';
   const done = task('done', 'SUCCEEDED'); done.adapter = 'orchestrator'; done.routing = undefined; done.createdAt = '2026-10-04T04:00:00.000Z';
-  const store = new InMemoryStore({ ...job([young, running, done]), executionMode: 'fixed' });
+  const store = new InMemoryStore({ ...job([young, running, done]) });
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [], maxConcurrent: 0, now: new Date(at) });
   await reconciler.reconcile('j');
   { const durable=(await store.load('j')).tasks; assert.deepEqual(durable.map(item => item.adapter), ['orchestrator','orchestrator','orchestrator','codex']); assert.deepEqual(durable.map(item=>item.state), ['RUNNING','FAILED','SUCCEEDED','QUEUED']); }
@@ -2178,7 +2178,7 @@ test('autonomous satisfied objective ignores failed troubleshooter history for f
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
   const recovery=task('troubleshoot-old','FAILED'); recovery.agentName='troubleshooter'; recovery.error='historical timeout';
-  const root={...job([planner,work,recovery]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-recovered'};
+  const root={...job([planner,work,recovery]),state:'ACTIVE',headSha:'sha-recovered'};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-recovered';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
@@ -2189,7 +2189,7 @@ test('autonomous satisfied objective ignores failed troubleshooter history for f
 test('autonomous satisfied objective still blocks final review on failed implementation', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
   const work=task('work','FAILED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner'; work.error='real failure';
-  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-failed-work'};
+  const root={...job([planner,work]),state:'ACTIVE',headSha:'sha-failed-work'};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-failed-work';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
@@ -2200,7 +2200,7 @@ test('autonomous satisfied objective still blocks final review on failed impleme
 test('autonomous satisfied objective allows one final review', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'satisfied',assessment:'done',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
-  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-autonomous-done'};
+  const root={...job([planner,work]),state:'ACTIVE',headSha:'sha-autonomous-done'};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-autonomous-done';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
@@ -2211,7 +2211,7 @@ test('autonomous satisfied objective allows one final review', async () => {
 
 test('no-review jobs stay ACTIVE and become merge-pending without creating a reviewer task', async () => {
   const work=task('work','SUCCEEDED');
-  const root={...job([work]),executionMode:'fixed',state:'ACTIVE',headSha:'sha-no-review',reviewEnabled:false};
+  const root={...job([work]),state:'ACTIVE',headSha:'sha-no-review',reviewEnabled:false};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-no-review';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[]});
   await reconciler.reconcile('j');
@@ -2866,7 +2866,7 @@ test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
   const blocked=task('25','BLOCKED');
   const unblocked=task('30','DRAFT');
   unblocked.unblock={event:'task.unblocked',at:now(),source:'cli',reason:'retry',baseline:{blockedAt:now()}};
-  const value={...job([blocked,unblocked]),executionMode:'autonomous',plans:[]};
+  const value={...job([blocked,unblocked]),plans:[]};
   assert.equal(needsLifecycleReconciliation(value),true);
   value.plans=[{id:'plan-4',status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']}}];
   assert.equal(needsLifecycleReconciliation(value),true,'unsatisfied objective still needs a Planner round');

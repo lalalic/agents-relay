@@ -39,7 +39,7 @@ test('dashboard polls the live package version and reloads only when it changes'
 });
 
 test('dashboard exposes the live package version without caching', async () => {
-  const server = managedDashboard(new InMemoryStore({ id: 'version-job', title: 'Version job', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }), 0, undefined, 300000, 'version-job');
+  const server = managedDashboard(new InMemoryStore({ id: 'version-job', title: 'Version job', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] }), 0, undefined, 300000, 'version-job');
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
@@ -146,7 +146,7 @@ test('dashboard discovers workflow Mermaid files dynamically', async () => {
 });
 
 test('dashboard exposes workflow graphs through a no-store API', async () => {
-  const job = { id: 'graphs-job', title: 'Graphs', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'graphs-job', title: 'Graphs', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
   await once(server, 'listening');
   const address = server.address();
@@ -330,7 +330,6 @@ test('job ordering keeps every non-terminal job ahead of every terminal job', ()
     id,
     title: id,
     state: 'ACTIVE',
-    executionMode: 'fixed',
     githubState: 'OPEN',
     runtimeStatus: 'IDLE',
     draft: false,
@@ -382,7 +381,7 @@ test('job row selection uses repository, PR, and durable id as one UI identity',
 });
 
 test('dashboard job actions invoke the supplied runtime handler', async () => {
-  const job = { id: 'action-job', title: 'Actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'action-job', title: 'Actions', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let invoked = '';
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     reconcile: async jobId => { invoked = jobId; return job; }
@@ -413,7 +412,7 @@ test('selected task exposes one direct durable state selector instead of retry a
 });
 
 test('dashboard job state override invokes the supplied runtime handler', async () => {
-  const job = { id: 'job-state-job', title: 'Job state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'job-state-job', title: 'Job state', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let invoked = '';
   let target;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
@@ -431,7 +430,7 @@ test('dashboard job state override invokes the supplied runtime handler', async 
 
 test('dashboard task state override invokes the supplied runtime handler', async () => {
   const task = { id: 'manual-task', jobId: 'task-state-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
-  const job = { id: 'task-state-job', title: 'Task state', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  const job = { id: 'task-state-job', title: 'Task state', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
   let invoked = '';
   let target;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
@@ -462,7 +461,7 @@ test('dashboard renders job clipboard, publication, merge-review, and commit-lin
 
 test('dashboard task actions invoke the supplied runtime handler', async () => {
   const task = { id: 'failed-task', jobId: 'task-action-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
-  const job = { id: 'task-action-job', title: 'Task actions', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  const job = { id: 'task-action-job', title: 'Task actions', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
   let invoked = '';
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     taskRetry: async (jobId, taskId) => { invoked = jobId + '/' + taskId; return job; }
@@ -478,7 +477,7 @@ test('dashboard task actions invoke the supplied runtime handler', async () => {
 
 test('dashboard control API dispatches durable commands through the service callback', async () => {
   const now = new Date().toISOString();
-  const job = { id: 'control-api-job', title: 'Control API', executionMode: 'fixed', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] };
+  const job = { id: 'control-api-job', title: 'Control API', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [] };
   let received = null;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     control: async body => { received = body; return { ok: true, command: body.command }; }
@@ -495,7 +494,7 @@ test('dashboard control API dispatches durable commands through the service call
 
 test('dashboard task controls preserve durable task ids with spaces and brackets', async () => {
   const task = { id: '[2026-09-29 17]', jobId: 'task-control-job', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'work', output: { kind: 'task_pr' }, state: 'FAILED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failed', timeoutMs: 1000, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), continuation: null, continuationDeliveredAt: null };
-  const job = { id: 'task-control-job', title: 'Task controls', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
+  const job = { id: 'task-control-job', title: 'Task controls', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [task] };
   const invocations = [];
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, undefined, undefined, undefined, {
     taskRetry: async (jobId, taskId) => { invocations.push(['retry', jobId, taskId]); return job; },
@@ -622,7 +621,7 @@ test('dashboard SSE sends short keepalive comments independent of durable snapsh
 });
 
 test('dashboard webhook accepts only self-contained facts and does not refresh GitHub', async () => {
-  const job = { id: 'webhook-job', title: 'Webhook state', executionMode: 'fixed', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'webhook-job', title: 'Webhook state', prNumber: 50, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let wakes=0;
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id, undefined, undefined, {
     secret: 'test-secret',
@@ -822,7 +821,7 @@ test('SSE lifecycle snapshot carries the computed runtime status instead of defa
 
 test('dashboard SSE streams committed local state immediately without a worker event or GitHub refresh', async () => {
   const { publishLocalCommit } = await import('../dist/local-commit-events.js');
-  const job = { id: 'committed-sse', title: 'Committed SSE', executionMode: 'autonomous', repository: 'owner/repo', prNumber: 91, state: 'ACTIVE', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'committed-sse', title: 'Committed SSE', repository: 'owner/repo', prNumber: 91, state: 'ACTIVE', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
   await once(server, 'listening');
   const addr = server.address();
@@ -918,7 +917,7 @@ test('dashboard deduplicates jobs by repository and durable ID while retaining P
 });
 
 test('publication webhook only acknowledges successful durable handling and retries failed delivery IDs', async () => {
-  const job = { id: 'webhook-retry', title: 'Webhook retry', executionMode: 'fixed', prNumber: 0,
+  const job = { id: 'webhook-retry', title: 'Webhook retry', prNumber: 0,
     repository: 'owner/repo', state: 'COMPLETED', continuation: null,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   let attempts = 0;
@@ -1008,7 +1007,7 @@ test('graph detail resolves only symbols present in canonical executable graph',
 });
 
 test('graph-symbol API returns real references and rejects missing or malformed graph symbols', async () => {
-  const job = { id: 'graph-symbol-test', title: 'Graph API smoke', executionMode: 'fixed', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
+  const job = { id: 'graph-symbol-test', title: 'Graph API smoke', prNumber: 0, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] };
   const server = managedDashboard(new InMemoryStore(job), 0, undefined, 300000, job.id);
   await once(server, 'listening');
   try {

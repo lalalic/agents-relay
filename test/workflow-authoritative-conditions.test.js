@@ -13,7 +13,7 @@ test('SQLite facts, not client booleans, determine queued/succeeded/routing post
   const db=new DatabaseSync(path);
   db.exec('CREATE TABLE job_snapshot(job_id TEXT PRIMARY KEY,json TEXT,updated_at TEXT); CREATE TABLE execution_process(job_id TEXT,task_id TEXT,execution_id TEXT,ended_at TEXT)');
   const task={id:'worker',state:'QUEUED',executionId:null,leaseOwner:null,executionHistory:[{id:'old',attempt:1}]};
-  const job={id:'481',state:'ACTIVE',executionMode:'autonomous',tasks:[task],plans:[]};
+  const job={id:'481',state:'ACTIVE',tasks:[task],plans:[]};
   const write=()=>db.prepare('INSERT OR REPLACE INTO job_snapshot VALUES(?,?,?)').run('481',JSON.stringify(job),new Date().toISOString());write();
   assert.equal(verifyAuthoritativeCondition(db,'481','task.queued','worker'),'Verified');
   assert.equal(verifyAuthoritativeCondition(db,'481','task.routing-cleared','worker'),'Verified');

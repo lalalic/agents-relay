@@ -6,7 +6,7 @@ import { applyManagedTaskUpdate } from '../dist/task-update.js';
 const stamp = () => new Date().toISOString();
 function fixture(state='QUEUED') {
   const task={jobId:'j',id:'work',kind:'work',priority:'P2',storySize:'M',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',input:'before',output:{kind:'task_pr'},attempt:0,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:stamp(),updatedAt:stamp(),state};
-  return {task,store:new InMemoryStore({id:'j',title:'update',repository:'owner/repo',prNumber:1,executionMode:'fixed',state:'ACTIVE',createdAt:stamp(),updatedAt:stamp(),continuation:null,tasks:[task]})};
+  return {task,store:new InMemoryStore({id:'j',title:'update',repository:'owner/repo',prNumber:1,state:'ACTIVE',createdAt:stamp(),updatedAt:stamp(),continuation:null,tasks:[task]})};
 }
 test('managed task update preserves lifecycle authority, execution fields and fresh optimistic preflight', async () => {
   const {task,store}=fixture(); const requested={...task,input:'after',priority:'P1'};

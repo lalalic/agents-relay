@@ -11,7 +11,7 @@ test('SQLite startup migrates ordinary BLOCKED snapshots to FAILED without rewri
   const path = join(dir, 'relay.sqlite');
   const now = '2026-10-21T12:00:00.000Z';
   const task = (id, agentName, failureReason) => ({ jobId: 'j', id, kind: 'work', agentName, priority: 'P1', storySize: 'S', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: id, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, state: 'BLOCKED', attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'historical block', failureReason, timeoutMs: 1000, createdAt: now, updatedAt: now });
-  const job = { id: 'j', title: 'migration', executionMode: 'fixed', prNumber: 1, repository: 'o/r', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task('ordinary', 'implementation', undefined), task('unknown', 'implementation', 'worker_outcome_unknown'), task('trouble', 'troubleshooter', 'human_action_required')] };
+  const job = { id: 'j', title: 'migration', prNumber: 1, repository: 'o/r', state: 'ACTIVE', continuation: null, createdAt: now, updatedAt: now, tasks: [task('ordinary', 'implementation', undefined), task('unknown', 'implementation', 'worker_outcome_unknown'), task('trouble', 'troubleshooter', 'human_action_required')] };
   const first = new SQLiteRelayStore(path);
   await first.saveJob(job);
   first.close();

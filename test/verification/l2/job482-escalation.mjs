@@ -33,8 +33,7 @@ export async function verifyJob482EscalationLoop({work,recommendation,originalEx
     executionHistory:id===recoveryId?[{id:recoveryExecutionId,attempt:1,startedAt:at}]:[{id:originalExecutionId,attempt:5,startedAt:at}],
     threadId:null,result:null,error:state==='FAILED'?'Repeated implementation execution failed before durable completion.':null,
     timeoutMs:900000,createdAt:at,updatedAt:at,...extra});
-  const job={id:jobId,title:'Job482 contradictory MCP evidence L2',repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'fixed',
-    autoMerge:false,reviewEnabled:false,headSha:'acfa2a5abbce2e55f85afab2fefd0b5fba1739ab',createdAt:at,updatedAt:at,
+  const job={id:jobId,title:'Job482 contradictory MCP evidence L2',repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:false,headSha:'acfa2a5abbce2e55f85afab2fefd0b5fba1739ab',createdAt:at,updatedAt:at,
     tasks:[task(originalId,'FAILED'),task(recoveryId,'RUNNING')]};
   const database=join(work,'stores','job482-escalation.sqlite');
   let escalationId;

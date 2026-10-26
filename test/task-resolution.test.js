@@ -4,7 +4,7 @@ import { decideTaskResolution, dispatchTaskResolution, validateResolutionProposa
 import { validatePlannerResolutionMaterialization } from '../dist/planner.js';
 
 const task = (id, state = 'FAILED') => ({ jobId: 'j', id, kind: 'work', state, dependencies: [], parentTaskId: null, adapter: 'codex', input: id, capabilities: [], attempt: 1, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: 'failure', timeoutMs: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
-const job = (tasks) => ({ id: 'j', repository: 'o/r', prNumber: 0, title: 'j', executionMode: 'fixed', state: 'ACTIVE', continuation: null, createdAt: '', updatedAt: '', tasks });
+const job = (tasks) => ({ id: 'j', repository: 'o/r', prNumber: 0, title: 'j', state: 'ACTIVE', continuation: null, createdAt: '', updatedAt: '', tasks });
 
 test('resolution graph exposes exact-original retry and never replacement_task', () => {
   const original = task('original');

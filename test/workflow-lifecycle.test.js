@@ -23,7 +23,6 @@ const job = state => ({
   id: 'job-graph',
   state,
   tasks: [],
-  executionMode: 'fixed',
   title: 'Graph lifecycle',
   prNumber: 74,
   repository: 'lalalic/agents-relay',

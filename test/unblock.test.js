@@ -8,9 +8,9 @@ import { implementationTasks } from '../dist/runtime-status.js';
 
 const at='2026-09-29T09:00:00.000Z';
 const baseTask=(id,state='BLOCKED',agentName)=>({jobId:'dependent',id,kind:'work',priority:'P0',storySize:'S',parentTaskId:null,dependencies:[],capabilities:[],adapter:'codex',agentName,input:'release 4.4.9',output:{kind:'task_pr'},continuation:null,continuationDeliveredAt:null,state,attempt:1,maxAttempts:3,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:'old release blockers',timeoutMs:300000,createdAt:at,updatedAt:at,blockedBaseline:{blockedAt:at,headSha:'c7bd3d6',reason:'old release blockers'}});
-const makeJob=(tasks,mode='autonomous')=>({id:'dependent',title:'release',objective:'publish',priority:'P0',executionMode:mode,autoMerge:false,reviewEnabled:false,prNumber:6,repository:'lalalic/team-mate',state:'ACTIVE',continuation:null,headSha:'7555d05',createdAt:at,updatedAt:at,tasks});
+const makeJob=(tasks)=>({id:'dependent',title:'release',objective:'publish',priority:'P0',autoMerge:false,reviewEnabled:false,prNumber:6,repository:'lalalic/team-mate',state:'ACTIVE',continuation:null,headSha:'7555d05',createdAt:at,updatedAt:at,tasks});
 
-test('authoritative unblock queues the same Troubleshooter in every Job mode', async()=>{
+test('authoritative unblock queues the same Troubleshooter', async()=>{
   const blocked=baseTask('public-release-4-4-9','BLOCKED','troubleshooter');
   const changed={...baseTask('media','SUCCEEDED'),attempt:1,error:null,result:{summary:'fresh 4.4.9 screenshots and demo required'},updatedAt:'2026-09-29T09:50:22.000Z'};
   const store=new InMemoryStore(makeJob([blocked,changed]));
@@ -46,7 +46,7 @@ test('maybeCreatePlanner gates on a BLOCKED Troubleshooter but not FAILED ordina
 });
 
 test('blocker Job resolution releases dependency waits and leaves FAILED work for Troubleshooter recovery', async()=>{
-  const blockerJob={id:'blocker',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerJob={id:'blocker',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const blockedStore=new InMemoryStore(makeJob([baseTask('release','DRAFT')]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker',dependentStore:blockedStore,dependentJobId:'dependent',dependentTaskId:'release',resolutionMode:'verified',now:at});
@@ -69,10 +69,10 @@ test('blocker Job resolution releases dependency waits and leaves FAILED work fo
 
 
 test('blocker resolution deduplicates interrupted durable unblock', async()=>{
-  const blockerJob={id:'blocker-interrupted',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerJob={id:'blocker-interrupted',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const blocked={...baseTask('interrupted','DRAFT'),attempt:2,maxAttempts:3};
-  const dependentStore=new InMemoryStore(makeJob([blocked],'fixed'));
+  const dependentStore=new InMemoryStore(makeJob([blocked]));
   await registerBlockerDependency({blockerStore,blockerJobId:'blocker-interrupted',dependentStore,dependentJobId:'dependent',dependentTaskId:'interrupted',resolutionMode:'verified',now:at});
 
   const durable=(await dependentStore.load('dependent')).tasks[0];
@@ -90,7 +90,7 @@ test('blocker resolution deduplicates interrupted durable unblock', async()=>{
 
 test('authoritative unblock queues the same Troubleshooter with a reset retry budget', async()=>{
   const blocked={...baseTask('fixed-release','BLOCKED','troubleshooter'),attempt:3,maxAttempts:3};
-  const store=new InMemoryStore(makeJob([blocked],'fixed'));
+  const store=new InMemoryStore(makeJob([blocked]));
   const current=await store.load('dependent');
   const result=await unblockTask({store,job:current,task:current.tasks[0],trigger:{source:'cli',reason:'external blocker cleared'},now:'2026-09-29T10:00:00.000Z'});
   assert.equal(result.replanning,false);
@@ -135,7 +135,7 @@ test('Troubleshooter unblock reruns the same Task without creating a Planner Pla
 
 
 test('blocker Job resolution does not unblock unrelated BLOCKED tasks', async()=>{
-  const blockerJob={id:'blocker-scope',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
+  const blockerJob={id:'blocker-scope',title:'blocker',priority:'P0',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const target=baseTask('target','DRAFT');
   const unrelated=baseTask('unrelated','BLOCKED','troubleshooter');

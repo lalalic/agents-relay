@@ -19,7 +19,7 @@ test('workspace dashboard/runtime summary refreshes the disposable local view fr
 test('broad GitHub discovery cannot evict RelayStore-known jobs from operational inventory', () => {
   const overview = (id, prNumber, state = 'ACTIVE', githubState = 'OPEN') => ({
     githubState, mergedAt: githubState === 'MERGED' ? '2026-10-01T00:00:00.000Z' : null, closedAt: null, draft: false, publication: null,
-    job: { id, title: id, executionMode: 'fixed', prNumber, repository: 'owner/repo', state, continuation: null, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', tasks: [] },
+    job: { id, title: id, prNumber, repository: 'owner/repo', state, continuation: null, createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z', tasks: [] },
   });
   const durable = overview('old-known-job', 1, 'ACTIVE', 'MERGED');
   const discovered = Array.from({ length: 25 }, (_, index) => overview('new-' + (index + 1), index + 2, 'COMPLETED', 'MERGED'));
@@ -29,7 +29,7 @@ test('broad GitHub discovery cannot evict RelayStore-known jobs from operational
 });
 
 test('dashboard discovery overlays GitHub snapshots with local operational Job truth', async () => {
-  const remoteJob = { id: 'job-1', title: 'remote', executionMode: 'fixed', prNumber: 1, repository: 'owner/repo', state: 'DRAFT', continuation: null, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
+  const remoteJob = { id: 'job-1', title: 'remote', prNumber: 1, repository: 'owner/repo', state: 'DRAFT', continuation: null, createdAt: '2026-09-29T00:00:00.000Z', updatedAt: '2026-09-29T00:00:00.000Z', tasks: [] };
   const localJob = { ...remoteJob, state: 'ACTIVE', updatedAt: '2026-09-29T00:01:00.000Z', tasks: [{ jobId:'job-1', id:'work', kind:'work', parentTaskId:null, dependencies:[], capabilities:[], adapter:'codex', attachments:[], output:{kind:'task_pr'}, continuation:null, continuationDeliveredAt:null, state:'RUNNING', attempt:1, maxAttempts:3, leaseOwner:'relay', leaseExpiresAt:null, executionId:'execution-1', threadId:null, result:null, plannerResult:null, error:null, timeoutMs:1000, createdAt:'2026-09-29T00:00:30.000Z', updatedAt:'2026-09-29T00:01:00.000Z', input:'work' }] };
   const overview = { githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: remoteJob };
   const hydrated = [];
@@ -408,7 +408,7 @@ test('long-form Job and Task content prefers file inputs and avoids shell quotin
 
   const now = new Date().toISOString();
   const localJob = join(directory, 'job.json');
-  await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', executionMode:'fixed', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
+  await writeFile(localJob, JSON.stringify({ id:'local-file-job', title:'local', priority:'P2', autoMerge:false, reviewEnabled:false, prNumber:1, repository:'owner/repo', state:'DRAFT', continuation:null, createdAt:now, updatedAt:now, tasks:[] }));
 
   const created = spawnSync(process.execPath, ['dist/cli.js','task','create','--file',localJob,'--task-id','file-task','--adapter','codex','--output','task-pr','--draft','--input-file',taskFile], { encoding:'utf8' });
   assert.equal(created.status, 0, created.stderr);
@@ -469,8 +469,8 @@ test('GitHub rate limit cannot gate locally authoritative lifecycle operations',
 
 test('recovery scan keeps active repositories and rotates one dormant recovery probe', () => {
   const now = new Date().toISOString();
-  const terminal = repository => ({ job: { id:'done-'+repository, title:'done', repository, prNumber:1, state:'COMPLETED', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null });
-  const active = { job: { id:'active', title:'active', repository:'owner/active', prNumber:2, state:'ACTIVE', executionMode:'fixed', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'OPEN', draft:false, mergedAt:null, closedAt:null };
+  const terminal = repository => ({ job: { id:'done-'+repository, title:'done', repository, prNumber:1, state:'COMPLETED', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'MERGED', draft:false, mergedAt:now, closedAt:null });
+  const active = { job: { id:'active', title:'active', repository:'owner/active', prNumber:2, state:'ACTIVE', continuation:null, createdAt:now, updatedAt:now, tasks:[] }, githubState:'OPEN', draft:false, mergedAt:null, closedAt:null };
   const repos=['owner/done-a','owner/active','owner/unknown','owner/done-b'];
   const cached=[terminal('owner/done-a'), active, terminal('owner/done-b')];
   assert.deepEqual(recoveryScanRepositories(repos, cached, 0), ['owner/active','owner/unknown','owner/done-a']);

@@ -24,12 +24,12 @@ SQLite persistence and dependency release but not a full provider dispatch.
 SQLite; they are not production merge effects or event-bus merge receipts.
 Do not cite these steps as proof that merge retries or reason receipt work.
 
-Known gaps before claiming complete L3: real scheduler-launched workers,
+Historical gaps before expanded L3 coverage: real Reconciler-dispatched workers,
 reviewer changes/revision/re-review, reviewer completion stall, troubleshooter
 escalation and authenticated unblock, merge failure with durable reason and
 retry through the actual effect, and full autonomous planner completion gates.
 A successful suite is evidence for tested edges only, not complete Job 481.
 
-The root cause for the prior review failure is missing scheduler-driven
-end-to-end lifecycle evidence. The fixture and SQLite-based assertions repair
+The root cause for the historical review failure was missing Reconciler-driven
+multi-stage lifecycle evidence. The fixture and SQLite-based assertions repair
 part of that gap without modifying production daemon or workflow policy.

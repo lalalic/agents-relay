@@ -39,8 +39,7 @@ test('L2 real Codex Planner corrects rejected forced restatement in one executio
   const job = {
     id: jobId, title: 'Resolve the outstanding objective',
     objective: 'Safely converge the work represented by historical Task task-150. Inspect its actual evidence. Its worker ended without a terminal event, so do not claim completion or infer the outcome. Preserve history and either create a justified safe recovery task or an evidence-backed blocked Troubleshooter.',
-    repository: 'local/planner-l2', prNumber: 0, state: 'ACTIVE', executionMode: 'fixed',
-    autoMerge: false, reviewEnabled: false, tasks: [], plans: [], createdAt: at, updatedAt: at,
+    repository: 'local/planner-l2', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, tasks: [], plans: [], createdAt: at, updatedAt: at,
   };
   job.tasks.push({
     id: 'task-150', jobId, title: 'Investigate the interrupted worker outcome', kind: 'work', parentTaskId: null,

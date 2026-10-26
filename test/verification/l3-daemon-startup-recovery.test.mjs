@@ -112,7 +112,7 @@ test('real daemon restart fences parent-shutdown and claims the same Troubleshoo
   const original = task('implementation-134', 'FAILED', { error: 'implementation failed before diagnosis' });
   const recovery = task('troubleshoot-134', 'QUEUED', { agentName: 'troubleshooter', parentTaskId: original.id });
   const job = { id: jobId, title: 'Job 473', objective: 'Diagnose failed implementation', repository: 'local/isolated',
-    prNumber: 0, state: 'ACTIVE', executionMode: 'fixed', autoMerge: false, reviewEnabled: false,
+    prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false,
     createdAt: now, updatedAt: now, tasks: [original, recovery] };
   let daemon;
   let daemonPid;

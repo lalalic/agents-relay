@@ -15,12 +15,12 @@ function task(id, state, adapter, model, executionId = null, leaseExpiresAt = nu
 
 test('runtime summary aggregates only currently running worker/model load', () => {
   const summary = summarizeRuntime([
-    { id:'a', title:'a', priority:'P1', executionMode:'fixed', autoMerge:true, reviewEnabled:false, prNumber:1, repository:'x/y', state:'ACTIVE', continuation:null, createdAt:'x', updatedAt:'x', tasks:[
+    { id:'a', title:'a', priority:'P1', autoMerge:true, reviewEnabled:false, prNumber:1, repository:'x/y', state:'ACTIVE', continuation:null, createdAt:'x', updatedAt:'x', tasks:[
       task('c1','RUNNING','chatgpt','gpt-5.6-sol','exec-1','2026-09-27T04:00:00.000Z'),
       task('c2','RUNNING','codex','zai-5.3-flash'),
       task('done','SUCCEEDED','chatgpt','gpt-5.6-sol'),
     ]},
-    { id:'b', title:'b', priority:'P1', executionMode:'fixed', autoMerge:true, reviewEnabled:false, prNumber:2, repository:'x/y', state:'DRAFT', continuation:null, createdAt:'x', updatedAt:'x', tasks:[
+    { id:'b', title:'b', priority:'P1', autoMerge:true, reviewEnabled:false, prNumber:2, repository:'x/y', state:'DRAFT', continuation:null, createdAt:'x', updatedAt:'x', tasks:[
       task('c3','RUNNING','chatgpt','gpt-5.6-sol'),
     ]},
   ]);

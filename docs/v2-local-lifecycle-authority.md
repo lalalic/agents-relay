@@ -31,15 +31,14 @@ Do not change or run the separate E2E worktree when validating this branch.
 - Review, Troubleshooter, retries, task dependencies, and Job terminalization
   remain Graph-driven; they only use SQLite state.
 - All GitHub PR states, head SHA, close/merge facts, webhook deliveries and publication
-  status are **audit-only**; they never trigger Job/Task/Review/Planner/Schedule
+  status are **audit-only**; they never trigger Job/Task/Review/Planner
   transitions or wake reconciliation. Confirmed external merge does not mean Job
   COMPLETED. Only local Git delivery with a verified receipt can do that.
 - Immutable `job.id` selects the authoritative SQLite DB for daemon control,
-  targeted worker events, startup recovery, and schedule ticks. `prNumber=0` is
+  targeted worker events, startup recovery, and automatic objective planning. `prNumber=0` is
   a normal local Job; a positive PR number is optional external metadata.
-- Schedule slots use an atomic SQLite `BEGIN IMMEDIATE` claim informed by the
-  Scheduled-run Graph, and a guarded completion; competing processes cannot
-  claim the same slot twice.
+- Planner rounds are created idempotently from SQLite after settled Task outcomes;
+  restart and duplicate wake signals cannot produce duplicate rounds.
 - CLI `job create --repo ... --id ... --objective ...` requires no GitHub login
   or PR. Local job stores use `job-<SHA-256(jobId)>.db`; older PR-bound SQLite
   filenames remain readable through registry discovery.

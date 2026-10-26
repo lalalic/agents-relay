@@ -15,7 +15,7 @@ const at = '2026-10-08T20:00:00.000Z';
 function job(id = 'local') {
   return {
     id, title: 'local-only', repository: 'owner/repo', prNumber: 12,
-    executionMode: 'fixed', state: 'ACTIVE', continuation: null,
+    state: 'ACTIVE', continuation: null,
     createdAt: at, updatedAt: at, tasks: [],
   };
 }

@@ -118,3 +118,9 @@ The new L1 inventory validates all 16 executable Graphs and every declared edge 
 ### Job 481 / Task 59 production-path evidence
 
 Run `node test/verification/l3-evidence.mjs /tmp/relay-l3-evidence` after `npm run build`. Each scenario writes its own SQLite-derived `report.json` and `report.md`; the aggregate report records observed failures, including an intentionally broken assertion, and lists unsupported flows rather than declaring them PASS. See `evidence/job481-task59/assessment.md` for actual validation and unresolved review terminal stall.
+
+## Browser Dashboard coverage after E2E retirement (2026-10-26)
+
+The legacy standalone Browser Workspace E2E scripts and production test-injection entry points were removed. Existing `test/dashboard.test.js` and Graph/L1 tests still validate Dashboard markup, URL wiring, graph source coverage and static safety constraints. They do **not** prove physical browser SVG rendering, navigation, keyboard focus, mobile viewport or adversarial DOM handling.
+
+**L2 physical browser/UI verification: NOT_RUN.** Historical isolated-browser evidence in `docs/evidence/` remains available for audit only and does not claim current-SHA acceptance. Future browser checks belong to a dedicated L2 role/provider capability; they must not reinstate the E2E runner or production fault-injection API. L3 is limited to deterministic production ingress, Graph/Reconciler and isolated SQLite checks.

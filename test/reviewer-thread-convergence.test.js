@@ -6,7 +6,7 @@ import { prepareReviewerThreadDelivery, recordThreadDelivery } from '../dist/rev
 const now = new Date().toISOString();
 function job() {
   return { id: 'review-routing-test', title: 'job', prNumber: 0, repository: 'local/job', state: 'ACTIVE',
-    executionMode: 'fixed', continuation: null, creatorThreadId: 'creator-thread',
+    continuation: null, creatorThreadId: 'creator-thread',
     reviewerThreadId: 'configured-reviewer-thread', implementationThreadId: 'separate-implementation-thread',
     headSha: 'head-123', tasks: [], createdAt: now, updatedAt: now };
 }

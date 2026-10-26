@@ -29,7 +29,7 @@ const task = (id, state = 'QUEUED', fields = {}) => ({
   result: null, error: null, timeoutMs: 0, createdAt: now(), updatedAt: now(), ...fields,
 });
 const job = (tasks) => ({
-  id: 'j', title: 'Ownership repair', executionMode: 'fixed', prNumber: 0,
+  id: 'j', title: 'Ownership repair', prNumber: 0,
   repository: 'owner/repo', state: 'ACTIVE', continuation: null,
   createdAt: now(), updatedAt: now(), tasks,
 });

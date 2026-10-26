@@ -27,7 +27,7 @@ flowchart LR
 | --- | --- | --- |
 | `wake` | `RepositoryWorkerPool.consumeSignals` | `wake.signal` |
 | `graph` | `src/workflow/dispatcher.ts` | `<event id>` (accepted/ambiguous/no-op) |
-| `transition` | `scheduler.ts`, `workflow/durable-transition.ts` | `transition`, `task.dispatch` |
+| `transition` | `task-transitions.ts`, `workflow/durable-transition.ts` | `transition`, `task.dispatch` |
 | `store` | `ProjectedDurableStore` | `store.commit` |
 | `projection` | `relay-store.ts`, `projected-store.ts` | `projection.enqueued`, `projection.completed`, `projection.retry_scheduled`, `projection.dead_lettered` |
 | `reconcile` | `Reconciler.reconcile` | `reconcile`, `reconcile.failed`, `reconcile.signal_unrouted` |

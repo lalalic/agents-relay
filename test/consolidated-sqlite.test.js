@@ -24,7 +24,7 @@ test('single SQLite consolidation preserves independent Job records, outboxes an
     const a = new SQLiteRelayStore(relayStorePath(source,'example/first',9));
     const b = new SQLiteRelayStore(relayJobStorePath(source,'2'));
     const createdAt='2026-10-14T00:00:00.000Z';
-    const makeJob=(id,repository,prNumber)=>({id,title:`Job ${id}`,repository,prNumber,objective:'fixture',state:'COMPLETED',executionMode:'fixed',continuation:null,createdAt,updatedAt:createdAt,tasks:[{id:'1',jobId:id,state:'SUCCEEDED'}],plans:[]});
+    const makeJob=(id,repository,prNumber)=>({id,title:`Job ${id}`,repository,prNumber,objective:'fixture',state:'COMPLETED',continuation:null,createdAt,updatedAt:createdAt,tasks:[{id:'1',jobId:id,state:'SUCCEEDED'}],plans:[]});
     await a.saveJob(makeJob('1','example/first',9));
     await b.saveJob(makeJob('2','example/second',0));
     await a.enqueueProjection({idempotencyKey:'same-key',operation:'save_job',payload:{jobId:'1'}});

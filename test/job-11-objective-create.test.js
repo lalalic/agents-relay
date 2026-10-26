@@ -49,7 +49,7 @@ test('SQLite create-if-absent is atomic and preserves the first complete snapsho
   const store = new SQLiteRelayStore(join(directory, 'relay.db'));
   try {
     const now = new Date().toISOString();
-    const first = createJobEntity({ id: 'same', title: 'first', objective: 'one', priority: 'P2', executionMode: 'fixed', autoMerge: true, reviewEnabled: true, prNumber: 0, repository: 'owner/repo', continuation: null, createdAt: now, updatedAt: now, tasks: [] });
+    const first = createJobEntity({ id: 'same', title: 'first', objective: 'one', priority: 'P2', autoMerge: true, reviewEnabled: true, prNumber: 0, repository: 'owner/repo', continuation: null, createdAt: now, updatedAt: now, tasks: [] });
     const second = { ...first, title: 'second', objective: 'two' };
     assert.equal((await store.createJobIfAbsent(first)).title, 'first');
     assert.equal((await store.createJobIfAbsent(second)).title, 'first');

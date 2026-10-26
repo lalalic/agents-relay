@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {createRuntimeStatusPublisher} from '../dist/runtime-status-events.js';
-const base={repository:'owner/repo',id:'job-1',state:'ACTIVE',executionMode:'autonomous',prNumber:0,continuation:null,tasks:[],createdAt:'2026-10-10T00:00:00Z',updatedAt:'2026-10-10T00:00:00Z'};
+const base={repository:'owner/repo',id:'job-1',state:'ACTIVE',prNumber:0,continuation:null,tasks:[],createdAt:'2026-10-10T00:00:00Z',updatedAt:'2026-10-10T00:00:00Z'};
 test('publish computed runtime status transitions once, with no persisted status',async()=>{
  const events=[];const publish=createRuntimeStatusPublisher({publish:async e=>{events.push(e)}});
  publish({...base});publish({...base});

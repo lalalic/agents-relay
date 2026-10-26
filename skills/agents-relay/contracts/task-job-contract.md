@@ -139,9 +139,9 @@ SHA-bound final reviewer. For example, `video-director + market + style ->
 review-chair -> unified revision plan` is a project pattern, not a hard-coded
 Relay reviewer list.
 
-A scheduled autonomous job adds cron/timezone/next-run and missed-run/concurrency policy to the trusted job marker. The always-on `agents-relayd` process is the sole heartbeat for repositories it manages: on startup and every ten minutes it evaluates cached managed Jobs and reconciles due work through the local worker pool. There is no GitHub Actions scheduler fallback. Unscheduled autonomous Jobs and fixed Jobs do not use the scheduler heartbeat.
+Every Job is objective-driven. After a direct initial Task batch or a Planner-produced batch settles, reconciliation evaluates the canonical Planner Graph and creates the next durable `plan-N` round until the latest successful Plan returns `objective_status: satisfied`. There is no fixed/autonomous mode, no Job schedule, no cron slot, and no Scheduler entity. The daemon performs startup recovery and wake-driven reconciliation from SQLite. A satisfied Plan alone does not complete a Job: successful implementation evidence, SHA-bound review when enabled, and verified local merge/delivery remain mandatory.
 
-The scheduler heartbeat filters cached managed Jobs, reloads each due Job to validate the marker's exact `nextRunAt`, claims the slot idempotently, advances the durable next run, and reconciles planner/worker execution locally. While the schedule is active, the durable Job remains `ACTIVE`; between runs its derived runtime status is `WAITING`. Scheduled recurring Jobs do not enter one-shot final-review/auto-merge after each satisfied run; older-cycle failures are historical evidence and do not block a later slot.
+A newly created zero-task DRAFT Job waits for explicit initial planning (`plan` or `--initial-plan`) or direct work creation; this is only a start gate, not a distinct execution mode. Failed or blocked Tasks require durable Troubleshooter/owner recovery and never allow a fabricated completion. Duplicate events and daemon restarts must not create duplicate Plan rounds.
 
 
 ## Task evidence and head identity

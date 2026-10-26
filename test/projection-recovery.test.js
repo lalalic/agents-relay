@@ -9,7 +9,7 @@ import { beginProjectionRecovery } from '../dist/projection-recovery.js';
 const at = '2026-10-20T12:00:00.000Z';
 const job483Fixture = {
   id: 'job-483', title: 'Job 483 projection divergence regression', repository: 'local/regression', prNumber: 483,
-  executionMode: 'fixed', state: 'COMPLETED', continuation: null, createdAt: at, updatedAt: at,
+  state: 'COMPLETED', continuation: null, createdAt: at, updatedAt: at,
   tasks: [], localMerge: { sourceRef: 'refs/heads/job-483', targetRef: 'refs/heads/main', status: 'succeeded',
     projectionStrategy: 'target_ref_push', sourceSha: '1111111111111111111111111111111111111111',
     mergedCommitSha: '2222222222222222222222222222222222222222' },

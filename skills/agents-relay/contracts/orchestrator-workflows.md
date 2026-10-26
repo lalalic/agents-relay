@@ -20,7 +20,7 @@ job create --initial-plan
 
 Without `--initial-plan`, `job create` remains create-only and establishes durable Job/PR state without execution. `agents-relay plan` remains available for an existing create-only/adopted Job. Unless the user explicitly requested **create-only / no execution**, the orchestrator should use `job create --initial-plan` rather than issuing two separate commands.
 
-The initial decomposition belongs to that durable Planner round. The orchestrator must not hand-author the initial child Task batch as a substitute. If initial planning fails, the create command fails visibly after preserving the durable Job/Plan evidence; the orchestrator must not silently invent Tasks. This applies regardless of whether the Job uses `fixed` or `autonomous` execution mode. Later replanning continues to follow Relay's normal Planner/reconciliation rules.
+The initial decomposition belongs to that durable Planner round. The orchestrator must not hand-author the initial child Task batch as a substitute. If initial planning fails, the create command fails visibly after preserving the durable Job/Plan evidence; the orchestrator must not silently invent Tasks. Every Job follows this same objective-driven lifecycle. After a completed implementation batch, Relay automatically creates subsequent Plan rounds until the latest successful Plan reports `objective_status: satisfied`; there is no fixed/autonomous execution mode or Job scheduling.
 
 ## P0 / self job workflow
 
@@ -48,7 +48,7 @@ state and hand subsequent execution to Relay.
 
 ## Merge completion vs deployment evidence
 
-For a normal one-shot managed Job, the canonical Job lifecycle graph owns completion: a durable `pr.merged` fact transitions the Job to `COMPLETED`. Reconciler and deployment code must not invent a second completion gate after merge.
+For a managed Job, the canonical Job lifecycle Graph owns completion. A satisfied Plan, successful implementation evidence, applicable SHA-bound review, and a verified local merge/delivery receipt are required. Remote GitHub `pr.merged` facts are audit-only and never independently complete a local Job. Deployment code must not invent another completion gate after durable Job completion.
 
 Post-merge publication and deployment activity is separate from Job lifecycle. Events or evidence such as `package.published`, published version metadata, service restart, and deployment verification may be attached after the Job is already `COMPLETED`; they must not hold the Job open, reopen it, or redefine completion. If post-merge deployment needs remediation, record that as separate deployment/recovery work rather than mutating the completed implementation Job lifecycle.
 

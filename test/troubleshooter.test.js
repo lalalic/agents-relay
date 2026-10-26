@@ -53,7 +53,6 @@ function job(tasks) {
     id: 'neo-pr40',
     title: 'Neo PR 40',
     objective: 'finish the original job',
-    executionMode: 'fixed',
     reviewEnabled: true,
     autoMerge: true,
     prNumber: 40,

@@ -23,8 +23,7 @@ test('L3 plan apply CLI commits its Plan and Tasks to isolated SQLite', async ()
   };
   const job = {
     id: jobId, title: 'Planner CLI receipt', objective: 'Create one verified Task',
-    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', executionMode: 'autonomous',
-    autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
+    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
     plans: [plan], tasks: [],
   };
   const store = new SQLiteRelayStore(join(env.root, 'relay.sqlite'), jobId);
@@ -75,8 +74,7 @@ test('L3 live Codex Planner applies through CLI and returns the matching receipt
   };
   const job = {
     id: jobId, title: 'Planner CLI receipt', objective: 'Create one small executable task for a hello world deliverable.',
-    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', executionMode: 'autonomous',
-    autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
+    repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', autoMerge: false, reviewEnabled: false, createdAt: timestamp, updatedAt: timestamp,
     plans: [plan], tasks: [],
   };
   const store = new SQLiteRelayStore(join(env.root, 'relay.sqlite'), jobId);

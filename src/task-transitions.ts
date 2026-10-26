@@ -9,7 +9,8 @@ export function completionGateSatisfied(job: Job): boolean {
   const latest = [...(job.plans ?? [])].sort((a, b) => a.round - b.round).at(-1);
   const planSatisfied = latest?.status === 'SUCCEEDED' && latest.objectiveStatus === 'satisfied';
   const legacySatisfied = (job.plans?.length ?? 0) === 0 && job.tasks.some(task => task.kind === 'planner' && task.state === 'SUCCEEDED' && task.plannerResult?.objective_status === 'satisfied');
-  return (planSatisfied || legacySatisfied) && implementationTasks(job).every(task => task.state === 'SUCCEEDED');
+  const implementation = implementationTasks(job);
+  return (planSatisfied || legacySatisfied) && implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
 }
 export function refreshTaskDependencies(job: Job): Job {
   if (job.pause) return job;

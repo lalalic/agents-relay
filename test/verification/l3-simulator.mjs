@@ -135,7 +135,8 @@ export async function runFullPath(scenario) {
     // A launched adapter and its terminal event may be delivered on separate turns.
     // Settle until durable SQLite reaches a stable post-ingress state; never trust the
     // adapter promise or the event bus receipt as proof of a terminal transition.
-    for (let settle = 0; settle < 100; settle += 1) {
+    // Full-suite load can delay the second SHA-bound review's terminal event.
+    for (let settle = 0; settle < 300; settle += 1) {
       const before = await snapshot();
       await tick();
       const after = await snapshot();

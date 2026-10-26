@@ -23,7 +23,7 @@ async function withEscalation(fn){
  let store=new LocalAuthorityDurableStore(sqlite,new InMemoryStore(),undefined,true);
  try{
   await store.saveJob({id:'notify',title:'Escalation notifier test',repository:'local/isolated',prNumber:0,state:'ACTIVE',
-   executionMode:'fixed',autoMerge:false,reviewEnabled:false,createdAt:stamp,updatedAt:stamp,
+   autoMerge:false,reviewEnabled:false,createdAt:stamp,updatedAt:stamp,
    tasks:[makeTask('original','FAILED'),makeTask('troubleshoot-original','QUEUED','original','troubleshooter')]});
   const request=await requestTroubleshooterEscalation(store,'notify','troubleshoot-original',
    {requiredAction:'Authorize provider access',resolutionCondition:'Provider authentication works',context:'Provider login requires human confirmation'});

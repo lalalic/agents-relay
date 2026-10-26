@@ -19,7 +19,7 @@ async function fixture(run) {
  const bus=new MemoryEventBus();
  let reconciler;
  try {
-  await store.saveJob({id,title:'L3 ingress simulator',repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:'fixed',autoMerge:false,reviewEnabled:false,createdAt:now,updatedAt:now,tasks:[task('a'),task('b',['a'])]});
+  await store.saveJob({id,title:'L3 ingress simulator',repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:false,reviewEnabled:false,createdAt:now,updatedAt:now,tasks:[task('a'),task('b',['a'])]});
   reconciler=new Reconciler(store,{owner:'l3-test',adapters:[],eventBus:bus,maxConcurrent:0,noGitHub:true});
   const stop=await reconciler.watch(id);
   try {await run({store,bus,reconciler,sqlite,env});} finally {await stop();}

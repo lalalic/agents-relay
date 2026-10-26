@@ -79,7 +79,7 @@ ReconcilerRuntimeBase
 - `ReconcilerReviewBase`: review lifecycle and review-driven graph events.
 - `Reconciler`: top-level observation/reconciliation, planner orchestration, and effect handler bindings.
 - `workflow/task-reconcile.ts`: dependency facts and graph reconciliation.
-- `scheduler.ts`: cron/schedule timing plus a compatibility facade around task reconciliation.
+- `task-transitions.ts`: dependency refresh and Graph-backed Task/Job transition facade; no Job scheduler.
 - `runtime-status.ts`: pure derived projection; it is not durable lifecycle state.
 - Store implementations: persistence only.
 
