@@ -62,20 +62,8 @@ test('reconcile preserves an existing durable task when a planner repeats its id
   await stop();
 });
 
-test('fixed jobs stop after the orchestrator-created task batch', async () => {
-  const { job: initial } = plannedJob('fixed');
-  const store = new InMemoryStore(initial);
-  const bus = new MemoryEventBus();
-  let plannerCalls = 0;
-  const reconciler = managedReconciler(store, { owner: 'test', adapters: [harness(bus)], planner: { plan: async () => { plannerCalls += 1; return { objective_status: 'satisfied', assessment: 'done', next_tasks: [] }; } }, eventBus: bus });
-  const stop = await reconciler.watch('planning');
-  await settle(reconciler);
-  assert.equal(plannerCalls, 0);
-  assert.equal((await store.load('planning')).tasks.filter(task => task.kind === 'planner').length, 0);
-  await stop();
-});
 
-test('cancelled planner history leaves an empty candidate retryable in the same active plan', async () => {
+test('cancelled planner history permits a fresh round to satisfy the objective', async () => {
   const completed = { ...work('business-cycle'), state: 'SUCCEEDED', result: { summary: 'diagnosed' } };
   const cancelled = { ...work('planner-1'), kind: 'planner', state: 'CANCELLED', error: 'Cancelled by user' };
   const store = new InMemoryStore(job([completed, cancelled]));
@@ -88,8 +76,8 @@ test('cancelled planner history leaves an empty candidate retryable in the same 
   const result = await store.load('planning');
   assert.equal(plannerCalls, 1);
   assert.equal(result.tasks.some(task => task.id === 'plan-2'), false);
-  assert.equal(result.plans?.find(plan => plan.id === 'plan-2')?.status, 'PLANNING');
-  assert.ok(result.plans?.find(plan => plan.id === 'plan-2')?.executionId);
+  assert.equal(result.plans?.find(plan => plan.id === 'plan-2')?.status, 'SUCCEEDED');
+  assert.equal(result.plans?.find(plan => plan.id === 'plan-2')?.objectiveStatus, 'satisfied');
   await stop();
 });
 

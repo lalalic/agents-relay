@@ -4,11 +4,12 @@ import { dispatchWorkflowGraphSync } from './dispatcher.js';
 
 const source = readFileSync(new URL('../../workflow/force-restate-validation.mmd', import.meta.url), 'utf8');
 export const forceRestateValidationV2 = new GraphRuntime(source, {
-  states: new Set(['idle', 'check_history_mode', 'check_history', 'check_normal_history', 'check_forward', 'rejected', 'committed']),
+  states: new Set(['idle', 'check_history_mode', 'check_history', 'check_normal_history', 'check_satisfied', 'check_forward', 'rejected', 'committed']),
   guards: {
     forceRestateRequested: facts => facts.durableFacts.forceRestateRequested === true,
     historyConsistencyValid: facts => facts.durableFacts.historyConsistencyValid === true,
     normalHistoryMutationAbsent: facts => facts.durableFacts.normalHistoryMutationAbsent === true,
+    objectiveSatisfied: facts => facts.durableFacts.objectiveSatisfied === true,
     forwardConvergenceValid: facts => facts.durableFacts.forwardConvergenceValid === true,
   },
   actions: {

@@ -410,7 +410,7 @@ test('saveJob migrates a legacy Job comment into the PR body without touching Ta
 });
 
 test('saveJob skips identical PR body writes and patches changed job state', async () => {
-  const durable = { ...job('idempotent'), executionMode: 'fixed' };
+  const durable = job('idempotent');
   const client = new ManagedGitHubClient([{ number: 6, title: 'Existing', body: renderJobBody(durable), state: 'open', head: { ref: 'feat/idempotent' }, base: { ref: 'main' } }]);
   const store = new GitHubStore(client, 'owner/repo', 6, new Set(['bot']));
 

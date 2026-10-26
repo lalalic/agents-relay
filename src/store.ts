@@ -92,8 +92,6 @@ export interface DurableStore {
   commitWorkflowMutationWithEvents?(jobId: string, mutation: (job: Job) => {next: Job; events: readonly {key:string;event:EventRecord}[]}): Promise<Job>;
   /** Replay stable event IDs; failed publish leaves outbox pending. */
   drainWorkflowEvents?(publish: (event: EventRecord) => Promise<void>): Promise<number>;
-  claimScheduledSlot?(jobId: string, bucket: string, now: Date): Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }>;
-  finishScheduledSlot?(jobId: string, slot: string, now: Date): Promise<Job>;
   recordExecutionProcess?(record: ExecutionProcessRecord): Promise<void>;
   loadExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<ExecutionProcessRecord | null>;
   finishExecutionProcess?(jobId: string, taskId: string, executionId: string): Promise<void>;
@@ -111,7 +109,7 @@ export class InMemoryStore implements DurableStore {
       for (const task of job.tasks) this.values.set(`${TASK_MARKER}:${task.jobId ?? ''}:${task.id}`, renderTaskComment(task));
     }
   }
-  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId).map(task => normalizeLegacyTaskLifecycle(task, job.executionMode)); return job; }
+  async load(jobId: string): Promise<Job> { const job = await this.findJob(jobId); if (!job) throw new Error(`Job ${jobId} not found`); job.plans = this.plansForJob(jobId); job.tasks = this.tasksForJob(jobId).map(task => normalizeLegacyTaskLifecycle(task)); return job; }
   async mutateJob(jobId: string, mutation: AtomicJobMutation): Promise<Job> {
     const current = await this.load(jobId);
     const next = mutation(structuredClone(current));

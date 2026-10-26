@@ -2,7 +2,7 @@ import {deliverPendingEscalations} from './escalation-notifier.js';
 import {createFailedPlanRecovery} from './planner-recovery.js';
 import { recoverPlannerChildren } from './planner-child-recovery.js';
 import { drainProductionWorkflowOutbox } from './reconciler-workflow-outbox.js';
-import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import {authorizedInjection} from './e2e-injection.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, schedule, transitionJobEvent, transitionTaskEvent } from './scheduler.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
+import { cancelPausedGenerations } from './reconciler-pause.js'; import { taskCommentContext } from './task-comments.js'; import { cancelActiveTasks } from './reconciler-cancellation.js'; import { implementationComplete } from './runtime-status.js'; import { bindPlannedReviewHead } from './planned-review-head.js';import { randomUUID } from 'node:crypto'; import { Job, Plan, Task, EventRecord, Priority, storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from './types.js'; import { DurableStore } from './store.js'; import { dependencyReady, refreshTaskDependencies, transitionJobEvent, transitionTaskEvent } from './task-transitions.js'; import { applyTaskCancelAction, applyTaskRetryAction } from './task-actions.js'; import { Execution, LaunchFailure, StartAckTimeout, LaunchContext } from './adapters.js'; import { eventFor } from './events.js'; import { PreSubmissionRejection } from './worker-rejection.js'; import { createPlanRound, materializePlannerChild, pendingPlan, parsePlannerResult, plannerInput, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from './planner.js'; import { retryPendingPlannerUnblocks } from './planner-runtime.js'; import { dispatchPlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js'; import { ExecutionContext, ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { validateAgentSelection } from './agent-graph.js'; import { ReconcilerReviewBase } from './reconciler-review.js';
 import { executeForceRestate } from './force-restate.js';
 import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js';
@@ -45,7 +45,7 @@ export class Reconciler extends ReconcilerReviewBase {
     ));
   }
   private async dispatchExecutableTasks(jobId: string): Promise<Job> {
-    const scheduled = schedule(await this.store.load(jobId));
+    const scheduled = refreshTaskDependencies(await this.store.load(jobId));
     if (scheduled.pause) return scheduled;
     for (const task of scheduled.tasks.filter(item => item.state === 'SUCCEEDED' && (item.continuation || scheduled.continuation) && !item.continuationDeliveredAt)) {
       this.detach(this.deliverContinuation(scheduled, task), scheduled.id, task.id, 'continuation');
@@ -68,7 +68,7 @@ export class Reconciler extends ReconcilerReviewBase {
         await this.applyTaskEffectOutcomes(scheduled, task, outcomes);
       }, async () => { await this.store.saveTask(task); });
     }
-    return schedule(await this.store.load(jobId));
+    return refreshTaskDependencies(await this.store.load(jobId));
   }
   async reconcile(jobId: string): Promise<Job> {
     if (this.reconciling) return this.store.load(jobId);
@@ -155,23 +155,20 @@ export class Reconciler extends ReconcilerReviewBase {
       }
       const beforeSchedule = await this.store.load(jobId);
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
-      const scheduleBefore = JSON.stringify(beforeSchedule.schedule ?? null);
-      let scheduled = schedule(beforeSchedule);
+      let scheduled = refreshTaskDependencies(beforeSchedule);
       for (const task of scheduled.tasks) if (task.executionId && ['QUEUED', 'RUNNING'].includes(task.state)) this.armInactivityWatchdog(task, task.executionId);
       for (const task of scheduled.tasks) {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
-      if (scheduled.state !== previousState || JSON.stringify(scheduled.schedule ?? null) !== scheduleBefore) await this.store.saveJob(scheduled);
+      if (scheduled.state !== previousState) await this.store.saveJob(scheduled);
       {
         await this.ensureFinalReview(scheduled, headSha);
-        scheduled = schedule(await this.store.load(jobId));
+        scheduled = refreshTaskDependencies(await this.store.load(jobId));
       }
-      if (scheduled.executionMode === 'autonomous' || (scheduled.plans ?? []).some(plan => plan.forceRestate && plan.status === 'FAILED')) {
-        scheduled = schedule(await this.maybeCreatePlanner(scheduled));
-      }
+      scheduled = refreshTaskDependencies(await this.maybeCreatePlanner(scheduled));
       if (scheduled.state !== previousState || scheduled.updatedAt !== job.updatedAt) await this.store.saveJob(scheduled);
       scheduled = await this.dispatchExecutableTasks(jobId);
-      let finalState = schedule(await this.store.load(jobId));
+      let finalState = refreshTaskDependencies(await this.store.load(jobId));
       if (finalState.updatedAt !== scheduled.updatedAt) await this.store.saveJob(finalState);
       await this.ensureFinalReview(finalState, headSha);
       await this.dispatchExecutableTasks(jobId);
@@ -243,6 +240,8 @@ export class Reconciler extends ReconcilerReviewBase {
     return executeManualPlan(this.store, jobId, guidance, this.options.plannerTimeoutMs ?? storySizeTimeoutMs('M'), (job, plan) => this.launchPlanner(job, plan, true));
   }
   private async maybeCreatePlanner(job: Job): Promise<Job> {
+    // Terminal Jobs can repair projections and re-review, but must not reopen planning.
+    if (job.state !== 'ACTIVE') return job;
     const pending = pendingPlan(job);
     const recoverable = pending && !this.plannerLive.has(pending.id)
       && (!pending.executionId || pending.leaseOwner !== this.options.owner || !pending.leaseExpiresAt || Date.parse(pending.leaseExpiresAt) <= (this.options.now ?? new Date()).getTime())
@@ -419,32 +418,7 @@ export class Reconciler extends ReconcilerReviewBase {
     const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
-    const declaration = authorizedInjection(job.repository, task.testInjection);
-    if (task.testInjection && !declaration) {
-      await this.failLaunch(job.id, task.id, durableExecutionId,
-        `E2E test injection refused for repository ${job.repository}; configure E2E_REPO on relayd`, 'delivery');
-      return;
-    }
-    const workerCheckpoint = declaration?.method === 'worker.codex.launch' || declaration?.method === 'browserWorkspace.command';
-    const testInjection = workerCheckpoint && ((task.adapter === 'codex' && declaration.method === 'worker.codex.launch') || (task.adapter === 'chatgpt' && declaration.method === 'browserWorkspace.command')) ? declaration : undefined;
-    if (workerCheckpoint && !testInjection) {
-      await this.failLaunch(job.id, task.id, durableExecutionId,
-        `E2E test injection ${declaration.method} is incompatible with adapter ${task.adapter}`, 'delivery');
-      return;
-    }
-    if (testInjection) {
-      const durable = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
-      if (!durable || durable.executionId!==durableExecutionId) return;
-      delete durable.testInjection;
-      durable.updatedAt = new Date(Math.max(Date.now(), Date.parse(durable.updatedAt) + 1)).toISOString();
-      await this.store.saveTask(durable);
-      const consumed = (await this.store.load(job.id)).tasks.find(item=>item.id===task.id);
-      if (!consumed || consumed.executionId!==durableExecutionId || consumed.testInjection)
-        throw new Error(`E2E injection consumption was not durably committed for ${task.id}`);
-      delete task.testInjection;
-    }
     const launchContext: LaunchContext = {
-      ...(testInjection ? {testInjection} : {}),
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
       executionContext,

@@ -1,7 +1,7 @@
 /** Read-only SQLite-backed workflow postconditions; never trust CLI-supplied facts. */
 import type { DatabaseSync } from 'node:sqlite';
 import type { ConditionOutcome } from './conditions.js';
-import { completionGateSatisfied } from '../scheduler.js';
+import { completionGateSatisfied } from '../task-transitions.js';
 import type { Job } from '../types.js';
 
 export type AuthoritativePredicate = 'task.queued' | 'task.succeeded' | 'task.failed' | 'task.routing-cleared' | 'task.execution-stopped' | 'job.objective-verified' | 'job.completed';

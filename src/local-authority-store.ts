@@ -8,8 +8,6 @@ import type { PullRequestFacts } from './relay-store.js';
 import { samePlanDefinition, sameTaskDefinition, DurableDefinitionConflictError, planDefinitionDivergence, taskDefinitionDivergence } from './store-task-definition.js';
 import { mergeInboundJobSnapshot, type RelayStore } from './relay-store.js';
 import { publishLocalCommit } from './local-commit-events.js';
-import { decideScheduledRun } from './workflow/scheduled-run-v2.js';
-import { nextScheduleRun, scheduleBucket } from './scheduler.js';
 
 /**
  * V2 authoritative lifecycle boundary.
@@ -187,56 +185,6 @@ export class LocalAuthorityDurableStore implements DurableStore {
     publishLocalCommit(updated);
   }
 
-  /** Claim a schedule slot under one SQLite IMMEDIATE transaction, across all processes. */
-  async claimScheduledSlot(jobId: string, bucket: string, now: Date):
-    Promise<{ job: Job; status: 'completed' | 'skipped-idempotent' | 'skipped-active' }> {
-    if (!this.authority.mutateJob) throw new Error('Atomic SQLite schedule claim is required');
-    let status: 'completed' | 'skipped-idempotent' | 'skipped-active' = 'skipped-idempotent';
-    const result = await this.authority.mutateJob(jobId, current => {
-      const schedule = current.schedule;
-      if (!schedule) throw new Error('Scheduled Job ' + jobId + ' has no schedule metadata');
-      const slot = new Date(schedule.nextRunAt);
-      const decision = decideScheduledRun({
-        slotDue: scheduleBucket(slot) === bucket && slot.getTime() <= now.getTime(),
-        slotUnclaimed: !schedule.lastScheduledSlot || new Date(schedule.lastScheduledSlot).getTime() < slot.getTime(),
-        jobActive: current.state === 'ACTIVE',
-        hasActiveTasks: current.tasks.some(task => ['QUEUED', 'RUNNING'].includes(task.state)),
-        concurrencySkip: schedule.concurrencyPolicy === 'skip',
-        concurrencyQueue: schedule.concurrencyPolicy === 'queue',
-        runMissed: schedule.missedRunPolicy === 'run',
-      });
-      const action = decision.accepted ? decision.actions[0]?.id : undefined;
-      if (action === 'schedule.skipActiveAdvance') {
-        schedule.lastScheduledSlot = slot.toISOString();
-        schedule.nextRunAt = nextScheduleRun(schedule, now).toISOString();
-        status = 'skipped-active';
-      } else if (action === 'schedule.claimFromSlot' || action === 'schedule.claimFromNow') {
-        schedule.lastScheduledSlot = slot.toISOString();
-        schedule.currentRunSlot = slot.toISOString();
-        schedule.nextRunAt = nextScheduleRun(schedule, action === 'schedule.claimFromSlot' ? slot : now).toISOString();
-        status = 'completed';
-      }
-      if (status !== 'skipped-idempotent') current.updatedAt = now.toISOString();
-      return current;
-    });
-    if (status !== 'skipped-idempotent') publishLocalCommit(result);
-    return { job: result, status };
-  }
-
-  /** Persist completion only if this is still the authoritative claimed slot. */
-  async finishScheduledSlot(jobId: string, slot: string, now: Date): Promise<Job> {
-    if (!this.authority.mutateJob) throw new Error('Atomic SQLite schedule completion is required');
-    const result = await this.authority.mutateJob(jobId, current => {
-      if (current.schedule?.currentRunSlot !== slot) return current;
-      if (!current.schedule.lastRunAt || Date.parse(current.schedule.lastRunAt) < now.getTime()) {
-        current.schedule.lastRunAt = now.toISOString();
-        current.updatedAt = now.toISOString();
-      }
-      return current;
-    });
-    publishLocalCommit(result);
-    return result;
-  }
 
   async appendPlan(plan: Plan): Promise<void> {
     await this.mutate(plan.jobId, job => {

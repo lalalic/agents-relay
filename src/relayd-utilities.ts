@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -26,7 +25,7 @@ import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, star
 import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction } from './task-actions.js';
-import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
@@ -85,10 +84,6 @@ export type GitHubReadPathDiagnostics = {
   prRefreshCoalescedByTrigger: Record<string, number>;
 };
 const PR_REFRESH_COALESCE_MS = 1000;
-export const SCHEDULE_HEARTBEAT_MS = 600_000;
-export function dueScheduledOverviews(overviews: readonly ManagedJobOverview[], now = new Date()): ManagedJobOverview[] {
-  return overviews.filter(item => item.job.state === 'ACTIVE' && item.job.executionMode === 'autonomous' && item.job.schedule && Date.parse(item.job.schedule.nextRunAt) <= now.getTime());
-}
 export function shouldCoalescePullRequestRefresh(completedAt: number | null, now = Date.now(), force = false): boolean {
   return !force && completedAt !== null && now >= completedAt && now - completedAt < PR_REFRESH_COALESCE_MS;
 }

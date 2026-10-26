@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Job, EventRecord } from './types.js';
 import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
-import { transitionJobEvent } from './scheduler.js';
+import { transitionJobEvent } from './task-transitions.js';
 import { deliverLocalMerge, localMergeFacts, type LocalMergeReceipt } from './local-git-merge.js';
 import { errorMessage } from './observability.js';
 import { decideJobLifecycle } from './workflow/lifecycle.js';

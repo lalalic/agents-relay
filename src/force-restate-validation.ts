@@ -1,7 +1,7 @@
 import type { Job, Task } from './types.js';
 import type { PlannerHistoryCleanup } from './planner-history-cleanup.js';
 import { classifyTaskResolution } from './workflow/task-resolution.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 import { satisfiesWorker, type WorkerCandidate } from './worker-routing.js';
 
 function dependencySatisfied(task: Task, byId: ReadonlyMap<string, Task>): boolean {
@@ -70,6 +70,16 @@ export function forceRestateConverged(job: Job, planId?: string, candidates?: re
   const completed = job.state === 'COMPLETED'
     && job.tasks.every(task => task.kind === 'planner' || !['DRAFT', 'QUEUED', 'RUNNING', 'BLOCKED'].includes(task.state));
   return completed || forceRestateRunnable(job, candidates) || forceRestateDependencyWaiting(job, candidates) || forceRestateBlocked(job, planId);
+}
+
+/** A satisfied objective can enter Relay-owned Review before Job completion.
+ * Never treat completed Planner execution alone as implementation evidence. */
+export function objectiveSatisfiedForReview(job: Job): boolean {
+  const latest = (job.plans ?? []).at(-1);
+  if (latest?.status !== 'SUCCEEDED' || latest.objectiveStatus !== 'satisfied') return false;
+  const implementation = job.tasks.filter(task => task.kind !== 'planner' && task.agentName !== 'reviewer' && task.agentName !== 'troubleshooter'
+    && task.resolutionClassification?.kind !== 'superseded');
+  return implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
 }
 
 export type HistoryValidation = { valid: true } | { valid: false; issues: string[] };

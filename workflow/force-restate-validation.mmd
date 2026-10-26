@@ -8,12 +8,14 @@ idle["state: idle"]
 checkHistoryMode["state: check_history_mode"]
 checkHistory["state: check_history"]
 checkNormalHistory["state: check_normal_history"]
+checkSatisfied["state: check_satisfied"]
 checkForward["state: check_forward"]
 commit["action: plan.apply.commit"]
 rejected["state: rejected"]
 committed["state: committed"]
 forceRestate["guard: forceRestateRequested"]
 historyConsistent["guard: historyConsistencyValid"]
+objectiveSatisfied["guard: objectiveSatisfied"]
 forwardConverged["guard: forwardConvergenceValid"]
 normalHistoryClean["guard: normalHistoryMutationAbsent"]
 rejectHistory["action: plan.apply.rejectHistory"]
@@ -24,12 +26,15 @@ checkHistoryMode -->|on: plan.apply| forceRestate
 forceRestate -->|true| checkHistory
 forceRestate -->|false| checkNormalHistory
 checkNormalHistory -->|on: plan.apply| normalHistoryClean
-normalHistoryClean -->|true| checkForward
+normalHistoryClean -->|true| checkSatisfied
 normalHistoryClean -->|false| rejectHistory
 checkHistory -->|on: plan.apply| historyConsistent
-historyConsistent -->|true| checkForward
+historyConsistent -->|true| checkSatisfied
 historyConsistent -->|false| rejectHistory
 rejectHistory --> rejected
+checkSatisfied -->|on: plan.apply| objectiveSatisfied
+objectiveSatisfied -->|true| commit
+objectiveSatisfied -->|false| checkForward
 checkForward -->|on: plan.apply| forwardConverged
 forwardConverged -->|true| commit
 forwardConverged -->|false| rejectForward

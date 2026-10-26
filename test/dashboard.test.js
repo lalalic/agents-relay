@@ -59,7 +59,7 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
 
 test('mobile jobs view keeps only the repository filter and hides runtime summary', () => {
   assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
-  assert.match(dashboardHtml, /#jobs-view \.job-search,[\s\S]*#jobs-view #quick-status,[\s\S]*#jobs-view #quick-autonomous,[\s\S]*#jobs-view #quick-draft \{ display:none; \}/);
+  assert.match(dashboardHtml, /#jobs-view \.job-search,[\s\S]*#jobs-view #quick-status,[\s\S]*#jobs-view #quick-draft \{ display:none; \}/);
   assert.match(dashboardHtml, /id="repo-filter"/);
 });
 
@@ -318,22 +318,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
   assert.match(dashboardHtml, /const primary=element\('div','job-primary'\);primary\.append\(states\)/);
 });
 
-test('job rows keep autonomous and review flags in the status row', () => {
-  assert.match(dashboardHtml, /job\.executionMode==='autonomous'/);
-  assert.match(dashboardHtml, /text\('AUTONOMOUS'\)/);
-  assert.match(dashboardHtml, /job\.reviewEnabled!==false/);
-  assert.match(dashboardHtml, /text\('REVIEW REQUIRED'\)/);
-  assert.doesNotMatch(dashboardHtml, /job-meta/);
-  assert.doesNotMatch(dashboardHtml, /mode-\+value\(job\.executionMode/);
-});
 
-test('job list groups ordinary, autonomous, draft, and terminal jobs', () => {
-  assert.match(dashboardHtml, /function jobGroup\(job\)/);
-  assert.match(dashboardHtml, /if\(isTerminalJob\(job\)\)return 3/);
-  assert.match(dashboardHtml, /if\(job\.executionMode==='autonomous'\)return 1/);
-  assert.match(dashboardHtml, /if\(job\.draft\|\|job\.state==='DRAFT'\)return 2/);
-  assert.match(dashboardHtml, /const groupDelta=jobGroup\(a\)-jobGroup\(b\)/);
-});
 
 test('job ordering keeps every non-terminal job ahead of every terminal job', () => {
   const orderingSource = dashboardHtml.slice(
@@ -360,7 +345,7 @@ test('job ordering keeps every non-terminal job ahead of every terminal job', ()
     job('running', '2026-01-04T00:00:00Z', { runtimeStatus: 'RUNNING' }),
     job('queued', '2026-01-03T00:00:00Z', { runtimeStatus: 'QUEUED' }),
     job('active', '2026-01-02T00:00:00Z', { runtimeStatus: 'WAITING' }),
-    job('autonomous', '2026-01-02T00:00:00Z', { executionMode: 'autonomous' }),
+    job('objective-job', '2026-01-02T00:00:00Z'),
     job('draft', '2026-01-08T00:00:00Z', { state: 'DRAFT', draft: true, runtimeStatus: 'IDLE' }),
     job('completed', '2026-01-01T00:00:00Z', { state: 'COMPLETED' }),
     job('cancelled', '2026-01-02T00:00:00Z', { state: 'CANCELLED' }),
@@ -376,7 +361,7 @@ test('job ordering keeps every non-terminal job ahead of every terminal job', ()
     'running',
     'queued',
     'active',
-    'autonomous',
+    'objective-job',
     'draft',
     'external-merged',
     'cancelled',
@@ -614,24 +599,6 @@ test('job list keeps repository quick filter without a separate repository metad
 
 
 
-test('job list quick filters let autonomous and draft toggle back off', () => {
-  assert.doesNotMatch(dashboardHtml, /id="quick-jobs"/);
-  assert.match(dashboardHtml, /id="quick-status"/);
-  assert.match(dashboardHtml, /id="quick-autonomous"/);
-  assert.match(dashboardHtml, /id="quick-draft"/);
-  assert.match(dashboardHtml, /function setQuickMode\(mode,status=''\)/);
-  assert.match(dashboardHtml, /function toggleQuickMode\(mode\)/);
-  assert.match(dashboardHtml, /quickMode==='autonomous'/);
-  assert.match(dashboardHtml, /quickMode==='draft'/);
-  assert.match(dashboardHtml, /quickMode==='status'/);
-  assert.match(dashboardHtml, /\(job\.runtimeStatus\|\|'IDLE'\)===selectedRuntimeStatus/);
-  assert.doesNotMatch(dashboardHtml, /quickJobs/);
-  assert.match(dashboardHtml, /quickAutonomous\.setAttribute\('aria-pressed',String\(quickMode==='autonomous'\)\)/);
-  assert.match(dashboardHtml, /quickDraft\.setAttribute\('aria-pressed',String\(quickMode==='draft'\)\)/);
-  assert.match(dashboardHtml, /quickStatus\.addEventListener\('change',\(\)=>setQuickMode\(quickStatus\.value\?'status':'jobs',quickStatus\.value\)\)/);
-  assert.match(dashboardHtml, /toggleQuickMode\('autonomous'\)/);
-  assert.match(dashboardHtml, /toggleQuickMode\('draft'\)/);
-});
 
 test('job list supports title and PR-number wildcard search', () => {
   assert.match(dashboardHtml, /id="job-search"/);

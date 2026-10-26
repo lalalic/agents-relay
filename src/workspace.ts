@@ -180,7 +180,7 @@ export function managedLocalJobWorktreePath(repository: string, jobId: string, w
 
 /** Only code artifacts need an isolated Git source branch and worktree. */
 export function jobRequiresManagedWorktree(job: Job): boolean {
-  return !(job.prNumber > 0) && !job.schedule && (Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr'));
+  return !(job.prNumber > 0) && (Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr'));
 }
 
 /** Bind an ordinary SQLite Job to one deterministic local work branch.

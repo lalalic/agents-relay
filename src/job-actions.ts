@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { Job } from './types.js';
-import { transitionJobEvent } from './scheduler.js';
+import { transitionJobEvent } from './task-transitions.js';
 import { tryApplyTaskCancelAction } from './task-actions.js';
 import { decideJobLifecycle, dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 

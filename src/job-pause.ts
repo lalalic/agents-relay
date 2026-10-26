@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { Job } from './types.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 
 export async function pauseJob(store: DurableStore, jobId: string): Promise<Job> {
   const mutate = (current: Job): Job => {

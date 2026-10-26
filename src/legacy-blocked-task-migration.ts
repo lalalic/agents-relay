@@ -10,7 +10,7 @@ export function migrateLegacyBlockedTasks(db: DatabaseSync): void {
   for (const row of rows) {
     const job = JSON.parse(row.json) as Job;
     const before = JSON.stringify(job.tasks);
-    job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task, job.executionMode));
+    job.tasks = job.tasks.map(task => normalizeLegacyTaskLifecycle(task));
     if (JSON.stringify(job.tasks) !== before) update.run(JSON.stringify(job), row.job_id);
   }
 }

@@ -8,9 +8,8 @@ import { marker, JOB_MARKER, PLAN_MARKER, TASK_MARKER, parseJob, parsePlan, pars
 import { AgentObjectivePlanner, createPlanRound, normalizePlannerPriority, parsePlannerOutput, parsePlannerResult, plannerInput, semanticTaskTree, validatePlannerHierarchy, validatePlannerLifecycleOwnership, validatePlannerProgress, validatePlannerResolutionMaterialization } from '../dist/planner.js';
 import { storySizeTimeoutMs, taskOverallTimeoutMs, chatGptStartAckTimeoutMs } from '../dist/types.js';
 import { Reconciler, executionEventSource } from '../dist/reconciler.js';
-import { schedule } from '../dist/scheduler.js';
+import { refreshTaskDependencies } from '../dist/task-transitions.js';
 import { deriveJobRuntimeStatus } from '../dist/runtime-status.js';
-import { executionMode } from '../dist/cli.js';
 import { dashboardHtml } from '../dist/dashboard.js';
 import { MemoryEventBus, eventFor } from '../dist/events.js';
 
@@ -18,9 +17,9 @@ const now = () => new Date().toISOString();
 const route = { provider: 'openai', model: 'gpt-5', decidedBy: 'test', decidedAt: now() };
 const output = { kind: 'task_pr' };
 const task = (id, state = 'QUEUED') => ({ jobId: 'auto', id, kind: 'work', parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'do the described work', output, routing: route, state, attempt: 0, maxAttempts: 1, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, error: null, timeoutMs: 1000, createdAt: now(), updatedAt: now(), continuation: null, continuationDeliveredAt: null });
-const job = (tasks = [], executionMode = 'autonomous') => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', executionMode, prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
+const job = (tasks = []) => ({ id: 'auto', title: 'Objective', objective: 'finish the objective', prNumber: 1, repository: 'owner/repo', state: 'ACTIVE', continuation: null, createdAt: now(), updatedAt: now(), tasks });
 const spec = id => ({ id, title: 'Implement and verify durable task outputs', input: 'do the described work', adapter: 'codex', workerRequirements: { capabilities: ['model'] }, output, routing: route });
-function startedAutonomousJob() {
+function startedObjectiveJob() {
   const seed = { ...task('seed', 'SUCCEEDED'), result: { summary: 'seed complete' } };
   return job([seed]);
 }
@@ -159,7 +158,7 @@ test('malformed manual planner output fails the round without materializing chil
 });
 test('reconcile resumes a durable PLANNING Plan without creating a planner Task', async () => {
   const createdAt = '2026-09-29T12:00:00.000Z';
-  const root = startedAutonomousJob();
+  const root = startedObjectiveJob();
   root.plans = [{ jobId:'auto', id:'plan-1', round:1, source:'model-planner', previousPlanId:null, trigger:{source:'continuation'}, status:'PLANNING', assessment:'Planning in progress.', generatedTaskIds:[], createdAt, updatedAt:createdAt }];
   const store = new InMemoryStore(root);
   const reconciler = managedReconciler(store, { owner:'test', adapters:[{ name:'codex', id:'planner-worker', capabilities:['model'] }], maxConcurrent:0, planner:{ plan:async()=>({ objective_status:'satisfied', assessment:'done', next_tasks:[spec('resume-work')] }) } });
@@ -189,7 +188,7 @@ test('manual planning recovers an interrupted manual Plan instead of creating a 
 
 
 
-test('planner cannot leave autonomous job idle with in_progress and no executable work before review', () => {
+test('planner cannot leave objective Job idle with in_progress and no executable work before review', () => {
   const implemented={...task('implementation','SUCCEEDED'),agentName:'implementation'};
   const root={...job([implemented],'autonomous'),prNumber:0,localMerge:{sourceRef:'refs/heads/feature',targetRef:'refs/heads/main',status:'pending'}};
   const empty={objective_status:'in_progress',assessment:'only Relay-owned lifecycle remains',next_tasks:[],unblocks:[]};
@@ -278,21 +277,17 @@ test('planner input stays compact with a large execution context and planner his
   assert.ok(payloadText.length < 20000, `planner input too large: ${payloadText.length}`);
 });
 
-test('execution mode and planner result markers round-trip', () => {
+test('legacy Job metadata is discarded while planner result markers round-trip', () => {
   const autonomous = job();
-  assert.equal(parseJob(renderJobComment(autonomous)).executionMode, 'autonomous');
+  assert.equal(parseJob(renderJobComment(autonomous)).executionMode, undefined);
   const legacy = { ...autonomous }; delete legacy.executionMode;
-  assert.equal(parseJob(marker(JOB_MARKER, legacy)).executionMode, 'fixed');
+  assert.equal(parseJob(marker(JOB_MARKER, { ...legacy, executionMode: 'fixed', schedule: { kind: 'cron', expression: '* * * * *' } })).executionMode, undefined);
+  assert.equal(parseJob(marker(JOB_MARKER, { ...legacy, executionMode: 'autonomous', schedule: { kind: 'cron', expression: '* * * * *' } })).schedule, undefined);
   const planner = { ...task('planner-1'), kind: 'planner', plannerResult: { objective_status: 'in_progress', assessment: 'need work', next_tasks: [spec('work-1')] } };
   assert.equal(parseTask(marker(TASK_MARKER, planner)).plannerResult.next_tasks[0].id, 'work-1');
   assert.equal(parsePlannerOutput('{"objective_status":"satisfied","assessment":"done","next_tasks":[]}').objective_status, 'satisfied');
   assert.throws(() => parsePlannerResult({ objective_status: 'satisfied', assessment: 'bad', next_tasks: [spec('duplicate'), spec('duplicate')] }), /duplicate/);
-  assert.equal(executionMode(['--mode', 'autonomous']), 'autonomous');
-  assert.equal(executionMode([]), 'fixed');
-  assert.match(dashboardHtml, /Execution mode/);
-  assert.match(dashboardHtml, /Cadence/);
-  assert.match(dashboardHtml, /function cadence\(job\)/);
-  assert.match(dashboardHtml, /Every '\+everyMinute\[1\]\+' min/);
+  assert.doesNotMatch(dashboardHtml, /Execution mode|Cadence|function cadence/);
 });
 
 test('planner parses authoritative reverse cross-job unblocks and rejects malformed declarations', () => {
@@ -349,7 +344,7 @@ test('planner priority normalization preserves canonical values and accepts safe
 });
 
 test('automatic planner retry carries prior failure and persists launch-time planner input', async () => {
-  const store = new InMemoryStore(startedAutonomousJob());
+  const store = new InMemoryStore(startedObjectiveJob());
   const seen = [];
   const planner = { plan: async context => {
     seen.push(context);
@@ -370,7 +365,7 @@ test('automatic planner retry carries prior failure and persists launch-time pla
 
 test('planner result with a formatting-only priority variation creates a child task', async () => {
   const bus = new MemoryEventBus();
-  const store = new InMemoryStore(startedAutonomousJob());
+  const store = new InMemoryStore(startedObjectiveJob());
   let calls = 0;
   const planner = { plan: async () => ++calls === 1 ? ({ objective_status:'satisfied', assessment:'work', next_tasks:[{title: 'Implement and verify durable task outputs',  ...spec('work-1'), priority:'p1' }] }) : ({ objective_status:'satisfied', assessment:'done', next_tasks:[] }) };
   const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
@@ -477,28 +472,10 @@ test('default planner agent runs from the resolved project working directory', a
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('fixed and autonomous work reaches runtime review after terminal events, not adapter exit', async () => {
-  for (const mode of ['fixed','autonomous']) {
-    const bus = new MemoryEventBus();
-    const store = new InMemoryStore(mode === 'fixed' ? job([task('fixed-work')], mode) : startedAutonomousJob());
-    let calls = 0;
-    const planner = { plan: async () => { calls += 1; return { objective_status:'satisfied', assessment:'work', next_tasks:[spec('work-1')] }; } };
-    const reconciler = managedReconciler(store, { owner:'test', adapters:[executionHarness(bus)], planner, eventBus:bus });
-    const stop = await reconciler.watch('auto');
-    await settle(reconciler);
-    const result = await store.load('auto');
-    assert.equal(result.state, 'ACTIVE');
-    assert.equal(deriveJobRuntimeStatus(result, 'OPEN'), 'IDLE');
-    if (mode === 'fixed') assert.equal(calls, 0);
-    else assert.equal(result.tasks.find(t=>t.id===result.plans?.find(p=>p.id==='plan-1')?.generatedTaskIds[0])?.state, 'SUCCEEDED');
-    await stop();
-  }
-});
-
 test('planner satisfaction cannot bypass failed or blocked completion gates', () => {
   const satisfied = { ...task('planner-1', 'SUCCEEDED'), kind: 'planner', plannerResult: { objective_status: 'satisfied', assessment: 'done', next_tasks: [] } };
-  const failed = schedule(job([satisfied, { ...task('failed', 'FAILED'), error: 'unresolved' }]));
-  const blocked = schedule(job([satisfied, { ...task('blocked', 'BLOCKED') }]));
+  const failed = refreshTaskDependencies(job([satisfied, { ...task('failed', 'FAILED'), error: 'unresolved' }]));
+  const blocked = refreshTaskDependencies(job([satisfied, { ...task('blocked', 'BLOCKED') }]));
   assert.equal(failed.state, 'ACTIVE');
   assert.equal(deriveJobRuntimeStatus(failed, 'OPEN'), 'FAILED');
   assert.equal(blocked.state, 'ACTIVE');

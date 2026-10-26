@@ -18,7 +18,6 @@ export const plannerOrchestrationV2 = new GraphRuntime(source, {
     'check_blocked','check_work','check_materialized','check_objective','wait','recovered','created',
   ]),
   guards: {
-    autonomousJob: boolGuard('autonomousJob'),
     legacyPlanningPending: boolGuard('legacyPlanningPending'),
     recoverablePendingPlan: boolGuard('recoverablePendingPlan'),
     terminalPlanFailure: boolGuard('terminalPlanFailure'),
@@ -49,9 +48,8 @@ export function decidePlannerOrchestration(facts:Readonly<Record<string,unknown>
 
 
 export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: boolean): Readonly<Record<string, unknown>> {
-  const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
-  const scopedTasks = Number.isFinite(slot) ? job.tasks.filter(task => Date.parse(task.createdAt) >= slot) : job.tasks;
-  const scopedPlans = (job.plans ?? []).filter(plan => !Number.isFinite(slot) || Date.parse(plan.createdAt) >= slot)
+  const scopedTasks = job.tasks;
+  const scopedPlans = (job.plans ?? [])
     .sort((a, b) => a.round - b.round || a.createdAt.localeCompare(b.createdAt));
   const latestPlan = scopedPlans.at(-1);
   const failedPlan = latestPlan?.status === 'FAILED' ? latestPlan : null;
@@ -67,7 +65,6 @@ export function plannerOrchestrationFacts(job: Job, recoverablePendingPlan: bool
   const latestId = latestPlan?.id ?? legacyLatest?.id;
   const latestObjective = latestPlan?.objectiveStatus ?? legacyLatest?.plannerResult?.objective_status;
   return {
-    autonomousJob: job.executionMode === 'autonomous' || latestPlan?.forceRestate === true,
     legacyPlanningPending: job.initialPlanning?.status === 'pending',
     recoverablePendingPlan,
     terminalPlanFailure: Boolean(failedPlan && (!failedPlan.manualPlanning || failedPlan.forceRestate) && failedPlan.trigger.source !== 'unblock'),

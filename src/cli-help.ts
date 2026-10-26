@@ -62,7 +62,7 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job. Existing PR adoption is an explicit separate command: job adopt.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --mode fixed|autonomous, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
 Job creation always enables auto-merge. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
@@ -73,7 +73,7 @@ Required: --repo OWNER/REPO and --pr NUMBER. The Job ID is allocated atomically 
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --mode fixed|autonomous, --schedule, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
 Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:
@@ -226,7 +226,7 @@ Example:
   npx agents-relay reconcile --repo OWNER/REPO --pr 12 --id 101`,
   init: `Initialize a new job. GitHub mode requires --repo and --pr; local mode requires explicit --file.
 
-Common: --id ID, --title TEXT, --objective TEXT, --mode fixed|autonomous, --priority P0|P1|P2|P3.
+Common: --id ID, --title TEXT, --objective TEXT, --priority P0|P1|P2|P3. All Jobs replan to an explicit satisfied objective; execution modes and schedules are unsupported.
 
 Example:
   npx agents-relay init --repo OWNER/REPO --pr 12 --id 101 --title "Objective"`,

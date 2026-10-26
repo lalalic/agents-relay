@@ -3,7 +3,7 @@ import { GraphRuntime, type GraphDecision, type ActionReceipt } from './graph-v2
 import { dispatchWorkflowGraph, dispatchWorkflowGraphSync } from './dispatcher.js';
 
 export type BlockerResolutionGraphState =
-  | 'waiting' | 'check_target' | 'check_autonomous' | 'check_effective' | 'check_already_unblocked'
+  | 'waiting' | 'check_target' | 'check_effective' | 'check_already_unblocked'
   | 'check_draft' | 'check_blocked' | 'check_failed' | 'check_unblocked' | 'wait' | 'obsolete' | 'resumed';
 
 const source=readFileSync(new URL('../../workflow/blocker-resolution.mmd',import.meta.url),'utf8');
@@ -11,13 +11,12 @@ const boolGuard=(name:string)=>(facts:{readonly durableFacts:Readonly<Record<str
 
 export const blockerResolutionV2=new GraphRuntime(source,{
   states:new Set<BlockerResolutionGraphState>([
-    'waiting','check_target','check_autonomous','check_effective','check_already_unblocked',
+    'waiting','check_target','check_effective','check_already_unblocked',
     'check_draft','check_blocked','check_failed','check_unblocked','wait','obsolete','resumed',
   ]),
   guards:{
     resolutionAllowed:boolGuard('resolutionAllowed'),
     targetMatches:boolGuard('targetMatches'),
-    autonomousJob:boolGuard('autonomousJob'),
     effectivelyBlocked:boolGuard('effectivelyBlocked'),
     alreadyUnblocked:boolGuard('alreadyUnblocked'),
     isDraft:boolGuard('isDraft'),
@@ -26,8 +25,7 @@ export const blockerResolutionV2=new GraphRuntime(source,{
     isUnblocked:boolGuard('isUnblocked'),
   },
   actions:Object.fromEntries([
-    'blocker.autonomousUnblock','blocker.acceptExistingUnblock','blocker.releaseDraft',
-    'blocker.unblockTask','blocker.retryFailed','blocker.retryUnblocked',
+    'blocker.releaseDraft',
   ].map(id=>[id,{id}])),
   events:{'blocker.resolved':{id:'blocker.resolved'}},
 });

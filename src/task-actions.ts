@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
-import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from './scheduler.js';
+import { extendRetryBudget, transitionTaskEvent, tryTransitionTaskEvent } from './task-transitions.js';
 import { selectRelatedTaskMutations, type RelatedTaskMutation } from './workflow/task-action-policy.js';
 import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 import { classifyTaskResolution, type TaskResolutionClassification } from './workflow/task-resolution.js';
@@ -72,7 +72,7 @@ function applyTaskRetrySnapshot(task: Task, policy: TaskRetryPolicy = {}): void 
 
 /** Fixed-job authoritative unblock continuation, applied inside one Job snapshot mutation. */
 export function applyTaskUnblockRetrySnapshot(task: Task): void {
-  if (task.state === 'BLOCKED' && !tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) throw lifecycleRejection(task, 'retryable after unblock');
+  if (task.state === 'BLOCKED' && !tryTransitionTaskEvent(task, 'task.unblocked', {}).accepted) throw lifecycleRejection(task, 'retryable after unblock');
   if (!['QUEUED', 'DRAFT'].includes(task.state)) throw lifecycleRejection(task, 'retryable after unblock');
   task.attempt = 0;
   task.maxAttempts = Math.max(3, task.maxAttempts);
@@ -91,7 +91,7 @@ export async function applyTaskRetryAction(task: Task, policy: TaskRetryPolicy =
 
 /** Fixed-job authoritative unblock continuation: legality is owned by the lifecycle graph. */
 export async function applyTaskUnblockRetryAction(task: Task): Promise<Task> {
-  if (task.state === 'BLOCKED') await transitionTaskAction(task, 'task.unblocked', 'retryable after unblock', { autonomousJob: false });
+  if (task.state === 'BLOCKED') await transitionTaskAction(task, 'task.unblocked', 'retryable after unblock', {});
   if (!['QUEUED', 'DRAFT'].includes(task.state)) throw lifecycleRejection(task, 'retryable after unblock');
   task.attempt = 0;
   task.maxAttempts = Math.max(3, task.maxAttempts);

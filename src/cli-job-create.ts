@@ -1,5 +1,5 @@
 import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js';
-import type { Job, Priority, ExecutionMode } from './types.js';
+import type { Job, Priority } from './types.js';
 import { type GitHubClient, type PullRequest } from './store.js';
 import { openLocalManagedStore } from './local-managed-store.js';
 import { createJobEntity } from './workflow/entity-creation.js';
@@ -17,7 +17,7 @@ export async function ensureManagedGitHubJob(
   _trustedAuthors: ReadonlySet<string>,
   options: {
     id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
-    priority?: Priority; executionMode?: ExecutionMode; schedule?: Job['schedule'];
+    priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
@@ -61,7 +61,6 @@ export async function ensureManagedGitHubJob(
       projectPath: options.projectPath,
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
-      executionMode: options.executionMode ?? 'fixed',
       tag: options.tag,
       autoMerge: true,
       ...(localMergeSource ? { localMerge: { sourceRef: localMergeSource, targetRef: 'refs/heads/main', status: 'pending' as const } } : {}),
@@ -81,8 +80,7 @@ export async function ensureManagedGitHubJob(
       createdAt: now,
       updatedAt: now,
       tasks: [],
-      ...(options.schedule ? { schedule: options.schedule } : {}),
-    }, { activate: Boolean(options.schedule) });
+    });
     if (options.persist !== false) {
       if (local.store.createJobIfAbsent) await local.store.createJobIfAbsent(job);
       else await local.store.saveJob(job);
@@ -119,7 +117,7 @@ export async function adoptExistingPullRequestJob(
     if (existing) return { job: existing, pr: { number: existing.prNumber, title: existing.title, body: existing.objective ?? '', state: 'OPEN', head: '', base: 'main' } };
     const now = new Date().toISOString();
     const job = createJobEntity({ id, title: options.title ?? id, objective: options.objective, projectPath: options.projectPath,
-      description: options.objective, priority: 'P2', executionMode: 'fixed', autoMerge: true, reviewEnabled: true,
+      description: options.objective, priority: 'P2', autoMerge: true, reviewEnabled: true,
       prNumber: options.prNumber, repository: repositoryName, continuation: null, createdAt: now, updatedAt: now, tasks: [] });
     const created = local.store.createJobIfAbsent ? await local.store.createJobIfAbsent(job) : (await local.store.saveJob(job), job);
     return { job: created, pr: { number: options.prNumber, title: created.title, body: created.objective ?? '', state: 'OPEN', head: '', base: 'main' } };

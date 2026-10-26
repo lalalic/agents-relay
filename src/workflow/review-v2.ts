@@ -12,7 +12,6 @@ const boolGuard = (name: string) => (facts: { readonly durableFacts: Readonly<Re
 export const reviewLifecycleV2 = new GraphRuntime(source, {
   states: new Set<ReviewGraphState>(['NONE','PENDING','STARTED','APPROVED','CHANGES_REQUIRED','BLOCKED','STALE']),
   guards: {
-    unscheduled: boolGuard('unscheduled'),
     reviewEnabled: boolGuard('reviewEnabled'),
     prOpen: boolGuard('prOpen'),
     jobActive: boolGuard('jobActive'),

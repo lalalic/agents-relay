@@ -3,7 +3,7 @@ import type { DurableStore } from './store.js';
 import type { Task } from './types.js';
 import type { InteractiveDecision } from './interactive-invocation.js';
 import { shouldRecoverInteractiveDecision } from './interactive-invocation.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 import { applyTaskUnblockRetrySnapshot } from './task-actions.js';
 
 export async function resumeInteractiveTask(

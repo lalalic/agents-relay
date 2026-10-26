@@ -17,7 +17,7 @@ export async function createSingleJobTaskControl(jobId: string, store: DurableSt
       await reconciler.reconcile(id); await reconciler.idle();
     } },
     bus, isEffectivelyBlocked: unblock.isEffectivelyBlocked,
-    unblockAutonomousTasks: unblock.unblockAutonomousTasks, unblockTask: unblock.unblockTask,
+    unblockTask: unblock.unblockTask,
     publishTaskUnblocked, dispatchTaskAction,
   });
   const allowed = new Set(['task.unblock','task.recover','task.escalate','task.resume-troubleshooter','task.classify']);

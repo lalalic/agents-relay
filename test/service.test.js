@@ -4,31 +4,12 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
-import { normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews } from '../dist/relayd.js';
+import { normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh } from '../dist/relayd.js';
 import { createService, runtimeReviewer, startService, SERVICE_DEFAULTS } from '../dist/cli.js';
 import { requestManagedReconciliation, resolveEventBus, eventBusResolutionMessage } from '../dist/cli-support.js';
 import { nextPatchVersion, nextPublishVersion } from '../scripts/npm-version.mjs';
 
 
-test('relayd scheduled heartbeat cadence is ten minutes', () => {
-  assert.equal(SCHEDULE_HEARTBEAT_MS, 600_000);
-});
-test('relayd timer is a pure schedule.tick trigger and does not execute scheduled buckets directly', async () => {
-  const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
-  assert.match(source, /pool\.scheduleTickSignal\(bus, item\.job, now\)/);
-  assert.doesNotMatch(source, /runScheduledBucket\s*\(/);
-});
-test('relayd scheduled heartbeat selects exact due local ACTIVE jobs regardless of remote PR state', () => {
-  const now = new Date('2026-09-29T18:05:00Z');
-  const base = { title: 'scheduled', priority: 'P0', autoMerge: false, reviewEnabled: false, continuation: null, createdAt: now.toISOString(), updatedAt: now.toISOString(), tasks: [] };
-  const overview = (id, nextRunAt, overrides = {}) => ({ githubState: 'OPEN', mergedAt: null, closedAt: null, draft: false, publication: null, job: { ...base, id, repository: 'owner/repo', prNumber: 1, state: 'ACTIVE', executionMode: 'autonomous', schedule: { cron: '0 * * * *', timezone: 'UTC', nextRunAt, missedRunPolicy: 'skip', concurrencyPolicy: 'skip', lastScheduledSlot: null, currentRunSlot: null, lastRunAt: null }, ...overrides } });
-  const due = overview('due', '2026-09-29T18:00:00Z');
-  const future = overview('future', '2026-09-29T19:00:00Z');
-  const fixed = overview('fixed', '2026-09-29T18:00:00Z', { executionMode: 'fixed' });
-  const closed = { ...overview('closed', '2026-09-29T18:00:00Z'), githubState: 'CLOSED' };
-  const terminal = overview('terminal', '2026-09-29T18:00:00Z', { state: 'COMPLETED' });
-  assert.deepEqual(dueScheduledOverviews([future, fixed, closed, terminal, due], now).map(item => item.job.id), ['closed','due']);
-});
 test('workspace dashboard/runtime summary refreshes the disposable local view from SQLite operational truth', async () => {
   const source = await readFile(new URL('../src/relayd.ts', import.meta.url), 'utf8');
   assert.match(source, /cachedOverviews = await inventoryFromLocal\(\)/);
@@ -222,8 +203,7 @@ test('workspace daemon restores SQLite RelayStore jobs before dashboard and best
   const watch = source.indexOf('const stopWatch = bus ? await pool.watch(bus)', initial);
   const server = source.indexOf('const server = serveDashboard', watch);
   const recover = source.indexOf('await pool.reconcileKnown(cachedOverviews)', server);
-  const schedule = source.indexOf('await scheduleHeartbeatSafely()', recover);
-  const timers = source.indexOf('interval=setInterval', schedule);
+  const timers = source.indexOf('interval=setInterval', recover);
   const projectionTimer = source.indexOf('projectionInterval=setInterval', timers);
   const remote = source.indexOf('void refreshAll(true)', projectionTimer);
   assert.ok(discover >= 0);
@@ -231,8 +211,7 @@ test('workspace daemon restores SQLite RelayStore jobs before dashboard and best
   assert.ok(watch > initial);
   assert.ok(server > watch);
   assert.ok(recover > server);
-  assert.ok(schedule > recover);
-  assert.ok(timers > schedule);
+  assert.ok(timers > recover);
   assert.ok(projectionTimer > timers);
   assert.ok(remote > projectionTimer);
 });
@@ -376,8 +355,8 @@ test('published bin files are executable after build and npm pack', async () => 
   assert.equal(files.has('workflow/planner-orchestration.mmd'), true);
   assert.equal(files.has('workflow/blocker-resolution.mmd'), true);
   assert.equal(files.has('workflow/authoritative-unblock.mmd'), true);
-  assert.equal(files.has('workflow/scheduled-run.mmd'), true);
-  assert.equal(files.has('workflow/schedule-cycle.mmd'), true);
+  assert.equal(files.has('workflow/scheduled-run.mmd'), false);
+  assert.equal(files.has('workflow/schedule-cycle.mmd'), false);
   assert.equal(files.has('workflow/troubleshooter.mmd'), true);
   assert.equal(files.has('workflow/task-related-action.mmd'), true);
   assert.equal(files.has('workflow/projection-conflict.mmd'), true);

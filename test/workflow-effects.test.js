@@ -14,7 +14,7 @@ import {
   decideJobLifecycle,
   decideTaskLifecycle,
 } from '../dist/workflow/lifecycle.js';
-import { transitionTaskEvent } from '../dist/scheduler.js';
+import { transitionTaskEvent } from '../dist/task-transitions.js';
 
 test('graph decision separates deterministic mutations from declarative effects', () => {
     const dispatch = decideTaskLifecycle(

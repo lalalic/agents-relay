@@ -12,7 +12,7 @@ import {MemoryEventBus,eventFor} from '../../dist/events.js';
 import {Reconciler,executionEventSource} from '../../dist/reconciler.js';
 import {dispatchTaskAction,TASK_RECOVER_ACTION} from '../../dist/task-actions.js';
 import {requestTroubleshooterEscalation,recordEscalationNotificationDelivery,resumeTroubleshooter} from '../../dist/task-recovery.js';
-import {tryTransitionTaskEvent,dependencyReady} from '../../dist/scheduler.js';
+import {tryTransitionTaskEvent,dependencyReady} from '../../dist/task-transitions.js';
 import {createPlanRound} from '../../dist/planner.js';
 const stamp='2026-10-17T12:00:00.000Z';
 const jobId='l3-replay';
@@ -38,16 +38,16 @@ export async function runReplay(scenario) {
  const planner=scenario.plannerScript ? {plan:async()=>{
    plannerCalls++;
    if(plannerCalls <= (scenario.plannerScript.failures??0))throw new Error('Injected isolated Planner provider failure '+plannerCalls);
-   return scenario.plannerScript.result;
- }} : undefined;
+   return scenario.plannerScript.results?.[Math.min(plannerCalls - (scenario.plannerScript.failures??0) - 1, scenario.plannerScript.results.length - 1)] ?? scenario.plannerScript.result;
+ }} : {plan:async()=>({objective_status:'satisfied',assessment:'All durable implementation tasks verified in isolated L3 replay.',next_tasks:[]})};
  const runtimeOptions={owner:'l3-replay',adapters:[{name:'codex',id:'l3-replay-worker',capabilities:['model']}],eventBus:bus,maxConcurrent:0,noGitHub:true,
-   ...(planner?{planner,projectPathForJob:()=>process.cwd()}:{}),...(!planner?{now:new Date(mockNow)}:{}),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
+   planner,projectPathForJob:()=>process.cwd(),...(simulatedGitEffect?{localMergeEffect:simulatedGitEffect,projectPathForJob:()=>env.storeDir}:{}),...(scenario.reviewEnabled?{reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'l3-external-provider-fixture',decidedAt:stamp}}}:{})};
  let runtime=new Reconciler(store,runtimeOptions);
  const trace=[];let stop;
  try {
   const tasks=(scenario.tasks??[{id:'a'},{id:'b',dependencies:['a']}]).map(item=>task(item.id,item.dependencies??[],item.state));
   if(new Set(tasks.map(item=>item.id)).size!==tasks.length || tasks.some(item=>item.dependencies.some(dep=>!tasks.some(other=>other.id===dep)))) throw Error('invalid task dependencies');
-  const initialJob={id:jobId,title:scenario.id,objective:scenario.plannerScript?'Verify complete multi-stage objective':undefined,repository:'local/isolated',prNumber:0,state:'ACTIVE',executionMode:scenario.executionMode??'fixed',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
+  const initialJob={id:jobId,title:scenario.id,objective:scenario.plannerScript?'Verify complete multi-stage objective':undefined,repository:'local/isolated',prNumber:0,state:'ACTIVE',autoMerge:scenario.autoMerge===true,reviewEnabled:scenario.reviewEnabled===true,
    ...(scenario.headSha?{headSha:scenario.headSha}:{}),
    ...(scenario.mergeOutcomes?{localMerge:{sourceRef:'refs/heads/mock-source',targetRef:'refs/heads/main',status:'pending',sourceSha:scenario.headSha??'mock-head',attempts:0}}:{}),
    createdAt:stamp,updatedAt:stamp,tasks};
@@ -69,7 +69,7 @@ export async function runReplay(scenario) {
    if(step.type==='reconcile') await runtime.reconcile(jobId);
    else if(step.type==='planner.settle' || step.type==='planner.await-success'){
      const desired=step.type==='planner.await-success'?'SUCCEEDED':(step.expectStatus??'SUCCEEDED');
-     const planId=step.type==='planner.await-success'?'plan-2':'plan-1';
+     const planId=step.planId ?? (step.type==='planner.await-success'?'plan-2':'plan-1');
      for(let attempt=0;attempt<100;attempt++){
        await runtime.reconcile(jobId);
        const status=(await snapshot()).plans?.find(p=>p.id===planId)?.status;
@@ -120,7 +120,7 @@ export async function runReplay(scenario) {
     const resolvedTaskId=await resolveTaskId(step.taskId);
     await store.mutateJob(jobId,current=>{
       const target=current.tasks.find(item=>item.id===resolvedTaskId);
-      if(!target || target.state!=='QUEUED' || target.executionId!==null || !dependencyReady(target,new Map(current.tasks.map(t=>[t.id,t])))) throw Error('mock provider cannot claim non-dispatchable Task');
+      if(!target || target.state!=='QUEUED' || target.executionId!==null || !dependencyReady(target,new Map(current.tasks.map(t=>[t.id,t])))) throw Error('mock provider cannot claim non-dispatchable Task '+JSON.stringify({resolvedTaskId,task:target&&{state:target.state,executionId:target.executionId,dependencies:target.dependencies},plans:current.plans?.map(p=>({id:p.id,status:p.status,objective:p.objectiveStatus,generated:p.generatedTaskIds}))}));
       const decision=tryTransitionTaskEvent(target,'dispatch',{dispatchable:true});
       if(!decision.accepted || !decision.actions.includes('effect.launchTask'))throw Error('canonical Graph rejected mock dispatch');
       target.attempt+=1;
@@ -195,7 +195,7 @@ export async function runReplay(scenario) {
    trace.push({actionAttempts,planStatuses:(observed.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,generatedTaskIds:p.generatedTaskIds})),taskResolutions:observed.tasks.filter(t=>t.resolution).map(t=>({taskId:t.id,path:t.resolution.path,state:t.resolution.state,recoveryExecutionId:t.resolution.recoveryExecutionId})),index,event:step.type,source:step.executionId??'exec-a',before:prior.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),after:observed.tasks.map(t=>({id:t.id,state:t.state,executionId:t.executionId})),jobState:observed.state,mergeStatus:observed.localMerge?.status??null,escalations:observed.tasks.filter(t=>t.escalation).map(t=>({taskId:t.id,status:t.escalation.status,notificationStatus:t.escalation.notification?.status??null})),progress:fingerprint(prior)!==fingerprint(observed)});
    prior=observed;
   }
-  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt})),localMerge:prior.localMerge??null};
+  const actual={jobState:prior.state,tasks:Object.fromEntries(prior.tasks.map(t=>[t.id,t.state])),plans:(prior.plans??[]).map(p=>({id:p.id,status:p.status,attempt:p.attempt,objectiveStatus:p.objectiveStatus})),localMerge:prior.localMerge??null};
   const errors=[];
   if(scenario.expected?.jobState && scenario.expected.jobState!==actual.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.jobState}`);
   for(const [id,state] of Object.entries(scenario.expected?.tasks??{})) if(actual.tasks[id]!==state)errors.push(`${id} expected ${state}, got ${actual.tasks[id]??'missing'}`);

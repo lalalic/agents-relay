@@ -149,7 +149,6 @@ export const dashboardStyles = `  <style>
       #jobs-view .job-filters { width:auto; }
       #jobs-view .job-search,
       #jobs-view #quick-status,
-      #jobs-view #quick-autonomous,
       #jobs-view #quick-draft { display:none; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }

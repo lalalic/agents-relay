@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import type { Job } from './types.js';
 import { implementationComplete } from './runtime-status.js';
-import { completionGateSatisfied } from './scheduler.js';
+import { completionGateSatisfied } from './task-transitions.js';
 
 export type LocalMergeReceipt = {
   sourceRef: string; targetRef: string; status: 'pending' | 'failed' | 'succeeded';
@@ -37,7 +37,6 @@ export function localMergeFacts(job: Job, headSha: string | null, now: () => num
   return {
     jobActive: job.state === 'ACTIVE',
     autoMergeEnabled: job.autoMerge !== false,
-    schedulePresent: Boolean(job.schedule),
     implementationComplete: implementationComplete(job),
     completionGateSatisfied: completionGateSatisfied(job),
     reviewSatisfied: job.reviewEnabled === false || job.review?.outcome === 'approved',

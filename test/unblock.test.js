@@ -68,7 +68,7 @@ test('blocker Job resolution releases dependency waits and leaves FAILED work fo
 });
 
 
-test('blocker resolution resumes a fixed Job interrupted after durable unblock', async()=>{
+test('blocker resolution deduplicates interrupted durable unblock', async()=>{
   const blockerJob={id:'blocker-interrupted',title:'blocker',priority:'P0',executionMode:'fixed',autoMerge:true,reviewEnabled:false,prNumber:10,repository:'org/platform',state:'ACTIVE',continuation:null,createdAt:at,updatedAt:at,tasks:[]};
   const blockerStore=new InMemoryStore(blockerJob);
   const blocked={...baseTask('interrupted','DRAFT'),attempt:2,maxAttempts:3};
@@ -88,7 +88,7 @@ test('blocker resolution resumes a fixed Job interrupted after durable unblock',
   assert.equal(saved.error,'old release blockers');
 });
 
-test('fixed authoritative unblock queues the same Troubleshooter with a reset retry budget', async()=>{
+test('authoritative unblock queues the same Troubleshooter with a reset retry budget', async()=>{
   const blocked={...baseTask('fixed-release','BLOCKED','troubleshooter'),attempt:3,maxAttempts:3};
   const store=new InMemoryStore(makeJob([blocked],'fixed'));
   const current=await store.load('dependent');

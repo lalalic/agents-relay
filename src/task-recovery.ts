@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { eventFor } from './events.js';
 import type { DurableStore } from './store.js';
 import type { Job, Task, TaskEscalation, EventRecord } from './types.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 import { dispatchTaskResolutionSync, materializeResolution } from './workflow/task-resolution.js';
 
 export type EscalationRequest = {
@@ -119,7 +119,7 @@ export async function resumeTroubleshooter(
     if (!task || task.agentName !== 'troubleshooter' || !task.escalation) throw new Error(`Task ${recoveryTaskId} is not a Troubleshooter escalation`);
     if (task.escalation.status !== 'pending') throw new Error(`Escalation ${task.escalation.id} already has a response`);
     if (task.state !== 'BLOCKED') throw new Error(`Task ${recoveryTaskId} is not a blocked Troubleshooter escalation`);
-    if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be resumed`);
+    if (!tryTransitionTaskEvent(task, 'task.unblocked', {}).accepted) throw new Error(`Troubleshooter ${recoveryTaskId} cannot be resumed`);
     task.escalation = { ...task.escalation, status: 'responded', response: response.trim(), respondedAt: now };
     task.result = null;
     task.error = null;

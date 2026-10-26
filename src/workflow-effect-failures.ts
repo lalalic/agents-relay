@@ -1,7 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { EventRecord, Job, Task } from './types.js';
 import type { WorkflowEffectOutcome } from './workflow/effects.js';
-import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { transitionJobEvent, transitionTaskEvent } from './task-transitions.js';
 import { workflowEffectFailureEvent } from './workflow/contracts.js';
 import { eventFor } from './events.js';
 export async function applyJobEffectOutcomes(store: DurableStore, emit: (event: EventRecord) => Promise<void>, job: Job, outcomes: readonly WorkflowEffectOutcome[]): Promise<void> {

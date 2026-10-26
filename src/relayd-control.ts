@@ -1,6 +1,5 @@
 import { appendTaskComment } from './task-comments.js';
 import type { Job, Task } from './types.js';
-import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -30,7 +29,7 @@ import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, star
 import { eventBusResolutionMessage, publishTaskBlocked, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { classifyFailedTask, dispatchTaskAction, supersedeCancelledTask } from './task-actions.js';
-import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { registerBlockerDependency } from './blockers.js';
 import { adoptExistingPullRequestJob, ensureManagedGitHubJob } from './cli-job-create.js';
@@ -53,7 +52,7 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 
 export function createWorkspaceControl(deps: any) {
-  const { client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockAutonomousTasks, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob } = deps;
+  const { client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob } = deps;
   const workspaceControl = async (body: Record<string, unknown>): Promise<unknown> => {
     const command = typeof body.command === 'string' ? body.command : '';
     const jobId = typeof body.jobId === 'string' ? body.jobId : '';
@@ -63,6 +62,7 @@ export function createWorkspaceControl(deps: any) {
       const repository = typeof body.repository === 'string' ? body.repository : '';
       const options = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
       if (!repository) throw new Error('job.create requires repository');
+      if ('executionMode' in options || 'schedule' in options) throw new Error('Job execution modes and schedules are unsupported');
       const result = await ensureManagedGitHubJob(client, repository, trusted, {
         id: typeof options.id === 'string' && options.id ? options.id : undefined,
         idempotencyKey: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
@@ -70,9 +70,7 @@ export function createWorkspaceControl(deps: any) {
         objective: typeof options.objective === 'string' ? options.objective : undefined,
         projectPath: typeof options.projectPath === 'string' ? options.projectPath : undefined,
         priority: options.priority as import('./types.js').Priority | undefined,
-        executionMode: options.executionMode as import('./types.js').ExecutionMode | undefined,
-        schedule: options.schedule as import('./types.js').Job['schedule'] | undefined,
-        tag: options.tag as import('./types.js').Job['tag'] | undefined,
+                tag: options.tag as import('./types.js').Job['tag'] | undefined,
         reviewEnabled: typeof options.reviewEnabled === 'boolean' ? options.reviewEnabled : undefined,
         continuation: options.continuation as import('./types.js').Job['continuation'] | undefined,
         reviewerThreadId: typeof options.reviewerThreadId === 'string' ? options.reviewerThreadId : undefined,
@@ -86,7 +84,7 @@ export function createWorkspaceControl(deps: any) {
       if (body.initialPlan === true) {
         const current = result.job;
         const existingPlan = current.plans?.at(-1);
-        if (existingPlan) return { repository, pr: result.pr.number, job: current.id, executionMode: current.executionMode, state: current.state, initialPlan: existingPlan.id, reused: true };
+        if (existingPlan) return { repository, pr: result.pr.number, job: current.id, state: current.state, initialPlan: existingPlan.id, reused: true };
         const unpublished = new InMemoryStore(current);
         const reconciler = makeReconciler(unpublished, concurrency);
         try {
@@ -99,10 +97,10 @@ export function createWorkspaceControl(deps: any) {
               : (await unpublishedStore.store.saveJob(planned.job), planned.job);
           } finally { unpublishedStore.relay.close(); }
           await pool.reconcileLocalJob(result.job.id, 'control.job.create.initial-plan');
-          return { repository, pr: committed.prNumber, job: committed.id, executionMode: committed.executionMode, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
+          return { repository, pr: committed.prNumber, job: committed.id, state: committed.state, initialPlan: committed.plans?.at(-1)?.id };
         } finally { await reconciler.close(); }
       }
-      return { repository, pr: result.pr.number, job: result.job.id, executionMode: result.job.executionMode, state: result.job.state };
+      return { repository, pr: result.pr.number, job: result.job.id, state: result.job.state };
     }
 
     if (command === 'job.adopt') {
@@ -126,7 +124,8 @@ export function createWorkspaceControl(deps: any) {
 
     if (command === 'job.update') {
       const patch = (body.patch && typeof body.patch === 'object' ? body.patch : {}) as Record<string, unknown>;
-      const mutable = ['title','objective','projectPath','priority','executionMode','schedule','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
+      if ('executionMode' in patch || 'schedule' in patch) throw new Error('Job execution modes and schedules are unsupported');
+      const mutable = ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const;
       for (const key of mutable) if (Object.prototype.hasOwnProperty.call(patch, key)) {
         const value = patch[key];
         if (['reviewerThreadId', 'creatorThreadId', 'implementationThreadId'].includes(key)) {

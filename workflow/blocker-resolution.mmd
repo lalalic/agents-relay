@@ -6,7 +6,6 @@ flowchart LR
 %% relay: initial waiting
 waiting["state: waiting"]
 checkTarget["state: check_target"]
-checkAutonomous["state: check_autonomous"]
 checkEffective["state: check_effective"]
 checkAlreadyUnblocked["state: check_already_unblocked"]
 checkDraft["state: check_draft"]
@@ -19,7 +18,6 @@ resumed["state: resumed"]
 
 resolutionAllowed["guard: resolutionAllowed"]
 targetMatches["guard: targetMatches"]
-autonomousJob["guard: autonomousJob"]
 effectivelyBlocked["guard: effectivelyBlocked"]
 alreadyUnblocked["guard: alreadyUnblocked"]
 isDraft["guard: isDraft"]
@@ -35,11 +33,7 @@ resolutionAllowed -->|true| checkTarget
 
 checkTarget -->|on: blocker.resolved| targetMatches
 targetMatches -->|false| obsolete
-targetMatches -->|true| checkAutonomous
-
-checkAutonomous -->|on: blocker.resolved| autonomousJob
-autonomousJob -->|true| checkEffective
-autonomousJob -->|false| checkDraft
+targetMatches -->|true| checkEffective
 
 checkEffective -->|on: blocker.resolved| effectivelyBlocked
 effectivelyBlocked -->|true| wait

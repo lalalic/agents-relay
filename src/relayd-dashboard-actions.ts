@@ -3,7 +3,6 @@ import { allocateEntityId, isGeneratedEntityId } from './job-task-id-sequence.js
 import { relayStoreDirectory } from './relay-store.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import type { Job } from './types.js';
-import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -30,7 +29,7 @@ import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, star
 import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction } from './task-actions.js';
-import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';

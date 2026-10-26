@@ -1,6 +1,6 @@
 import type { DurableStore } from './store.js';
 import type { Job, Task } from './types.js';
-import { transitionTaskEvent } from './scheduler.js';
+import { transitionTaskEvent } from './task-transitions.js';
 import { reclaimStaleExecutionProcess } from './execution-process-tracker.js';
 
 export type ExecutionRecoveryPorts = {

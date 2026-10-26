@@ -1,4 +1,4 @@
-// Full-path L3 simulator: real Reconciler/Graph/scheduler/SQLite, mocked workers and Git.
+// Full-path L3 simulator: real Reconciler/Graph/dependencies/SQLite, mocked workers and Git.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createIsolatedEnvironment } from './harness.mjs';
@@ -85,6 +85,7 @@ export async function runFullPath(scenario) {
       return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha };
     },
     reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 },
+    planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) },
   });
   const trace = [];
   let stop;
@@ -92,7 +93,7 @@ export async function runFullPath(scenario) {
   const tick = async () => { await new Promise(resolve => setTimeout(resolve, 10)); await runtime.idle(); await runtime.reconcile(jobId); await runtime.idle(); };
   try {
     const tasks = (scenario.tasks ?? [{ id: 'a' }, { id: 'b', dependencies: ['a'] }]).map(item => task(item.id, item.dependencies ?? [], item.agentName ?? 'implementation', jobId));
-    await store.saveJob({ id: jobId, title: scenario.id, objective: scenario.objective ?? scenario.id, repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', executionMode: 'fixed', autoMerge: scenario.autoMerge ?? true, reviewEnabled: scenario.reviewEnabled ?? true, headSha: heads.current, localMerge: { sourceRef: 'refs/heads/sim-source', targetRef: 'refs/heads/main', status: 'pending' }, createdAt: stamp, updatedAt: stamp, tasks });
+    await store.saveJob({ id: jobId, title: scenario.id, objective: scenario.objective ?? scenario.id, repository: 'local/isolated', prNumber: 0, state: 'ACTIVE', autoMerge: scenario.autoMerge ?? true, reviewEnabled: scenario.reviewEnabled ?? true, headSha: heads.current, localMerge: { sourceRef: 'refs/heads/sim-source', targetRef: 'refs/heads/main', status: 'pending' }, createdAt: stamp, updatedAt: stamp, tasks });
     await store.saveAgent({
       id: 'l3-worker', name: 'L3 mock worker', responsibility: 'simulated external agent', role: 'worker', capabilities: ['model', 'codex'], boundaries: [],
       endpoint: { kind: 'adapter', target: 'l3-worker' }, runtime: { adapter: 'codex', provider: 'simulator', model: 'mock-agent' }, availability: 'available', routing: {},
@@ -116,7 +117,7 @@ export async function runFullPath(scenario) {
         await stop?.(); await runtime.close(); sqlite.close();
         sqlite = new SQLiteRelayStore(join(env.storeDir, 'relay.sqlite'), jobId);
         store = new LocalAuthorityDurableStore(sqlite, new InMemoryStore(), undefined, true);
-        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 } });
+        runtime = new Reconciler(store, { owner: 'l3-simulator-restarted', adapters: [fakeAdapter(bus, outcomes, verdicts, heads, startedWaiters)], eventBus: bus, maxConcurrent: scenario.maxConcurrent ?? 4, noGitHub: true, projectPathForJob: async () => env.root, headShaProvider: () => heads.current, localMergeDelivery: (_path, receipt) => { if (mergeReceipts.length > 0 && mergeOutcomes.length === 0) return mergeReceipts.at(-1); const outcome = scenario.persistMergeFailure ? 'failed' : (mergeOutcomes.shift() ?? 'succeeded'); if (outcome === 'failed') throw new Error(scenario.mergeFailureReason ?? 'simulated dirty target worktree'); const mergedCommitSha = `merge-${mergeReceipts.length + 1}`; mergeReceipts.push({ sourceSha: receipt.sourceSha, mergedCommitSha }); return { sourceSha: receipt.sourceSha ?? heads.current, mergedCommitSha }; }, reviewer: { adapter: 'codex', workerId: 'l3-worker', routing: route, maxAttempts: 3 }, planner: { plan: async () => ({ objective_status: 'satisfied', assessment: 'Durable worker evidence verified.', next_tasks: [] }) } });
         stop = await runtime.watch(jobId);
         await runtime.reconcile(jobId);
       } else if (action.type === 'advance-head') {
@@ -146,7 +147,7 @@ export async function runFullPath(scenario) {
     for (const [id, state] of Object.entries(scenario.expected?.tasks ?? {})) if (actual.tasks.find(item => item.id === id)?.state !== state) errors.push(`${id} expected ${state}`);
     if (scenario.expected?.jobState && actual.state !== scenario.expected.jobState) errors.push(`job expected ${scenario.expected.jobState}, got ${actual.state}`);
     if (scenario.expected?.mergeStatus && actual.localMerge?.status !== scenario.expected.mergeStatus) errors.push(`merge expected ${scenario.expected.mergeStatus}, got ${actual.localMerge?.status ?? 'none'}`);
-    const result = { schemaVersion: 3, scenarioId: scenario.id, outcome: errors.length ? 'FAIL' : 'PASS', actual: { jobState: actual.state, headSha: heads.current, review: actual.review ?? null, facts: localMergeFacts(actual, heads.current), tasks: Object.fromEntries(actual.tasks.map(item => [item.id, item.state])), localMerge: actual.localMerge ?? null }, trace, mergeReceipts, events: observedEvents, errors, authority: 'isolated SQLite via MemoryEventBus, Reconciler, Graph and scheduler' };
+    const result = { schemaVersion: 3, scenarioId: scenario.id, outcome: errors.length ? 'FAIL' : 'PASS', actual: { jobState: actual.state, headSha: heads.current, review: actual.review ?? null, facts: localMergeFacts(actual, heads.current), tasks: Object.fromEntries(actual.tasks.map(item => [item.id, item.state])), localMerge: actual.localMerge ?? null }, trace, mergeReceipts, events: observedEvents, errors, authority: 'isolated SQLite via MemoryEventBus, Reconciler, Graph and dependency reconciliation' };
     if (scenario.outputDir) { mkdirSync(resolve(scenario.outputDir), { recursive: true }); writeFileSync(join(resolve(scenario.outputDir), 'report.json'), JSON.stringify(result, null, 2) + '\n'); writeFileSync(join(resolve(scenario.outputDir), 'report.md'), `# L3 production-path simulator\n\nScenario: ${scenario.id}\nResult: ${result.outcome}\n\n| Event | Job | Tasks |\n| --- | --- | --- |\n${trace.map(item => `| ${item.event} | ${item.jobState} | ${item.tasks.map(t => `${t.id}:${t.state}`).join(', ')} |`).join('\n')}\n${errors.map(error => `\n- ERROR: ${error}`).join('')}\n`); }
     return result;
   } finally { await stop?.(); await runtime.close(); sqlite.close(); env.cleanup(); }

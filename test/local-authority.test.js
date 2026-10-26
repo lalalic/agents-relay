@@ -9,7 +9,7 @@ import { InMemoryStore } from '../dist/store.js';
 import { eventFor } from '../dist/events.js';
 import { parseGitHubWebhook } from '../dist/github-webhook.js';
 import { subscribeLocalCommits } from '../dist/local-commit-events.js';
-import { transitionTaskEvent } from '../dist/scheduler.js';
+import { transitionTaskEvent } from '../dist/task-transitions.js';
 
 const at = '2026-10-08T20:00:00.000Z';
 function job(id = 'local') {
@@ -305,6 +305,7 @@ test('offline Review approval is Graph-owned, durable, and never queues GitHub m
     reviewHeadSha: head, dependencies: ['implementation'],
     updatedAt: '2026-10-08T20:02:00.000Z' };
   await local.saveJob({ ...job(), headSha: head, autoMerge: true, reviewEnabled: true,
+    plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'satisfied',plannerResult:{objective_status:'satisfied',next_tasks:[]}}],
     tasks: [implementation, review], review: {
       outcome: 'pending', headSha: head, taskId: review.id, evidence: null,
       updatedAt: '2026-10-08T20:02:00.000Z',
@@ -385,6 +386,7 @@ test('offline Graph automatically creates exactly one final-review Task', async 
   const store = new LocalAuthorityDurableStore(sqlite, remote);
   const head = 'cafebabedeadbeefcafebabedeadbeef00112233';
   await store.saveJob({ ...job(), reviewEnabled: true, autoMerge: false, headSha: head,
+    plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'satisfied',plannerResult:{objective_status:'satisfied',next_tasks:[]}}],
     tasks: [{ ...task('SUCCEEDED'), id: 'work', adapter: 'codex',
       routing: { provider: 'openai', model: 'gpt-test', decidedBy: 'test', decidedAt: at },
       result: { summary: 'done' } }] });
@@ -492,6 +494,7 @@ test('UNKNOWN PR still creates a local final Review without requesting Merge', a
   const local = new LocalAuthorityDurableStore(sqlite, remote);
   const sha = 'offline-review-head';
   await local.saveJob({ ...job(), state:'ACTIVE', headSha: sha, autoMerge: true, reviewEnabled: true,
+    plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'satisfied',plannerResult:{objective_status:'satisfied',next_tasks:[]}}],
     tasks:[{ ...task('SUCCEEDED'), id: 'done', updatedAt: new Date().toISOString() }] });
   const reconciler = managedReconciler(local, { owner:'offline-review-reconcile', adapters:[], maxConcurrent:0,
     reviewer: { adapter:'chatgpt', routing:{provider:'chatgpt', model:'account-defaults', decidedBy:'test', decidedAt: new Date().toISOString()} },

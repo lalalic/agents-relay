@@ -4,7 +4,7 @@ export { executionEventSource } from './execution-event-identity.js'; import { a
 import { classifyChatGptPlatformFailure, classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
-import { transitionJobEvent, transitionTaskEvent } from './scheduler.js';
+import { transitionJobEvent, transitionTaskEvent } from './task-transitions.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js'; import { Execution, StartAckTimeout, WorkerAdapter } from './adapters.js'; import { ContinuationAdapter } from './continuation.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
 import type { ExecutionContextRoots } from './execution-context.js'; import type { AccountUsageOverview } from './usage.js';

@@ -2,7 +2,7 @@ import test, { managedReconciler } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { InMemoryStore } from '../dist/store.js';
 import { pauseJob, resumeJob } from '../dist/job-pause.js';
-import { schedule } from '../dist/scheduler.js';
+import { refreshTaskDependencies } from '../dist/task-transitions.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state = 'RUNNING', executionId = 'exec-1') => ({
@@ -20,7 +20,7 @@ test('pause atomically gates dispatch and preserves resumable execution identity
   assert.equal(paused.tasks[0].state, 'QUEUED');
   assert.equal(paused.tasks[0].executionId, null);
   assert.equal(paused.tasks[0].pausedExecution?.id, 'exec-1');
-  assert.equal(schedule(paused).tasks[0].state, 'QUEUED');
+  assert.equal(refreshTaskDependencies(paused).tasks[0].state, 'QUEUED');
 
   const resumed = await resumeJob(store, 'a');
   assert.equal(resumed.pause, undefined);

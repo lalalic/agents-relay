@@ -80,7 +80,6 @@ const taskRuntime = new GraphRuntime(taskSource, {
     troubleshooterTask: boolGuard('troubleshooterTask'),
     awaitingInteractiveDecision: boolGuard('awaitingInteractiveDecision'),
     retryAvailable: boolGuard('retryAvailable'),
-    autonomousJob: boolGuard('autonomousJob'),
   },
   events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
   actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask']),
@@ -97,11 +96,11 @@ const jobRuntime = new GraphRuntime(jobSource, {
     headAvailable: boolGuard('headAvailable'),
     mergeCapable: boolGuard('mergeCapable'),
     localCompletionAllowed: facts => facts.durableFacts.jobActive === true && facts.durableFacts.autoMergeEnabled === true
-      && facts.durableFacts.schedulePresent !== true && facts.durableFacts.implementationComplete === true
+      && facts.durableFacts.implementationComplete === true
       && facts.durableFacts.completionGateSatisfied === true && facts.durableFacts.reviewSatisfied === true
       && (facts.durableFacts.localMergeRequired !== true || facts.durableFacts.localMergeSucceeded === true),
     localMergeReady: facts => facts.durableFacts.jobActive === true && facts.durableFacts.autoMergeEnabled === true
-      && facts.durableFacts.schedulePresent !== true && facts.durableFacts.implementationComplete === true
+      && facts.durableFacts.implementationComplete === true
       && facts.durableFacts.completionGateSatisfied === true && facts.durableFacts.reviewSatisfied === true
       && facts.durableFacts.localMergePresent === true && facts.durableFacts.reviewHeadCurrent === true
       && facts.durableFacts.mergeAttemptReady === true,

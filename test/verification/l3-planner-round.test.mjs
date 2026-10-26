@@ -187,3 +187,39 @@ test('Plan-specific Troubleshooter human escalation retains failed Plan, notific
  assert.equal(result.actual.jobState,'ACTIVE');
  assert.equal(result.observedEvents.filter(e=>e.event==='escalation.requested').length,1);
 });
+
+// L3 deterministic production-ingress sequence: Plan A -> Task A -> Plan B -> Task B -> satisfied -> Review.
+test('L3 objective-only Job replans through two completed Tasks and restarts before final Review', async () => {
+ const {runReplay}=await import('./l3-replay.mjs');
+ const result=await runReplay({
+  id:'objective-only-sequential-plan',reviewEnabled:true,autoMerge:true,headSha:'head-1',mergeOutcomes:['succeeded'],tasks:[],
+  plannerScript:{results:[
+   {objective_status:'in_progress',assessment:'First implement A',next_tasks:[{id:'a',title:'Implement and verify stage A outcome',input:'Implement and verify stage A',output:{kind:'task_pr'},storySize:'S'}],unblocks:[]},
+   {objective_status:'in_progress',assessment:'Next implement B',next_tasks:[{id:'b',title:'Implement and verify stage B outcome',input:'Implement and verify stage B',output:{kind:'task_pr'},storySize:'S'}],unblocks:[]},
+   {objective_status:'satisfied',assessment:'Both results verified',next_tasks:[],unblocks:[]},
+  ]},
+  steps:[
+   {type:'planner.settle'},
+   {type:'mock.claim',taskId:'@planned',executionId:'task-a'},
+   {type:'task.started',taskId:'@planned',executionId:'task-a'},
+   {type:'task.completed',taskId:'@planned',executionId:'task-a'},
+   {type:'restart'},
+   {type:'planner.await-success',planId:'plan-2'},
+   {type:'mock.claim',taskId:'@planned',executionId:'task-b'},
+   {type:'task.started',taskId:'@planned',executionId:'task-b'},
+   {type:'task.completed',taskId:'@planned',executionId:'task-b'},
+   {type:'planner.await-success',planId:'plan-3'},
+   {type:'mock.claim',taskId:'@review',executionId:'review'},
+   {type:'review.started',taskId:'@review',executionId:'review',data:{head_sha:'head-1'}},
+   {type:'review.approved',taskId:'@review',executionId:'review',data:{head_sha:'head-1'}},
+   {type:'reconcile'},
+  ],
+  expected:{jobState:'COMPLETED',plans:{'plan-1':'SUCCEEDED','plan-2':'SUCCEEDED','plan-3':'SUCCEEDED'},localMergeStatus:'succeeded'},
+ });
+ assert.equal(result.outcome,'PASS',result.errors.join('; '));
+ assert.equal(result.plannerCalls,3);
+ assert.equal(result.actual.plans.length,3,'each round has one durable identity');
+ assert.deepEqual(result.actual.plans.map(plan=>plan.objectiveStatus),['in_progress','in_progress','satisfied']);
+ assert.ok(result.trace.some(step=>step.event==='restart'));
+ assert.equal(result.actual.jobState,'COMPLETED');
+});

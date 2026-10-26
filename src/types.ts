@@ -8,19 +8,6 @@ export type WorkerAdapterName = 'codex' | 'chatgpt';
 /** Persisted compatibility only: new Tasks may use WorkerAdapterName values only. */
 export type AdapterName = WorkerAdapterName | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';
-export type ExecutionMode = 'fixed' | 'autonomous';
-export type MissedRunPolicy = 'run' | 'skip';
-export type ScheduleConcurrencyPolicy = 'skip' | 'queue';
-export type JobSchedule = {
-  cron: string;
-  timezone: string;
-  nextRunAt: string;
-  missedRunPolicy: MissedRunPolicy;
-  concurrencyPolicy: ScheduleConcurrencyPolicy;
-  lastScheduledSlot?: string | null;
-  currentRunSlot?: string | null;
-  lastRunAt?: string | null;
-};
 export type TaskKind = 'work' | 'planner';
 export type PlanningDecisionSource = 'orchestrator' | 'model-planner';
 export type StorySize = 'S' | 'M' | 'L';
@@ -156,8 +143,6 @@ export type Task = {
   jobId?: string; id: string; title?: string; taskUrl?: string; kind?: TaskKind; priority?: Priority; storySize?: StorySize; projectName?: string; agentName?: string; agentGraph?: string; parentTaskId: string | null; dependencies: string[]; capabilities: string[]; taskCapabilities?: string[]; workerCapabilities?: string[]; adapter: AdapterName;
   planningDecisionId?: string; planningSource?: PlanningDecisionSource; planningRound?: number; previousPlannerTaskId?: string | null; planTrigger?: PlanTrigger; tag?: string; plannerRetryFeedback?: string; plannerGuidance?: string; manualPlanning?: boolean;
   resolutionClassification?: { kind: 'superseded' | 'invalid'; targetTaskId: string; evidence: string; reason: string; updatedAt: string };
-  /** Internal E2E-only planner option, consumed before execution. */
-  testInjection?: string | import('./e2e-injection.js').InjectionConfig;
   input: string; attachments?: string[]; output?: TaskOutput; review?: ReviewTaskMetadata; workerRequirements?: WorkerRequirements; workerSelection?: WorkerSelection; routing?: RoutingDecision; continuation?: Continuation | null; continuationDeliveredAt?: string | null; chatgptTabClosePolicy?: ChatGptTabClosePolicy; state: TaskState; attempt: number; maxAttempts: number;
   leaseOwner: string | null; leaseExpiresAt: string | null; executionId: string | null; executionHistory?: Array<{ id: string; attempt: number; startedAt: string }>; threadId: string | null;
   threadDeletedAt?: string | null; threadCleanupError?: string | null;
@@ -187,8 +172,7 @@ export type Task = {
   result: Result | null; plannerResult?: import('./planner.js').PlannerResult | null; error: string | null; timeoutMs: number; lastProgressAt?: string; lastProgressEventAt?: string; processExitedAt?: string; createdAt: string; updatedAt: string;
 };
 /** Normalize snapshots written before UNBLOCKED was removed from the lifecycle graph. */
-export function normalizeLegacyTaskLifecycle(task: Task, executionMode: ExecutionMode): Task {
-  void executionMode;
+export function normalizeLegacyTaskLifecycle(task: Task): Task {
   const legacy = task as Task & { state: string };
   if ((legacy.state as string) === 'UNBLOCKED') {
     legacy.state = task.agentName === 'troubleshooter' ? 'QUEUED' : 'FAILED';
@@ -206,7 +190,7 @@ export function normalizeLegacyTaskLifecycle(task: Task, executionMode: Executio
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
 export type JobPause = { generation: number; requestedAt: string };
 export type ProjectionRecovery = { key: string; remoteSha: string; status: 'repairing' | 'retry' | 'projected' | 'escalated'; taskId: string; attempts: number; maxAttempts: number; error?: string; updatedAt: string };
-export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; executionMode: ExecutionMode; schedule?: JobSchedule; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 

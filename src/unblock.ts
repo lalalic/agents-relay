@@ -1,7 +1,7 @@
 import type { DurableStore } from './store.js';
 import type { BlockedBaseline, Job, PlanTrigger, Task, TaskUnblockRecord } from './types.js';
 import { applyTaskUnblockRetrySnapshot } from './task-actions.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 import { dispatchAuthoritativeUnblock } from './workflow/authoritative-unblock-v2.js';
 import { hasPendingTroubleshooterEscalation } from './task-recovery.js';
 
@@ -34,7 +34,7 @@ function unblockFacts(job: Job, tasks: Task[], currentHeadSha: string | null, re
 }
 
 export function unconsumedUnblockTrigger(job: Job): PlanTrigger | undefined {
-  const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
+  const consumed = new Set((job.plans ?? []).filter(plan => plan.status === 'SUCCEEDED').flatMap(plan => plan.trigger?.source === 'unblock' ? plan.trigger.taskIds ?? [] : []));
   const tasks = job.tasks.filter(task => task.agentName !== 'troubleshooter' && task.unblock && !consumed.has(task.id) && ['DRAFT', 'QUEUED'].includes(task.state));
   if (tasks.length === 0) {
     const legacy = job.changeCycle;
@@ -58,13 +58,8 @@ export function unblockNeedsNewPlan(job: Job): boolean {
   const pending = unconsumedUnblockTrigger(job);
   if (!pending) return false;
   const latest = job.plans?.at(-1);
-  return !(latest?.status === 'FAILED' && latest.trigger.source === 'unblock'
-    && latest.trigger.taskIds?.some(id => pending.taskIds?.includes(id)));
-}
-
-export async function unblockAutonomousTasks(options: { store: DurableStore; job: Job; tasks: Task[]; trigger: UnblockSource; now?: string }): Promise<PlanTrigger> {
-  void options;
-  throw new Error('Ordinary Tasks cannot be authoritatively unblocked; only a blocked Troubleshooter can resume');
+  return !(latest?.status === 'FAILED' && latest.trigger?.source === 'unblock'
+    && latest.trigger?.taskIds?.some(id => pending.taskIds?.includes(id)));
 }
 
 export async function unblockTask(options: { store: DurableStore; job: Job; task: Task; trigger: UnblockSource; now?: string }): Promise<{ replanning: boolean; planTrigger?: PlanTrigger }> {
@@ -84,7 +79,7 @@ export async function unblockTask(options: { store: DurableStore; job: Job; task
       const apply = (current: Job): void => {
         const task = current.tasks.find(item => item.id === options.task.id);
         if (!task || !isEffectivelyBlocked(task)) throw new Error(`Task ${options.task.id} changed before authoritative unblock`);
-        if (!tryTransitionTaskEvent(task, 'task.unblocked', { autonomousJob: false }).accepted) throw new Error(`Task ${task.id} cannot be authoritatively unblocked`);
+        if (!tryTransitionTaskEvent(task, 'task.unblocked', {}).accepted) throw new Error(`Task ${task.id} cannot be authoritatively unblocked`);
         const baseline = baselineFor(task); task.blockedBaseline = baseline;
         task.unblock = { event: 'task.unblocked', at: now, source: options.trigger.source, reason: options.trigger.reason, baseline, currentHeadSha: currentHeadSha ?? undefined, facts, blockerJobId: options.trigger.blockerJobId, resolution: options.trigger.resolution };
         applyTaskUnblockRetrySnapshot(task); task.updatedAt = now; delete task.blockedBy; current.updatedAt = now;

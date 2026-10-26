@@ -2,9 +2,13 @@ import type {DatabaseSync} from 'node:sqlite';
 import type {Job} from './types.js';
 import {normalizeLegacyTaskLifecycle} from './types.js';
 import {normalizeLegacyJobPrNumber} from './job-pr-number-migration.js';
+export function currentJobMetadata<T extends object>(job: T): T {
+ const { executionMode: _mode, schedule: _schedule, ...current } = job as T & {executionMode?: unknown; schedule?: unknown};
+ return current as T;
+}
 export function normalizeRelayJob(json:string):Job {
- const job=normalizeLegacyJobPrNumber(JSON.parse(json) as Job);
- job.tasks=job.tasks.map(t=>normalizeLegacyTaskLifecycle(t,job.executionMode));
+ const job = currentJobMetadata(normalizeLegacyJobPrNumber(JSON.parse(json) as Job));
+ job.tasks=job.tasks.map(t=>normalizeLegacyTaskLifecycle(t));
  job.plans=(job.plans??[]).map(plan=>{
   const legacy=plan as typeof plan & {forceCleanHistory?:boolean;cleanHistoryTaskIds?:string[]};
   if(plan.forceRestate===undefined&&legacy.forceCleanHistory===true)plan.forceRestate=true;

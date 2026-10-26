@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runFullPath } from './l3-simulator.mjs';
 
-test('full production path completes through worker, review, scheduler and mocked local merge', async () => {
+test('full production path completes through worker, review, dependency reconciliation and mocked local merge', async () => {
   const result = await runFullPath({ id: 'full-happy-path', expected: { jobState: 'COMPLETED', mergeStatus: 'succeeded' } });
   assert.equal(result.outcome, 'PASS', JSON.stringify({ errors: result.errors, actual: result.actual }));
   assert.equal(result.actual.jobState, 'COMPLETED');

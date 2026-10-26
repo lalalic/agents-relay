@@ -7,7 +7,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTask, marker, renderJobBody, TASK_MARKER } from '../dist/markers.js';
-import { detectCycles, dependencyReady, extendRetryBudget, schedule, transitionTaskEvent } from '../dist/scheduler.js';
+import { detectCycles, dependencyReady, extendRetryBudget, refreshTaskDependencies, transitionTaskEvent } from '../dist/task-transitions.js';
 import { CodexAdapter, ChatGptAdapter, LaunchFailure } from '../dist/adapters.js';
 import { InMemoryStore, GitHubStore } from '../dist/store.js';
 import { PreSubmissionRejection } from '../dist/worker-rejection.js';
@@ -25,7 +25,7 @@ import { DurableTaskTransitionRuntime } from '../dist/workflow/durable-transitio
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
-const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'ACTIVE',continuation:null,createdAt:now(),updatedAt:now(),tasks});
+const job = (tasks=[]) => ({id:'j',title:'x',prNumber:1,repository:'owner/repo',state:'ACTIVE',continuation:null,createdAt:now(),updatedAt:now(),tasks,plans:tasks.length?[{jobId:'j',id:'plan-1',round:1,source:'model-planner',previousPlanId:null,trigger:{source:'initial'},status:'SUCCEEDED',objectiveStatus:'satisfied',assessment:'fixture objective satisfied',generatedTaskIds:tasks.map(t=>t.id),createdAt:now(),updatedAt:now()}]:[]});
 const eventSource = (jobId, taskId, executionId) => ({ id: executionEventSource(jobId, taskId, executionId) });
 const activeEventSource = async (store, taskId, jobId='j') => {
   // Fixed polling attempts avoid wall-clock jumps on CI hosts while still
@@ -304,7 +304,7 @@ assert.notEqual(code, 0);
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(saved.state, 'DRAFT');
   assert.deepEqual(saved.tasks, []);
-  assert.equal(saved.plans, undefined);
+  assert.deepEqual(saved.plans, []);
   const descendantPid = Number(await readFile(descendantFile, 'utf8'));
   assert.throws(() => process.kill(descendantPid, 0), error => error?.code === 'ESRCH');
 });
@@ -468,7 +468,7 @@ test('CLI no longer exposes manual orchestrator task start or complete', async (
 
 test('active replacement work derives QUEUED despite historical failed tasks', () => {
   const old=task('old','FAILED'); const replacement=task('replacement','QUEUED');
-  const value=schedule(job([old,replacement])); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED');
+  const value=refreshTaskDependencies(job([old,replacement])); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED');
 });
 test('CLI no longer records synthetic orchestrator Tasks', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agents-relay-record-removed-'));
@@ -489,7 +489,7 @@ test('healthy task states clear stale current errors without deleting history ev
     assert.equal(current.error,null);
   }
   const queued=task('queued-with-old-error','QUEUED'); queued.error='stale dependency error';
-  const scheduled=schedule(job([queued]));
+  const scheduled=refreshTaskDependencies(job([queued]));
   assert.equal(scheduled.tasks[0].state,'QUEUED');
   assert.equal(scheduled.tasks[0].error,null);
 });
@@ -499,8 +499,8 @@ test('manual retry budget advances in three-attempt windows without resetting hi
   assert.equal(extendRetryBudget({attempt:6,maxAttempts:6}),9);
   assert.equal(extendRetryBudget({attempt:8,maxAttempts:9}),12);
 });
-test('schedules dependencies while preserving only Troubleshooter BLOCKED state', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); b.agentName='troubleshooter'; const c=task('c','QUEUED',['a']); const value=schedule(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
-test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=schedule(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
+test('schedules dependencies while preserving only Troubleshooter BLOCKED state', () => { const a=task('a','SUCCEEDED'); const b=task('b','BLOCKED',['a']); b.agentName='troubleshooter'; const c=task('c','QUEUED',['a']); const value=refreshTaskDependencies(job([a,b,c])); assert.equal(b.state,'BLOCKED'); assert.equal(c.state,'QUEUED'); assert.equal(value.state,'ACTIVE'); assert.equal(deriveJobRuntimeStatus(value,'OPEN'),'QUEUED'); });
+test('dependency-backed DRAFT becomes QUEUED only after dependencies succeed', () => { const dep=task('dep','SUCCEEDED'); const child=task('child','DRAFT',['dep']); const value=refreshTaskDependencies(job([dep,child])); assert.equal(value.tasks.find(t=>t.id==='child').state,'QUEUED'); });
 test('RUNNING tasks cannot return to DRAFT', async () => { const current=task('running','RUNNING'); await assert.rejects(transitionTaskEvent(current,'hold'),/No enabled workflow transition from RUNNING on hold/); });
 test('detects cycles and requires successful dependencies', () => { assert.throws(() => detectCycles([task('a','QUEUED',['b']),task('b','QUEUED',['a'])]), /cycle/); assert.equal(dependencyReady(task('b','QUEUED',['a']),new Map([['a',task('a','RUNNING')]])),false); });
 test('repository pool orders all locally active jobs regardless of GitHub state', () => { const low={...job([]),id:'low',priority:'P3',createdAt:'2026-01-01T00:00:00.000Z'}; const high={...job([]),id:'high',priority:'P0',createdAt:'2026-02-01T00:00:00.000Z'}; assert.equal(compareJobPriority(high,low)<0,true); assert.deepEqual(runnableManagedJobs([{job:low,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:high,githubState:'OPEN',draft:false,mergedAt:null,closedAt:null},{job:{...high,id:'merged'},githubState:'MERGED',draft:false,mergedAt:now(),closedAt:now()}]).map(x=>x.id),['high','merged','low']); });
@@ -688,39 +688,7 @@ test('new final-review creation wakes repository pool without relying on polling
   await stop();
 });
 
-test('scheduler timer enters through EventBus schedule.tick before scheduled graph reconciliation', async () => {
-  const bus=new MemoryEventBus();
-  const at=new Date('2026-09-29T18:05:00.000Z');
-  const root={...job([]),id:'scheduled-event-job',repository:'owner/repo',prNumber:48,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
-  const store=new InMemoryStore(root);
-  const seen=[]; let reconciles=0;
-  const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async id=>{reconciles+=1; seen.push('reconcile:'+id);}}),()=>false,undefined,()=>store);
-  const stopAudit=await bus.subscribeAll(async event=>{if(event.type==='schedule.tick')seen.push('bus:'+event.type);});
-  const stopPool=await pool.watch(bus);
-  await pool.scheduleTickSignal(bus,root,at);
-  for(let i=0;i<20&&reconciles===0;i+=1) await new Promise(resolve=>setTimeout(resolve,5));
-  assert.equal(seen[0],'bus:schedule.tick');
-  assert.equal(reconciles,1);
-  const durable=await store.load(root.id);
-  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
-  assert.equal(durable.schedule.lastRunAt,at.toISOString());
-  await stopPool(); await stopAudit();
-});
 
-test('scheduler timer without EventBus uses the same schedule coordinator path', async () => {
-  const at=new Date('2026-09-29T18:05:00.000Z');
-  const root={...job([]),id:'scheduled-local-job',repository:'owner/repo',prNumber:49,executionMode:'autonomous',schedule:{cron:'0 * * * *',timezone:'UTC',nextRunAt:'2026-09-29T18:00:00.000Z',missedRunPolicy:'run',concurrencyPolicy:'skip',lastScheduledSlot:null,currentRunSlot:null,lastRunAt:null}};
-  const store=new InMemoryStore(root);
-  let reconciles=0;
-  const client={request:async()=>{throw new Error('unexpected request');}};
-  const pool=localPoolFixture(client,['owner/repo'],new Set(['bot']),1,()=>({reconcile:async()=>{reconciles+=1;}}),()=>false,undefined,()=>store);
-  await pool.scheduleTickSignal(undefined,root,at);
-  assert.equal(reconciles,1);
-  const durable=await store.load(root.id);
-  assert.equal(durable.schedule.lastScheduledSlot,'2026-09-29T18:00:00.000Z');
-  assert.equal(durable.schedule.lastRunAt,at.toISOString());
-});
 
 test('repository pool serializes same-job targeted reconcile with discovered reconcile', async () => {
   const queued=task('serialize-task','QUEUED');
@@ -1105,48 +1073,6 @@ test('sync adapter runtime exit without mandatory terminal event fails after bou
   assert.ok((await store.load('j')).tasks.some(item => item.agentName === 'troubleshooter' && item.parentTaskId === 'runtime-exit'), 'watchdog must wake reconciliation to create a troubleshooter without manual retry');
   await reconciler.close();
   await stop(); await stopEvents();
-});
-
-test('unauthorized E2E injection fails closed before launching real worker', async () => {
-  const original=process.env.E2E_REPO; delete process.env.E2E_REPO;
-  try {
-    const t=task('unauthorized-injection');
-    t.testInjection={method:'worker.codex.launch',action:'return',execution:'skip',mock:'worker_model_not_found'};
-    const store=new InMemoryStore(job([t]));
-    const adapter=new FakeAdapter();
-    const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus()});
-    const stop=await reconciler.watch('j');
-    await reconciler.reconcile('j');
-    await new Promise(resolve=>setTimeout(resolve,50));
-    const durable=(await store.load('j')).tasks.find(item=>item.id==='unauthorized-injection');
-    assert.equal(adapter.launches,0);
-    assert.equal(durable.state,'FAILED');
-    assert.match(durable.error,/E2E test injection refused/);
-    await reconciler.close(); await stop();
-  } finally {
-    if(original===undefined) delete process.env.E2E_REPO; else process.env.E2E_REPO=original;
-  }
-});
-
-test('projection injection survives worker launch for its later checkpoint', async () => {
-  const original=process.env.E2E_REPO; process.env.E2E_REPO='owner/repo';
-  try {
-    const t=task('projection-injection');
-    t.testInjection={method:'github.projectLocalMerge',action:'throw',execution:'after',error:{code:'SERVICE_UNAVAILABLE',message:'projection unavailable',status:503}};
-    const store=new InMemoryStore(job([t]));
-    const adapter=new FakeAdapter();
-    const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:new MemoryEventBus()});
-    const stop=await reconciler.watch('j');
-    await reconciler.reconcile('j');
-    await new Promise(resolve=>setTimeout(resolve,20));
-    const durable=(await store.load('j')).tasks.find(item=>item.id==='projection-injection');
-    assert.equal(adapter.launches,1);
-    assert.equal(durable.testInjection?.method,'github.projectLocalMerge');
-    adapter.resolvers[0].resolve({summary:'runtime exited'});
-    await reconciler.close(); await stop();
-  } finally {
-    if(original===undefined) delete process.env.E2E_REPO; else process.env.E2E_REPO=original;
-  }
 });
 
 test('ambiguous ChatGPT Browser Workspace delivery failure is quarantined without same-route replay', async () => {
@@ -1703,37 +1629,7 @@ test('late completed recovers legacy delivery-after-start failure', async () => 
   assert.equal(durable.error,null);
 });
 
-test('scheduled autonomous cycle keeps an empty candidate retryable for the active Planner execution', async () => {
-  const oldFailed=task('old-failed','FAILED'); oldFailed.createdAt='2026-09-21T16:00:00.000Z'; oldFailed.updatedAt=oldFailed.createdAt;
-  const oldPlanner=task('planner-1','SUCCEEDED'); oldPlanner.kind='planner'; oldPlanner.adapter='orchestrator'; oldPlanner.routing=undefined; oldPlanner.agentName='planner'; oldPlanner.createdAt='2026-09-21T16:05:00.000Z'; oldPlanner.updatedAt=oldPlanner.createdAt; oldPlanner.plannerResult={objective_status:'satisfied',assessment:'previous slot done',next_tasks:[]};
-  const root={...job([oldFailed,oldPlanner]),executionMode:'autonomous',state:'ACTIVE',objective:'repeat the objective',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:'2026-09-21T16:10:00.000Z'}};
-  const store=new InMemoryStore(root);
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0,planner:{plan:async()=>({objective_status:'satisfied',assessment:'current slot done',next_tasks:[]})}});
-  await reconciler.reconcile('j');
-  await reconciler.idle();
-  const saved=await store.load('j');
-  const fresh=saved.plans?.find(item=>item.id==='plan-2');
-  assert.ok(fresh);
-  assert.equal(fresh.previousPlanId,'planner-1');
-  assert.equal(fresh.status,'PLANNING');
-  assert.ok(fresh.executionId);
-  assert.equal(saved.tasks.filter(item=>item.kind==='planner').length,1); // legacy history only
-  assert.notEqual(saved.state,'FAILED');
-});
 
-test('scheduled autonomous cycle keeps ACTIVE lifecycle and derives WAITING between runs', async () => {
-  const current=task('planner-1','SUCCEEDED'); current.kind='planner'; current.adapter='orchestrator'; current.routing=undefined; current.agentName='planner'; current.createdAt='2026-09-21T16:21:00.000Z'; current.updatedAt=current.createdAt; current.plannerResult={objective_status:'satisfied',assessment:'this slot done',next_tasks:[]};
-  const root={...job([current]),executionMode:'autonomous',state:'ACTIVE',headSha:'scheduled-sha',schedule:{cron:'*/10 * * * *',timezone:'UTC',nextRunAt:'2026-09-21T16:30:00.000Z',missedRunPolicy:'skip',concurrencyPolicy:'skip',lastScheduledSlot:'2026-09-21T16:20:00.000Z',currentRunSlot:'2026-09-21T16:20:00.000Z',lastRunAt:null}};
-  const store=new InMemoryStore(root); let merges=0; store.mergePullRequest=async()=>{merges+=1;};
-  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
-  await reconciler.reconcile('j');
-  const saved=await store.load('j');
-  assert.equal(saved.state,'ACTIVE');
-  assert.equal(deriveJobRuntimeStatus(saved,'OPEN'),'WAITING');
-  assert.ok(saved.schedule.lastRunAt);
-  assert.equal(saved.tasks.some(item=>item.agentName==='reviewer'),false);
-  assert.equal(merges,0);
-});
 
 test('final review ignores troubleshooter recovery history', async () => {
   const succeeded=task('done','SUCCEEDED');
@@ -2268,7 +2164,7 @@ test('reconcile ignores remote head and does not request GitHub merge after loca
 test('autonomous in-progress batch advances planner without creating final review', async () => {
   const planner=task('plan-1','SUCCEEDED'); planner.kind='planner'; planner.agentName='planner'; planner.plannerResult={objective_status:'in_progress',assessment:'continue',next_tasks:[],unblocks:[]};
   const work=task('work','SUCCEEDED'); work.planningDecisionId='plan-1'; work.planningSource='model-planner';
-  const root={...job([planner,work]),executionMode:'autonomous',state:'ACTIVE',headSha:'sha-autonomous-in-progress'};
+  const root={...job([planner,work]),plans:[],state:'ACTIVE',headSha:'sha-autonomous-in-progress'};
   const store=new InMemoryStore(root); store.pullRequestState=async()=> 'OPEN'; store.headSha=async()=> 'sha-autonomous-in-progress';
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:new MemoryEventBus(),maxConcurrent:0});
   await reconciler.reconcile('j');
@@ -2973,6 +2869,8 @@ test('daemon inventory wakes an autonomous job with unconsumed unblock', () => {
   const value={...job([blocked,unblocked]),executionMode:'autonomous',plans:[]};
   assert.equal(needsLifecycleReconciliation(value),true);
   value.plans=[{id:'plan-4',status:'SUCCEEDED',trigger:{source:'unblock',taskIds:['30']}}];
+  assert.equal(needsLifecycleReconciliation(value),true,'unsatisfied objective still needs a Planner round');
+  value.plans[0].objectiveStatus='satisfied';
   assert.equal(needsLifecycleReconciliation(value),false);
 });
 

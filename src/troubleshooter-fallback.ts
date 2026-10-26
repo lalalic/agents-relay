@@ -1,5 +1,5 @@
 import type { DurableStore } from './store.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
 import { requestTroubleshooterEscalation } from './task-recovery.js';
 
 const MARKER = '[Relay execution fallback attempted]';

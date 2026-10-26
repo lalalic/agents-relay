@@ -6,7 +6,7 @@ import {
   decideJobLifecycle,
   decideTaskLifecycle,
 } from '../dist/workflow/lifecycle.js';
-import { schedule, transitionJobEvent, transitionTaskEvent } from '../dist/scheduler.js';
+import { refreshTaskDependencies, transitionJobEvent, transitionTaskEvent } from '../dist/task-transitions.js';
 import { decideJobReconcile } from '../dist/workflow/job-reconcile-v2.js';
 
 const task = state => ({
@@ -194,13 +194,13 @@ test('job cancel graph owns active-work cancellation effect', () => {
 test('graph reconcile releases satisfied dependencies', () => {
   const dep={...task('SUCCEEDED'),id:'dep'};
   const child={...task('DRAFT'),id:'child',dependencies:['dep']};
-  const scheduled=schedule({...job('ACTIVE'),tasks:[dep,child]});
+  const scheduled=refreshTaskDependencies({...job('ACTIVE'),tasks:[dep,child]});
   assert.equal(scheduled.tasks[1].state,'QUEUED');
 });
 
 
 test('production lifecycle source does not import the legacy stateDiagram definitions', () => {
-  for (const name of ['types.ts','workflow/lifecycle.ts','scheduler.ts']) {
+  for (const name of ['types.ts','workflow/lifecycle.ts','task-transitions.ts']) {
     const source=readFileSync(new URL('../src/'+name,import.meta.url),'utf8');
     assert.doesNotMatch(source,/workflow\/definitions(?:\.js)?['"]/ ,name+' must use v2 lifecycle definitions');
     assert.doesNotMatch(source,/from ['"]\.\/definitions\.js['"]/ ,name+' must not load the legacy lifecycle runtime');

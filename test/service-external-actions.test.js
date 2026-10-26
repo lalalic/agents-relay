@@ -15,7 +15,8 @@ const task = {
 };
 const job = {
   id:'service-job', title:'service', repository:'owner/repo', prNumber:7,
-  state:'ACTIVE', executionMode:'fixed', reviewEnabled:false, autoMerge:true,
+  state:'ACTIVE', reviewEnabled:false, autoMerge:true,
+  plans:[{id:'plan-1',round:1,status:'SUCCEEDED',trigger:{source:'initial'},objectiveStatus:'satisfied',plannerResult:{objective_status:'satisfied',next_tasks:[]}}],
   headSha:'abc123', continuation:null, createdAt:at, updatedAt:at, tasks:[task],
 };
 

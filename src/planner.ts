@@ -1,6 +1,5 @@
 import { buildReferenceFirstPrompt, renderAgentPrompt } from './agent-prompt-builder.js';
 import { readFile } from 'node:fs/promises';
-import { parseTestInjection } from './e2e-injection.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
@@ -31,7 +30,6 @@ export type PlannerTaskSpec = {
   dependencies?: string[];
   capabilities?: string[];
   workerRequirements?: WorkerRequirements;
-  testInjection?: Task['testInjection'];
   adapter?: AdapterName;
   output?: TaskOutput;
   routing?: RoutingDecision;
@@ -64,7 +62,6 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
   const decision = dispatchPlannerTrigger({
     manualPlan: manual && !hasUnblock,
     hasUnblock,
-    scheduledRun: Boolean(job.schedule?.currentRunSlot),
     initialPlan: (job.plans?.length ?? 0) === 0 && !job.tasks.some(task => task.kind === 'planner'),
   });
   if (!decision.accepted) throw new Error('Planner trigger graph rejected plan.requested');
@@ -88,7 +85,6 @@ function plannerTrigger(job: Job, manual = false): PlanTrigger {
     if (!cycle || cycle.consumedByPlannerTaskId) throw new Error('Planner trigger graph selected unblock without unblock facts');
     return { source: 'unblock', taskIds: cycle.taskIds, reason: cycle.reason, facts: cycle.facts, blockedHeadShas: cycle.baselineHeadShas, currentHeadSha: cycle.currentHeadSha, unblockSource: cycle.source };
   }
-  if (source === 'schedule') return { source: 'schedule' };
   if (source === 'initial') return { source: 'initial' };
   return { source: 'continuation' };
 }
@@ -146,13 +142,13 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
     if (!target || !unresolvedTask(target)) throw new Error(`Planner resolution for ${spec.id} must target one unresolved durable Task`);
   }
   const reviewerThread = spec.agentName === 'reviewer' ? prepareReviewerThreadDelivery(job, { id: spec.id, agentName: spec.agentName, reviewHeadSha }) : undefined, implementationThread = (spec.agentName === 'implementation' || spec.agentName == null) && job.implementationThreadId ? job.implementationThreadId : undefined, threadOwned = Boolean(reviewerThread || implementationThread);
-  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.agentName === 'reviewer' ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: objectiveRoot?.id ?? spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, testInjection: spec.testInjection, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
+  return createTaskEntity(job, { jobId: job.id, id: spec.id, title: spec.agentName === 'reviewer' ? 'Review' : spec.title, kind: 'work', priority: spec.priority ?? job.priority, storySize: spec.storySize ?? 'M', projectName: spec.projectName, agentName: spec.agentName, agentGraph: spec.agentGraph, review: spec.review, parentTaskId: objectiveRoot?.id ?? spec.parentTaskId ?? null, dependencies: spec.dependencies ?? [], capabilities: spec.capabilities ?? [], workerRequirements: threadOwned ? chatgptThreadRequirements(spec.workerRequirements) : spec.workerRequirements, adapter: threadOwned ? 'chatgpt' : (spec.adapter ?? 'codex'), chatgptThreadDelivery: reviewerThread, input: spec.input, output: spec.output, continuation: spec.continuation ?? null, continuationDeliveredAt: null, attempt: 0, maxAttempts: spec.maxAttempts ?? 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: spec.timeoutMs ?? taskOverallTimeoutMs(spec.storySize ?? 'M'), createdAt: now, updatedAt: now, planningDecisionId: decisionId, planningSource: source, planningRound: round, reviewHeadSha, resolution: resolution ? { ...resolution, state: 'proposed', owner: 'planner', updatedAt: now } : undefined });
 }
 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output) throw new Error(`Initial task ${task.id} requires an output contract`);
   if (!['codex', 'chatgpt'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
-  return { id: task.id, title: task.title, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, testInjection: task.testInjection, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
+  return { id: task.id, title: task.title, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
 
 function record(value: unknown, field = 'result'): Record<string, unknown> {
@@ -299,7 +295,6 @@ export function parsePlannerResult(value: unknown): PlannerResult {
       id, title: requiredPlannerTaskTitle(task.title, index), parentTaskId, input: task.input, priority, storySize,
       projectName: optionalString(task.projectName, 'projectName'), agentName: optionalString(task.agentName, 'agentName'), agentGraph, review,
       dependencies: stringArray(task.dependencies, 'dependencies'), capabilities: stringArray(task.capabilities, 'capabilities'), workerRequirements: requirements,
-      testInjection: parseTestInjection(task.testInjection ?? task['--test-injection']) ?? optionalString(task.testInjection ?? task['--test-injection'], `next_tasks[${index}].--test-injection`),
       adapter: adapter as AdapterName | undefined, output: output as TaskOutput, routing: route,
       continuation: task.continuation as Task['continuation'], maxAttempts, timeoutMs, resolution: resolutionProposal(task.resolution, `next_tasks[${index}].resolution`)
     };

@@ -11,7 +11,7 @@ const TASK_STATES = ['DRAFT','QUEUED','RUNNING','BLOCKED','SUCCEEDED','FAILED','
 const JOB_STATES = ['DRAFT','ACTIVE','COMPLETED','CANCELLED'] as const;
 
 const conditionRegistry = new ConditionRegistry([
-  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','autonomousJob','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady'])
+  ...new Set(['dependenciesSatisfied','dependenciesUnsatisfied','runnable','dispatchable','recoverableExecution','troubleshooterRecovery','troubleshooterTask','awaitingInteractiveDecision','retryAvailable','notMerged','autoMerge','prOpen','reviewDisabled','implementationComplete','headAvailable','mergeCapable','localCompletionAllowed','localMergeReady'])
 ].map(booleanCondition));
 const boolGuard = (name: string) => conditionRegistry.guard(name);
 export const lifecycleConditions = conditionRegistry;
@@ -46,7 +46,6 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   troubleshooterTask: boolGuard('troubleshooterTask'),
   awaitingInteractiveDecision: facts => facts.durableFacts.awaitingInteractiveDecision === true,
   retryAvailable: boolGuard('retryAvailable'),
-  autonomousJob: boolGuard('autonomousJob'),
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
@@ -59,15 +58,13 @@ export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {
   mergeCapable: boolGuard('mergeCapable'),
   localCompletionAllowed: (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => {
     const values = facts.durableFacts;
-    return values.jobActive === true && values.autoMergeEnabled === true && values.schedulePresent !== true
-      && values.implementationComplete === true && values.completionGateSatisfied === true
+    return values.jobActive === true && values.autoMergeEnabled === true && values.implementationComplete === true && values.completionGateSatisfied === true
       && values.reviewSatisfied === true
       && (values.localMergeRequired !== true || values.localMergeSucceeded === true);
   },
   localMergeReady: (facts: { readonly durableFacts: Readonly<Record<string, unknown>> }) => {
     const values = facts.durableFacts;
-    return values.jobActive === true && values.autoMergeEnabled === true && values.schedulePresent !== true
-      && values.implementationComplete === true && values.completionGateSatisfied === true
+    return values.jobActive === true && values.autoMergeEnabled === true && values.implementationComplete === true && values.completionGateSatisfied === true
       && values.reviewSatisfied === true && values.localMergePresent === true
       && values.reviewHeadCurrent === true && values.mergeAttemptReady === true;
   },

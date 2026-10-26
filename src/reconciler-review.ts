@@ -1,5 +1,5 @@
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
-import { completionGateSatisfied, schedule, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './scheduler.js';
+import { completionGateSatisfied, refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
 import { implementationComplete, implementationTasks } from './runtime-status.js';
 import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
@@ -36,7 +36,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
     const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
-      unscheduled: !job.schedule,
       reviewEnabled: job.reviewEnabled !== false,
       jobActive: job.state === 'ACTIVE' || job.projectionRecovery?.status === 'repairing',
       implementationComplete: implementationComplete(job),
@@ -147,7 +146,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Review the complete PR diff at this exact immutable head SHA, not only the dependency Tasks.',
       'Use the selected reviewer agent contract as the authoritative review protocol.',
       'This is a PRE-MERGE artifact approval gate: inspect exact PR head, requirements, tests and genuine blocking defects.',
-      'Do not block approval because automatic merge, Job COMPLETED, or post-merge E2E evidence has not occurred yet.',
+      'Do not block approval because automatic merge, Job COMPLETED, or post-merge validation has not occurred yet.',
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
@@ -205,7 +204,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     job.review = { outcome, headSha, taskId: reviewTaskId, evidence: null, updatedAt: now };
     job.updatedAt = now;
     await this.store.saveJob(job);
-    const ready = schedule(await this.store.load(job.id));
+    const ready = refreshTaskDependencies(await this.store.load(job.id));
     await this.store.saveJob(ready);
   }
   protected async selectReviewer(implementationTasks: readonly Task[], requirementsOverride?: WorkerRequirements): Promise<{ candidate: WorkerCandidate & { routing: RoutingDecision }; selection: WorkerSelection; reason: 'worker-router' }> {
@@ -280,7 +279,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       job: {
         id: job.id, title: job.title, objective: job.objective ?? null,
         description: job.description ?? null, priority: job.priority ?? null,
-        executionMode: job.executionMode, repository: job.repository,
+        repository: job.repository,
         prNumber: this.externalReviewPrNumber(job), state: job.state,
       },
       task: {

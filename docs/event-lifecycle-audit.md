@@ -37,7 +37,6 @@ Graph sources: `workflow/*.mmd`; declared events/effects: `src/workflow/contract
 | Planner orchestration | `planner.reconcile`, pending recovery and new-round effect | Process-close / terminal grace after published `planner.completed` is a side-effect supervision gap, not a separate outcome state |
 | Review lifecycle | Approval, changes-required, blocked, SHA binding | Verify replay races, stale head and idempotency |
 | Job lifecycle | PR merge/close, implementation completion | Ensure post-merge deployment evidence never holds completion open |
-| Scheduler | Scheduled-run and schedule-cycle graphs | Real-time schedule.tick ingestion vs ten-minute insurance must have one action owner |
 | Blockers and escalation | Authoritative-unblock, blocker-resolution, troubleshooter, escalation graphs | Transport and process exit telemetry do not have a dedicated reconciliation path |
 | Projection conflict | Projection conflict graph | GitHub comments/PR are collaboration projections; SQLite is operational authority |
 

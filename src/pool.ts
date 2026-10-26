@@ -3,13 +3,12 @@ import { EventBus, eventFor } from './events.js';
 import { Reconciler } from './reconciler.js';
 import { Job, Priority } from './types.js';
 import { GitHubWebhookWake } from './github-webhook.js';
-import { runScheduledBucketFromStore } from './scheduled-jobs.js';
-import { scheduleBucket } from './scheduler.js';
 import { ReconcileCoordinator, type ReconcileSignal } from './reconcile-coordinator.js';
 import type { EventRecord } from './types.js';
 import { errorMessage, observability, withObservabilityCorrelation } from './observability.js';
 import { jobHasActiveExecution } from './job-execution-slot.js';
-import { unblockNeedsNewPlan } from './unblock.js';
+import { pendingPlan } from './planner.js';
+import { decidePlannerOrchestration, plannerOrchestrationFacts } from './workflow/planner-orchestration-v2.js';
 import { pendingTroubleshooterRetries } from './troubleshooter.js';
 
 const RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
@@ -22,7 +21,9 @@ export function needsLifecycleReconciliation(job: Job, now = Date.now()): boolea
   if (job.tasks.length === 0) return false;
   if (job.state === 'ACTIVE' && job.localMerge?.status === 'failed' &&
       (!job.localMerge.nextAttemptAt || Date.parse(job.localMerge.nextAttemptAt) <= now)) return true;
-  if (job.executionMode === 'autonomous' && unblockNeedsNewPlan(job)) return true;
+  // The Graph owns continuation eligibility, including restart recovery.
+  const planning = decidePlannerOrchestration(plannerOrchestrationFacts(job, Boolean(pendingPlan(job))));
+  if (planning.accepted && planning.actions.length > 0) return true;
   if (pendingTroubleshooterRetries(job).length > 0) return true;
   if (job.tasks.some(task => (task.state === 'QUEUED' && task.executionId === null)
     || (task.state === 'RUNNING' && task.adapter === 'orchestrator' && task.executionId === null)
@@ -41,7 +42,6 @@ export class RepositoryWorkerPool {
   private pending = false;
   private readonly reconcileLocks = new Map<string, Promise<void>>();
   private readonly coordinator: ReconcileCoordinator;
-  private readonly scheduleSignalCoordinator: ReconcileCoordinator;
   private dispatchTail: Promise<void> = Promise.resolve();
   private watchedBus?: EventBus;
   constructor(
@@ -59,7 +59,6 @@ export class RepositoryWorkerPool {
       });
     };
     this.coordinator = new ReconcileCoordinator((jobId, signals) => this.consumeSignals(jobId, signals), reportCoordinatorError);
-    this.scheduleSignalCoordinator = new ReconcileCoordinator((jobId, signals) => this.consumeScheduleSignals(jobId, signals), reportCoordinatorError);
   }
   private async localTarget(jobId: string): Promise<{ job: Job; store: DurableStore } | null> {
     return this.resolveLocalJob(jobId);
@@ -96,18 +95,6 @@ export class RepositoryWorkerPool {
     return `event.${event.type}`;
   }
 
-  private async consumeScheduleSignals(jobId: string, signals: readonly ReconcileSignal[]): Promise<void> {
-    const event = [...signals].reverse().find(item => item.event?.type === 'schedule.tick')?.event;
-    const bucket = typeof event?.data?.bucket === 'string' ? event.data.bucket : null;
-    const tickAt = new Date(typeof event?.data?.tickAt === 'string' ? event.data.tickAt : event?.timestamp ?? Date.now());
-    if (!bucket || Number.isNaN(tickAt.getTime())) return;
-    const target = await this.localTarget(jobId);
-    if (!target) return;
-    await runScheduledBucketFromStore(target.store, { jobId, bucket }, {
-      reconcile: async () => this.reconcileLocalJob(jobId, 'schedule.tick'),
-      idle: async () => {},
-    }, tickAt);
-  }
 
   async reconcileLocalJob(jobId: string, reason = 'local.request'): Promise<void> {
     const target = await this.localTarget(jobId);
@@ -146,7 +133,8 @@ export class RepositoryWorkerPool {
       const ready = job.tasks.filter(task => (task.state === 'QUEUED' && task.executionId === null) || (task.state === 'DRAFT' && task.dependencies.length > 0)).length;
       const expiredRunning = job.tasks.some(task => ['RUNNING', 'QUEUED'].includes(task.state) && task.executionId !== null && task.leaseExpiresAt !== null && new Date(task.leaseExpiresAt).getTime() <= Date.now());
       if (!needsLifecycleReconciliation(job)) continue;
-      const allowance = Math.max(1, Math.min(capacity, ready || (expiredRunning ? 1 : 0) || 1));
+      // A Graph-selected Planner continuation does not reserve a Task worker slot.
+      const allowance = ready || expiredRunning ? Math.max(1, Math.min(capacity, ready || 1)) : 0;
       try {
         await this.reconcileExclusive(job.id, async () => {
           await this.makeReconciler(store, allowance).reconcile(job.id);
@@ -197,10 +185,6 @@ export class RepositoryWorkerPool {
     const unsubscribe = await bus.subscribeAll(async event => {
       const routedWebhook = event.type === 'github.webhook' && event.data?.coordinatorRouted === true;
       const ingressWebhook = event.type === 'github.webhook' && event.data?.coordinatorIngress === true && !routedWebhook;
-      if (event.type === 'schedule.tick') {
-        await this.scheduleSignalCoordinator.acceptTransport({ jobId: event.job_id, reason: this.signalReason(event), event });
-        return;
-      }
       if (ingressWebhook) return;
       if (routedWebhook) return;
       const lifecycle = ['task.started', 'task.progress', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
@@ -218,23 +202,6 @@ export class RepositoryWorkerPool {
       await unsubscribe();
       if (this.watchedBus === bus) this.watchedBus = undefined;
     };
-  }
-  async scheduleTickSignal(bus: EventBus | undefined, job: Job, now = new Date()): Promise<void> {
-    if (!job.schedule) return;
-    const event = eventFor(
-      job.id,
-      'scheduler',
-      null,
-      'schedule.tick',
-      'queued',
-      `Schedule tick for ${job.schedule.nextRunAt}`,
-      'orchestrator',
-      { bucket: scheduleBucket(new Date(job.schedule.nextRunAt)), tickAt: now.toISOString() },
-      { agent: 'relay', component: 'scheduler-timer' },
-    );
-    // Use the same coordinator-owned schedule path whether transport is available or not.
-    if (bus) { await bus.publish(event); return; }
-    await this.scheduleSignalCoordinator.accept({ jobId: job.id, reason: this.signalReason(event), event });
   }
 
   async webhookSignal(_bus: EventBus | undefined, _wake: GitHubWebhookWake): Promise<void> {

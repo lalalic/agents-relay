@@ -2,7 +2,7 @@
 
 Agents Relay is a TypeScript runtime for durable asynchronous agent Jobs driven locally by SQLite and canonical workflow Graphs. The EventBus wakes reconciliation; an EventBus message or GitHub PR comment is never the lifecycle authority. Job, Plan, Task, Review, Execution, Lease and Recovery state survive daemon restarts in SQLite.
 
-V2 uses a read-only local SQLite Job Registry for discovery. The immutable jobId selects the Job Store even when prNumber is zero; scheduled slot claims are atomic across processes. GitHub is **audit-only**: its PR/head/publish events are persisted for reporting, never consulted to start, stop, or complete local Workflows. Local Git delivery and its confirmed merge receipt—not a remote PR MERGED fact—gate Graph completion. Job creation and local Task operations require no GitHub authentication or PR.
+V2 uses a read-only local SQLite Job Registry for discovery. The immutable jobId selects the Job Store even when prNumber is zero; lifecycle transitions are atomic across processes. GitHub is **audit-only**: its PR/head/publish events are persisted for reporting, never consulted to start, stop, or complete local Workflows. Local Git delivery and its confirmed merge receipt—not a remote PR MERGED fact—gate Graph completion. Job creation and local Task operations require no GitHub authentication or PR.
 
 
 The canonical V2 architecture contract is
@@ -23,7 +23,7 @@ flowchart LR
     Coordinator --> Graphs[Canonical Mermaid Graph Engine]
     Graphs --> Effects[Stateless actions / effects]
     Effects --> Store
-    Store --> Views[Dashboard / Scheduler / Recovery]
+    Store --> Views[Dashboard / Recovery]
     Effects --> Outbox[Durable external-action outbox]
     Outbox --> GH[GitHub Commit / PR / Review / Merge API]
     GH --> Facts[Confirmed external facts]
@@ -46,8 +46,6 @@ it cannot replace the durable SQLite record.
 | Planner orchestration | [`workflow/planner-orchestration.mmd`](workflow/planner-orchestration.mmd) |
 | Blocker resolution | [`workflow/blocker-resolution.mmd`](workflow/blocker-resolution.mmd) |
 | Authoritative unblock | [`workflow/authoritative-unblock.mmd`](workflow/authoritative-unblock.mmd) |
-| Scheduled run | [`workflow/scheduled-run.mmd`](workflow/scheduled-run.mmd) |
-| Schedule cycle | [`workflow/schedule-cycle.mmd`](workflow/schedule-cycle.mmd) |
 | Troubleshooter | [`workflow/troubleshooter.mmd`](workflow/troubleshooter.mmd) |
 | Escalation | [`workflow/escalation.mmd`](workflow/escalation.mmd) |
 | Related-task action policy | [`workflow/task-related-action.mmd`](workflow/task-related-action.mmd) |
@@ -70,7 +68,7 @@ Standalone Job context. Put a Mermaid block first when a workflow/state/architec
 EOF
 
 npx agents-relay job create --repo OWNER/REPO \
-  --id job-1 --title "Objective" --objective-file job.md --mode fixed
+  --id job-1 --title "Objective" --objective-file job.md
 
 # The orchestrator decides the initial batch separately
 cat > task.md <<'EOF'
@@ -102,24 +100,23 @@ npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id chil
 npx agents-relay task update --repo OWNER/REPO --pr 12 --id job-1 --task-id child --queue
 ~~~
 
-Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created unscheduled Job is DRAFT, creating executable work activates it, and scheduled Jobs are ACTIVE because the scheduler is allowed to advance them. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, PR, and schedule facts and is never persisted as lifecycle truth.
+Jobs separate durable lifecycle from derived runtime status. Durable lifecycle is `DRAFT | ACTIVE | COMPLETED | CANCELLED`: a newly created Job is DRAFT, and creating executable work or starting the Planner activates it. Runtime status (`IDLE`, `WAITING`, `QUEUED`, `RUNNING`, `BLOCKED`, `FAILED`, `REVIEWING`, `MERGE_PENDING`, `MERGED`, or `CANCELLED`) is computed from Tasks, Review, and locally confirmed merge facts and is never persisted as lifecycle truth.
 
 Lifecycle transition authority lives in the directly renderable canonical flowchart sources linked in [Workflow graph navigation](#workflow-graph-navigation). Git history owns prior graph versions; the working tree contains only the current graph set.
 
-The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, Schedule, and Troubleshooter orchestration branches are defined by the canonical workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
+The canonical Mermaid Graph Engine is the authoritative durable workflow decision path. Job/Task lifecycle transitions plus Review, Planner, Blocker/Unblock, and Troubleshooter orchestration branches are defined by the canonical workflow graphs and executed through the shared graph runtime. TypeScript supplies facts and primitive action/effect implementations; it must not duplicate those workflow branches as a second procedural state machine.
 
 Job objectives and Task inputs are Markdown. Prefer `--objective-file` / `--input-file` (use `-` for stdin) for durable long-form context; inline `--objective` / `--input` remain for short/simple text and are mutually exclusive with the file variants. When a diagram materially clarifies the work, put Mermaid first and then Markdown detail. A newly created Job must capture enough context to finish independently of the originating chat. Its PR body contains exactly one hidden `agents-relay:job:v1` metadata marker followed by the objective Markdown; there is no separate Job comment duplicating the objective. Objective and Job metadata updates rewrite that same PR body. Legacy Job-comment markers remain readable and are migrated into the PR body on the next Job save.
 
-Jobs default to `fixed`. `job create` persists only the durable job and never
+Every Job is objective-driven. `job create` persists only the durable Job and never
 creates executable tasks. The caller can either create work directly with
 `task create` or invoke the Planner explicitly with `plan`. Direct
 orchestrator-created tasks are persisted directly and are not wrapped in a
 synthetic Plan. `agents-relay plan` works immediately on a zero-task DRAFT Job,
 activates it, persists a real `plan-N` planning round, and materializes validated
-`next_tasks`. Autonomous reconciliation still does not invent the first round
-for an untouched zero-task Job; after explicit work begins, later autonomous
-planning rounds reuse the same planning implementation. Fixed jobs never grow
-another planning round automatically.
+`next_tasks`. Reconciliation does not invent the first round for an untouched
+zero-task DRAFT Job; once work starts, every Job automatically creates later
+Planner rounds until its latest Plan is satisfied.
 
 Manual planning syntax:
 
@@ -130,8 +127,7 @@ npx agents-relay plan --repo OWNER/REPO --pr 12 --id job-1 --prompt-file guidanc
 
 The optional prompt is additional round guidance; it does not replace the durable Job objective. New planning rounds use `plan-N`; historical `planner-N` records remain readable.
 
-The durable status JSON and dashboard show the mode and planning provenance. An
-autonomous runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
+The durable status JSON and dashboard show planning provenance. The runtime uses the bundled `skills/agents-relay/agents/planner.agent.md` by default; `--planner-command` is an optional override
 snapshot as JSON on stdin and must return `{ "objective_status": "in_progress"|"satisfied", "assessment": "...", "next_tasks": [...] }`.
 Planner-created tasks use stable IDs and the existing parent/subtask tree, so
 retries and daemon restarts do not create duplicate work.
@@ -140,9 +136,7 @@ Task producers must follow `skills/agents-relay/contracts/task-job-contract.md`;
 Execution routing is code-driven: Relay builds complete executable worker+model routes from authoritative runtime/model/resource facts, merges profile defaults with the user's explicit `[choices]`, deduplicates them, removes only impossible routes via hard gates, then calls the generic typed `decide(request, contract)` boundary exactly once with one merged choice list and the `[routing-instruction]` text forwarded verbatim. Task/resource/capability signals and the routing instruction are soft decision facts; decision failure falls back deterministically to a usable Codex default route. See [Execution Router and typed decisions](docs/worker-model-routers.md).
 All task producers use the same story-size contract: `S`≈5 minutes, `M`≈15 minutes, and `L`≈45 minutes of inactivity, with `M` as the default. `high` reasoning doubles that inactivity window. Accepted `task.started` and newer `task.progress` events from the exact current execution reset it. ChatGPT Browser Worker start-ack timeout is derived as one third of the effective inactivity timeout, clamped between 1 and 5 minutes. Orchestrators and planners should choose `storySize`, not raw timeout milliseconds; `--timeout` remains only as an explicit compatibility/debug override.
 
-Autonomous jobs can also be scheduled. The Job marker stores a five-field cron expression, IANA timezone, next run, and missed-run/concurrency policy. The daemon evaluates the SQLite-backed managed Job view and validates durable schedule facts before claiming a due slot. A repository heartbeat invokes `tick` at 10-minute resolution. See
-[Scheduled autonomous jobs](docs/scheduled-autonomous-jobs.md) for the exact
-operational contract.
+There is no Job scheduling or cron support. Reconciliation resumes objective planning from durable state, including after a missed wake-up or restart. See [objective-driven Jobs](docs/objective-driven-jobs.md).
 
 GitHub projection creates or reuses a display PR after a meaningful source-branch commit; `job adopt` is reserved for existing legacy PR bindings. Re-running it is idempotent: it reuses the PR and maintains exactly one trusted agents-relay:job:v1 marker. Job creation is always create-only and always enables auto-merge; `--no-auto-merge` is not a `job create` option. Existing Jobs can still change that setting with `job update`. Task execution options belong to `task create`, and the orchestrator may create zero, one, or multiple initial Tasks according to user intent.
 
@@ -294,14 +288,14 @@ flowchart LR
     Unblock --> Repair
 ```
 
-The escalation graph is the authority for what happens after Neo returns: `resolved` selects resume recovery, `failed` selects technical-failure handling, and only `needs_user` selects the block-for-user action. Notification mechanics stay caller-described through `--on-needs-user`; Relay does not bind WeChat, Discord, iMessage, or another channel. Only after the failure cause is repaired does Troubleshooter retry the original FAILED task and verify durable progress. Historical failures from older scheduled autonomous runs do not spawn recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
+The escalation graph is the authority for what happens after Neo returns: `resolved` selects resume recovery, `failed` selects technical-failure handling, and only `needs_user` selects the block-for-user action. Notification mechanics stay caller-described through `--on-needs-user`; Relay does not bind WeChat, Discord, iMessage, or another channel. Only after the failure cause is repaired does Troubleshooter retry the original FAILED task and verify durable progress. Historical resolved failures do not spawn duplicate recovery work, and deterministic reconciliation does not duplicate a Troubleshooter task for the same failed attempt.
 
 
 ### Authoritative unblock and Planner history
 
 Dependency release and runtime unblock are separate concepts. Dependency completion simply releases DAG work. A runtime/external blocker remains `BLOCKED` until `task unblock`, `job unblock`, or blocker-Job resolution records the blocked baseline/current evidence and emits `task.unblocked`, transitioning the Task to `UNBLOCKED`.
 
-For autonomous Jobs, `UNBLOCKED` is historical: Relay does not retry that old Task. The unblock evidence becomes the trigger/context of the next Planner round. Every Planner round is a first-class `agents-relay:plan:v1` PR comment. Relay creates that Plan comment before generated Task comments, then updates the same comment with the Planner assessment and generated Task IDs, preserving causal order in the PR timeline. Fixed Jobs may transition `UNBLOCKED -> QUEUED` through retry after the authoritative unblock record exists. Legacy Job `changeCycle` data is accepted only as compatibility input and is not written by the current model.
+For every Job, unblock evidence becomes durable recovery context. Relay retries the same authorized Troubleshooter, while ordinary work uses Planner-owned recovery when necessary. Every Planner round is a first-class `agents-relay:plan:v1` record. It is persisted before generated Tasks, then updated with the Planner assessment and generated Task IDs. Legacy Job `changeCycle` data is accepted only as compatibility input and is not written by the current model.
 
 
 ### Browser Workspace product boundary

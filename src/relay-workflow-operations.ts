@@ -49,7 +49,7 @@ export class SQLiteWorkflowOperations {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as {json?:string}|undefined;
       if (!row?.json) throw new Error(`Unknown Job ${jobId}`);
       const current = normalizeRelayJob(row.json);
-      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task,current.executionMode));
+      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task));
       const previous = structuredClone(current);
       const next = mutation(current);
       if (next.id !== jobId) throw new Error('Cannot change authoritative Job identity');
@@ -110,7 +110,7 @@ export class SQLiteWorkflowOperations {
       const row = this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(jobId) as { json?: string } | undefined;
       if (!row?.json) throw new Error(`Local authoritative Job ${jobId} not found`);
       const current = normalizeRelayJob(row.json);
-      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task, current.executionMode));
+      current.tasks = current.tasks.map(task => normalizeLegacyTaskLifecycle(task));
       const previous = structuredClone(current);
       const before = JSON.stringify(current);
       const next = mutation(current);

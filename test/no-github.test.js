@@ -42,7 +42,7 @@ const job = (items=[task()]) => ({
   id:'local-job', title:'Local workflow', repository:'local/test', prNumber:1,
   state:'ACTIVE', executionMode:'fixed', reviewEnabled:false, autoMerge:true,
   headSha:'local-job-head', createdAt:timestamp(), updatedAt:timestamp(),
-  continuation:null, tasks:items,
+  continuation:null, tasks:items, plans:[{jobId:'local-job',id:'plan-1',round:1,source:'model-planner',previousPlanId:null,trigger:{source:'initial'},status:'SUCCEEDED',objectiveStatus:'satisfied',assessment:'fixture objective satisfied',generatedTaskIds:items.map(t=>t.id),createdAt:timestamp(),updatedAt:timestamp()}],
 });
 function fixture() {
   const db=new SQLiteRelayStore(':memory:');

@@ -13,7 +13,6 @@ changes["state: CHANGES_REQUIRED"]
 blocked["state: BLOCKED"]
 stale["state: STALE"]
 
-unscheduledNone["guard: unscheduled"]
 reviewEnabledNone["guard: reviewEnabled"]
 jobActiveNone["guard: jobActive"]
 implementationCompleteNone["guard: implementationComplete"]
@@ -21,7 +20,6 @@ headAvailableNone["guard: headAvailable"]
 completionGateNone["guard: completionGateSatisfied"]
 noActiveReviewNone["guard: noActiveReviewTask"]
 noApprovedReviewNone["guard: noApprovedCurrentReview"]
-unscheduledStale["guard: unscheduled"]
 reviewEnabledStale["guard: reviewEnabled"]
 jobActiveStale["guard: jobActive"]
 implementationCompleteStale["guard: implementationComplete"]
@@ -49,9 +47,7 @@ fixChanges["action: review.createFix"]
 mergePending["action: review.requestMerge"]
 mergeStarted["action: review.requestMerge"]
 
-none -->|on: reconcile| unscheduledNone
-unscheduledNone -->|true| reviewEnabledNone
-unscheduledNone -->|false| none
+none -->|on: reconcile| reviewEnabledNone
 reviewEnabledNone -->|true| jobActiveNone
 reviewEnabledNone -->|false| none
 jobActiveNone -->|true| implementationCompleteNone
@@ -68,9 +64,7 @@ noApprovedReviewNone -->|true| createNone
 noApprovedReviewNone -->|false| none
 createNone --> pending
 
-stale -->|on: reconcile| unscheduledStale
-unscheduledStale -->|true| reviewEnabledStale
-unscheduledStale -->|false| stale
+stale -->|on: reconcile| reviewEnabledStale
 reviewEnabledStale -->|true| jobActiveStale
 reviewEnabledStale -->|false| stale
 jobActiveStale -->|true| implementationCompleteStale

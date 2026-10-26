@@ -1,3 +1,4 @@
+import { currentJobMetadata } from './relay-job-snapshot-reads.js';
 import { AgentRegistration, Job, Plan, Task } from './types.js';
 export const JOB_MARKER = 'agents-relay:job:v1';
 export const TASK_MARKER = 'agents-relay:task:v1';
@@ -30,7 +31,7 @@ function contentBeforeDelimiter(body: string, heading: string, end: string): str
 
 function jobMetadata(job: Job): Omit<Job, 'objective' | 'description' | 'tasks' | 'plans'> {
   const { objective: _objective, description: _description, tasks: _tasks, plans: _plans, ...metadata } = job;
-  return metadata;
+  return currentJobMetadata(metadata);
 }
 
 export function renderJobBody(job: Job): string {
@@ -80,9 +81,9 @@ export function parseJob(body: string): Job | null {
   const bodyObjective = markerEnd >= 0 ? body.slice(markerEnd + 3).trim() || undefined : undefined;
   const objective = job.objective ?? job.description ?? contentBeforeDelimiter(body, '\n## Objective\n\n', JOB_OBJECTIVE_END) ?? markdownSection(body, '\n## Objective\n') ?? bodyObjective;
   const parsed = { ...job, objective };
-  if (parsed.executionMode === undefined) return { ...parsed, executionMode: 'fixed' };
-  if (parsed.executionMode !== 'fixed' && parsed.executionMode !== 'autonomous') return null;
-  return parsed;
+  // Historical markers may carry mode/schedule; neither is live Job state.
+  const { executionMode: _legacyMode, schedule: _legacySchedule, ...current } = parsed as Job & { executionMode?: unknown; schedule?: unknown };
+  return current;
 }
 export function parseTask(body: string): Task | null {
   const task = parseMarker<Task>(body, TASK_MARKER);

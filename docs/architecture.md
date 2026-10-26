@@ -16,11 +16,10 @@ Provide a generic, shareable async agent job system where agents can create dura
 - **GitHub pull request** — durable top-level job container and audit surface.
 - **PR body Job marker + objective** — the canonical durable Job surface: hidden job metadata/continuation state followed by the visible Markdown objective.
 - **Task marker comments** — append-friendly durable child-task records.
-- **Agents Relay daemon** — reconciler, scheduler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
+- **Agents Relay daemon** — reconciler, dispatcher, lease/recovery manager, continuation engine, and dashboard server.
 - **Agent adapters** — agent execution backends such as Codex and ChatGPT browser workers.
 - **Event adapter** — required lifecycle channel for model-backed workers. Correlated terminal events drive task-state transitions, while GitHub PR/task markers persist the resulting durable state.
 - **Periodic watchdog** — low-frequency recovery sweep that re-reads durable PR/job state to repair missed wakeups and recover stale execution state (30 minutes with webhook mode by default; 5 minutes without webhooks for compatibility).
-- **Autonomous scheduler** — the always-on `agents-relayd` process is the sole scheduler heartbeat. It evaluates the disposable in-process Job view restored from SQLite every ten minutes, validates durable `nextRunAt`, claims due slots, and reconciles them locally; see [scheduled autonomous jobs](scheduled-autonomous-jobs.md).
 - **Artifact references** — large/private outputs stay outside GitHub comments; task records store references.
 
 ## Agent network slice
@@ -31,22 +30,13 @@ Registration records identity/name, role and responsibility, claimed capabilitie
 
 The registry does not yet execute remote agents or expose a public marketplace. A constrained ChatGPT/voice/mobile runtime should eventually use a small authenticated service surface with only `POST /jobs` (intention-only/public jobs) and `GET /jobs/:id`; credentials and private payloads must stay out of PR markers and events. Private-data/credential jobs, multi-owner trust, isolation, billing, and public discovery are future security-gated work.
 
-## Execution modes
+## Objective-driven Jobs
 
-Jobs persist `executionMode` as `fixed` or `autonomous`; missing mode in legacy
-markers is read as `fixed`. Fixed remains the default. Direct orchestrator work is created with `task create`; explicit planner-driven decomposition uses `plan`, and autonomous continuation uses the same planner-round implementation when Relay invokes the planner. Autonomous jobs use the existing task records and parent hierarchy:
-when all currently runnable work is settled and no planner task is active,
-reconciliation appends one durable `kind: "planner"` `plan-N` task. Historical `planner-N` task IDs remain readable. The planner returns
-typed `objective_status`, `assessment`, and `next_tasks` values. Each
-`next_tasks` item becomes a normal work Task whose `planningDecisionId`/`planningRound` record provenance. Its optional `parentTaskId` is semantic ownership in the business Task tree and never points to a `plan-N` round; `dependencies` independently express execution prerequisites.
-
-Stable task IDs and append-if-same-definition behavior make planner retries
-idempotent. Leases, owner recovery, and completion decisions remain in the
-reconciler; planner output never directly marks a job complete.
+All Jobs use the same durable Planner workflow. After the executable Task batch settles, reconciliation requests another `plan-N` round until the latest successful Plan records `objective_status: satisfied`. Each generated Task retains its `planningDecisionId` and `planningRound`, while semantic `parentTaskId` never targets a Plan. Failed or blocked work requires recovery, not false completion. Legacy `executionMode` and `schedule` marker fields are ignored on read and never written by current code. There is no Scheduler entity or time-driven Job cadence.
 
 ## Reconciliation rule
 
-Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL is the single local source of truth for operational execution state and the projection outbox. Any daemon in-memory Job overview is disposable and reconstructed from SQLite; there is no separate persisted JSON Job cache. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next autonomous planner task only from durable settled state.
+Every wake-up means only: "the durable state may have changed." In v2 the daemon reloads operational Job/Task state from RelayStore and incorporates fresh typed GitHub facts when they are available; it does not require a GitHub round trip for every reconcile. GitHub remains the durable collaboration projection, while SQLite/WAL is the single local source of truth for operational execution state and the projection outbox. Any daemon in-memory Job overview is disposable and reconstructed from SQLite; there is no separate persisted JSON Job cache. The daemon never advances a job solely because an event claimed something happened. Event-driven and periodic reconciles are single-flight within one process; a periodic sweep may create the next objective-driven Planner round only from durable settled state.
 
 ## State
 
@@ -67,24 +57,18 @@ Runtime-status projection intentionally remains TypeScript in `src/runtime-statu
 
 ```mermaid
 flowchart TD
-    F[Job + Task + Review + PR + schedule facts] --> M{PR merged?}
-    M -- yes --> MERGED
-    M -- no --> C{Closed or Job cancelled?}
-    C -- yes --> CANCELLED
-    C -- no --> D{Job DRAFT?}
-    D -- yes --> IDLE
-    D -- no --> S{Scheduled recurring Job?}
-    S -- yes --> SP[Project Task activity; otherwise WAITING]
-    S -- no --> RV{Review approved or active/required?}
-    RV -- approved --> MERGE_PENDING
-    RV -- active/required --> REVIEWING
-    RV -- no --> TP[Project Task activity: RUNNING > QUEUED > BLOCKED > FAILED > WAITING]
-    TP --> NM{No-review implementation complete?}
-    NM -- yes --> MERGE_PENDING
-    NM -- no --> IDLE
+    F[Durable Job and Task facts] --> C{Job terminal?}
+    C -->|yes| T[COMPLETED or CANCELLED]
+    C -->|no| D{DRAFT Job?}
+    D -->|yes| IDLE
+    D -->|no| R{Runnable Task or Reviewer?}
+    R -->|yes| BUSY[RUNNING / QUEUED / REVIEWING]
+    R -->|no| G{Failure or pending work?}
+    G -->|yes| WAIT[FAILED / BLOCKED / WAITING]
+    G -->|no| MERGE[MERGE_PENDING or IDLE]
 ```
 
-Within Task activity, runnable/running work outranks blocked or failed siblings. `BLOCKED` or `FAILED` describes the Job only when no `RUNNING` or `QUEUED` work can still advance it. A scheduled `ACTIVE` Job with no current executable activity projects `WAITING` between runs.
+Within Task activity, runnable/running work outranks blocked or failed siblings. `BLOCKED` or `FAILED` describes the Job only when no `RUNNING` or `QUEUED` work can still advance it. An ACTIVE Job waiting for Planner evidence remains nonterminal.
 
 Task lifecycle is defined and rendered from [`workflow/task-lifecycle.mmd`](../workflow/task-lifecycle.mmd). This document explains the semantics but does not duplicate the transition table.
 
@@ -113,7 +97,7 @@ Task submission is append-only at creation time, which avoids a single giant mut
 1. An agent creates a durable task under the Job.
 2. A task comment is created durably.
 3. The relay wakes and reloads the PR.
-4. Scheduler marks dependency-satisfied tasks ready.
+4. Reconciler Graph transitions dependency-satisfied Tasks to QUEUED.
 5. Execution Router builds complete worker+model routes using declared requirements plus fresh shared usage/runtime facts, removes only impossible routes, chooses one route in a single typed decision, and persists worker/model fields before launch. Decision failure falls back to a usable Codex default route.
 6. Final review uses the same worker-router boundary: hard constraints are applied first, then worker and provider/model diversity are preferences. The durable review task records the selected worker and reason.
 7. Dispatcher validates the selected worker's routing/capabilities and claims a lease.

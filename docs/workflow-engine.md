@@ -22,8 +22,6 @@ Production orchestration-policy graphs:
 - `workflow/planner-orchestration.mmd`
 - `workflow/blocker-resolution.mmd`
 - `workflow/authoritative-unblock.mmd`
-- `workflow/scheduled-run.mmd`
-- `workflow/schedule-cycle.mmd`
 - `workflow/troubleshooter.mmd`
 - `workflow/escalation.mmd`
 - `workflow/task-related-action.mmd`

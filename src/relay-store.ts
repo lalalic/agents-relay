@@ -1,4 +1,4 @@
-import { loadRelayJob, listRelayJobs } from './relay-job-snapshot-reads.js';
+import { currentJobMetadata, loadRelayJob, listRelayJobs } from './relay-job-snapshot-reads.js';
 import { SQLiteWorkflowOperations } from './relay-workflow-operations.js';
 import { taskLifecycleV2 } from './workflow/definitions-v2.js';
 import { dispatchWorkflowGraphSync } from './workflow/dispatcher.js';
@@ -288,7 +288,7 @@ export class SQLiteRelayStore implements RelayStore {
     this.db.prepare(`
       INSERT INTO job_snapshot(job_id,json,updated_at) VALUES(?,?,?)
       ON CONFLICT(job_id) DO UPDATE SET json=excluded.json, updated_at=excluded.updated_at
-    `).run(job.id, JSON.stringify(job), now);
+    `).run(job.id, JSON.stringify(currentJobMetadata(job)), now);
   }
   async loadAgents(): Promise<AgentRegistration[] | null> {
     const observed = this.scopeJobId

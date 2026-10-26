@@ -14,23 +14,23 @@ Create an isolated store with `createIsolatedEnvironment`; pass its returned `en
 
 ## Isolated Graph/SQLite regressions (Task 56, partial L3)
 
-`npm run test:verification:l3` runs foundation checks plus two production Graph/scheduler/SQLite regression tests. They validate persisted dependency release across a database restart and rejection of duplicate terminal transitions. Each test uses a temporary `AGENTS_RELAY_STORE_DIR`-style directory; no production Job or daemon is changed.
+`npm run test:verification:l3` runs foundation checks plus two production Graph/Reconciler/SQLite regression tests. They validate persisted dependency release across a database restart and rejection of duplicate terminal transitions. Each test uses a temporary `AGENTS_RELAY_STORE_DIR`-style directory; no production Job or daemon is changed.
 
 **Coverage limit:** These are component integration regressions, **not** the required full-path L3 simulator. They do not exercise production events-bus ingress, active Reconciler dispatch/worker lifecycle, human escalation, merge effects, replay JSON/Markdown generation, or the required broader fault matrix. Do not report the L3 objective as PASS from these tests alone.
 
 ## Production ingress regression (Job 481, Task 56)
 
-`npm run test:verification:l3` also runs `l3-ingress.test.mjs`: an isolated unified SQLite authority under a temporary `AGENTS_RELAY_STORE_DIR`, with real `MemoryEventBus.subscribe`, `Reconciler.watch`/`handleEvent`, production Graph transitions and scheduler-driven dependency release. It asserts persisted state, tests duplicate/stale event rejection, and confirms that a deliberately wrong-generation event fails the expected-success assertion. No external Git or provider calls are made.
+`npm run test:verification:l3` also runs `l3-ingress.test.mjs`: an isolated unified SQLite authority under a temporary `AGENTS_RELAY_STORE_DIR`, with real `MemoryEventBus.subscribe`, `Reconciler.watch`/`handleEvent`, production Graph transitions and Graph-driven dependency release. It asserts persisted state, tests duplicate/stale event rejection, and confirms that a deliberately wrong-generation event fails the expected-success assertion. No external Git or provider calls are made.
 
 ### Full production-path simulator
 
-`l3-simulator.mjs` drives the real `Reconciler`, Graph engine, scheduler, event ingress and SQLite store. Only the worker/provider and local Git delivery are mocked. `l3-full-path.test.mjs` covers worker lifecycle, immutable review changes/re-review, restart and parallel dependencies, durable merge failure receipts, and deliberately asserts terminal state from SQLite. Use `runFullPath({ outputDir })` to export unified `report.json` and `report.md` evidence. The simulator never writes lifecycle state directly after setup.
+`l3-simulator.mjs` drives the real `Reconciler`, Graph engine, dependency reconciliation, event ingress and SQLite store. Only the worker/provider and local Git delivery are mocked. `l3-full-path.test.mjs` covers worker lifecycle, immutable review changes/re-review, restart and parallel dependencies, durable merge failure receipts, and deliberately asserts terminal state from SQLite. Use `runFullPath({ outputDir })` to export unified `report.json` and `report.md` evidence. The simulator never writes lifecycle state directly after setup.
 
 The older `cli.mjs replay` remains a trace validator for L1/foundation fixtures; it is not evidence of a production-path run.
 
 ### Bounded production ingress replay
 
-Run `node test/verification/l3-replay.mjs test/verification/l3-scenarios/dependency-release.json /tmp/l3-evidence`. This runs a fresh MemoryEventBus → Reconciler.watch → production Graph/scheduler → isolated SQLite, and generates `report.json` and `report.md`. The deliberately invalid `broken-premature-completion.json` exits nonzero; terminal assertions read the saved SQLite state, not input trace terminal markers. `npm run test:verification:l3` runs its positive and negative replay regression tests. This is a bounded two-task replay, **not** all required Job 481 L3 workflows; escalation/re-review/merge/restart and full worker dispatch remain unverified.
+Run `node test/verification/l3-replay.mjs test/verification/l3-scenarios/dependency-release.json /tmp/l3-evidence`. This runs a fresh MemoryEventBus → Reconciler.watch → production Graph/reconciliation → isolated SQLite, and generates `report.json` and `report.md`. The deliberately invalid `broken-premature-completion.json` exits nonzero; terminal assertions read the saved SQLite state, not input trace terminal markers. `npm run test:verification:l3` runs its positive and negative replay regression tests. This is a bounded two-task replay, **not** all required Job 481 L3 workflows; escalation/re-review/merge/restart and full worker dispatch remain unverified.
 
 ## Independent B verification (2026-10-19)
 
@@ -52,7 +52,7 @@ Two new L3 negative/safety regressions cover sequential blocked Planner/Worker/R
 
 ## Third review / A integration boundary
 
-A's `f0e1462` introduces `WorkflowActionLedger`, a tri-state condition registry and a dispatcher verification option. B independently ran A's two focused ledger integration test files (3/3 PASS) without editing A's worktree. They establish isolated reserve/deduplicate/Unknown behavior, **not** production Reconciler/Scheduler invocation, authoritative execution-generation fencing, crash-consistent publish, or successful objective verification. B must not simulate successful completion by direct SQLite writes. The full multi-stage positive objective path remains NOT_RUN pending the production dispatch integration and verified postconditions. Browser-specific focused E2E evidence is under `docs/evidence/dashboard-b-third-review/`.
+A's `f0e1462` introduces `WorkflowActionLedger`, a tri-state condition registry and a dispatcher verification option. B independently ran A's two focused ledger integration test files (3/3 PASS) without editing A's worktree. They establish isolated reserve/deduplicate/Unknown behavior, **not** production Reconciler/dependency reconciliation invocation, authoritative execution-generation fencing, crash-consistent publish, or successful objective verification. B must not simulate successful completion by direct SQLite writes. The full multi-stage positive objective path remains NOT_RUN pending the production dispatch integration and verified postconditions. Browser-specific focused E2E evidence is under `docs/evidence/dashboard-b-third-review/`.
 
 ## Fourth review: A action-ledger cross-branch gates
 
@@ -70,7 +70,7 @@ Cross-branch tests now explicitly reject missing, mismatched execution IDs and a
 
 ## Seventh review: pending full recovery acceptance
 
-`full-recovery-gates.mjs` enumerates 11 mandatory scenario paths: Planner recovery, Worker recovery, Reviewer changes-required and failure, Merge retry, combined positive objective, human escalation notification/delivery/confirmation/unblock, Unknown effect postcondition reconciliation, crash after persist/before publish, stale replay and impossible objective. These are **acceptance inventory**, not evidence of execution. All are explicitly `NOT_RUN` until production Reconciler/Graph/Scheduler postcondition instrumentation produces trusted SQLite-based proof. Caller-provided traces or `COMPLETED` fields cannot promote them to PASS. A commit `9b11efa` does not yet wire the Ledger and durable outbox to production Reconciler/Scheduler; B does not edit A-owned graph or registry code. Run the B unit tests for gate integrity, not to claim the 11 runtime paths succeeded.
+`full-recovery-gates.mjs` enumerates 11 mandatory scenario paths: Planner recovery, Worker recovery, Reviewer changes-required and failure, Merge retry, combined positive objective, human escalation notification/delivery/confirmation/unblock, Unknown effect postcondition reconciliation, crash after persist/before publish, stale replay and impossible objective. These are **acceptance inventory**, not evidence of execution. All are explicitly `NOT_RUN` until production Reconciler/Graph/Reconciler postcondition instrumentation produces trusted SQLite-based proof. Caller-provided traces or `COMPLETED` fields cannot promote them to PASS. A commit `9b11efa` does not yet wire the Ledger and durable outbox to production Reconciler/Scheduler; B does not edit A-owned graph or registry code. Run the B unit tests for gate integrity, not to claim the 11 runtime paths succeeded.
 
 ## Eighth review: outbox crash windows and trusted evidence
 

@@ -57,7 +57,6 @@ export const WORKFLOW_FACT_NAMES = [
   'retryAvailable',
   'reviewUnblocked',
   'initialPlan',
-  'scheduledRun',
   'hasUnblock',
   'manualPlan',
   'reviewDisabled',

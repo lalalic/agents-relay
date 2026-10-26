@@ -10,8 +10,8 @@ import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import { withExecutionBoundary, type ReconcileOptions } from './reconciler-runtime.js';
 import type { DurableStore } from './store.js';
 import { storySizeTimeoutMs, type EventRecord, type Job, type Plan } from './types.js';
-import { tryTransitionTaskEvent } from './scheduler.js';
-import { applyPlannerHistoryCleanup, forceRestateConverged } from './force-restate-validation.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
+import { applyPlannerHistoryCleanup, forceRestateConverged, objectiveSatisfiedForReview } from './force-restate-validation.js';
 import { decideForceRestateValidation } from './workflow/force-restate-validation-v2.js';
 import type { PlannerHistoryCleanup } from './planner-history-cleanup.js';
 import { workerCandidates } from './worker-routing.js';
@@ -251,6 +251,7 @@ export async function finishPlanner(
         historyConsistencyValid: history.valid,
         normalHistoryMutationAbsent: !candidatePlan.forceRestate && historyCleanup.length === 0,
         forwardConvergenceValid: forwardValid,
+        objectiveSatisfied: !plan.forceRestate && objectiveSatisfiedForReview(candidate),
       });
       if (!decision.accepted) {
         throw new PlannerApplyValidationError('forward_convergence', [`Plan Apply graph rejected the candidate: ${decision.reason}.`]);

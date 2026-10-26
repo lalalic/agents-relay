@@ -5,9 +5,8 @@ import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
 import { createJobIdRegistryResolver } from './local-job-registry.js';
 import { relayStoreDirectory } from './relay-store.js';
-import { EventRecord, Job, Task, ExecutionMode, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
+import { EventRecord, Job, Task, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
-import { parseJobSchedule } from './scheduler.js';
 import { parseJobTagJson } from './task-tag.js';
 import { resolveEventsBusRuntime } from './events-bus-runtime.js';
 
@@ -193,24 +192,15 @@ export async function requestManagedReconciliation(bus: EventBus | undefined, jo
 }
 export function priority(args: string[], fallback: Priority = 'P2'): Priority { const value = arg(args, '--priority', fallback); if (!['P0','P1','P2','P3'].includes(value)) throw new Error('--priority must be P0, P1, P2, or P3'); return value as Priority; }
 export function storySize(args: string[], fallback: StorySize = 'M'): StorySize { const value = arg(args, '--story-size', fallback).toUpperCase(); if (!['S','M','L'].includes(value)) throw new Error('--story-size must be S, M, or L'); return value as StorySize; }
-export function executionMode(args: string[], fallback: ExecutionMode = 'fixed'): ExecutionMode { const value = arg(args, '--mode', arg(args, '--execution-mode', fallback)); if (value !== 'fixed' && value !== 'autonomous') throw new Error('--mode must be fixed or autonomous'); return value; }
 export function chatGptTabClosePolicy(args: string[]): ChatGptTabClosePolicy {
   const value = arg(args, '--chatgpt-tab-close-policy', process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY || 'after-start');
   if (!['after-start', 'never', 'after-terminal'].includes(value)) throw new Error('--chatgpt-tab-close-policy must be after-start, never, or after-terminal');
   return value as ChatGptTabClosePolicy;
 }
-export function requestedExecutionMode(args: string[]): ExecutionMode | undefined { const value = arg(args, '--mode', arg(args, '--execution-mode')); return value ? executionMode(args) : undefined; }
 export function jobTagFromArgs(args: string[]): Job['tag'] | undefined { return parseJobTagJson(arg(args, '--tag')); }
 export function continuation(args: string[]): Job['continuation'] { const kind = arg(args, '--continue-kind'); const target = arg(args, '--continue-target'); return kind && target ? { kind: kind as NonNullable<Job['continuation']>['kind'], target, input: arg(args, '--continue-input') || undefined } : null; }
-export function scheduleFromArgs(args: string[]): Job['schedule'] {
-  const cron = arg(args, '--schedule');
-  if (!cron) return undefined;
-  const nextRunAt = arg(args, '--schedule-next-run') || undefined;
-  return parseJobSchedule({
-    cron,
-    timezone: arg(args, '--schedule-timezone', 'UTC'),
-    nextRunAt,
-    missedRunPolicy: arg(args, '--missed-run-policy', 'skip') as 'run' | 'skip',
-    concurrencyPolicy: arg(args, '--schedule-concurrency', 'skip') as 'skip' | 'queue',
-  });
+/** Removed Job options fail closed rather than silently accepting obsolete scheduling. */
+export function rejectRemovedJobOptions(args: string[]): void {
+  const obsolete = ['--mode','--execution-mode','--schedule','--schedule-next-run','--schedule-timezone','--missed-run-policy','--schedule-concurrency','--cron','--schedule-cron'].find(option => hasArg(args, option));
+  if (obsolete) throw new Error(`Unsupported Job option ${obsolete}: every Job replans to objective satisfaction and scheduling is unavailable`);
 }

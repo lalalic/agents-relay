@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { Task } from '../types.js';
 import { dispatchWorkflowGraphSync } from './dispatcher.js';
 import { GraphRuntime, type GraphDecision } from './graph-v2.js';
-import { tryTransitionTaskEvent } from '../scheduler.js';
+import { tryTransitionTaskEvent } from '../task-transitions.js';
 import { taskOverallTimeoutMs } from '../types.js';
 
 export const STALE_ORCHESTRATOR_TASK_MS = 30 * 60 * 1000;

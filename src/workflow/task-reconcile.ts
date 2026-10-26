@@ -21,15 +21,9 @@ export function detectCycles(tasks: Task[]): void {
   for (const task of tasks) visit(task.id);
 }
 
-function scheduledCycleTasks(job: Job): Task[] {
-  const slot = job.schedule?.currentRunSlot ? Date.parse(job.schedule.currentRunSlot) : Number.NaN;
-  if (!Number.isFinite(slot)) return job.tasks;
-  return job.tasks.filter(task => Date.parse(task.createdAt) >= slot);
-}
-
 export function reconcileTaskDependencies(job: Job): Job {
   detectCycles(job.tasks);
-  const scopedTasks = scheduledCycleTasks(job);
+  const scopedTasks = job.tasks;
   const tasks = new Map(job.tasks.map(task => [task.id, task]));
   for (const task of scopedTasks) {
     if (task.kind === 'planner') continue;

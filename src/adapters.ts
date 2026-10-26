@@ -3,8 +3,6 @@ import { join, relative, resolve, sep, basename } from 'node:path';
 import { DEFAULT_PROMPT_REFERENCE_DIRECTORY } from './agent-prompt-builder.js';
 import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { withTestInjection, type InjectionConfig } from './e2e-injection.js';
 import { Task, WorkerAdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
 import { taskReferencePrompt } from './task-context.js';
@@ -22,7 +20,7 @@ export type Execution = {
   pid?: number;
   deliveryReceipt?: Record<string, unknown>;
 };
-export type LaunchContext = { testInjection?: InjectionConfig; waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
+export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
 export interface WorkerAdapter {
   readonly name: WorkerAdapterName;
   readonly id: string;
@@ -80,8 +78,6 @@ export class CodexAdapter implements WorkerAdapter {
   constructor(private readonly command = 'codex') {}
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
-    if (context.testInjection?.method==='worker.codex.launch')
-      return withTestInjection('worker.codex.launch',context.testInjection,()=>this.launch(task,signal,{...context,testInjection:undefined})) as Execution;
     if (!task.routing) throw new Error(`Task ${task.id} requires routing metadata before Codex launch`);
     const child = spawnOwnedProcess(this.command, buildCodexArgs(task.routing, task.input), {
       invocation: `worker.codex:${task.id}`,
@@ -202,9 +198,8 @@ type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_WEBHELM_COMMAND): BrowserWorkspaceCli {
   return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['--from', 'browser-workspace', 'webhelm'] };
 }
-const browserWorkspaceInjection = new AsyncLocalStorage<InjectionConfig>();
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
-  return Promise.resolve(withTestInjection('browserWorkspace.command', browserWorkspaceInjection.getStore(), () => rawBrowserWorkspaceCommand(cli,args,stdin,signal)));
+  return rawBrowserWorkspaceCommand(cli,args,stdin,signal);
 }
 function rawBrowserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -433,8 +428,7 @@ export class ChatGptAdapter implements WorkerAdapter {
           tabClosePolicy: policy,
         }, route, controller.signal);
       };
-      const run = await (context.testInjection?.method === 'browserWorkspace.command'
-        ? browserWorkspaceInjection.run(context.testInjection, submit) : submit());
+      const run = await submit();
       try {
         // Start acknowledgement may expire while browser submission is still pending.
         // Race its rejection with delivery so a hung browser cannot hold a QUEUED

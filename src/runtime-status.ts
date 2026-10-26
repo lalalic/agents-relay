@@ -32,17 +32,6 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   const plannerFailed = currentPlan?.status === 'FAILED' && !job.tasks.some(task => ['QUEUED','RUNNING'].includes(task.state));
   const plannerRunning = currentPlan?.status === 'PLANNING';
 
-  if (job.schedule) {
-    if (job.tasks.some(task => task.state === 'RUNNING')) return 'RUNNING';
-    if (job.tasks.some(task => task.state === 'QUEUED')) return 'QUEUED';
-    if (job.tasks.some(task => task.state === 'BLOCKED')) return 'BLOCKED';
-    if (job.tasks.some(task => task.state === 'FAILED')) return 'FAILED';
-    if (job.tasks.some(task => task.state === 'DRAFT')) return 'WAITING';
-    if (plannerFailed) return 'FAILED';
-    if (plannerRunning) return 'RUNNING';
-    return 'WAITING';
-  }
-
   // Draft or queued reviewers must not mask implementation that is still active.
   const implementation = implementationTasks(job);
   if (implementation.some(task => task.state === 'RUNNING')) return 'RUNNING';
@@ -60,7 +49,6 @@ export function deriveJobRuntimeStatus(job: Job, _prState: PullRequestRuntimeSta
   if (plannerFailed) return 'FAILED';
   if (plannerRunning) return 'RUNNING';
 
-  if (job.executionMode === 'autonomous' && job.autoMerge === false && job.reviewEnabled === false && implementationComplete(job) ) return 'WAITING';
   if (job.reviewEnabled === false && implementationComplete(job) ) return 'MERGE_PENDING';
   return 'IDLE';
 }

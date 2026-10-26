@@ -77,7 +77,7 @@ The Job owns the meaning of the tag. Its trusted Job marker declares a human-rea
 ```json
 {
   "tag": {
-    "description": "Deterministic E2E outcome. Set pass when the fixed E2E exits 0; set fail when it still fails after the required retry.",
+    "description": "L3 verification outcome. Set pass only after authoritative SQLite replay checks pass; set fail when a required check fails.",
     "values": {
       "pass": "✅",
       "fail": "❌"
@@ -109,9 +109,9 @@ Relay validates `data.tag` against `Job.tag.values`. If the value is allowed, Re
 
 The dashboard always keeps the normal lifecycle badge. When a valid Task tag is present, it additionally renders the display string from `Job.tag.values` after the lifecycle status. For the example above this appears as `SUCCEEDED ✅`.
 
-A tag must describe something specific to the Job contract, not Relay lifecycle. Examples include an E2E result (`pass` / `fail`), publication result, validation classification, or another small Job-defined outcome. The Job description must tell the worker when to set the tag and what each allowed value means. Jobs without a `tag` declaration behave exactly as before.
+A tag must describe something specific to the Job contract, not Relay lifecycle. Examples include a verified L3 result (`pass` / `fail`), publication result, validation classification, or another small Job-defined outcome. The Job description must tell the worker when to set the tag and what each allowed value means. Jobs without a `tag` declaration behave exactly as before.
 
-For the ChatGPT Browser Worker guardian, for example, the Job defines `pass -> ✅` and `fail -> ❌`; each hourly E2E child Task reports `data.tag` after running the fixed deterministic E2E, while the Task lifecycle independently records whether Relay execution itself completed, failed, or became blocked.
+For a validation Job, for example, the Job defines `pass -> ✅` and `fail -> ❌`; each L3 verification Task reports `data.tag` after the isolated replay and evidence checks, while Task lifecycle independently records the worker outcome.
 
 
 ### Task resolution classifications

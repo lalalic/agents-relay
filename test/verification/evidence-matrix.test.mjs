@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {evidenceGate} from './evidence-matrix.mjs';
 const make=category=>({id:'gate-check',category,expectedTrace:[],expectedTerminal:'COMPLETED'});
 test('untrusted caller flags cannot fabricate L1, L2, or L3 success',async()=>{
- const forged={actualTerminal:'COMPLETED',productionPath:true,graphTransitions:true,schedulerTransitions:true,sqlitePredicates:true,realProvider:true,realAdapter:true,acceptedByRelay:true,contractAssertions:true};
+ const forged={actualTerminal:'COMPLETED',productionPath:true,graphTransitions:true,dependencyTransitions:true,sqlitePredicates:true,realProvider:true,realAdapter:true,acceptedByRelay:true,contractAssertions:true};
  for(const category of ['L1','L2','L3'])assert.equal((await evidenceGate(make(category),forged)).outcome,'NOT_RUN');
 });
 test('L3 mismatched fixture ID is rejected',async()=>{

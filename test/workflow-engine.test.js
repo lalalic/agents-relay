@@ -9,8 +9,6 @@ import { plannerTriggerV2 } from '../dist/workflow/planner-trigger-v2.js';
 import { plannerOrchestrationV2 } from '../dist/workflow/planner-orchestration-v2.js';
 import { blockerResolutionV2 } from '../dist/workflow/blocker-resolution-v2.js';
 import { authoritativeUnblockV2 } from '../dist/workflow/authoritative-unblock-v2.js';
-import { scheduledRunV2 } from '../dist/workflow/scheduled-run-v2.js';
-import { scheduleCycleV2 } from '../dist/workflow/schedule-cycle-v2.js';
 import { troubleshooterV2 } from '../dist/workflow/troubleshooter-v2.js';
 import { escalationGraph } from '../dist/workflow/escalation.js';
 import { reviewLifecycleV2 } from '../dist/workflow/review-v2.js';
@@ -90,8 +88,6 @@ test('every repository lifecycle graph file parses and validates with the produc
         ['planner-orchestration.mmd', plannerOrchestrationV2],
         ['blocker-resolution.mmd', blockerResolutionV2],
         ['authoritative-unblock.mmd', authoritativeUnblockV2],
-        ['scheduled-run.mmd', scheduledRunV2],
-        ['schedule-cycle.mmd', scheduleCycleV2],
         ['troubleshooter.mmd', troubleshooterV2],
         ['escalation.mmd', escalationGraph],
         ['task-related-action.mmd', taskRelatedActionV2],
@@ -139,8 +135,6 @@ test('production orchestration entry points use dispatch facades and never direc
     ['reconciler.ts', ['dispatchPlannerOrchestration', 'dispatchJobReconcile']],
     ['blockers.ts', ['dispatchBlockerResolution']],
     ['unblock.ts', ['dispatchAuthoritativeUnblock']],
-    ['scheduled-jobs.ts', ['dispatchScheduledRun']],
-    ['scheduler.ts', ['dispatchScheduleCycle']],
     ['troubleshooter.ts', ['dispatchTroubleshooter']],
   ]);
   const forbiddenDecision = /\bdecide(?:ReviewLifecycle|PlannerOrchestration|JobReconcile|BlockerResolution|AuthoritativeUnblock|ScheduledRun|ScheduleCycle|Troubleshooter|TaskLifecycle|JobLifecycle)\b/;

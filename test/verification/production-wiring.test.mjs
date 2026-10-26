@@ -6,12 +6,12 @@ import {fileURLToPath} from 'node:url';
 const root=resolve(fileURLToPath(new URL('../../',import.meta.url)));
 /** Read-only integration readiness. This check is NOT a runtime path PASS. */
 export function productionWiring(rootDir=root){
- const paths=['src/reconciler.ts','src/scheduler.ts'];
+ const paths=['src/reconciler.ts','src/task-transitions.ts'];
  const texts=paths.map(p=>readFileSync(join(rootDir,p),'utf8'));
  const joined=texts.join('\n');
  const checks={
   reconcilerActionVerification:/actionVerification\s*:/.test(texts[0]),
-  schedulerActionVerification:/actionVerification\s*:/.test(texts[1]),
+  transitionActionVerification:/actionVerification\s*:/.test(texts[1]),
   sqliteOutbox:/DurableWorkflowPublication|commitTransitionAndEvents/.test(joined),
   sqlitePostcondition:/WorkflowActionLedger|reserveForRunningTask/.test(joined),
   restartDrain:/\.replay\s*\(/.test(joined)

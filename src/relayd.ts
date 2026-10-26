@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {escalationNotifierFromEnvironment} from './escalation-notifier.js'; import {consumeMethodInjection,withTestInjection} from './e2e-injection.js';
+import {escalationNotifierFromEnvironment} from './escalation-notifier.js';
 import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
@@ -28,7 +28,7 @@ import { dashboardJobAction, isEntrypoint, runtimePlanner, runtimeReviewer, star
 import { eventBusResolutionMessage, publishTaskUnblocked, resolveEventBus } from './cli-support.js';
 import { eventFor } from './events.js';
 import { dispatchTaskAction } from './task-actions.js';
-import { isEffectivelyBlocked, unblockAutonomousTasks, unblockTask } from './unblock.js';
+import { isEffectivelyBlocked, unblockTask } from './unblock.js';
 import { registerBlockerDependency } from './blockers.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { applyJobActivateAction } from './job-actions.js';
@@ -50,8 +50,8 @@ import { routeExecution } from './execution-routing.js';
 import { RelayObservability, classifyFailure, errorMessage, observability, setObservability } from './observability.js';
 import { createWorkspaceControl } from './relayd-control.js';
 import { createDashboardActions } from './relayd-dashboard-actions.js';
-export { daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
-import { configureDaemonObservability, firstStageChoices, value, type GitHubReadPathDiagnostics, type PullRequestRefreshTrigger, daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, SCHEDULE_HEARTBEAT_MS, dueScheduledOverviews, configureExecutionRouterRulesPath } from './relayd-utilities.js';
+export { daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, configureExecutionRouterRulesPath } from './relayd-utilities.js';
+import { configureDaemonObservability, firstStageChoices, value, type GitHubReadPathDiagnostics, type PullRequestRefreshTrigger, daemonHelp, normalizeDaemonArguments, overlayOperationalOverviews, mergeOperationalInventory, recoveryScanRepositories, shouldCoalescePullRequestRefresh, configureExecutionRouterRulesPath } from './relayd-utilities.js';
 export async function runDaemon(argv: readonly string[]): Promise<void> {
   if (argv.includes('--help') || argv.includes('-h')) { console.log(daemonHelp); return; }
   configureDaemonObservability();
@@ -273,7 +273,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (job.state === 'COMPLETED' && job.localMerge?.status === 'succeeded' && job.localMerge.projectionStrategy === 'target_ref_push') {
         const projection = await projectBindingLocalMerge(job, relay, {
           projectPath: canonical,
-          project: async projectedJob => withTestInjection('github.projectLocalMerge', await consumeMethodInjection(relay,job.repository,job.id,'github.projectLocalMerge'), () => projectAuthoritativeLocalMerge(canonical, projectedJob)),
+          project: async projectedJob => projectAuthoritativeLocalMerge(canonical, projectedJob),
           verifyObservedRemote: async sha => { try { await gitText(canonical, ['merge-base','--is-ancestor',sha,'refs/heads/main']); }
             catch { throw new Error(`Projection recovery did not preserve observed origin/main ${sha} in local main`); } }, eventBus: bus,
         });
@@ -325,7 +325,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const initial = cachedOverviews; const fallback = initial[0]?.job;
   const dashboardStore = fallback ? (await requireLocalJobBinding(fallback.id)).store : new InMemoryStore();
   const {dashboardOverview,workspaceJobAction,workspaceJobSetState,workspaceTaskCreate,workspaceTaskAction,workspaceTaskSetState} = createDashboardActions({getOverviews: () => cachedOverviews, requireLocalJobBinding, pool, dashboardJobAction, makeReconciler, concurrency, dashboardJobSetState, refreshAll, applyJobActivateAction, bus, dashboardTaskAction, dashboardTaskSetState});
-  const workspaceControl = createWorkspaceControl({client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockAutonomousTasks, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob});
+  const workspaceControl = createWorkspaceControl({client, trusted, noGitHub, repositories, refreshAll, requireLocalJobBinding, makeReconciler, concurrency, pool, bus, isEffectivelyBlocked, unblockTask, publishTaskUnblocked, dispatchTaskAction, registerBlockerDependency, discoverAgents, ensureManagedGitHubJob});
   const secretFile = value(argv,'--github-webhook-secret-file');
   const secret = noGitHub ? '' : value(argv,'--github-webhook-secret') || process.env.AGENTS_RELAY_GITHUB_WEBHOOK_SECRET || (secretFile ? (await readFile(secretFile,'utf8')).trim() : '');
   const webhook = secret ? {
@@ -408,7 +408,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         job: {
           id: job.id, title: job.title, objective: job.objective ?? null,
           description: job.description ?? null, priority: job.priority ?? null,
-          executionMode: job.executionMode, repository: job.repository,
+          repository: job.repository,
           prNumber: job.prNumber, state: job.state,
         },
         task: {
@@ -456,16 +456,6 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     try { await pool.reconcile(); }
     catch (error) { observability().record({ stage: 'daemon', event: 'daemon.reconcile_failed', level: 'warn', outcome: 'failed', message: `Workspace reconcile unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } }); }
   };
-  const scheduleHeartbeatSafely = async (): Promise<void> => {
-    const now = new Date();
-    for (const item of dueScheduledOverviews(cachedOverviews, now)) {
-      try {
-        await pool.scheduleTickSignal(bus, item.job, now);
-      } catch (error) {
-        observability().record({ stage: 'daemon', event: 'daemon.schedule_heartbeat_failed', level: 'warn', outcome: 'failed', message: `Scheduled heartbeat unavailable: ${errorMessage(error)}`, correlation: { repository: item.job.repository, prNumber: item.job.prNumber, jobId: item.job.id }, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
-      }
-    }
-  };
   const flushProjectionsSafely = async (): Promise<void> => {
     let externalActionsCompleted = 0;
     for (const writer of projectionWriters.values()) {
@@ -477,16 +467,13 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   };
   const watchdogDefault = webhook ? SERVICE_DEFAULTS.webhookWatchdogMs : SERVICE_DEFAULTS.watchdogMs;
   let interval: NodeJS.Timeout | undefined;
-  let scheduleInterval: NodeJS.Timeout | undefined;
   let projectionInterval: NodeJS.Timeout | undefined;
-  const stop=()=>{stopRuntimeStatusEvents(); if (interval) clearInterval(interval); if (scheduleInterval) clearInterval(scheduleInterval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
+  const stop=()=>{stopRuntimeStatusEvents(); if (interval) clearInterval(interval); if (projectionInterval) clearInterval(projectionInterval); void Promise.allSettled([stopWatch(), shutdownOwnedProcesses('parent-shutdown')]).finally(()=>{ for (const store of relayStores.values()) store.close(); server.close(()=>process.exit(0)); });}; process.once('SIGINT',stop);process.once('SIGTERM',stop);
   await syncGitHubBindingsSafely();
   await pool.reconcileKnown(cachedOverviews);
-  await scheduleHeartbeatSafely();
   await flushProjectionsSafely();
   interval=setInterval(()=>void reconcileSafely().finally(flushProjectionsSafely),Number(value(argv,'--interval',String(watchdogDefault)))); interval.unref();
   if (!noGitHub) { projectionInterval=setInterval(()=>void syncGitHubBindingsSafely().then(flushProjectionsSafely),Number(value(argv,'--projection-ms',String(SERVICE_DEFAULTS.projectionFlushMs)))); projectionInterval.unref(); }
-  scheduleInterval=setInterval(()=>void scheduleHeartbeatSafely(),SCHEDULE_HEARTBEAT_MS); scheduleInterval.unref();
   console.log('Dashboard listening; repository worker pool active');
   void refreshAll(true)
     .then(items => pool.reconcileKnown(items))

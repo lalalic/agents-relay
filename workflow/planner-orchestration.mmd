@@ -1,6 +1,6 @@
 ---
 title: Planner Orchestration
-description: Guards autonomous planning rounds, interrupted plans, and planner recovery.
+description: Guards objective-driven planning rounds, interrupted plans, and planner recovery.
 ---
 flowchart LR
 %% relay: initial idle
@@ -21,7 +21,6 @@ wait["state: wait"]
 recovered["state: recovered"]
 created["state: created"]
 
-autonomous["guard: autonomousJob"]
 legacyPending["guard: legacyPlanningPending"]
 recoverablePending["guard: recoverablePendingPlan"]
 terminalFailure["guard: terminalPlanFailure"]
@@ -39,9 +38,7 @@ recoverAction["action: planner.recoverPending"]
 createRecovery["action: planner.createRecovery"]
 createAction["action: planner.createRound"]
 
-idle -->|on: planner.reconcile| autonomous
-autonomous -->|false| wait
-autonomous -->|true| checkLegacy
+idle -->|on: planner.reconcile| checkLegacy
 
 checkLegacy -->|on: planner.reconcile| legacyPending
 legacyPending -->|true| wait

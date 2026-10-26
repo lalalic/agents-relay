@@ -120,7 +120,6 @@ export async function resolveBlockerDependencies(options: {
     const decision = await dispatchBlockerResolution({
       resolutionAllowed: !(mode === 'verified' && options.resolution !== 'verified'),
       targetMatches,
-      autonomousJob: targetJob?.executionMode === 'autonomous',
       effectivelyBlocked: !!task && isEffectivelyBlocked(task),
       alreadyUnblocked: Boolean(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state)),
       isDraft: task?.state === 'DRAFT', isBlocked: Boolean(task && isEffectivelyBlocked(task)),
@@ -143,7 +142,8 @@ export async function resolveBlockerDependencies(options: {
     relation.resolution = options.resolution;
     relation.note = note;
     unblocked.push({ repository: relation.repository, prNumber: relation.prNumber, jobId: relation.jobId, taskId: relation.taskId });
-    resumed += 1;
+    // A durable unblock may have committed before this relation was acknowledged.
+    if (!(task?.unblock && ['DRAFT', 'QUEUED'].includes(task.state))) resumed += 1;
   }
 
   const remaining = relations.filter(relation => relation.state === 'waiting');

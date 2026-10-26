@@ -1,6 +1,6 @@
 import type { DurableStore } from '../store.js';
 import type { Job, Task } from '../types.js';
-import { tryTransitionTaskEvent } from '../scheduler.js';
+import { tryTransitionTaskEvent } from '../task-transitions.js';
 import type { WorkflowContext } from './mermaid.js';
 import type { WorkflowDecision } from './contracts.js';
 import { observability } from '../observability.js';
