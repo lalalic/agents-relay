@@ -50,11 +50,21 @@ Common options:
 
 Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
-  review: `Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
+  review: `Use review run for an Agent-owned outcome review, or request for the SHA-bound final review.
+
+Outcome: agents-relay review run --prompt-file PATH --agents video-director,market --project-path DIR [--output PATH]
+The generic Outcome Reviewer is implicit. Exit 0=PASS, 10=CHANGE_REQUIRED, 20=BLOCKED. The caller owns repair and re-review.
+
+Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 
 Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
 
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
+  'review run': `Evaluate the calling Agent's requested outcome inside its Worker. A generic Outcome Reviewer runs by default; --agents adds comma-separated professional roles found in the project or shared agent catalog. Does not create Relay Tasks or trigger Final Review.
+
+Usage: agents-relay review run (--prompt TEXT | --prompt-file PATH) [--project-path DIR] [--agents role,role] [--output PATH]
+
+Return codes: 0 PASS, 10 CHANGE_REQUIRED, 20 BLOCKED; CLI/worker errors fail separately.`,
   'review request': `Request a review in an existing ChatGPT thread.
 
 Required: --repo OWNER/REPO --pr NUMBER --id JOB_ID.
@@ -205,7 +215,7 @@ Actions:
 
 Required: --project-path PATH.
 Common: --role orchestrator|planner|reviewer|worker|nested-worker, --skills a,b, --agents a,b.
-Root overrides for testing/configuration: --workspace-root PATH, --neo-root PATH|none, --global-root PATH.
+Root overrides for testing/configuration: --workspace-root PATH (or AGENTS_RELAY_WORKSPACE_ROOT), --global-root PATH. Neo Shared Root is always <workspace-root>/neo.
 
 Example:
   npx agents-relay context resolve --project-path ~/Workspace/agents-relay --role orchestrator`,

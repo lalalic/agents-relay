@@ -1,5 +1,6 @@
 import { arg, hasArg, relayControlCommand } from './cli-support.js';
 import { normalizeThreadId } from './reviewer-thread.js';
+import { runOutcomeReview } from './outcome-review.js';
 
 export function reviewRequestThreadOverride(args: readonly string[]): string | undefined {
   const values = [...args];
@@ -9,7 +10,8 @@ export function reviewRequestThreadOverride(args: readonly string[]): string | u
 }
 
 export async function runReviewCommand(action: string, reviewArgs: string[]): Promise<void> {
-  if (action !== 'request') throw new Error('review supports: request');
+  if (action === 'run') return runOutcomeReview(reviewArgs);
+  if (action !== 'request') throw new Error('review supports: request | run');
   const jobId = arg(reviewArgs, '--id');
   if (!arg(reviewArgs, '--repo') || !jobId) throw new Error('review request requires --repo and --id');
   const threadId = reviewRequestThreadOverride(reviewArgs);
