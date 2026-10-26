@@ -41,7 +41,10 @@ export async function resolveWorkspaceRoot(explicit?: string): Promise<string> {
       configured = config.workspaceRoot;
     }
   }
-  const candidate = resolve(configured ?? defaultWorkspaceRoot());
+  // On first launch the default workspace may not exist yet. Only user-selected
+  // or saved roots are mandatory existing directories.
+  if (configured === undefined) return defaultWorkspaceRoot();
+  const candidate = resolve(configured);
   try {
     if (!(await stat(candidate)).isDirectory()) throw new Error('not a directory');
     return await realpath(candidate);
