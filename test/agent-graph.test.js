@@ -27,7 +27,7 @@ test('agent selection rejects invisible named and graph agents but allows an unn
     const workspace=join(root,'workspace'), neo=join(workspace,'neo'), project=join(workspace,'project');
     await Promise.all([mkdir(project,{recursive:true}),mkdir(neo,{recursive:true})]);
     await writeAgent(project,'reviewer');
-    const context=await resolveExecutionContext(project,'planner',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
+    const context=await resolveExecutionContext(project,'planner',{workspaceRoot:workspace,globalRoot:join(root,'global')});
     assert.doesNotThrow(() => validateAgentSelection(context));
     assert.doesNotThrow(() => validateAgentSelection(context, 'reviewer'));
     assert.throws(() => validateAgentSelection(context, 'missing-agent'), /Agent missing-agent is not visible in the resolved planning\/execution context/);
@@ -41,7 +41,7 @@ test('agent graph loads every node contract and preserves fan-in dependencies', 
     const workspace=join(root,'workspace'), neo=join(workspace,'neo'), project=join(workspace,'project');
     await Promise.all([mkdir(project,{recursive:true}),mkdir(neo,{recursive:true})]);
     for (const name of ['strategy','product','synthesis','planner']) await writeAgent(project,name);
-    const context=await resolveExecutionContext(project,'worker',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
+    const context=await resolveExecutionContext(project,'worker',{workspaceRoot:workspace,globalRoot:join(root,'global')});
     const prompt=await agentGraphPrompt(context,`flowchart TD\nstrategy --> synthesis\nproduct --> synthesis\nsynthesis --> planner`);
     assert.match(prompt,/Execution waves: 1:product,strategy \| 2:synthesis \| 3:planner/);
     assert.match(prompt,/\[Node synthesis; predecessors=strategy,product\]/);
@@ -58,7 +58,7 @@ test('business-loop can feed the canonical bundled planner in an external projec
     const workspace=join(root,'workspace'), neo=join(workspace,'neo'), project=join(workspace,'product');
     await Promise.all([mkdir(project,{recursive:true}),mkdir(neo,{recursive:true})]);
     await writeAgent(project,'business-loop');
-    const context=await resolveExecutionContext(project,'worker',{workspaceRoot:workspace,neoRoot:neo,globalRoot:join(root,'global')});
+    const context=await resolveExecutionContext(project,'worker',{workspaceRoot:workspace,globalRoot:join(root,'global')});
     const planner=context.agents.find(agent=>agent.name==='planner');
     assert.equal(planner?.source,'builtin');
     assert.match(planner?.path ?? '',/skills\/agents-relay\/agents\/planner\.agent\.md$/);

@@ -13,7 +13,7 @@ test('production worker prompt assembly separates roles and snapshots each effec
   const snapshotDir = await mkdtemp(join(tmpdir(), 'relay-prompt-snapshots-'));
   process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR = snapshotDir;
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, neoRoot: null, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
     for (const role of ['planner', 'reviewer', 'troubleshooter', 'worker']) for (const adapter of ['codex', 'chatgpt']) {
       const task = { id: `task-${role}`, jobId: 'prompt-test', title: `Test ${role}`, state: 'QUEUED', kind: 'work',
         agentName: role === 'worker' ? 'implementation' : role, adapter, input: `UNTRUSTED TASK EVIDENCE ${role}`,
@@ -40,7 +40,7 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
   const projectPath = resolve('.');
   const emptyGlobal = await mkdtemp(join(tmpdir(), 'relay-prompt-eval-global-'));
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, neoRoot: null, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
     const task = { id: 'task-reviewer', jobId: 'prompt-test', title: 'Test reviewer', state: 'QUEUED', kind: 'work',
       agentName: 'reviewer', adapter: 'codex', input: 'Evidence: end-to-end verification did not run.',
       output: { kind: 'task_pr' }, executionId: 'execution-reviewer', attempt: 1, maxAttempts: 1, dependencies: [] };

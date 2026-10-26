@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -20,6 +20,34 @@ export type DiscoveredRepository = { path: string; repository: string };
 
 export function defaultWorkspaceRoot(): string {
   return join(homedir(), 'Workspace');
+}
+
+export async function resolveWorkspaceRoot(explicit?: string): Promise<string> {
+  let configured = explicit ?? process.env.AGENTS_RELAY_WORKSPACE_ROOT;
+  if (configured === undefined) {
+    const configPath = process.env.NEO_WORKSPACE_CONFIG ?? join(homedir(), '.config', 'neo', 'workspace.json');
+    let configText: string | undefined;
+    try { configText = await readFile(configPath, 'utf8'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read workspace configuration: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (configText !== undefined) {
+      let config: unknown;
+      try { config = JSON.parse(configText); }
+      catch { throw new Error(`Invalid workspace configuration at ${configPath}: expected valid JSON`); }
+      if (typeof config !== 'object' || config === null || !('schemaVersion' in config) || config.schemaVersion !== 1 || !('workspaceRoot' in config) || typeof config.workspaceRoot !== 'string' || !isAbsolute(config.workspaceRoot)) {
+        throw new Error(`Invalid workspace configuration at ${configPath}`);
+      }
+      configured = config.workspaceRoot;
+    }
+  }
+  const candidate = resolve(configured ?? defaultWorkspaceRoot());
+  try {
+    if (!(await stat(candidate)).isDirectory()) throw new Error('not a directory');
+    return await realpath(candidate);
+  } catch {
+    throw new Error(`Configured Workspace Root is not an accessible directory: ${candidate}`);
+  }
 }
 
 export function githubRepositoryFromRemote(remote: string): string | null {
@@ -181,6 +209,10 @@ export function managedLocalJobWorktreePath(repository: string, jobId: string, w
 /** Only code artifacts need an isolated Git source branch and worktree. */
 export function jobRequiresManagedWorktree(job: Job): boolean {
   return !(job.prNumber > 0) && (Boolean(job.localMerge?.sourceRef) || job.tasks.some(task => task.output?.kind === 'task_pr'));
+}
+
+export function taskRequiresManagedWorktree(job: Job, task?: Task): boolean {
+  return jobRequiresManagedWorktree(job) && !(task && taskUsesCanonicalProjectRun(task, job.tasks));
 }
 
 /** Bind an ordinary SQLite Job to one deterministic local work branch.

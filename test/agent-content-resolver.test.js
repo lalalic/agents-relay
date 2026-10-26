@@ -43,7 +43,7 @@ test('whole replacement excludes replaceable base, standalone local and builtin 
 test('invalid parents, conflicting sections, unknown headings and unsafe links fail closed', async t => {
   const f=await fixture(t);
   await f.write('---\nname: planner\nextends: neo/planner\n---\n# Test');
-  await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Only extends/);
+  await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Missing Neo base/);
   await f.write('---\nname: planner\nextends: relay/planner\nsections:\n  replace: [Planner/B]\n  extend: [Planner/B]\n---\n# Planner\n## B\nChanged');
   await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/Conflicting/);
   await f.write('---\nname: planner\nextends: relay/planner\nsections:\n  replace: [Planner/Missing]\n---\n# Planner\n## Missing\nChanged');

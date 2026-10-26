@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, realpath, rm, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
+import { assertCleanWorktreeAtHead, cleanupCompletedJobWorktree, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, taskRequiresManagedWorktree, managedJobWorktreePath, managedLocalJobWorktreePath, prepareLocalJobExecutionWorktree, prepareManagedExecutionWorktree } from '../dist/workspace.js';
 
 function git(cwd, ...args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -18,6 +18,15 @@ test('only code Tasks request managed Git worktrees', () => {
   assert.equal(jobRequiresManagedWorktree({ ...base, prNumber: 7, tasks: [{ output: { kind: 'task_pr' } }] }), false);
   assert.equal(jobRequiresManagedWorktree({ ...base, localMerge: { sourceRef: 'refs/heads/legacy', targetRef: 'refs/heads/main', status: 'pending' } }), true);
   assert.equal(jobRequiresManagedWorktree({ ...base, schedule: { cron: '* * * * *' } }), false);
+});
+
+test('a task_pr Troubleshooter below a canonical runs owner keeps the canonical project path', () => {
+  const owner = { id: 'run-owner', output: { kind: 'file', path: 'runs/episode/result.md' } };
+  const troubleshooting = { id: 'recovery', parentTaskId: owner.id, output: { kind: 'task_pr' } };
+  const job = { id: 'job', prNumber: 0, tasks: [owner, troubleshooting] };
+  assert.equal(jobRequiresManagedWorktree(job), true);
+  assert.equal(taskRequiresManagedWorktree(job, troubleshooting), false);
+  assert.equal(taskRequiresManagedWorktree(job, { id: 'code', output: { kind: 'task_pr' } }), true);
 });
 
 async function fixture(t) {
@@ -179,6 +188,6 @@ test('local Job projectPath resolves project-local contract folder inside its is
   const checkout=await prepareLocalJobExecutionWorktree(f.repo,job,f.root);
   assert.equal(checkout,join(managedLocalJobWorktreePath(job.repository,job.id,f.root),'vlog'));
   const {resolveExecutionContext}=await import('../dist/execution-context.js');
-  const context=await resolveExecutionContext(checkout,'planner',{neoRoot:null,globalRoot:join(f.root,'global')});
+  const context=await resolveExecutionContext(checkout,'planner',{workspaceRoot:f.root,globalRoot:join(f.root,'global')});
   assert.equal(context.agents.find(x=>x.name==='planner')?.source,'project');
 });

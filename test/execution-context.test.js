@@ -45,10 +45,12 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     await agent(neo, 'duplicate', 'neo');
     const projectAgent = await agent(project, 'duplicate', 'project,review');
     const reviewer = await agent(project, 'reviewer', 'review');
+    const sharedOnly = await agent(neo, 'shared-only', 'shared');
+    await writeFile(sharedOnly, '---\nname: shared-only\ncapabilities: [shared]\ndescription: shared contract\n---\n\nShared base.');
+    await writeFile(join(project, 'agents', 'shared-only.agent.md'), '---\nname: shared-only\nextends: neo/shared-only\ncapabilities: [project]\n---\n\nProject extension.');
 
     const context = await resolveExecutionContext(project, 'worker', {
       workspaceRoot: workspace,
-      neoRoot: neo,
       globalRoot,
       runtimes: [{ adapter: 'codex', capabilities: ['model', 'codex'] }],
     });
@@ -65,19 +67,25 @@ test('shared execution context resolves precedence, fallbacks, explicit selectio
     assert.deepEqual(byAgent.get('duplicate').trustDomains, ['local']);
     assert.deepEqual(byAgent.get('duplicate').delegation, []);
     assert.equal(byAgent.get('reviewer').path, await realpath(reviewer));
-    assert.equal(byAgent.has('neo-private'), false);
+    assert.equal(byAgent.get('neo-private').source, 'neo');
+    assert.equal(byAgent.get('shared-only').source, 'project');
+    assert.deepEqual(byAgent.get('shared-only').capabilities, ['project']);
+    assert.equal(byAgent.get('shared-only').description, 'shared contract');
     assert.equal(byAgent.has('global-private'), false);
     assert.deepEqual(context.instructions.map(item => item.source), ['global', 'project', 'project']);
     const neoAgents = await realpath(join(neo, 'AGENTS.md'));
     assert.equal(context.instructions.some(item => item.path === neoAgents), false);
     assert.deepEqual(context.runtimes, [{ name: 'codex', id: undefined, capabilities: ['model', 'codex'], source: 'runtime' }]);
+    const { agentContractPrompt } = await import('../dist/execution-context.js');
+    const inherited = await agentContractPrompt(context, 'shared-only');
+    assert.match(inherited, /Shared base\.\s+Project extension\./);
 
-    const selected = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, neoRoot: neo, globalRoot, explicitSkills: ['neo-only'], explicitAgents: ['reviewer'] });
+    const selected = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, globalRoot, explicitSkills: ['neo-only'], explicitAgents: ['reviewer'] });
     assert.deepEqual(selected.skills.map(item => item.name), ['neo-only']);
     assert.deepEqual(selected.agents.map(item => item.name), ['reviewer']);
-    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, neoRoot: neo, globalRoot, explicitSkills: ['missing'] }), /not visible/);
-    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, neoRoot: neo, globalRoot, explicitAgents: ['missing-agent'] }), /not visible/);
-    await assert.rejects(resolveExecutionContext(join(root, 'missing-project'), 'worker', { workspaceRoot: workspace, neoRoot: neo, globalRoot }), /Project path not found/);
+    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, explicitSkills: ['missing'] }), /not visible/);
+    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: workspace, globalRoot, explicitAgents: ['missing-agent'] }), /not visible/);
+    await assert.rejects(resolveExecutionContext(join(root, 'missing-project'), 'worker', { workspaceRoot: workspace, globalRoot }), /Project path not found/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -92,7 +100,7 @@ test('registered agents preserve runtime, trust, and delegation restrictions wit
       availability:'available', routing:{trustDomains:['public'],regions:['ca']}, evidence:{evaluations:[],outcomes:{succeeded:0,failed:0,timedOut:0},lastObservedAt:null},
       registeredAt:'2026-01-01T00:00:00Z', updatedAt:'2026-01-01T00:00:00Z'
     };
-    const context = await resolveExecutionContext(project, 'worker', { workspaceRoot:root, neoRoot:null, globalRoot:join(root,'global'), registeredAgents:[registration] });
+    const context = await resolveExecutionContext(project, 'worker', { workspaceRoot:root, globalRoot:join(root,'global'), registeredAgents:[registration] });
     const resolved = context.agents.find(item => item.name === 'remote-reviewer');
     assert.equal(resolved.source, 'registry');
     assert.equal(resolved.runtime, 'codex');
@@ -101,12 +109,44 @@ test('registered agents preserve runtime, trust, and delegation restrictions wit
   } finally { await rm(root, { recursive:true, force:true }); }
 });
 
+test('execution context fails clearly when the configured Workspace Root is absent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-missing-workspace-'));
+  try {
+    const project = join(root, 'project');
+    await mkdir(project, { recursive: true });
+    await assert.rejects(resolveExecutionContext(project, 'worker', { workspaceRoot: join(root, 'missing') }), /Configured Workspace Root is not an accessible directory/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Neo Shared Root is always derived from Workspace Root and ignores NEO_SHARED_ROOT', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agents-relay-derived-neo-'));
+  const previous = process.env.NEO_SHARED_ROOT;
+  try {
+    const workspace = join(root, 'workspace');
+    const neo = join(workspace, 'neo');
+    const alternate = join(root, 'alternate-neo');
+    const project = join(workspace, 'project');
+    await Promise.all([mkdir(join(neo, 'agents'), { recursive: true }), mkdir(join(alternate, 'agents'), { recursive: true }), mkdir(project, { recursive: true })]);
+    await agent(neo, 'shared-role');
+    await agent(alternate, 'wrong-role');
+    process.env.NEO_SHARED_ROOT = alternate;
+    const context = await resolveExecutionContext(project, 'worker', { workspaceRoot: workspace });
+    assert.equal(context.project.neoRoot, await realpath(neo));
+    assert.equal(context.agents.some(item => item.name === 'shared-role'), true);
+    assert.equal(context.agents.some(item => item.name === 'wrong-role'), false);
+  } finally {
+    if (previous === undefined) delete process.env.NEO_SHARED_ROOT;
+    else process.env.NEO_SHARED_ROOT = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('managed worker prompt exposes resolved context and durable retrieval guidance', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-nested-context-'));
   try {
     const project = join(root, 'project');
     await mkdir(project, { recursive: true });
-    const context = await resolveExecutionContext(project, 'nested-worker', { workspaceRoot: root, globalRoot: join(root, 'global'), neoRoot: join(root, 'missing-neo') });
+    const context = await resolveExecutionContext(project, 'nested-worker', { workspaceRoot: root, globalRoot: join(root, 'global') });
     const job = { id:'j', title:'job', prNumber:54, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
     const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:'nested-exec', threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
@@ -130,7 +170,7 @@ test('managed worker input loads the selected agent Markdown contract by agentNa
     await Promise.all([mkdir(project, { recursive: true }), mkdir(neo, { recursive: true })]);
     const reviewerPath = await agent(project, 'reviewer', 'review');
     await writeFile(reviewerPath, `---\nname: reviewer\ntype: reviewer\ncapabilities: [review]\n---\n\nCANONICAL REVIEW CONTRACT: emit review.started then one decision.`);
-    const context = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, neoRoot: neo, globalRoot: join(root, 'global') });
+    const context = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, globalRoot: join(root, 'global') });
     const job = { id:'j', title:'job', objective:'ship safely', prNumber:75, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
     const task = { id:'review', agentName:'reviewer', executionId:'review-exec', parentTaskId:null, dependencies:[], capabilities:['review'], adapter:'codex', input:'review exact head abc', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
     const prompt = await managedWorkerInput(job, task, context);
@@ -154,7 +194,7 @@ test('context resolve CLI exposes the same resolver for XChat without durable st
     await skill(project, 'local');
     const result = spawnSync(process.execPath, [
       'dist/cli.js', 'context', 'resolve', '--project-path', project, '--role', 'orchestrator',
-      '--workspace-root', workspace, '--neo-root', 'none', '--global-root', globalRoot, '--skills', 'local'
+      '--workspace-root', workspace, '--global-root', globalRoot, '--skills', 'local'
     ], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const context = JSON.parse(result.stdout);
@@ -194,7 +234,7 @@ mode: extend
 ---
 # Vlog review
 Check real footage evidence.`);
-    const context = await resolveExecutionContext(project,'worker',{workspaceRoot:root,neoRoot:null,globalRoot:join(root,'global')});
+    const context = await resolveExecutionContext(project,'worker',{workspaceRoot:root,globalRoot:join(root,'global')});
     const {agentContractPrompt}=await import('../dist/execution-context.js');
     const prompt=await agentContractPrompt(context,'reviewer');
     assert.match(prompt,/Check real footage evidence/);

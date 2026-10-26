@@ -1,4 +1,5 @@
 import { resolveAgentMarkdown } from './agent-content-resolver.js';
+import { resolveWorkspaceRoot } from './workspace.js';
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
@@ -34,7 +35,7 @@ export type ExecutionContext = {
   delegation: { mode: 'relay-child-task'; parentTaskIdRequired: boolean };
 };
 
-export type ExecutionContextRoots = { workspaceRoot?: string; neoRoot?: string | null; globalRoot?: string };
+export type ExecutionContextRoots = { workspaceRoot?: string; globalRoot?: string };
 
 export type ExecutionContextOptions = ExecutionContextRoots & {
   explicitSkills?: readonly string[];
@@ -55,19 +56,6 @@ function isWithin(path: string, root: string): boolean {
 }
 async function directory(path: string): Promise<boolean> {
   try { return (await stat(path)).isDirectory(); } catch { return false; }
-}
-function configuredWorkspaceRoot(projectPath: string, explicit?: string): string {
-  const configured = explicit ?? process.env.AGENTS_RELAY_WORKSPACE_ROOT ?? process.env.XCHAT_WORKSPACE_ROOT;
-  if (configured) return resolve(configured);
-  const conventional = join(homedir(), 'Workspace');
-  return isWithin(projectPath, conventional) ? conventional : dirname(projectPath);
-}
-async function configuredNeoRoot(workspaceRoot: string, explicit?: string | null): Promise<string | null> {
-  if (explicit === null) return null;
-  const configured = explicit ?? process.env.NEO_SHARED_ROOT;
-  if (configured) return await directory(resolve(configured)) ? await realpath(resolve(configured)) : null;
-  const candidate = join(workspaceRoot, 'neo');
-  return await directory(candidate) ? await realpath(candidate) : null;
 }
 function configuredGlobalRoot(explicit?: string): string {
   return resolve(explicit ?? process.env.AGENTS_HOME ?? join(homedir(), '.agents'));
@@ -177,9 +165,9 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   if (!projectPath) throw new Error('projectPath is required');
   const project = await realpath(resolve(projectPath)).catch(() => { throw new Error(`Project path not found: ${projectPath}`); });
   if (!await directory(project)) throw new Error(`Project path is not a directory: ${projectPath}`);
-  const workspaceCandidate = configuredWorkspaceRoot(project, options.workspaceRoot);
-  const workspaceRoot = await realpath(workspaceCandidate).catch(() => workspaceCandidate);
-  const neoRoot = await configuredNeoRoot(workspaceRoot, options.neoRoot);
+  const workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot);
+  const neoCandidate = join(workspaceRoot, 'neo');
+  const neoRoot = await directory(neoCandidate) ? await realpath(neoCandidate) : neoCandidate;
   const globalCandidate = configuredGlobalRoot(options.globalRoot);
   const globalRoot = await realpath(globalCandidate).catch(() => globalCandidate);
 
@@ -200,27 +188,25 @@ export async function resolveExecutionContext(projectPath: string, role: Executi
   const skills = selectByName([...skillMap.values()].sort((a, b) => a.name.localeCompare(b.name)), options.explicitSkills, 'skill');
 
   const agentMap = new Map<string, ResolvedAgent>();
-  for (const agent of await agentFiles(dirname(BUNDLED_AGENTS_ROOT), 'builtin', [])) agentMap.set(agent.name, agent);
-  for (const agent of await agentFiles(project, 'project', [])) {
-    // An extending agent inherits the builtin identity metadata unless the project
-    // explicitly supplies a value. Local-only agents retain their own metadata.
-    const builtin = agentMap.get(agent.name);
-    if (builtin && agent.path) {
-      const { fields } = await metadata(agent.path);
-      if (fields.extends === `relay/${agent.name}`) {
-        agentMap.set(agent.name, {
-          ...builtin, ...agent,
-          description: fields.description === undefined ? builtin.description : agent.description,
-          capabilities: fields.capabilities === undefined ? builtin.capabilities : agent.capabilities,
-          runtime: fields.runtime === undefined && fields.runtimes === undefined ? builtin.runtime : agent.runtime,
-          trustDomains: fields.trustDomains === undefined && fields.trust_domains === undefined && fields.trust === undefined ? builtin.trustDomains : agent.trustDomains,
-          delegation: fields.delegation === undefined ? builtin.delegation : agent.delegation,
-          restrictions: fields.restrictions === undefined && fields.boundaries === undefined ? builtin.restrictions : agent.restrictions,
-        });
-        continue;
-      }
-    }
-    agentMap.set(agent.name, agent);
+  const agentNames = new Set<string>();
+  for (const [root, source] of [[dirname(BUNDLED_AGENTS_ROOT), 'builtin'], [neoRoot, 'neo'], [project, 'project']] as const) {
+    for (const agent of await agentFiles(root, source, [])) agentNames.add(agent.name);
+  }
+  for (const name of agentNames) {
+    const resolved = await resolveAgentMarkdown(name, BUNDLED_AGENTS_ROOT, project, neoRoot);
+    const fields = resolved.metadata;
+    const sourcePath = resolved.sources[resolved.sources.length - 1];
+    const source: ResolvedAgent['source'] = sourcePath?.startsWith(project + '/') ? 'project'
+      : sourcePath?.startsWith(neoRoot + '/') ? 'neo' : 'builtin';
+    agentMap.set(name, {
+      name, path: sourcePath, source,
+      description: fields.description,
+      capabilities: listValue(fields.capabilities),
+      runtime: fields.runtime || listValue(fields.runtimes)[0] || undefined,
+      trustDomains: listValue(fields.trustDomains ?? fields.trust_domains ?? fields.trust),
+      delegation: listValue(fields.delegation),
+      restrictions: listValue(fields.restrictions ?? fields.boundaries),
+    });
   }
   for (const registration of options.registeredAgents ?? []) {
     if (agentMap.has(registration.name)) continue;
@@ -253,7 +239,7 @@ export async function resolveAgentContract(context: ExecutionContext, agentName:
   const agent = context.agents.find(candidate => candidate.name === agentName);
   if (!agent) throw new Error(`Agent ${agentName} is not visible in the resolved execution context`);
   if (!agent.path) throw new Error(`Agent ${agentName} has no readable Markdown contract`);
-  const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path);
+  const resolved = await resolveAgentMarkdown(agentName, BUNDLED_AGENTS_ROOT, context.project.path, context.project.neoRoot);
   const definition = resolved.content;
   if (!definition.trim()) throw new Error(`Agent ${agentName} Markdown contract is empty`);
   return { agent, definition, hash: resolved.hash, sources: resolved.sources };

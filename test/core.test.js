@@ -872,6 +872,22 @@ test('model task requires an event bus before launch', async () => {
   assert.match(durable.error,/event bus/);
 });
 
+test('selected agent contract loading failure terminalizes before the inactivity watchdog', async () => {
+  const t = task('missing-agent-contract'); t.agentName = 'not-visible';
+  const store = new InMemoryStore(job([t])); const bus = new MemoryEventBus(); const adapter = new FakeAdapter();
+  const reconciler = managedReconciler(store, {
+    owner: 'test', adapters: [adapter], eventBus: bus, projectPathForJob: async () => process.cwd(),
+    executionContextRoots: { workspaceRoot: process.cwd(), globalRoot: process.cwd() },
+  });
+  await reconciler.reconcile('j');
+  const durable = (await store.load('j')).tasks[0];
+  assert.equal(adapter.launches, 0);
+  assert.equal(durable.state, 'FAILED');
+  assert.equal(durable.executionId, null);
+  assert.equal(durable.leaseOwner, null);
+  assert.match(durable.error, /Execution contract unavailable: Agent not-visible is not visible/);
+});
+
 test('Relay publishes process launched and accepts only a worker-owned post-launch start acknowledgement', async () => {
   const t=task('chat-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); const events=[];
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};

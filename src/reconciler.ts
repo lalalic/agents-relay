@@ -392,16 +392,10 @@ export class Reconciler extends ReconcilerReviewBase {
     let executionContext: ExecutionContext;
     try {
       const role: ExecutionRole = task.agentName === 'reviewer' ? 'reviewer' : task.agentName === 'troubleshooter' ? 'troubleshooter' : task.parentTaskId ? 'nested-worker' : 'worker';
-      let projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job) : task.routing?.cwd ?? process.cwd();
-      const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
+      const projectPath = this.options.projectPathForJob ? await this.options.projectPathForJob(job, task) : task.routing?.cwd ?? process.cwd();
       executionContext = await this.resolvedContext(job, task, role, projectPath);
     } catch (error) {
-      task.leaseOwner = null;
-      task.leaseExpiresAt = null;
-      task.executionId = null;
-      await transitionTaskEvent(task, 'block');
-      task.error = `Execution checkout unavailable: ${error instanceof Error ? error.message : String(error)}`;
-      await this.store.saveTask(task);
+      await this.failLaunch(job.id, task.id, task.executionId, `Execution context unavailable: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
     const startedAt = Date.now();
@@ -409,7 +403,12 @@ export class Reconciler extends ReconcilerReviewBase {
     const controller = new AbortController();
     let execution: Execution;
     const sourceId = executionEventSource(job.id, task.id, durableExecutionId);
-    const baseWorkerInput = await managedWorkerInput(job, task, executionContext);
+    let baseWorkerInput: string;
+    try { baseWorkerInput = await managedWorkerInput(job, task, executionContext); }
+    catch (error) {
+      await this.failLaunch(job.id, task.id, task.executionId, `Execution contract unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     const canonicalProjectRun = taskUsesCanonicalProjectRun(task, job.tasks);
     const workerInput = canonicalProjectRun
       ? `${baseWorkerInput}\n\n[Canonical Neo project run]\nExecution cwd: ${executionContext.project.path}\nKeep generated artifacts under runs/.`

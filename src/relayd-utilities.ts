@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
@@ -32,7 +32,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -95,7 +95,8 @@ Usage:
 Options:
   --no-github             Local-only mode: no GitHub auth, transport, PR, merge, or fetch
   --repo OWNER/REPO       Watch one repository
-  --workspace PATH        Discover repositories below PATH (default: ~/Workspace)
+  --workspace-root PATH  Workspace Root (default: AGENTS_RELAY_WORKSPACE_ROOT, shared Neo config, or ~/Workspace)
+  --workspace PATH       Legacy alias for --workspace-root
   --port PORT             Dashboard port (default: 8787)
   --concurrency N         Maximum concurrent workers (default: 4)
   --interval MS           Recovery interval
@@ -108,7 +109,7 @@ Legacy single-job mode also accepts --repo OWNER/REPO --pr NUMBER --id JOB_ID.
 
 Examples:
   npx agents-relayd --repo OWNER/REPO
-  npx agents-relayd --workspace ~/Workspace`;
+  npx agents-relayd --workspace-root ~/Workspace`;
 export function firstStageChoices(decisionInput: Record<string, unknown> | undefined): string[] {
   const stages = decisionInput?.stages;
   if (!Array.isArray(stages) || stages.length === 0) return [];
@@ -119,13 +120,15 @@ export function firstStageChoices(decisionInput: Record<string, unknown> | undef
 export function value(args: readonly string[], name: string, fallback = ''): string { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback; }
 export function normalizeDaemonArguments(argv: readonly string[]): DaemonArguments {
   const repository = value(argv, '--repo') || null;
-  const workspaceRoot = value(argv, '--workspace', defaultWorkspaceRoot()) || null;
+  if (argv.includes('--workspace-root') && argv.includes('--workspace')) throw new Error('--workspace-root and --workspace cannot both be supplied');
+  const workspaceRootValue = value(argv, '--workspace-root') || value(argv, '--workspace') || process.env.AGENTS_RELAY_WORKSPACE_ROOT;
+  const workspaceRoot = workspaceRootValue ? resolve(workspaceRootValue) : null;
   const prValue = value(argv, '--pr'); const id = value(argv, '--id');
   if ((prValue && !id) || (!prValue && id)) throw new Error('--pr and --id must be supplied together for legacy single-job mode');
   if ((prValue || id) && !repository) throw new Error('--repo is required for legacy single-job mode');
   if (repository && argv.includes('--workspace')) throw new Error('--repo and --workspace are mutually exclusive');
   const pullRequest = prValue ? Number(prValue) : null; if (pullRequest !== null && (!Number.isInteger(pullRequest) || pullRequest <= 0)) throw new Error('--pr must be positive');
-  return { repository, workspaceRoot: repository ? null : workspaceRoot, pullRequest, jobId: id || null, serviceArguments: [...argv] };
+  return { repository, workspaceRoot, pullRequest, jobId: id || null, serviceArguments: [...argv] };
 }
 
 export function recoveryScanRepositories(repositories: readonly string[], cached: readonly ManagedJobOverview[], dormantProbeIndex = 0): string[] {

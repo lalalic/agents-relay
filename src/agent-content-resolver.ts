@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 export type AgentMergeMode = 'extend' | 'replace';
-export type EffectiveAgentContent = { content: string; hash: string; sources: string[] };
+export type EffectiveAgentContent = { content: string; hash: string; sources: string[]; metadata: Record<string, string | undefined> };
 const parseList = (raw: string): string[] => raw.trim().replace(/^\[/, '').replace(/\]$/, '').split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
 
 /** Restrict the frontmatter grammar to the explicitly supported scalar/list fields. */
@@ -75,33 +75,61 @@ function mergeSections(base: string, child: ReturnType<typeof parseDocument>): s
   return result.trim();
 }
 
-/** Exactly two lookup layers: Relay built-ins and a single job context agents directory. */
-export async function resolveAgentMarkdown(name: string, builtinsRoot: string, contextRoot: string): Promise<EffectiveAgentContent> {
+/** Resolve the visible agent through Relay, Neo shared, then project-local layers. */
+export async function resolveAgentMarkdown(name: string, builtinsRoot: string, contextRoot: string, neoRoot?: string | null): Promise<EffectiveAgentContent> {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error(`Invalid agent name ${name}`);
-  const builtin = join(builtinsRoot, `${name}.agent.md`);
-  const local = join(contextRoot, 'agents', `${name}.agent.md`);
-  const sources: string[] = [];
   const load = async (path: string, root: string) => {
     const canonical = await realpath(path);
     const canonicalRoot = await realpath(root);
     if (!(canonical === canonicalRoot || canonical.startsWith(canonicalRoot + '/'))) throw new Error('Agent file escapes context root');
-    const source = parseDocument(await readFile(canonical, 'utf8'));
+    const raw = await readFile(canonical, 'utf8');
+    const source = parseDocument(raw);
     if (source.name && source.name !== name) throw new Error(`Agent name mismatch ${source.name} != ${name}`);
-    sources.push(canonical);
-    return source;
+    return { ...source, path: canonical, metadata: Object.fromEntries(raw.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1].split(/\r?\n/).flatMap(line => {
+      const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+      return field ? [[field[1], field[2].trim().replace(/^['"]|['"]$/g, '')]] : [];
+    }) ?? []) };
   };
-  let base: ReturnType<typeof parseDocument> | undefined;
-  try { base = await load(builtin, builtinsRoot); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-  let overlay: ReturnType<typeof parseDocument> | undefined;
-  try { overlay = await load(local, contextRoot + '/agents'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-  if (!base && !overlay) throw new Error(`Unknown agent ${name}`);
-  if (overlay && (overlay.replace.length || overlay.extend.length) && !overlay.extendsAgent) throw new Error('Section operations require extends');
-  if (overlay?.extendsAgent && overlay.extendsAgent !== `relay/${name}`) throw new Error(`Only extends: relay/${name} is supported`);
-  if (overlay?.extendsAgent && !base) throw new Error(`Missing Relay base for agent ${name}`);
-  if (overlay && base && !overlay.extendsAgent) { // explicit local definition without inheritance
-    if (overlay.replace.length || overlay.extend.length) throw new Error('Section operations require extends');
-    return {content:overlay.body, sources:[sources[sources.length-1]], hash:createHash('sha256').update(overlay.body).digest('hex')};
+  type Loaded = ReturnType<typeof parseDocument> & { path: string; metadata: Record<string, string | undefined> };
+  const loadLayer = async (root: string): Promise<Loaded> => {
+    for (const suffix of ['.agent.md', '.md']) {
+      try { return await load(join(root, `${name}${suffix}`), root); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
+    throw Object.assign(new Error('Agent file not found'), { code: 'ENOENT' });
+  };
+  let base: Loaded | undefined;
+  try { base = await loadLayer(builtinsRoot); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  let effective = base;
+  let shared: Loaded | undefined;
+  let sharedSources: string[] = [];
+  let sources = base ? [base.path] : [];
+  let metadata = { ...(base?.metadata ?? {}) };
+  for (const [layer, root] of [['neo', neoRoot], ['project', contextRoot]] as const) {
+    if (!root) continue;
+    let overlay: Loaded | undefined;
+    try { overlay = await loadLayer(join(root, 'agents')); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    if (!overlay) continue;
+    const hasOperations = overlay.replace.length || overlay.extend.length;
+    if (hasOperations && !overlay.extendsAgent) throw new Error('Section operations require extends');
+    if (overlay.extendsAgent && ![`relay/${name}`, `neo/${name}`].includes(overlay.extendsAgent)) throw new Error(`Only extends: relay/${name} or neo/${name} is supported`);
+    if (layer === 'neo' && overlay.extendsAgent === `neo/${name}`) throw new Error(`Missing Neo base for agent ${name}`);
+    if (overlay.extendsAgent === `relay/${name}` && !base) throw new Error(`Missing Relay base for agent ${name}`);
+    if (overlay.extendsAgent === `neo/${name}` && !shared) throw new Error(`Missing Neo base for agent ${name}`);
+    if (!overlay.extendsAgent) {
+      effective = overlay;
+      metadata = {};
+      sources = [overlay.path];
+    } else {
+      const parent = overlay.extendsAgent === `relay/${name}` ? base : overlay.extendsAgent === `neo/${name}` ? shared : effective;
+      effective = { ...overlay, body: mergeSections(parent!.body, overlay) };
+      metadata = { ...parent!.metadata };
+      sources = [...(overlay.extendsAgent === `relay/${name}` ? [base!.path] : overlay.extendsAgent === `neo/${name}` ? sharedSources : sources), overlay.path];
+    }
+    Object.assign(metadata, overlay.metadata);
+    if (layer === 'neo') { shared = effective; sharedSources = [...sources]; }
   }
-  const content = overlay ? mergeSections(base?.body ?? '', overlay) : base!.body;
-  return {content, sources, hash:createHash('sha256').update(content).digest('hex')};
+  if (!effective) throw new Error(`Unknown agent ${name}`);
+  const content = effective.body;
+  return {content, metadata, sources, hash:createHash('sha256').update(content).digest('hex')};
 }

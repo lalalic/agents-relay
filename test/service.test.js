@@ -237,6 +237,7 @@ test('daemon arguments default to workspace mode without changing --repo mode', 
   assert.equal(workspace.workspaceRoot, '/tmp/Workspace');
   assert.equal(workspace.pullRequest, null);
   assert.throws(() => normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--workspace', '/tmp/Workspace']), /mutually exclusive/);
+  assert.equal(normalizeDaemonArguments(['--repo', 'OWNER/REPO', '--workspace-root', '/tmp/Workspace']).workspaceRoot, '/tmp/Workspace');
 });
 
 test('daemon package bin uses an unconditional launcher that remains PM2-loadable', async () => {

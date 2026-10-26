@@ -35,7 +35,7 @@ import { applyJobActivateAction } from './job-actions.js';
 import { managedTaskUpdateHandler } from './task-update.js';
 import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js';
 import { codexAndZaiUsageRegistry } from './usage.js';
-import { defaultWorkspaceRoot, discoverWorkspaceRepositories, ensureLocalJobSourceBranch, jobRequiresManagedWorktree, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
+import { discoverWorkspaceRepositories, ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { GitHubWebhookWake } from './github-webhook.js';
 import { deriveJobRuntimeStatus } from './runtime-status.js';
 import { createRuntimeStatusPublisher } from './runtime-status-events.js';
@@ -82,13 +82,14 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   const bus = eventResolution.bus;
   const stopRuntimeStatusEvents = bus ? subscribeLocalCommits(createRuntimeStatusPublisher(bus)) : () => {};
   process.stderr.write(`${eventBusResolutionMessage(eventResolution)}\n`);
-  const workspaceRoot = noGitHub ? (value(argv, '--project-path') || value(argv, '--workspace') || process.cwd())
-    : normalized.workspaceRoot ?? defaultWorkspaceRoot();
-  const discoveredRepositories = normalized.repository || noGitHub ? [] : await discoverWorkspaceRepositories(workspaceRoot).catch(() => []);
-  const repositories = noGitHub && !normalized.repository ? [`local/${basename(workspaceRoot)}`] : normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);
-  const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
-  if (noGitHub) for (const repo of repositories) repositoryPaths.set(repo, value(argv, '--project-path') || workspaceRoot);
+  const workspaceRoot = await resolveWorkspaceRoot(normalized.workspaceRoot ?? undefined);
   const explicitProjectPath = value(argv,'--project-path');
+  const localProjectPath = noGitHub && !explicitProjectPath && !argv.includes('--workspace') && !argv.includes('--workspace-root') && !process.env.AGENTS_RELAY_WORKSPACE_ROOT
+    ? process.cwd() : explicitProjectPath || workspaceRoot;
+  const discoveredRepositories = normalized.repository || noGitHub ? [] : await discoverWorkspaceRepositories(workspaceRoot).catch(() => []);
+  const repositories = noGitHub && !normalized.repository ? [`local/${basename(localProjectPath)}`] : normalized.repository ? [normalized.repository] : discoveredRepositories.map(item => item.repository);
+  const repositoryPaths = new Map(discoveredRepositories.map(item => [item.repository, item.path]));
+  if (noGitHub) for (const repo of repositories) repositoryPaths.set(repo, localProjectPath);
   const usageRegistry = codexAndZaiUsageRegistry();
   const decisionAuditStore = new JsonlDecisionAuditStore(process.env.AGENTS_RELAY_DECISION_AUDIT_PATH ?? join(homedir(), '.agents-relay', 'decision-audit.jsonl'));
   let cachedOverviews: ManagedJobOverview[] = [];
@@ -132,11 +133,18 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       !['COMPLETED','CANCELLED'].includes(item.job.state) || counts.get(item.job.id) !== 1));
   };
   cachedOverviews = await inventoryFromLocal();
-  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, escalationNotifier:escalationNotifierFromEnvironment(), reviewer:runtimeReviewer(argv), projectPathForJob: async job => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (!jobRequiresManagedWorktree(job)) return resolveRepositoryProjectPath(canonical, job.projectPath);
-    const sourceRef = await ensureLocalJobSourceBranch(canonical, job);
-    if (!store.mutateJob) throw new Error('Local Job branch binding requires atomic SQLite mutation');
-    const bound = await store.mutateJob(job.id, current => current.localMerge ? current : ({...current, localMerge: {sourceRef,targetRef:'refs/heads/main',status:'pending' as const},updatedAt:new Date().toISOString()}));
-    return prepareLocalJobExecutionWorktree(canonical, bound, workspaceRoot); } });
+  const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, escalationNotifier:escalationNotifierFromEnvironment(), reviewer:runtimeReviewer(argv), executionContextRoots: { workspaceRoot }, projectPathForJob: async (job, task) => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
+    const sourceRef = job.localMerge?.sourceRef ?? await ensureLocalJobSourceBranch(canonical, job);
+    if (!job.localMerge?.sourceRef) {
+      if (!task || !store.mutateJob) throw new Error('Managed source branch binding requires an executing code Task and atomic SQLite mutation');
+      const bound = await store.mutateJob(job.id, current => {
+        const activeTask = current.tasks.find(item => item.id === task.id);
+        if (current.localMerge || current.state !== 'ACTIVE' || !activeTask || !['QUEUED', 'RUNNING'].includes(activeTask.state) || !taskRequiresManagedWorktree(current, activeTask)) return current;
+        return {...current, localMerge: {sourceRef,targetRef:'refs/heads/main',status:'pending' as const},updatedAt:new Date().toISOString()};
+      });
+      if (!bound.localMerge?.sourceRef) throw new Error('Job changed before managed source branch binding');
+    }
+    return prepareLocalJobExecutionWorktree(canonical, await store.load(job.id), workspaceRoot); } });
   const refreshAll = async (_full = false): Promise<ManagedJobOverview[]> => {
     cachedOverviews = await inventoryFromLocal();
     return cachedOverviews;
