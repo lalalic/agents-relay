@@ -13,7 +13,28 @@ const productionSources=walk(join(root,'src')).map(path=>readFileSync(path,'utf8
 const graphNames=readdirSync(graphDirectory).filter(x=>x.endsWith('.mmd')&&x!=='main.mmd').sort();
 test('every executable graph is loaded by production, without an orphan or silent deletion',()=>{
  assert.equal(graphNames.length,graphs.size);
- assert.ok(graphNames.length>=16,'unexpected graph inventory contraction requires explicit review');
+ // Reviewed inventory migration (2026-10-26): retire only scheduled-run.mmd and
+ // schedule-cycle.mmd. Jobs now replan on objective progress, not cron slots.
+ // An exact inventory prevents future silent graph additions or removals;
+ // the per-graph production owner, binding and edge checks below stay strict.
+ const expectedGraphs=[
+  'authoritative-unblock.mmd',
+  'blocker-resolution.mmd',
+  'escalation.mmd',
+  'force-restate-validation.mmd',
+  'interactive-invocation.mmd',
+  'job-lifecycle.mmd',
+  'orchestrator-rescue.mmd',
+  'planner-orchestration.mmd',
+  'planner-trigger.mmd',
+  'projection-conflict.mmd',
+  'review-lifecycle.mmd',
+  'task-lifecycle.mmd',
+  'task-related-action.mmd',
+  'task-resolution.mmd',
+  'troubleshooter.mmd',
+ ];
+ assert.deepEqual(graphNames,expectedGraphs,'executable Graph inventory changed without explicit review');
  for(const name of graphNames){
   assert.ok(graphs.has(name),name);
   assert.ok(productionSources.some(source=>source.includes(name)||source.includes("'"+name.slice(0,-4)+"'")),name+' has no production owner');
