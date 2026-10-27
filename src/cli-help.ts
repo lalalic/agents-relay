@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|review|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|review|artifact|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
@@ -11,6 +11,7 @@ Commands:
   job create|update|show|list|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|classify|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
+  artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
   blocker add|resolve|show  Manage cross-Job blocker dependencies
@@ -60,6 +61,10 @@ Request a new SHA-bound reviewer turn through the existing Relay lifecycle.
 Usage: npx agents-relay review request --repo OWNER/REPO --pr NUMBER --id JOB_ID [--thread-id THREAD_ID]
 
 When provided, --thread-id persists a reviewer destination; otherwise the Job reviewer thread, then creator thread, then legacy review route is used. The command wakes Relay. Review Task creation, idempotency, routing and delivery remain graph/daemon-owned. Rejects in-flight/queued reviews; does not itself mark review delivered.`,
+  artifact: `Check a JSON artifact against a project-owned JSON Schema. Read-only; does not affect Task state or planning.
+
+Usage: agents-relay artifact validate --artifact PATH --schema PATH
+Exit 0 on PASS, 1 on schema mismatch or invalid input. Returns JSON { valid, errors }.`,
   'review run': `Evaluate the calling Agent's requested outcome inside its Worker. A generic Outcome Reviewer runs by default; --agents adds comma-separated professional roles found in the project or shared agent catalog. Does not create Relay Tasks or trigger Final Review.
 
 Usage: agents-relay review run (--prompt TEXT | --prompt-file PATH) [--project-path DIR] [--agents role,role] [--output PATH]

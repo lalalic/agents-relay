@@ -45,5 +45,8 @@
     "workflow",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "ajv": "^8.20.0"
+  }
 }
