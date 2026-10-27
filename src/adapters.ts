@@ -414,7 +414,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         const referencePrompt = task.chatgptThreadDelivery && references.length
           ? `\n\n[Inline immutable local reference snapshots]\nThese complete verified snapshots are included in this message because this thread delivery does not attach local files. Follow their contents according to their declared roles.\n${references.map(reference => `\n--- ${reference.role}: ${reference.path} (sha256:${reference.sha256}) ---\n${reference.content}\n--- end snapshot ---`).join('\n')}`
           : references.length
-            ? `\n\n[Attached immutable Agent Contract]\nAfter publishing the required task.started event, read the attached contract file and verify its SHA-256 before following it. If it is unreadable or mismatched, report a concrete failure.\n${references.map(reference => `- ${reference.path} (sha256:${reference.sha256})`).join('\n')}`
+            ? `\n\n[Attached immutable Agent Contract]\nAfter publishing the required task.started event, read the attached immutable contract snapshot and follow it. Relay owns snapshot integrity; do not hash or compare the original .agent.md. If the attached snapshot is unreadable, report a concrete failure.\n${references.map(reference => `- ${reference.path} (sha256:${reference.sha256})`).join('\n')}`
           : '';
         if (task.chatgptThreadDelivery && declaredPromptReferences(task.input).length) {
           const unresolved = declaredPromptReferences(task.input)

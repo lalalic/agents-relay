@@ -461,7 +461,7 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
     const instructions = effectivePlanner?.content ?? await readFile(this.agentFile, 'utf8');
     const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
     const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
-    const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: (effectivePlanner ? `[Effective planner contract SHA-256: ${effectivePlanner.hash}]\n\n` : '') + instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
+    const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       // Plan apply writes unified relay.sqlite beside AGENTS_RELAY_STORE_DIR.
       const child = spawnOwnedProcess(this.command, buildPlannerCodexArgs(relayStoreDirectory(), input), { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });

@@ -240,6 +240,7 @@ Check real footage evidence.`);
     assert.match(prompt,/Check real footage evidence/);
     assert.match(prompt,/BEGIN AGENT CONTRACT/);
     assert.match(prompt,/Relay Reviewer Agent/);
+    assert.doesNotMatch(prompt,/Effective contract SHA-256/);
     assert.deepEqual(context.agents.find(a => a.name === 'reviewer')?.capabilities, ['review','evidence-verification']);
     await writeFile(join(project,'agents','planner.agent.md'),`---
 name: planner

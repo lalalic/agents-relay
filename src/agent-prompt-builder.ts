@@ -83,7 +83,7 @@ export async function buildReferenceFirstPrompt(input: {
   return buildAgentPrompt({
     role: input.role,
     system: (input.bootstrap ? input.bootstrap.trim() + '\n' : '') +
-      'After the required execution startup action, read the referenced immutable Agent Contract. Verify its SHA-256 before following it. If unreadable or mismatched, report a concrete failure; never guess its instructions.',
+      'After the required execution startup action, read the referenced immutable Agent Contract snapshot and follow it. Relay owns snapshot integrity and version identity; do not compute a hash of the source .agent.md or compare it to the snapshot. If the snapshot is unreadable, report a concrete failure; never guess its instructions.',
     user: input.user,
     references: [reference],
   });

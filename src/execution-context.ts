@@ -246,11 +246,10 @@ export async function resolveAgentContract(context: ExecutionContext, agentName:
 }
 
 export async function agentContractPrompt(context: ExecutionContext, agentName: string): Promise<string> {
-  const { agent, definition, hash, sources } = await resolveAgentContract(context, agentName);
+  const { agent, definition, sources } = await resolveAgentContract(context, agentName);
   return `[Selected task agent contract]
 Agent: ${agent.name}
 Source: ${agent.path ?? agent.source}
-Effective contract SHA-256: ${hash}
 Contract layers: ${sources.join(' -> ')}
 
 The following Markdown is the authoritative behavioral contract for this Task agent.

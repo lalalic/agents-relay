@@ -411,7 +411,8 @@ process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_mes
     const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
     assert.ok(reference);
     assert.match(await readFile(reference[1], 'utf8'), /agents-relay plan apply/);
-    assert.match(prompt, /Verify its SHA-256/);
+    assert.doesNotMatch(prompt, /Verify its SHA-256|Effective planner contract SHA-256/);
+    assert.match(prompt, /Relay owns snapshot integrity/);
     assert.match(prompt, /## Durable planner input/);
     assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
     const args = JSON.parse(await readFile(argsFile, 'utf8'));

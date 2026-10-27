@@ -24,7 +24,7 @@ test('reference-first snapshot pins the merged contract bytes for both adapters'
   try {
     const bundle = await buildReferenceFirstPrompt({ role: 'planner', adapter: 'chatgpt', referenceDirectory: directory,
       system: 'MERGED CONTRACT\nplan apply is mandatory', user: 'DURABLE INPUT', bootstrap: 'Read the attached contract.' });
-    assert.equal(bundle.system, 'Read the attached contract.\nAfter the required execution startup action, read the referenced immutable Agent Contract. Verify its SHA-256 before following it. If unreadable or mismatched, report a concrete failure; never guess its instructions.');
+    assert.equal(bundle.system, 'Read the attached contract.\nAfter the required execution startup action, read the referenced immutable Agent Contract snapshot and follow it. Relay owns snapshot integrity and version identity; do not compute a hash of the source .agent.md or compare it to the snapshot. If the snapshot is unreadable, report a concrete failure; never guess its instructions.');
     assert.equal(bundle.references.length, 1);
     assert.match(await readFile(bundle.references[0].path, 'utf8'), /plan apply is mandatory/);
     assert.equal((await promptFileReference(bundle.references[0].path, 'instructions')).sha256, bundle.references[0].sha256);
