@@ -15,8 +15,9 @@ const plan = { id: 'plan-1', round: 1, source: 'model-planner', headSha: 'head-1
 const spec = { id: 'review-planned', agentName: 'reviewer', input: 'Review head.', output: { kind: 'task_pr' } };
 
 test('planner-created reviewer binds exact configured thread before dispatch without implementation bleed', () => {
-  const task = materializePlannerChild(job(), plan, spec, context);
+  const task = materializePlannerChild({ ...job(), tasks: [{ id: 'implementation-root', kind: 'work', agentName: 'implementation', parentTaskId: null }] }, plan, spec, context);
   assert.equal(task.adapter, 'chatgpt');
+  assert.equal(task.parentTaskId, null);
   assert.equal(task.workerRequirements.runtime, 'chatgpt');
   assert.equal(task.chatgptThreadDelivery.threadId, 'configured-reviewer-thread');
   assert.equal(task.chatgptThreadDelivery.threadSource, 'reviewer');

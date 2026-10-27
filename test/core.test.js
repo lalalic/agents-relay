@@ -2004,6 +2004,7 @@ test('completed jobs create one SHA-bound reviewer task and suppress duplicates'
   let saved = await store.load('j');
   assert.equal(saved.tasks.filter(item => item.agentName === 'reviewer').length, 1);
   const reviewer = saved.tasks.find(item => item.agentName === 'reviewer');
+  assert.equal(reviewer?.parentTaskId, null);
   assert.equal(reviewer?.reviewHeadSha, 'sha-review-1');
   assert.equal(reviewer?.adapter, 'chatgpt');
   assert.equal(reviewer?.routing?.provider, 'chatgpt');

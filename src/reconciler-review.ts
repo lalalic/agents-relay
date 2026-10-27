@@ -151,7 +151,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     ].join('\n\n');
     const task = createTaskEntity(job, {
       jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
-      parentTaskId: reviewGateTasks.find(item => !item.parentTaskId)?.id ?? null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
+      parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
       output: { kind: 'task_pr' }, routing: reviewerRouting.candidate.routing, continuation: null, continuationDeliveredAt: null,
