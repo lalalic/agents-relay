@@ -2,7 +2,7 @@ import test, { managedDashboard } from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
-import { Script } from 'node:vm';
+import { Script, runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { dashboardHtml, dashboardVersion, dashboardSourceRevision, dashboardWorkflowGraphs, githubPrUrl, searchDashboardJobs, serveDashboard } from '../dist/dashboard.js';
 import { InMemoryStore } from '../dist/store.js';
@@ -67,9 +67,9 @@ test('mobile jobs view exposes both status and repository multi-select controls'
 });
 
 test('refresh failure remains visible after controls are restored', () => {
-  assert.match(dashboardHtml, /catch\(error\)\{[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
+  assert.match(dashboardHtml, /catch\(error\)\{if\(requestSequence!==jobsRequestSequence\)return;[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
   const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=false)'), dashboardHtml.indexOf('function renderEventScope()'));
-  assert.match(refreshBody, /finally\{jobsRefresh\.disabled=false;jobsRefresh\.textContent='Refresh';syncFilters\(\);\}/);
+  assert.match(refreshBody, /finally\{if\(requestSequence===jobsRequestSequence\)\{jobsRefresh\.disabled=false;jobsRefresh\.textContent='Refresh';syncFilters\(\);\}\}/);
   assert.doesNotMatch(refreshBody, /finally\{[^}]*renderJobList\(/);
 });
 
@@ -1239,4 +1239,53 @@ test('failed tasks retain failure and show resolution status in badge and detail
   assert.match(dashboardHtml, /task\.state\+' \/ '\+resolution/);
   assert.match(dashboardHtml, /task\.state==='FAILED'\?taskStateLabel\(task\)/);
   assert.match(dashboardHtml, /field\('Resolution state',task\.resolution\.state\)/);
+});
+test('Jobs search keeps only the newest response across filters, paging and Refresh', async () => {
+  const source = dashboardHtml.match(/let jobsRequestSequence=0;[\s\S]*?(?=\nfunction renderEventScope\()/)?.[0];
+  assert.ok(source, 'Jobs request sequence guard is present');
+  const pending = [];
+  const state = {
+    jobsRefresh:{disabled:false,textContent:''}, jobsPrev:{disabled:false}, jobsNext:{disabled:false},
+    jobsPage:1, jobsTotalPages:3, jobsTotal:0, jobs:[], jobRepositories:[],
+    selectedJob:null,selectedTaskId:null,searchQuery:'',selectedStatuses:[],selectedRepos:[],
+    connection:{textContent:'',className:'',setAttribute(name,value){this[name]=value;}},
+    location:{hash:''}, jobList:{replaceChildren(){}},
+    jobsQuery(force){return 'q='+context.searchQuery+'&page='+context.jobsPage+'&refresh='+Number(force);},
+    loadJSON(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));},
+    dedupeJobs(value){return value;},drawRuntimeSummary(){},compareJobs(){return 0;},
+    jobForSelection(){return null;},jobSelectionKey(job){return job?.id||null;},
+    rememberSelection(){},rememberJobFilters(){},renderAll(){state.renders++;},
+    loadEventHistory(){},syncFilters(){state.synced++;},
+    renders:0,synced:0,
+    element(){return {};},text(value){return value},
+  };
+  // Explicit global access makes the test exercise the same closure as browser handlers.
+  const context = runInNewContext('(' + JSON.stringify({}) + ')', {});
+  Object.assign(context,state);
+  runInNewContext(source+'\nthis.runRefresh=refresh;',context);
+  const first=context.runRefresh(true);
+  assert.match(pending[0].url,/refresh=1/);
+  context.searchQuery='latest';
+  context.jobsPage=2;
+  const second=context.runRefresh(false);
+  assert.match(pending[1].url,/q=latest&page=2/);
+  pending[1].resolve({jobs:[{id:'latest'}],repositories:['owner/repo'],total:21,page:2,totalPages:2});
+  await second;
+  const renders=state.renders;
+  pending[0].resolve({jobs:[{id:'stale'}],repositories:[],total:1,page:1,totalPages:1});
+  await first;
+  assert.equal(context.jobs[0].id,'latest');
+  assert.equal(context.jobsPage,2);
+  assert.equal(state.renders,renders);
+  assert.equal(context.jobsRefresh.disabled,false);
+  const third=context.runRefresh(false);
+  context.searchQuery='newest';
+  const fourth=context.runRefresh(true);
+  pending[2].reject(new Error('old request failed'));
+  await third;
+  assert.notEqual(context.connection.className,'status-pill bad');
+  pending[3].resolve({jobs:[{id:'newest'}],repositories:[],total:1,page:1,totalPages:1});
+  await fourth;
+  assert.equal(context.jobs[0].id,'newest');
+  assert.equal(context.connection.className,'status-pill ok');
 });
