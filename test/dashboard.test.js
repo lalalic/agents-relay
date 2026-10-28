@@ -679,7 +679,11 @@ test('Jobs search parses aliases, searches durable identity, and preserves repos
 });
 
 test('Jobs API performs a fresh authoritative query with page size 20', async () => {
-  const job = (id, overrides = {}) => ({ id, title:id, prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[], ...overrides });
+  let fixtureOrder = 0;
+  const job = (id, overrides = {}) => {
+    const timestamp = new Date(Date.UTC(2026, 0, 1) - fixtureOrder++ * 1000).toISOString();
+    return { id, title:id, prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:timestamp, updatedAt:timestamp, tasks:[], ...overrides };
+  };
   const jobs = Array.from({length:22},(_,index)=>job(`job-${index+1}`));
   let calls = 0;
   const overviewProvider = async (forceRefresh) => {
@@ -702,7 +706,12 @@ test('Jobs API performs a fresh authoritative query with page size 20', async ()
 });
 
 test('Jobs API applies repeated filters, default and explicit statuses, search, reset, and fresh refresh results', async () => {
-  const job = (id, state, repository, overrides = {}) => ({ id, title:id, prNumber:1, repository, state, continuation:null, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), tasks:[], ...overrides });
+  // Distinct fixture timestamps make the sort order independent of clock resolution.
+  let fixtureOrder = 0;
+  const job = (id, state, repository, overrides = {}) => {
+    const timestamp = new Date(Date.UTC(2026, 0, 1) - fixtureOrder++ * 1000).toISOString();
+    return { id, title:id, prNumber:1, repository, state, continuation:null, createdAt:timestamp, updatedAt:timestamp, tasks:[], ...overrides };
+  };
   let snapshot = [
     job('active-one','ACTIVE','owner/one',{ title:'Needle active', prNumber:11 }),
     job('active-two','ACTIVE','owner/two',{ title:'Other active', prNumber:12 }),
