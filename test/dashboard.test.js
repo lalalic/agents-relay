@@ -57,11 +57,20 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
   assert.match(dashboardHtml, /location\.hash='#\/jobs';syncMobileJobsView\(\)/);
 });
 
-test('mobile jobs view keeps only the repository filter and hides runtime summary', () => {
+test('mobile jobs view exposes both status and repository multi-select controls', () => {
   assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
-  assert.match(dashboardHtml, /#jobs-view \.job-search,[\s\S]*#jobs-view #status-filter \{ display:none; \}/);
+  assert.match(dashboardHtml, /#jobs-view #status-filter \{ display:block; max-width:145px; \}/);
+  assert.doesNotMatch(dashboardHtml, /#jobs-view #status-filter \{ display:none; \}/);
   assert.doesNotMatch(dashboardHtml, /#jobs-view #repo-filter \{ display:none; \}/);
-  assert.match(dashboardHtml, /id="repo-filter"/);
+  assert.match(dashboardHtml, /id="status-filter"[^>]*multiple/);
+  assert.match(dashboardHtml, /id="repo-filter"[^>]*multiple/);
+});
+
+test('refresh failure remains visible after controls are restored', () => {
+  assert.match(dashboardHtml, /catch\(error\)\{[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
+  const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=false)'), dashboardHtml.indexOf('function renderEventScope()'));
+  assert.match(refreshBody, /finally\{jobsRefresh\.disabled=false;jobsRefresh\.textContent='Refresh';syncFilters\(\);\}/);
+  assert.doesNotMatch(refreshBody, /finally\{[^}]*renderJobList\(/);
 });
 
 test('mobile usage view uses compact single-column cards', () => {

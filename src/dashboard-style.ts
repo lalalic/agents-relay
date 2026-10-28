@@ -149,8 +149,8 @@ export const dashboardStyles = `  <style>
       #jobs-view .panel-actions { width:100%; flex-wrap:wrap; }
       .runtime-summary { display:none; }
       #jobs-view .job-filters { width:auto; }
-      #jobs-view .job-search,
-      #jobs-view #status-filter { display:none; }
+      #jobs-view .job-search { display:none; }
+      #jobs-view #status-filter { display:block; max-width:145px; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }
