@@ -24,6 +24,8 @@ export const dashboardStyles = `  <style>
     .panel-actions { display:flex; align-items:center; gap:.45rem; }
     .job-filters { display:flex; gap:.35rem; align-items:center; flex-wrap:wrap; }
     .job-filter { max-width:145px; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .4rem; font:inherit; font-size:.72rem; }
+    .job-filter[multiple] { height:5.6rem; }
+    .jobs-pagination { display:flex; gap:.3rem; align-items:center; }
     .job-search { width:95px; max-width:14vw; border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--text); padding:.27rem .45rem; font:inherit; font-size:.72rem; }
     .quick-filter { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.27rem .42rem; font:inherit; font-size:.7rem; font-weight:750; cursor:pointer; }
     .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
@@ -147,9 +149,8 @@ export const dashboardStyles = `  <style>
       #jobs-view .panel-actions { width:100%; flex-wrap:wrap; }
       .runtime-summary { display:none; }
       #jobs-view .job-filters { width:auto; }
-      #jobs-view .job-search,
-      #jobs-view #quick-status,
-      #jobs-view #quick-draft { display:none; }
+      #jobs-view .job-search { display:none; }
+      #jobs-view #status-filter { display:block; max-width:145px; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }

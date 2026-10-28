@@ -1,4 +1,5 @@
 import { dashboardStyles } from './dashboard-style.js';
+import { DASHBOARD_JOB_PAGE_SIZE, DEFAULT_DASHBOARD_JOB_STATUSES } from './dashboard-data.js';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +38,7 @@ ${dashboardStyles}
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search title or PR #" aria-label="Search jobs by title or PR number"><select id="quick-status" class="job-filter" aria-label="Filter jobs by derived status"><option value="">STATUS</option></select><button id="quick-draft" class="quick-filter" type="button" aria-pressed="false">DRAFT</button><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search title or PR #" aria-label="Search jobs by title or PR number"><select id="status-filter" class="job-filter" multiple aria-label="Filter jobs by status (choose at least one; empty uses DRAFT, ACTIVE, and COMPLETED)"><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select><select id="repo-filter" class="job-filter" multiple aria-label="Filter jobs by repository (empty shows all repositories)"></select><button id="jobs-reset" class="refresh-button" type="button">Reset</button></div><div class="jobs-pagination"><button id="jobs-prev" class="refresh-button" type="button">Previous</button><span id="jobs-page" class="subtle">Page 1</span><button id="jobs-next" class="refresh-button" type="button">Next</button></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -137,10 +138,13 @@ const shortcutsView=document.querySelector('#shortcuts-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
+const jobsReset=document.querySelector('#jobs-reset');
 const jobSearch=document.querySelector('#job-search');
+const jobsPrev=document.querySelector('#jobs-prev');
+const jobsNext=document.querySelector('#jobs-next');
+const jobsPageLabel=document.querySelector('#jobs-page');
 const repoFilter=document.querySelector('#repo-filter');
-const quickStatus=document.querySelector('#quick-status');
-const quickDraft=document.querySelector('#quick-draft');
+const statusFilter=document.querySelector('#status-filter');
 const selectedJobRefresh=document.querySelector('#selected-job-refresh');
 const mobileJobsBack=document.querySelector('#mobile-jobs-back');
 const mobileJobs=window.matchMedia('(max-width:650px)');
@@ -172,9 +176,12 @@ const runtimeSummary=document.querySelector('#runtime-summary');
 let jobs=[];
 let selectedJob=sessionStorage.getItem('agents-relay:selected-job');
 let selectedTaskId=sessionStorage.getItem('agents-relay:selected-task');
-let selectedRepo=sessionStorage.getItem('agents-relay:repo-filter')||'';
-let quickMode=sessionStorage.getItem('agents-relay:quick-filter')||'jobs';
-let selectedRuntimeStatus=sessionStorage.getItem('agents-relay:runtime-status-filter')||'';
+let selectedRepos=storedValues('agents-relay:repo-filter');
+let selectedStatuses=sessionStorage.getItem('agents-relay:status-filter')===null?[...${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)}]:storedValues('agents-relay:status-filter');
+let jobsPage=1;
+let jobsTotal=0;
+let jobsTotalPages=1;
+let jobRepositories=[];
 let searchQuery=sessionStorage.getItem('agents-relay:job-search')||'';
 let workflowGraphs=[];
 let selectedGraphId='entry';
@@ -184,6 +191,7 @@ const collapsedTasks=new Set();
 const expandedTasks=new Set();
 const displayedEventIds=new Set();
 function value(input){return input===null||input===undefined||input===''?'—':String(input);}
+function storedValues(key){const stored=sessionStorage.getItem(key);if(!stored)return [];try{const parsed=JSON.parse(stored);if(Array.isArray(parsed))return parsed.filter(value=>typeof value==='string'&&value);if(typeof parsed==='string'&&parsed)return [parsed];}catch{return [stored];}return [];}
 function text(input){return document.createTextNode(value(input));}
 function element(name,className,child){const node=document.createElement(name);if(className)node.className=className;if(child)node.append(child);return node;}
 function yamlScalar(input){if(input===null)return 'null';if(typeof input==='boolean'||typeof input==='number')return String(input);return JSON.stringify(String(input));}
@@ -210,25 +218,22 @@ function clearEvents(){displayedEventIds.clear();eventFeed.replaceChildren(eleme
 async function loadEventHistory(){const job=selected();if(!job){clearEvents();return;}const params=new URLSearchParams({job:job.id,limit:String(MAX_EVENTS)});if(eventTaskId)params.set('task',eventTaskId);try{const history=await loadJSON('/api/events?'+params.toString());clearEvents();for(const event of Array.isArray(history)?history.slice().reverse():[])addEvent(event);}catch{clearEvents();}}
 function copySelectedJobIdentity(job){if(!job||!navigator.clipboard?.writeText)return;void navigator.clipboard.writeText(repoName(job.repository)+'/'+value(job.id)).catch(()=>{});}
 function selectJob(job){selectedJob=jobSelectionKey(job);selectedTaskId=null;eventTaskId=null;rememberSelection();clearEvents();location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';copySelectedJobIdentity(job);renderAll();void loadEventHistory();}
-function matchesQuickFilter(job){if(quickMode==='draft')return job.draft||job.state==='DRAFT';if(quickMode==='status')return !!selectedRuntimeStatus&&(job.runtimeStatus||'IDLE')===selectedRuntimeStatus;return true;}
+function matchesQuickFilter(job){const statuses=selectedStatuses.length?selectedStatuses:${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)};return statuses.some(status=>status==='DRAFT'?job.draft||job.state==='DRAFT':job.state===status);}
 function matchesSearch(job){const query=searchQuery.trim().toLowerCase();if(!query)return true;const pr=String(job.prNumber||'');const normalized=query.replace(/^pr\s*#?/,'').replace(/^#/,'');return String(job.title||job.id||'').toLowerCase().includes(query)||String(job.id||'').toLowerCase().includes(query)||shortManagedId(job.id,job.repository,'j').toLowerCase().includes(query)||pr.includes(normalized);}
-function filteredJobs(){return jobs.filter(job=>(!selectedRepo||job.repository===selectedRepo)&&matchesQuickFilter(job)&&matchesSearch(job));}
-function setQuickMode(mode,status=''){quickMode=mode;selectedRuntimeStatus=mode==='status'?status:'';sessionStorage.setItem('agents-relay:quick-filter',quickMode);if(selectedRuntimeStatus)sessionStorage.setItem('agents-relay:runtime-status-filter',selectedRuntimeStatus);else sessionStorage.removeItem('agents-relay:runtime-status-filter');syncFilters();renderJobList();}
-function toggleQuickMode(mode){setQuickMode(quickMode===mode?'jobs':mode);}
+function filteredJobs(){return jobs.filter(job=>(!selectedRepos.length||selectedRepos.includes(job.repository))&&matchesQuickFilter(job)&&matchesSearch(job));}
 function syncFilters(){
-  const repos=[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
-  const previousRepo=selectedRepo;
-  repoFilter.replaceChildren(new Option('All repos',''),...repos.map(repo=>new Option(repo,repo)));
-  selectedRepo=repos.includes(previousRepo)?previousRepo:'';
-  repoFilter.value=selectedRepo;
-  const statuses=[...new Set(jobs.map(job=>job.runtimeStatus||'IDLE'))].sort();
-  const previousStatus=selectedRuntimeStatus;
-  quickStatus.replaceChildren(new Option('STATUS',''),...statuses.map(status=>new Option(status,status)));
-  selectedRuntimeStatus=statuses.includes(previousStatus)?previousStatus:'';
-  if(quickMode==='status'&&!selectedRuntimeStatus)quickMode='jobs';
-  quickStatus.value=quickMode==='status'?selectedRuntimeStatus:'';
-  quickDraft.setAttribute('aria-pressed',String(quickMode==='draft'));
+  const repos=jobRepositories.length?jobRepositories:[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
+  const validRepos=new Set(repos);
+  repoFilter.replaceChildren(...repos.map(repo=>new Option(repo,repo)));
+  selectedRepos=selectedRepos.filter(repo=>validRepos.has(repo));
+  for(const option of repoFilter.options)option.selected=selectedRepos.includes(option.value);
+  const validStatuses=new Set([...statusFilter.options].map(option=>option.value));
+  selectedStatuses=selectedStatuses.filter(status=>validStatuses.has(status));
+  for(const option of statusFilter.options)option.selected=selectedStatuses.includes(option.value);
   jobSearch.value=searchQuery;
+  jobsPageLabel.textContent='Page '+jobsPage+' of '+jobsTotalPages+(jobsTotal?' · '+jobsTotal+' jobs':'');
+  jobsPrev.disabled=jobsPage<=1;
+  jobsNext.disabled=jobsPage>=jobsTotalPages;
 }
 function repoName(repository){if(typeof repository!=='string'||!repository)return 'unknown-repo';const parts=repository.split('/').filter(Boolean);return parts.at(-1)||repository;}
 const CHAT_SHORTCUTS_KEY='agents-relay:chatgpt-shortcuts';
@@ -243,7 +248,7 @@ function jobChatRef(job){const pr=Number(job?.prNumber||0);return repoName(job?.
 function chatShortcutUrl(prompt){return 'https://chatgpt.com/?prompt='+encodeURIComponent(prompt);}
 const CHAT_SHORTCUT_TARGET='agents-relay-shortcut';
 function chatShortcutField(job){const box=element('div','detail-group');box.append(element('p','detail-label',text('ChatGPT shortcut')));const select=document.createElement('select');select.className='job-filter job-chat-shortcut-select';select.setAttribute('aria-label','ChatGPT shortcut');select.append(new Option('',''));for(const item of parseChatShortcuts(chatShortcutText()))select.append(new Option(item.name,item.prompt));select.value='';select.addEventListener('change',()=>{if(!select.value)return;const prompt=select.value.replaceAll('%1',jobChatRef(job));window.open(chatShortcutUrl(prompt),CHAT_SHORTCUT_TARGET,'noopener');select.value='';});box.append(select);return box;}
-function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected repo.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));row.addEventListener('click',()=>selectJob(job));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job);});select.append(element('span','job-title',text(repoName(job.repository)+'/'+value(job.id)+(Number(job.prNumber||0)>0?'/PR#'+value(job.prNumber):'')+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.publicationFailure)states.append(element('span','badge FAILED',text('PUBLISH FAILED: '+value(job.publicationFailure.stage))));else if(job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));else if(Number(job.prNumber||0)>0&&job.githubState==='MERGED')states.append(element('span','badge MERGED',text('PR Merged')));else if(job.state==='COMPLETED'&&job.githubState==='CLOSED')states.append(element('span','badge SUCCEEDED',text('PR Archived')));if(job.state==='ACTIVE'&&job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.localMerge?.status==='failed')states.append(element('span','badge FAILED',text('MERGE FAILED: '+value(job.localMerge.error||'Unknown error'))));else if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
+function renderJobList(){jobList.replaceChildren();const visible=filteredJobs();if(!jobs.length){jobList.append(element('li','empty',text('No durable jobs discovered.')));return;}if(!visible.length){jobList.append(element('li','empty',text('No jobs match the selected filters.')));return;}for(const job of visible){const row=element('div','job-row'+(isCompleteUnmerged(job)?' complete-unmerged':''));row.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));row.addEventListener('click',()=>selectJob(job));const content=element('div','job-content');const select=document.createElement('button');select.type='button';select.className='job-button';select.setAttribute('aria-current',String(jobSelectionKey(job)===selectedJob));select.title=job.title||job.id;select.addEventListener('click',event=>{event.stopPropagation();selectJob(job);});select.append(element('span','job-title',text(repoName(job.repository)+'/'+value(job.id)+(Number(job.prNumber||0)>0?'/PR#'+value(job.prNumber):'')+': '+value(job.title||job.id))));const states=element('span','job-status-line');states.append(element('span','badge '+value(job.state),text(value(job.state))),element('span','badge '+value(job.runtimeStatus||'IDLE'),text(value(job.runtimeStatus||'IDLE'))));if(job.publicationFailure)states.append(element('span','badge FAILED',text('PUBLISH FAILED: '+value(job.publicationFailure.stage))));else if(job.publication?.version)states.append(element('span','badge SUCCEEDED',text('v'+job.publication.version)));else if(Number(job.prNumber||0)>0&&job.githubState==='MERGED')states.append(element('span','badge MERGED',text('PR Merged')));else if(job.state==='COMPLETED'&&job.githubState==='CLOSED')states.append(element('span','badge SUCCEEDED',text('PR Archived')));if(job.state==='ACTIVE'&&job.reviewEnabled!==false)states.append(element('span','badge flag-review',text('REVIEW REQUIRED')));if(job.localMerge?.status==='failed')states.append(element('span','badge FAILED',text('MERGE FAILED: '+value(job.localMerge.error||'Unknown error'))));else if(isCompleteUnmerged(job))states.append(element('span','badge MERGE_PENDING',text('MERGE PENDING')));const primary=element('div','job-primary');primary.append(states);const lastLine=element('div','job-last-line');lastLine.append(element('span','subtle',text(compactCounts(counts(job.tasks)))),element('span','subtle',text(relativeTime(job.updatedAt))));content.append(select,primary,lastLine);row.append(content);jobList.append(element('li','',row));}}
 function taskTagDisplay(job,task){const display=task.tag&&job?.tag?.values?.[task.tag];return typeof display==='string'&&display?display:null;}
 function taskVerdict(job,task){if(task.state!=="SUCCEEDED")return null;const data=task.result?.data||{};if(task.agentName==="reviewer"){const verdict=data.verdict||((job?.review?.taskId===task.id)?job.review.outcome:null);return ({approved:"APPROVED",pass:"APPROVED","changes-required":"CHANGES REQUIRED",changes_required:"CHANGES REQUIRED"})[verdict]||null;}if(task.agentName==="troubleshooter"){const original=job?.tasks?.find(t=>t.id===task.parentTaskId);const resolution=original?.resolution;if(resolution?.state!=="resolved"||resolution.owner!=="troubleshooter")return null;return ({exact_original_retry:"RETRY VERIFIED",same_job_dependency:"DEPENDENCY REGISTERED",blocker_job_dependency:"BLOCKER REGISTERED",cancel_supersede:"SUPERSEDED"})[resolution.path]||null;}return null;}function taskSubtreeComplete(task,children){return ['SUCCEEDED','CANCELLED'].includes(task.state)&&(children.get(task.id)||[]).every(child=>taskSubtreeComplete(child,children));}
 function taskStateLabel(task){const resolution=task?.resolution?.state;return task?.state==='FAILED'&&typeof resolution==='string'&&resolution.trim()?task.state+' / '+resolution:task.state;}
@@ -275,7 +280,10 @@ function renderRateLimitStatus(status){
 function runtimePill(label,value){const pill=element('span','runtime-stat');pill.append(document.createTextNode(label+' '),element('strong','',text(value)));return pill;}
 async function drawRuntimeSummary(){try{const summary=await loadJSON('/api/runtime-summary');runtimeSummary.replaceChildren(runtimePill('Active Jobs',summary.activeJobs||0),runtimePill('Running Tasks',summary.runningTasks||0),runtimePill('ChatGPT',summary.workers?.chatgpt||0),runtimePill('Codex',summary.workers?.codex||0));for(const item of Array.isArray(summary.models)?summary.models:[])runtimeSummary.append(runtimePill(item.model,item.count));}catch{runtimeSummary.replaceChildren();}}
 async function refreshStatus(){try{renderRateLimitStatus(await loadJSON('/api/status'));}catch{renderRateLimitStatus(null);}}
-async function refresh(force=false){jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';try{const discovered=await loadJSON('/api/jobs'+(force?'?refresh=1':''));jobs=dedupeJobs(Array.isArray(discovered)?discovered:[]);void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();renderAll();void loadEventHistory();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';}}
+function rememberJobFilters(){sessionStorage.setItem('agents-relay:repo-filter',JSON.stringify(selectedRepos));sessionStorage.setItem('agents-relay:status-filter',JSON.stringify(selectedStatuses));sessionStorage.setItem('agents-relay:job-search',searchQuery);}
+function jobsQuery(force=false){const params=new URLSearchParams();if(searchQuery.trim())params.set('q',searchQuery.trim());for(const status of selectedStatuses)params.append('status',status);for(const repository of selectedRepos)params.append('repo',repository);params.set('page',String(jobsPage));params.set('pageSize',String(${DASHBOARD_JOB_PAGE_SIZE}));if(force)params.set('refresh','1');return params.toString();}
+let jobsRequestSequence=0;
+async function refresh(force=false){const requestSequence=++jobsRequestSequence;jobsRefresh.disabled=true;jobsRefresh.textContent='Refreshing…';jobsPrev.disabled=true;jobsNext.disabled=true;try{const params=jobsQuery(force);const discovered=await loadJSON('/api/jobs'+(params?'?'+params:''));if(requestSequence!==jobsRequestSequence)return;const result=Array.isArray(discovered)?{jobs:discovered,repositories:[...new Set(discovered.map(job=>job.repository).filter(Boolean))].sort(),total:discovered.length,page:1,totalPages:1}:discovered;jobs=dedupeJobs(Array.isArray(result.jobs)?result.jobs:[]);jobRepositories=result.repositories||[];jobsTotal=result.total||0;jobsPage=result.page||1;jobsTotalPages=result.totalPages||1;void drawRuntimeSummary();jobs.sort(compareJobs);if(selectedJob&&!jobForSelection(selectedJob)){selectedJob=null;selectedTaskId=null;}if(!selectedJob){const match=location.hash.match(/^#\\/jobs\\/(.+)$/);const fromHash=match?decodeURIComponent(match[1]):null;const fromRoute=jobForSelection(fromHash);selectedJob=jobSelectionKey(fromRoute||jobs[0]);}rememberSelection();rememberJobFilters();renderAll();void loadEventHistory();connection.textContent='';connection.setAttribute('aria-label','Live durable state connected');connection.className='status-pill ok';}catch(error){if(requestSequence!==jobsRequestSequence)return;connection.textContent='';connection.setAttribute('aria-label','Durable state unavailable');connection.className='status-pill bad';jobList.replaceChildren(element('li','error-state',text('Could not load jobs: '+error.message)));}finally{if(requestSequence===jobsRequestSequence){jobsRefresh.disabled=false;jobsRefresh.textContent='Refresh';syncFilters();}}}
 function renderEventScope(){const task=eventTaskId&&selected()?.tasks?.find(candidate=>candidate.id===eventTaskId);eventsAllTasks.disabled=!task;eventsAllTasks.setAttribute('aria-pressed',String(!task));eventsScope.textContent=task?'Task '+task.id+' · newest first · 60 max':'Job-wide · newest first · 60 max';}
 function eventLabel(type){return ({'task.process.launched':'Process launched','task.started':'Worker started','task.process.exited':'Sync process exited','task.process.async_exited':'Async process exited','task.completed':'Worker completed','task.failed':'Worker failed','task.blocked':'Worker blocked','review.started':'Review started','review.approved':'Review approved','review.changes_required':'Review changes required','review.blocked':'Review blocked'})[type]||type||'Event';}
 function eventSeverity(event,level){const type=String(event?.type||'').toLowerCase(),eventLevel=String(event?.level||level||'').toLowerCase(),outcome=String(event?.outcome||event?.status||'').toLowerCase();if(eventLevel==='error'||outcome==='failed'||type.endsWith('.failed')||type==='task.failed')return 'error';if(eventLevel==='warn'||outcome==='blocked'||type.endsWith('.blocked')||type==='task.blocked'||type==='review.blocked')return 'warn';return 'normal';}
@@ -333,11 +341,13 @@ async function saveQa(){qaSave.disabled=true;qaStatus.textContent='Saving…';tr
 function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isGraphs=view==='graphs';const isRules=view==='rules';const isShortcuts=view==='shortcuts';const isQa=view==='qa';qaView.hidden=!isQa;qaTab.setAttribute('aria-selected',String(isQa));jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;graphsView.hidden=!isGraphs;rulesView.hidden=!isRules;shortcutsView.hidden=!isShortcuts;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));graphsTab.setAttribute('aria-selected',String(isGraphs));rulesTab.setAttribute('aria-selected',String(isRules));shortcutsTab.setAttribute('aria-selected',String(isShortcuts));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isGraphs)void drawGraphs();else if(isRules)void drawRules();else if(isQa)void drawQa();else void drawShortcuts();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
+jobsReset.addEventListener('click',()=>{searchQuery='';selectedStatuses=[...${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)}];selectedRepos=[];jobsPage=1;void refresh(false);});
+jobsPrev.addEventListener('click',()=>{if(jobsPage>1){jobsPage-=1;void refresh(false);}});
+jobsNext.addEventListener('click',()=>{if(jobsPage<jobsTotalPages){jobsPage+=1;void refresh(false);}});
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
-repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;sessionStorage.setItem('agents-relay:repo-filter',selectedRepo);renderJobList();});
-jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;sessionStorage.setItem('agents-relay:job-search',searchQuery);renderJobList();});
-quickDraft.addEventListener('click',()=>toggleQuickMode('draft'));
-quickStatus.addEventListener('change',()=>setQuickMode(quickStatus.value?'status':'jobs',quickStatus.value));
+repoFilter.addEventListener('change',()=>{selectedRepos=[...repoFilter.selectedOptions].map(option=>option.value);jobsPage=1;void refresh(false);});
+jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;jobsPage=1;void refresh(false);});
+statusFilter.addEventListener('change',()=>{selectedStatuses=[...statusFilter.selectedOptions].map(option=>option.value);jobsPage=1;void refresh(false);});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJobsView();window.scrollTo({top:0,behavior:'instant'});});
 mobileJobs.addEventListener('change',syncMobileJobsView);
