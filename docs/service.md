@@ -4,6 +4,23 @@
 
 The dashboard reads a bounded window (one day by default, or `--usage-window-days`) of local Codex JSONL session telemetry at `/api/usage`. Requests recorded with GLM models are shown as Z.ai runtime usage; account quota and remaining balance are marked unavailable unless a supported source is added.
 
+### Jobs search API
+
+`GET /api/jobs` performs a read-only query against the authoritative Relay SQLite inventory. It never mutates Job, Plan, Task, Review, lease, or recovery lifecycle state.
+
+Dashboard consumers use these request parameters:
+
+| Parameter | Contract |
+| --- | --- |
+| `q` | Case-insensitive substring match on durable Job title or ID. A value such as `12`, `#12`, or `pr 12` also matches a PR-number substring. |
+| `status` | Repeat the parameter for an inclusive OR across lifecycle states: `DRAFT`, `ACTIVE`, `COMPLETED`, and `CANCELLED`. Comma-separated `statuses` remains a compatibility alias. When every status selection is empty, the API defaults to `DRAFT`, `ACTIVE`, and `COMPLETED`; `CANCELLED` is returned only when explicitly selected. A `DRAFT` selection matches durable `DRAFT` Jobs and Jobs whose GitHub PR is a draft. |
+| `repo` | Repeat the parameter for an inclusive OR across exact repository names. `repos` and `repositories` remain compatibility aliases. An empty selection matches every repository. |
+| `page` | One-based page number; invalid or missing values resolve to `1`, and values beyond the last page resolve to the last page. |
+| `pageSize` | Positive integer capped at `20`; invalid or missing values use `20`. |
+| `refresh` | Set to `1` for an explicit Refresh query. The backend re-reads the current SQLite-backed inventory before applying filters and pagination. |
+
+Status and repository selections are OR operations within each filter; combining them ANDs the two predicates together. The response contains the selected `jobs`, every known `repositories` value (unfiltered so the selector remains stable), `total` matching count, the normalized `page`, effective `pageSize`, and `totalPages`. Calls without any search-contract parameter retain the previous array response for unrelated callers.
+
 Runtime decisions are additionally recorded as one structured observability stream (`src/observability.ts`): wake, graph decision, transition/effect, store commit, and projection outcome share a repository/PR/job/task/execution correlation envelope. The stream is diagnostic only and never a second durable store; failures are classified as deterministic `conflict` vs `transient` retry vs `terminal`, and secrets/prompts/large payloads are redacted. Set `AGENTS_RELAY_OBSERVABILITY` (`silent`|`debug`|`info`|`warn`|`error`, default `info`) to control it. See [structured-observability.md](structured-observability.md).
 
 The Event Bus is the shared transport for worker lifecycle facts and orchestration signals. Runtime events such as `task.started` and terminal task/review events are applied as durable lifecycle facts; they do not imply a GitHub PR refresh. GitHub webhooks first enter the Event Bus as repository/PR signals, then the repository pool refreshes that PR once, fans the refreshed snapshot out to affected Jobs, and submits reconcile work through per-Job `ReconcileCoordinator` mailboxes. The coordinator serializes one Job, consumes every lifecycle fact, coalesces reconcile work, and is the only event-consumer path that decides to run orchestration reconciliation. Narrow observers such as worker start acknowledgement may still subscribe directly but do not own reconciliation.

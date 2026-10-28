@@ -15,8 +15,8 @@ import { loadExecutionRouterRules, saveExecutionRouterRules } from './routing-po
 import { summarizeRuntime } from './runtime-summary.js';
 import { GitHubRuntimeRateUsage } from './github-runtime-usage.js';
 import type { DecisionAuditRecord } from './decision-audit.js';
-import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory } from './dashboard-data.js';
-export { dashboardWorkflowGraphs, githubPrUrl } from './dashboard-data.js';
+import { dashboardWorkflowGraphs, effectiveGitHubUsage, eventHistory, searchDashboardJobs } from './dashboard-data.js';
+export { dashboardWorkflowGraphs, githubPrUrl, searchDashboardJobs } from './dashboard-data.js';
 const SSE_HEARTBEAT_MS = 15000;
 type DashboardTarget = { repository?: string; prNumber?: number };
 type DashboardActions = { control?: (body: Record<string, unknown>) => Promise<unknown>; start?: (jobId: string) => Promise<Job>; reconcile?: (jobId: string) => Promise<Job>; cancel?: (jobId: string) => Promise<Job>; jobSetState?: (jobId: string, state: JobLifecycleState, target?: DashboardTarget) => Promise<Job>; taskCreate?: (jobId: string, task: Task, idempotencyKey?: string) => Promise<Job>; taskUpdate?: (jobId: string, taskId: string, task: Task, expectedUpdatedAt: string) => Promise<Job>; taskRetry?: (jobId: string, taskId: string) => Promise<Job>; taskCancel?: (jobId: string, taskId: string) => Promise<Job>; taskSetState?: (jobId: string, taskId: string, state: TaskState, target?: DashboardTarget) => Promise<Job> };
@@ -64,6 +64,7 @@ export function serveDashboard(
       lastKnownJobs = jobs;
       return jobs;
     } catch (error) {
+      if (forceRefresh) throw error;
       if (lastKnownJobs) return lastKnownJobs;
       if (jobId) {
         try {
@@ -195,10 +196,13 @@ export function serveDashboard(
     if (new URL(req.url ?? '/', 'http://127.0.0.1').pathname === '/api/jobs') {
       try {
         await subscribeDiscovered();
-        const forceRefresh = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('refresh') === '1';
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        const forceRefresh = url.searchParams.get('refresh') === '1';
         const jobs = await discoveredJobs(forceRefresh);
-        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json' });
-        if (!res.writableEnded) res.end(JSON.stringify(jobs));
+        const usesSearchContract = ['q', 'status', 'statuses', 'repo', 'repositories', 'repos', 'page', 'pageSize'].some(name => url.searchParams.has(name));
+        const body = usesSearchContract ? searchDashboardJobs(jobs, url.searchParams) : jobs;
+        if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        if (!res.writableEnded) res.end(JSON.stringify(body));
       } catch (error) {
         if (!res.headersSent) res.writeHead(502);
         if (!res.writableEnded) res.end(error instanceof Error ? error.message : String(error));
