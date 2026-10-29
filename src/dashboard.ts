@@ -199,8 +199,7 @@ export function serveDashboard(
         const url = new URL(req.url ?? '/', 'http://127.0.0.1');
         const forceRefresh = url.searchParams.get('refresh') === '1';
         const jobs = await discoveredJobs(forceRefresh);
-        const usesSearchContract = ['q', 'status', 'statuses', 'repo', 'repositories', 'repos', 'page', 'pageSize'].some(name => url.searchParams.has(name));
-        const body = usesSearchContract ? searchDashboardJobs(jobs, url.searchParams) : jobs;
+        const body = searchDashboardJobs(jobs, url.searchParams);
         if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         if (!res.writableEnded) res.end(JSON.stringify(body));
       } catch (error) {

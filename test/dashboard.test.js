@@ -57,32 +57,26 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
   assert.match(dashboardHtml, /location\.hash='#\/jobs';syncMobileJobsView\(\)/);
 });
 
-test('mobile jobs toolbar uses compact accessible filter dropdowns', () => {
-  assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
+test('Jobs toolbar uses compact native single-choice filters and removes pagination', () => {
+  assert.match(dashboardHtml, /id="status-filter" class="job-filter"/);
+  assert.match(dashboardHtml, /id="repo-filter" class="job-filter"/);
+  assert.match(dashboardHtml, /<option value="">All \(no CANCELLED\)<\/option>/);
+  assert.match(dashboardHtml, /<option value="CANCELLED">CANCELLED<\/option>/);
+  assert.doesNotMatch(dashboardHtml, /type="checkbox" name="(?:status|repo)"/);
+  assert.doesNotMatch(dashboardHtml, /id="jobs-(?:prev|next|page)"|>Previous<|>Next<|Page \d/);
+  assert.match(dashboardHtml, /params\.set\('status',selectedStatus\)/);
+  assert.match(dashboardHtml, /params\.set\('repo',selectedRepo\)/);
+  assert.match(dashboardHtml, /selectedStatus=storedFilterValue\('agents-relay:status-filter'\)/);
+  assert.match(dashboardHtml, /selectedRepo=storedFilterValue\('agents-relay:repo-filter'\)/);
+  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';void refresh\(true\);\}\)/);
   assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
-  assert.doesNotMatch(dashboardHtml, /id="status-filter"[^>]*multiple/);
-  assert.doesNotMatch(dashboardHtml, /id="repo-filter"[^>]*multiple/);
-  assert.match(dashboardHtml, /id="status-filter" class="filter-trigger"[^>]*aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="status-filter-menu"/);
-  assert.match(dashboardHtml, /id="repo-filter" class="filter-trigger"[^>]*aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="repo-filter-menu"/);
-  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="CANCELLED"><span>CANCELLED<\/span>/);
-  assert.match(dashboardHtml, /function toggleFilterMenu\(trigger,menu\)/);
-  assert.match(dashboardHtml, /document\.addEventListener\('keydown',event=>\{if\(event\.key!=='Escape'\)return/);
-  assert.match(dashboardHtml, /if\(!inStatus&&!inRepo\)closeFilterMenus\(null\);/);
-  assert.match(dashboardHtml, /names\.length<=2\?names\.join\(', '\):names\.length\+' selected'/);
-  assert.match(dashboardHtml, /syncFilterSummary\(statusFilter,statusFilterSummary,statusInputs,selectedStatuses,'Default'\)/);
-  assert.match(dashboardHtml, /syncFilterSummary\(repoFilter,repoFilterSummary,\[\.\.\.repoFilterMenu\.querySelectorAll\('input'\)\],selectedRepos,'All'\)/);
-});
-
-test('repository multi-selection preserves focused checkboxes across filter refreshes', () => {
-  assert.match(dashboardHtml, /existingInputs\.length!==repos\.length\|\|existingInputs\.some\(\(input,index\)=>input\.value!==repos\[index\]\)/);
-  assert.match(dashboardHtml, /repoFilterMenu\.contains\(document\.activeElement\)\?document\.activeElement\.value:null/);
-  assert.match(dashboardHtml, /if\(focusedRepo\)for\(const input of repoFilterMenu\.querySelectorAll\('input'\)\)if\(input\.value===focusedRepo\)\{input\.focus\(\);break;\}/);
 });
 
 test('refresh failure remains visible after controls are restored', () => {
   assert.match(dashboardHtml, /catch\(error\)\{if\(requestSequence!==jobsRequestSequence\)return;[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
-  const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=false)'), dashboardHtml.indexOf('function renderEventScope()'));
+  const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=true)'), dashboardHtml.indexOf('function renderEventScope()'));
   assert.match(refreshBody, /finally\{if\(requestSequence===jobsRequestSequence\)\{jobsRefresh\.disabled=false;jobsRefresh\.textContent='Refresh';syncFilters\(\);\}\}/);
+  assert.match(refreshBody, /jobsFeedback\.textContent='Refresh failed: '\+error\.message/);
   assert.doesNotMatch(refreshBody, /finally\{[^}]*renderJobList\(/);
 });
 
@@ -230,7 +224,7 @@ test('SSE connection health stays out of the durable job event feed', () => {
   assert.doesNotMatch(dashboardHtml, /addEvent\(\{type:'connection'/);
 });
 
-test('jobs panel supports manual refresh and unfinished-first ordering', () => {
+test('jobs panel supports manual fresh refresh and latest-first ordering', () => {
   assert.match(dashboardHtml, /id="jobs-refresh"/);
   assert.match(dashboardHtml, /id="selected-job-refresh"/);
   assert.match(dashboardHtml, /selectedJobRefresh\.addEventListener\('click'/);
@@ -238,10 +232,10 @@ test('jobs panel supports manual refresh and unfinished-first ordering', () => {
   assert.match(dashboardHtml, /loadJSON\('\/api\/job\?'\+params\.toString\(\)\)/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
   assert.match(dashboardHtml, /\/api\/jobs'\+\(params\?'\?'\+params:''\)/);
-  assert.match(dashboardHtml, /function isTerminalJob\(job\)/);
+  assert.doesNotMatch(dashboardHtml, /function isTerminalJob\(job\)/);
   assert.match(dashboardHtml, /jobs\.sort\(compareJobs\)/);
-  assert.match(dashboardHtml, /COMPLETED','CANCELLED/);
-  assert.match(dashboardHtml, /MERGED','CLOSED/);
+  assert.match(dashboardHtml, /Date\.parse\(job\.updatedAt\|\|''\)/);
+  assert.match(dashboardHtml, /timestamp\(b\)-timestamp\(a\)\|\|String\(a\.repository\|\|''\)\.localeCompare\(String\(b\.repository\|\|''\)\)\|\|String\(a\.id\|\|''\)\.localeCompare\(String\(b\.id\|\|''\)\)/);
 });
 
 test('events follow selected job/task and can return to all tasks', () => {
@@ -343,7 +337,7 @@ test('job rows show lifecycle and runtime without PR state or quick actions', ()
 
 
 
-test('job ordering keeps every non-terminal job ahead of every terminal job', () => {
+test('job ordering is deterministic and latest-first across lifecycle states', () => {
   const orderingSource = dashboardHtml.slice(
     dashboardHtml.indexOf('function isCompleteUnmerged(job)'),
     dashboardHtml.indexOf('async function loadJSON(url)')
@@ -376,19 +370,8 @@ test('job ordering keeps every non-terminal job ahead of every terminal job', ()
   ];
 
   assert.deepEqual([...jobs].sort(compareJobs).map(item => item.id), [
-    'merge-pending',
-    'failed',
-    'blocked',
-    'reviewing',
-    'running',
-    'queued',
-    'active',
-    'objective-job',
-    'draft',
-    'external-merged',
-    'cancelled',
-    'completed',
-    'external-closed'
+    'draft', 'failed', 'blocked', 'external-merged', 'reviewing', 'running', 'queued',
+    'active', 'cancelled', 'objective-job', 'completed', 'external-closed', 'merge-pending'
   ]);
 });
 
@@ -606,21 +589,19 @@ test('selected job body does not scroll and omits task count field', () => {
 });
 
 
-test('job list keeps repository quick filter without a separate repository metadata line', () => {
+test('job list keeps native repository and status filters with session persistence', () => {
   assert.match(dashboardHtml, /id="repo-filter"/);
-  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="DRAFT">/);
-  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="CANCELLED">/);
+  assert.match(dashboardHtml, /id="status-filter"/);
+  assert.match(dashboardHtml, /<option value="DRAFT">DRAFT<\/option>/);
+  assert.match(dashboardHtml, /<option value="CANCELLED">CANCELLED<\/option>/);
+  assert.doesNotMatch(dashboardHtml, /type="checkbox" name="status"/);
   assert.doesNotMatch(dashboardHtml, /id="quick-draft"/);
   assert.match(dashboardHtml, /repoName\(job\.repository\)/);
-  assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
   assert.match(dashboardHtml, /function filteredJobs\(\)/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:repo-filter'/);
   assert.match(dashboardHtml, /sessionStorage\.setItem\('agents-relay:status-filter'/);
   assert.doesNotMatch(dashboardHtml, /id="job-count"/);
 });
-
-
-
 
 test('job list supports title and PR-number wildcard search', () => {
   assert.match(dashboardHtml, /id="job-search"/);
@@ -629,72 +610,64 @@ test('job list supports title and PR-number wildcard search', () => {
   assert.match(dashboardHtml, /agents-relay:job-search/);
 });
 
-test('Jobs search UI sends authoritative filter and page parameters', () => {
+test('Jobs search UI sends one filter value and forces fresh backend requests', () => {
   assert.match(dashboardHtml, /function jobsQuery\(force=false\)/);
-  assert.match(dashboardHtml, /params\.append\('status',status\)/);
-  assert.match(dashboardHtml, /params\.append\('repo',repository\)/);
-  assert.match(dashboardHtml, /params\.set\('pageSize',String\(20\)\)/);
-  assert.match(dashboardHtml, /sessionStorage\.getItem\('agents-relay:status-filter'\)===null\?\[\.\.\.\["DRAFT","ACTIVE","COMPLETED"\]\]/);
-  assert.match(dashboardHtml, /catch\{return \[stored\];\}/);
-  assert.match(dashboardHtml, /const statuses=selectedStatuses\.length\?selectedStatuses:\["DRAFT","ACTIVE","COMPLETED"\]/);
-  assert.match(dashboardHtml, /const statusInputs=\[\.\.\.statusFilterMenu\.querySelectorAll\('input'\)\]/);
-  assert.match(dashboardHtml, /const validStatuses=new Set\(statusInputs\.map\(input=>input\.value\)\)/);
-  assert.match(dashboardHtml, /selectedStatuses=selectedStatuses\.filter\(status=>validStatuses\.has\(status\)\)/);
-  assert.match(dashboardHtml, /No jobs match the selected filters\./);
-  assert.match(dashboardHtml, /selectedStatuses=\[\.\.\.\["DRAFT","ACTIVE","COMPLETED"\]\];selectedRepos=\[\];jobsPage=1;closeFilterMenus\(\);void refresh\(false\)/);
+  assert.match(dashboardHtml, /params\.set\('status',selectedStatus\)/);
+  assert.match(dashboardHtml, /params\.set\('repo',selectedRepo\)/);
+  assert.match(dashboardHtml, /params\.set\('refresh','1'\)/);
+  assert.doesNotMatch(dashboardHtml, /params\.set\('page(?:Size)?'/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
+  assert.match(dashboardHtml, /jobsFeedback\.textContent='Loading…'/);
+  assert.match(dashboardHtml, /jobsFeedback\.textContent='Refresh failed: '\+error\.message/);
+  assert.match(dashboardHtml, /function storedFilterValue\(key\)/);
+  assert.match(dashboardHtml, /return parsed\.length===1&&typeof parsed\[0\]==='string'\?parsed\[0\]:''/);
 });
 
-test('Jobs search defaults, multi-select semantics, Draft, and pagination', () => {
+test('Jobs search defaults exclude cancelled; one status and repository combine with AND', () => {
   const jobs = [
     { id:'draft-active', state:'ACTIVE', repository:'owner/one', title:'Draft candidate', prNumber:1, draft:true },
     { id:'one-active', state:'ACTIVE', repository:'owner/one', title:'Alpha', prNumber:2 },
     { id:'two-complete', state:'COMPLETED', repository:'owner/two', title:'Beta', prNumber:3 },
     { id:'cancelled', state:'CANCELLED', repository:'owner/two', title:'Cancelled', prNumber:4 },
   ];
-  const empty = new URLSearchParams('page=1&pageSize=20');
-  assert.deepEqual(searchDashboardJobs(jobs, empty).jobs.map(job => job.id), ['one-active','draft-active','two-complete']);
+  assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams()).jobs.map(job => job.id), ['draft-active','one-active','two-complete']);
   assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams({ status:'DRAFT' })).jobs.map(job => job.id), ['draft-active']);
-  const selected = new URLSearchParams({ status:'CANCELLED', page:'1', pageSize:'20' });
-  assert.deepEqual(searchDashboardJobs(jobs, selected).jobs.map(job => job.id), ['cancelled']);
-  const multi = new URLSearchParams();
-  multi.append('status','DRAFT'); multi.append('status','COMPLETED');
-  multi.append('repo','owner/one'); multi.append('repo','owner/two');
-  assert.deepEqual(searchDashboardJobs(jobs, multi).jobs.map(job => job.id), ['draft-active','two-complete']);
-  const twenty = Array.from({length:24},(_,index)=>({id:String(index+1),state:'ACTIVE',repository:'owner/one',title:`Job ${index+1}`,prNumber:index+1}));
-  const first = searchDashboardJobs(twenty, new URLSearchParams({ page:'2', pageSize:'100' }));
-  assert.equal(first.pageSize,20); assert.equal(first.total,24); assert.equal(first.totalPages,2);
-  assert.deepEqual(first.jobs.map(job=>job.id), Array.from({length:4},(_,index)=>String(index+21)));
-  const ordered = [
-    { id:'completed', state:'COMPLETED', repository:'owner/one', updatedAt:'2026-10-28T12:00:00Z' },
-    { id:'older-active', state:'ACTIVE', repository:'owner/one', updatedAt:'2026-10-27T12:00:00Z' },
-    { id:'newer-active', state:'ACTIVE', repository:'owner/one', updatedAt:'2026-10-28T12:00:00Z' },
+  assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams({ status:'CANCELLED' })).jobs.map(job => job.id), ['cancelled']);
+  const oneValue = new URLSearchParams();
+  oneValue.append('status','COMPLETED'); oneValue.append('status','ACTIVE');
+  oneValue.append('repo','owner/two'); oneValue.append('repo','owner/one');
+  assert.deepEqual(searchDashboardJobs(jobs, oneValue).jobs.map(job => job.id), ['two-complete']);
+  assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams({ status:'ACTIVE', repo:'owner/one', q:'alpha' })).jobs.map(job => job.id), ['one-active']);
+  assert.equal(searchDashboardJobs(jobs, new URLSearchParams({ status:'CANCELLED', q:'#4' })).jobs[0]?.id, 'cancelled');
+  const many = Array.from({length:24},(_,index)=>({id:String(index+1),state:'ACTIVE',repository:'owner/one',title:`Job ${index+1}`,updatedAt:new Date(Date.UTC(2026,0,1)+index*1000).toISOString()}));
+  const limited = searchDashboardJobs(many, new URLSearchParams({ page:'2', pageSize:'1' }));
+  assert.equal(limited.total,24); assert.equal(limited.jobs.length,20);
+  assert.deepEqual(limited.jobs.map(job=>job.id), Array.from({length:20},(_,index)=>String(24-index)));
+  const tied = [
+    { id:'older', state:'ACTIVE', repository:'owner/one', createdAt:'2026-10-28T12:00:00Z' },
+    { id:'b', state:'ACTIVE', repository:'owner/two', updatedAt:'2026-10-28T12:00:00Z' },
+    { id:'a', state:'ACTIVE', repository:'owner/one', updatedAt:'2026-10-28T12:00:00Z' },
   ];
-  assert.deepEqual(searchDashboardJobs(ordered, new URLSearchParams({ page:'1', pageSize:'1' })).jobs.map(job => job.id), ['newer-active']);
-  assert.deepEqual(searchDashboardJobs(ordered, new URLSearchParams({ page:'2', pageSize:'1' })).jobs.map(job => job.id), ['older-active']);
+  assert.deepEqual(searchDashboardJobs(tied, new URLSearchParams({ status:'ACTIVE' })).jobs.map(job => job.id), ['a','older','b']);
 });
 
-test('Jobs search parses aliases, searches durable identity, and preserves repository choices', () => {
+test('Jobs search matches a single repository and searches durable identity', () => {
   const jobs = [
     { id:'job-12', state:'ACTIVE', repository:'owner/one', title:'Release alpha', prNumber:34 },
     { id:'job-24', state:'COMPLETED', repository:'owner/two', title:'Archive', prNumber:56 },
   ];
-  const statuses = new URLSearchParams('statuses=ACTIVE,COMPLETED');
-  assert.deepEqual(searchDashboardJobs(jobs, statuses).jobs.map(job => job.id), ['job-12','job-24']);
-  const repositories = new URLSearchParams();
-  repositories.append('repositories','owner/two');
-  assert.deepEqual(searchDashboardJobs(jobs, repositories).jobs.map(job => job.id), ['job-24']);
+  assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams({ repo:'owner/two' })).jobs.map(job => job.id), ['job-24']);
   assert.equal(searchDashboardJobs(jobs, new URLSearchParams({ q:'#34' })).jobs[0]?.id, 'job-12');
   assert.equal(searchDashboardJobs(jobs, new URLSearchParams({ q:'release' })).jobs[0]?.id, 'job-12');
-  const emptyResult = searchDashboardJobs(jobs, new URLSearchParams({ status:'', repo:'', page:'9', pageSize:'1' }));
-  assert.deepEqual(emptyResult.jobs.map(job => job.id), ['job-24']);
+  const emptyResult = searchDashboardJobs(jobs, new URLSearchParams({ status:'', repo:'' }));
+  assert.deepEqual(emptyResult.jobs.map(job => job.id), ['job-12','job-24']);
   assert.deepEqual(emptyResult.repositories, ['owner/one','owner/two']);
 });
 
-test('Jobs API performs a fresh authoritative query with page size 20', async () => {
+test('Jobs API performs a fresh authoritative query and returns only the latest 20', async () => {
   let fixtureOrder = 0;
   const job = (id, overrides = {}) => {
-    const timestamp = new Date(Date.UTC(2026, 0, 1) - fixtureOrder++ * 1000).toISOString();
+    const timestamp = new Date(Date.UTC(2026, 0, 1) + fixtureOrder++ * 1000).toISOString();
     return { id, title:id, prNumber:1, repository:'owner/repo', state:'ACTIVE', continuation:null, createdAt:timestamp, updatedAt:timestamp, tasks:[], ...overrides };
   };
   const jobs = Array.from({length:22},(_,index)=>job(`job-${index+1}`));
@@ -713,9 +686,12 @@ test('Jobs API performs a fresh authoritative query with page size 20', async ()
   assert.equal(response.headers.get('cache-control'),'no-store');
   const result = await response.json();
   assert.equal(calls,1);
-  assert.equal(result.total,22); assert.equal(result.pageSize,20); assert.equal(result.page,2); assert.equal(result.totalPages,2);
-  assert.deepEqual(result.jobs.map(item=>item.id), ['job-21','job-22']);
+  assert.equal(result.total,22); assert.equal(result.jobs.length,20);
+  assert.deepEqual(result.jobs.map(item=>item.id), Array.from({length:20},(_,index)=>`job-${22-index}`));
   assert.deepEqual(result.repositories, ['owner/repo']);
+  assert.equal(Object.hasOwn(result,'page'),false);
+  assert.equal(Object.hasOwn(result,'totalPages'),false);
+  server.close();
 });
 
 test('Jobs API applies repeated filters, default and explicit statuses, search, reset, and fresh refresh results', async () => {
@@ -745,30 +721,29 @@ test('Jobs API applies repeated filters, default and explicit statuses, search, 
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}/api/jobs`;
   try {
-    const defaults = await (await fetch(`${base}?refresh=1&page=1&pageSize=20`)).json();
+    const defaults = await (await fetch(`${base}?refresh=1`)).json();
     assert.deepEqual(defaults.jobs.map(item => item.id), ['active-one','active-two','draft','github-draft','complete']);
 
-    const selected = await (await fetch(`${base}?refresh=1&q=needle&status=ACTIVE&status=COMPLETED&repo=owner%2Fone&repo=owner%2Ftwo&page=1&pageSize=20`)).json();
-    assert.deepEqual(selected.jobs.map(item => item.id), ['active-one','complete']);
-    assert.equal(selected.total, 2);
+    const selected = await (await fetch(`${base}?refresh=1&q=needle&status=ACTIVE&status=COMPLETED&repo=owner%2Fone&repo=owner%2Ftwo`)).json();
+    assert.deepEqual(selected.jobs.map(item => item.id), ['active-one']);
+    assert.equal(selected.total, 1);
 
-    const explicitCancelled = await (await fetch(`${base}?refresh=1&status=CANCELLED&page=1&pageSize=20`)).json();
+    const explicitCancelled = await (await fetch(`${base}?refresh=1&status=CANCELLED`)).json();
     assert.deepEqual(explicitCancelled.jobs.map(item => item.id), ['cancelled']);
 
-    const explicitDraft = await (await fetch(`${base}?refresh=1&status=DRAFT&page=1&pageSize=20`)).json();
+    const explicitDraft = await (await fetch(`${base}?refresh=1&status=DRAFT`)).json();
     assert.deepEqual(explicitDraft.jobs.map(item => item.id), ['draft','github-draft']);
 
-    const emptySelections = await (await fetch(`${base}?refresh=1&status=&repo=&q=&page=1&pageSize=20`)).json();
+    const emptySelections = await (await fetch(`${base}?refresh=1&status=&repo=&q=`)).json();
     assert.deepEqual(emptySelections.jobs.map(item => item.id), ['active-one','active-two','draft','github-draft','complete']);
 
-    const noResults = await (await fetch(`${base}?refresh=1&q=not-found&status=ACTIVE&repo=owner%2Fone&page=3&pageSize=20`)).json();
+    const noResults = await (await fetch(`${base}?refresh=1&q=not-found&status=ACTIVE&repo=owner%2Fone`)).json();
     assert.deepEqual(noResults.jobs, []);
     assert.equal(noResults.total, 0);
-    assert.equal(noResults.page, 1);
-    assert.equal(noResults.totalPages, 1);
+    assert.equal(Object.hasOwn(noResults,'page'), false);
 
     snapshot = [...snapshot, job('new-active','ACTIVE','owner/one',{ title:'New result', prNumber:17 })];
-    const refreshed = await (await fetch(`${base}?refresh=1&q=new&status=ACTIVE&repo=owner%2Fone&page=1&pageSize=20`)).json();
+    const refreshed = await (await fetch(`${base}?refresh=1&q=new&status=ACTIVE&repo=owner%2Fone`)).json();
     assert.deepEqual(refreshed.jobs.map(item => item.id), ['new-active']);
     assert.equal(calls, 7);
   } finally {
@@ -787,7 +762,7 @@ test('Jobs API reports an explicit refresh failure instead of returning a stale 
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/api/jobs?refresh=1&page=1&pageSize=20`);
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/jobs?refresh=1`);
     assert.equal(response.status, 502);
     assert.equal(await response.text(), 'SQLite query failed');
   } finally {
@@ -850,11 +825,12 @@ test('dashboard shows the current package version at the top right', () => {
 });
 
 
-test('completed but unmerged jobs are pinned and highlighted for merge follow-up', () => {
+test('completed but unmerged jobs remain highlighted without changing latest-first order', () => {
   assert.match(dashboardHtml, /function isCompleteUnmerged\(job\)/);
   assert.match(dashboardHtml, /MERGE PENDING/);
   assert.match(dashboardHtml, /complete-unmerged/);
-  assert.match(dashboardHtml, /mergePendingDelta/);
+  assert.match(dashboardHtml, /compareJobs\(a,b\)/);
+  assert.doesNotMatch(dashboardHtml, /mergePendingDelta/);
   assert.match(dashboardHtml, /job\.runtimeStatus==='MERGE_PENDING'/);
 });
 test('dashboard exposes reviewer approval, changes-required, stale, and merge-ready states', () => {
@@ -1253,17 +1229,16 @@ test('failed tasks retain failure and show resolution status in badge and detail
   assert.match(dashboardHtml, /task\.state==='FAILED'\?taskStateLabel\(task\)/);
   assert.match(dashboardHtml, /field\('Resolution state',task\.resolution\.state\)/);
 });
-test('Jobs search keeps only the newest response across filters, paging and Refresh', async () => {
+test('Jobs search keeps only the newest response across filters and Refresh', async () => {
   const source = dashboardHtml.match(/let jobsRequestSequence=0;[\s\S]*?(?=\nfunction renderEventScope\()/)?.[0];
   assert.ok(source, 'Jobs request sequence guard is present');
   const pending = [];
   const state = {
-    jobsRefresh:{disabled:false,textContent:''}, jobsPrev:{disabled:false}, jobsNext:{disabled:false},
-    jobsPage:1, jobsTotalPages:3, jobsTotal:0, jobs:[], jobRepositories:[],
-    selectedJob:null,selectedTaskId:null,searchQuery:'',selectedStatuses:[],selectedRepos:[],
+    jobsRefresh:{disabled:false,textContent:''}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
+    selectedJob:null,selectedTaskId:null,searchQuery:'',selectedStatus:'',selectedRepo:'',
     connection:{textContent:'',className:'',setAttribute(name,value){this[name]=value;}},
     location:{hash:''}, jobList:{replaceChildren(){}},
-    jobsQuery(force){return 'q='+context.searchQuery+'&page='+context.jobsPage+'&refresh='+Number(force);},
+    jobsQuery(force){return 'q='+context.searchQuery+'&refresh='+Number(force);},
     loadJSON(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));},
     dedupeJobs(value){return value;},drawRuntimeSummary(){},compareJobs(){return 0;},
     jobForSelection(){return null;},jobSelectionKey(job){return job?.id||null;},
@@ -1279,25 +1254,23 @@ test('Jobs search keeps only the newest response across filters, paging and Refr
   const first=context.runRefresh(true);
   assert.match(pending[0].url,/refresh=1/);
   context.searchQuery='latest';
-  context.jobsPage=2;
-  const second=context.runRefresh(false);
-  assert.match(pending[1].url,/q=latest&page=2/);
-  pending[1].resolve({jobs:[{id:'latest'}],repositories:['owner/repo'],total:21,page:2,totalPages:2});
+  const second=context.runRefresh(true);
+  assert.match(pending[1].url,/q=latest&refresh=1/);
+  pending[1].resolve({jobs:[{id:'latest'}],repositories:['owner/repo'],total:1});
   await second;
   const renders=state.renders;
-  pending[0].resolve({jobs:[{id:'stale'}],repositories:[],total:1,page:1,totalPages:1});
+  pending[0].resolve({jobs:[{id:'stale'}],repositories:[],total:1});
   await first;
   assert.equal(context.jobs[0].id,'latest');
-  assert.equal(context.jobsPage,2);
   assert.equal(state.renders,renders);
   assert.equal(context.jobsRefresh.disabled,false);
-  const third=context.runRefresh(false);
+  const third=context.runRefresh(true);
   context.searchQuery='newest';
   const fourth=context.runRefresh(true);
   pending[2].reject(new Error('old request failed'));
   await third;
   assert.notEqual(context.connection.className,'status-pill bad');
-  pending[3].resolve({jobs:[{id:'newest'}],repositories:[],total:1,page:1,totalPages:1});
+  pending[3].resolve({jobs:[{id:'newest'}],repositories:[],total:1});
   await fourth;
   assert.equal(context.jobs[0].id,'newest');
   assert.equal(context.connection.className,'status-pill ok');

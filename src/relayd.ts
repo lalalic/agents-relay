@@ -145,11 +145,11 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       if (!bound.localMerge?.sourceRef) throw new Error('Job changed before managed source branch binding');
     }
     return prepareLocalJobExecutionWorktree(canonical, await store.load(job.id), workspaceRoot); } });
-  const refreshAll = async (_full = false): Promise<ManagedJobOverview[]> => {
+  const refreshAll = async (_forceRefresh = false): Promise<ManagedJobOverview[]> => {
     cachedOverviews = await inventoryFromLocal();
     return cachedOverviews;
   };
-  const overviews = async (_forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => refreshAll();
+  const overviews = async (forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => refreshAll(forceRefresh);
   const refreshPullRequestSnapshot = async (repository: string, prNumber: number, _trigger: PullRequestRefreshTrigger = 'internal', _options: { force?: boolean } = {}): Promise<ManagedGitHubPullRequestSnapshot> => {
     const inventory = await refreshAll();
     return {
