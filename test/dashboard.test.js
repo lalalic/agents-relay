@@ -59,6 +59,7 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
 
 test('mobile jobs toolbar uses compact accessible filter dropdowns', () => {
   assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
+  assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(dashboardHtml, /id="status-filter"[^>]*multiple/);
   assert.doesNotMatch(dashboardHtml, /id="repo-filter"[^>]*multiple/);
   assert.match(dashboardHtml, /id="status-filter" class="filter-trigger"[^>]*aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="status-filter-menu"/);

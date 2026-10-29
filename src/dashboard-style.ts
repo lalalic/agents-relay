@@ -161,7 +161,7 @@ export const dashboardStyles = `  <style>
       #jobs-view .panel-head { display:grid; align-items:start; }
       #jobs-view .panel-actions { display:grid; grid-template-columns:1fr; width:100%; gap:.5rem; }
       .runtime-summary { display:none; }
-      #jobs-view .job-filters { width:100%; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap:.4rem; }
+      #jobs-view .job-filters { width:100%; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.4rem; }
       #jobs-view .job-search { grid-column:1 / -1; width:100%; max-width:none; }
       #jobs-view .filter-trigger { width:100%; max-width:none; min-height:2.5rem; }
       #jobs-view .filter-trigger { display:grid; align-content:center; justify-items:start; gap:.1rem; }
