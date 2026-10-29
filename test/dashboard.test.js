@@ -70,14 +70,14 @@ test('Jobs toolbar uses compact native single-choice filters and removes paginat
   assert.match(dashboardHtml, /params\.set\('repo',selectedRepo\)/);
   assert.match(dashboardHtml, /selectedStatus=storedFilterValue\('agents-relay:status-filter'\)/);
   assert.match(dashboardHtml, /selectedRepo=storedFilterValue\('agents-relay:repo-filter'\)/);
-  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';void refresh\(true\);\}\)/);
+  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';syncFilters\(\);applyLocalJobFilters\(\);\}\)/);
   assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 });
 
 test('refresh failure remains visible after controls are restored', () => {
   assert.match(dashboardHtml, /catch\(error\)\{if\(requestSequence!==jobsRequestSequence\)return;[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
   const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=true)'), dashboardHtml.indexOf('function renderEventScope()'));
-  assert.match(refreshBody, /finally\{if\(requestSequence===jobsRequestSequence\)\{jobsRefresh\.disabled=false;jobsRefresh\.textContent='Refresh';syncFilters\(\);\}\}/);
+  assert.match(refreshBody, /finally\{if\(requestSequence===jobsRequestSequence\)\{jobsRefresh\.disabled=false;syncFilters\(\);\}\}/);
   assert.match(refreshBody, /jobsFeedback\.textContent='Refresh failed: '\+error\.message/);
   assert.doesNotMatch(refreshBody, /finally\{[^}]*renderJobList\(/);
 });
@@ -619,7 +619,7 @@ test('Jobs search UI sends one filter value and forces fresh backend requests', 
   assert.match(dashboardHtml, /params\.set\('refresh','1'\)/);
   assert.doesNotMatch(dashboardHtml, /params\.set\('page(?:Size)?'/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
-  assert.match(dashboardHtml, /jobsFeedback\.textContent='Loading…'/);
+  assert.doesNotMatch(dashboardHtml, /jobsFeedback\.textContent='Loading…'/);
   assert.match(dashboardHtml, /jobsFeedback\.textContent='Refresh failed: '\+error\.message/);
   assert.match(dashboardHtml, /function storedFilterValue\(key\)/);
   assert.match(dashboardHtml, /return parsed\.length===1&&typeof parsed\[0\]==='string'\?parsed\[0\]:''/);
@@ -641,7 +641,7 @@ test('Jobs selector values survive refresh while available and missing repositor
   context.jobRepositories=['owner/one'];
   runInNewContext(syncFilters+';syncFilters();',context);
   assert.equal(context.repoFilter.value,'');
-  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';void refresh\(true\);\}\)/);
+  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';syncFilters\(\);applyLocalJobFilters\(\);\}\)/);
 });
 
 test('Jobs query uses only the currently selected conditions and forces a fresh request', () => {
@@ -1266,7 +1266,7 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   assert.ok(source, 'Jobs request sequence guard is present');
   const pending = [];
   const state = {
-    jobsRefresh:{disabled:false,textContent:''}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
+    jobsRefresh:{disabled:false,textContent:'Refresh'}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
     selectedJob:null,selectedTaskId:null,searchQuery:' initial ',selectedStatus:'ACTIVE',selectedRepo:'owner/one', URLSearchParams,
     connection:{textContent:'',className:'',setAttribute(name,value){this[name]=value;}},
     location:{hash:''}, jobList:{replaceChildren(){}},
@@ -1285,8 +1285,8 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   const first=context.runRefresh(true);
   assert.equal(pending[0].url,'/api/jobs?q=initial&status=ACTIVE&repo=owner%2Fone&refresh=1');
   assert.equal(context.jobsRefresh.disabled,true);
-  assert.equal(context.jobsRefresh.textContent,'Refreshing…');
-  assert.equal(context.jobsFeedback.textContent,'Loading…');
+  assert.equal(context.jobsRefresh.textContent,'Refresh');
+  assert.equal(context.jobsFeedback.textContent,'');
   context.searchQuery='latest';
   context.selectedStatus='CANCELLED';
   context.selectedRepo='owner/two';
@@ -1319,4 +1319,52 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   assert.equal(context.connection.className,'status-pill bad');
   assert.equal(context.jobsRefresh.disabled,false);
   assert.equal(context.jobsRefresh.textContent,'Refresh');
+});
+
+
+test('Jobs condition changes are local-only, stable, and capped at 20', () => {
+  const from = dashboardHtml.indexOf('function applyLocalJobFilters()');
+  const to = dashboardHtml.indexOf("selectedJobRefresh.addEventListener", from);
+  assert.ok(from >= 0 && to > from);
+  const handlers = {};
+  let renders=0, persistence=0, syncs=0;
+  const context = {
+    searchQuery:'', selectedStatus:'', selectedRepo:'',
+    jobSearch:{value:'', addEventListener(_event,fn){handlers.search=fn;}},
+    repoFilter:{value:'', addEventListener(_event,fn){handlers.repo=fn;}},
+    statusFilter:{value:'', addEventListener(_event,fn){handlers.status=fn;}},
+    jobsReset:{addEventListener(_event,fn){handlers.reset=fn;}},
+    rememberJobFilters(){persistence++;},
+    renderJobList(){renders++;},
+    syncFilters(){syncs++;context.jobSearch.value=context.searchQuery;},
+  };
+  runInNewContext(dashboardHtml.slice(from,to),context);
+  context.jobSearch.value='alpha';handlers.search();
+  assert.equal(context.searchQuery,'alpha');
+  context.statusFilter.value='ACTIVE';handlers.status();
+  assert.equal(context.selectedStatus,'ACTIVE');
+  context.repoFilter.value='owner/repo';handlers.repo();
+  assert.equal(context.selectedRepo,'owner/repo');
+  handlers.reset();
+  assert.equal(context.searchQuery,'');
+  assert.equal(context.selectedStatus,'');
+  assert.equal(context.selectedRepo,'');
+  assert.equal(renders,4);
+  assert.equal(persistence,4);
+  assert.equal(syncs,1);
+  assert.match(dashboardHtml, /function filteredJobs\(\)\{[^}]*\.slice\(0,20\)/);
+  assert.match(dashboardHtml, /jobs=dedupeJobs\([^;]*\)\.sort\(compareJobs\)\.slice\(0,20\)/);
+  assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
+  assert.doesNotMatch(dashboardHtml, /jobsRefresh\.textContent='Refreshing/);
+  assert.doesNotMatch(dashboardHtml, /selectedJobRefresh\.textContent='Refreshing/);
+});
+
+test('navigating or clicking a Job never runs a Jobs backend search', () => {
+  const view = dashboardHtml.slice(dashboardHtml.indexOf('function showView(view)'),dashboardHtml.indexOf('jobsTab.addEventListener'));
+  assert.doesNotMatch(view, /\brefresh\(/);
+  const selection = dashboardHtml.match(/function selectJob\(job\)\{[^}]*\}/)?.[0];
+  assert.ok(selection);
+  assert.doesNotMatch(selection, /\brefresh\(/);
+  assert.match(dashboardHtml, /else showView\('jobs'\);void refresh\(false\);/);
+  assert.doesNotMatch(dashboardHtml, /addEventListener\('(?:hashchange|popstate)'[^\n]*refresh\(/);
 });
