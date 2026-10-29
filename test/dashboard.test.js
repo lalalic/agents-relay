@@ -57,13 +57,26 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
   assert.match(dashboardHtml, /location\.hash='#\/jobs';syncMobileJobsView\(\)/);
 });
 
-test('mobile jobs view exposes both status and repository multi-select controls', () => {
+test('mobile jobs toolbar uses compact accessible filter dropdowns', () => {
   assert.match(dashboardHtml, /\.runtime-summary \{ display:none; \}/);
-  assert.match(dashboardHtml, /#jobs-view #status-filter \{ display:block; max-width:145px; \}/);
-  assert.doesNotMatch(dashboardHtml, /#jobs-view #status-filter \{ display:none; \}/);
-  assert.doesNotMatch(dashboardHtml, /#jobs-view #repo-filter \{ display:none; \}/);
-  assert.match(dashboardHtml, /id="status-filter"[^>]*multiple/);
-  assert.match(dashboardHtml, /id="repo-filter"[^>]*multiple/);
+  assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(dashboardHtml, /id="status-filter"[^>]*multiple/);
+  assert.doesNotMatch(dashboardHtml, /id="repo-filter"[^>]*multiple/);
+  assert.match(dashboardHtml, /id="status-filter" class="filter-trigger"[^>]*aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="status-filter-menu"/);
+  assert.match(dashboardHtml, /id="repo-filter" class="filter-trigger"[^>]*aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="repo-filter-menu"/);
+  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="CANCELLED"><span>CANCELLED<\/span>/);
+  assert.match(dashboardHtml, /function toggleFilterMenu\(trigger,menu\)/);
+  assert.match(dashboardHtml, /document\.addEventListener\('keydown',event=>\{if\(event\.key!=='Escape'\)return/);
+  assert.match(dashboardHtml, /if\(!inStatus&&!inRepo\)closeFilterMenus\(null\);/);
+  assert.match(dashboardHtml, /names\.length<=2\?names\.join\(', '\):names\.length\+' selected'/);
+  assert.match(dashboardHtml, /syncFilterSummary\(statusFilter,statusFilterSummary,statusInputs,selectedStatuses,'Default'\)/);
+  assert.match(dashboardHtml, /syncFilterSummary\(repoFilter,repoFilterSummary,\[\.\.\.repoFilterMenu\.querySelectorAll\('input'\)\],selectedRepos,'All'\)/);
+});
+
+test('repository multi-selection preserves focused checkboxes across filter refreshes', () => {
+  assert.match(dashboardHtml, /existingInputs\.length!==repos\.length\|\|existingInputs\.some\(\(input,index\)=>input\.value!==repos\[index\]\)/);
+  assert.match(dashboardHtml, /repoFilterMenu\.contains\(document\.activeElement\)\?document\.activeElement\.value:null/);
+  assert.match(dashboardHtml, /if\(focusedRepo\)for\(const input of repoFilterMenu\.querySelectorAll\('input'\)\)if\(input\.value===focusedRepo\)\{input\.focus\(\);break;\}/);
 });
 
 test('refresh failure remains visible after controls are restored', () => {
@@ -595,9 +608,8 @@ test('selected job body does not scroll and omits task count field', () => {
 
 test('job list keeps repository quick filter without a separate repository metadata line', () => {
   assert.match(dashboardHtml, /id="repo-filter"/);
-  assert.match(dashboardHtml, /id="status-filter"[^>]+multiple/);
-  assert.match(dashboardHtml, /<option value="DRAFT">DRAFT<\/option>/);
-  assert.match(dashboardHtml, /<option value="CANCELLED">CANCELLED<\/option>/);
+  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="DRAFT">/);
+  assert.match(dashboardHtml, /<input type="checkbox" name="status" value="CANCELLED">/);
   assert.doesNotMatch(dashboardHtml, /id="quick-draft"/);
   assert.match(dashboardHtml, /repoName\(job\.repository\)/);
   assert.doesNotMatch(dashboardHtml, /text\(job\.repository\|\|'unknown repo'\)/);
@@ -625,10 +637,11 @@ test('Jobs search UI sends authoritative filter and page parameters', () => {
   assert.match(dashboardHtml, /sessionStorage\.getItem\('agents-relay:status-filter'\)===null\?\[\.\.\.\["DRAFT","ACTIVE","COMPLETED"\]\]/);
   assert.match(dashboardHtml, /catch\{return \[stored\];\}/);
   assert.match(dashboardHtml, /const statuses=selectedStatuses\.length\?selectedStatuses:\["DRAFT","ACTIVE","COMPLETED"\]/);
-  assert.match(dashboardHtml, /const validStatuses=new Set\(\[\.\.\.statusFilter\.options\]\.map\(option=>option\.value\)\)/);
+  assert.match(dashboardHtml, /const statusInputs=\[\.\.\.statusFilterMenu\.querySelectorAll\('input'\)\]/);
+  assert.match(dashboardHtml, /const validStatuses=new Set\(statusInputs\.map\(input=>input\.value\)\)/);
   assert.match(dashboardHtml, /selectedStatuses=selectedStatuses\.filter\(status=>validStatuses\.has\(status\)\)/);
   assert.match(dashboardHtml, /No jobs match the selected filters\./);
-  assert.match(dashboardHtml, /selectedStatuses=\[\.\.\.\["DRAFT","ACTIVE","COMPLETED"\]\];selectedRepos=\[\];jobsPage=1;void refresh\(false\)/);
+  assert.match(dashboardHtml, /selectedStatuses=\[\.\.\.\["DRAFT","ACTIVE","COMPLETED"\]\];selectedRepos=\[\];jobsPage=1;closeFilterMenus\(\);void refresh\(false\)/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
 });
 
