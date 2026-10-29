@@ -38,7 +38,7 @@ ${dashboardStyles}
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search title or PR #" aria-label="Search jobs by title or PR number"><select id="status-filter" class="job-filter" multiple aria-label="Filter jobs by status (choose at least one; empty uses DRAFT, ACTIVE, and COMPLETED)"><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select><select id="repo-filter" class="job-filter" multiple aria-label="Filter jobs by repository (empty shows all repositories)"></select><button id="jobs-reset" class="refresh-button" type="button">Reset</button></div><div class="jobs-pagination"><button id="jobs-prev" class="refresh-button" type="button">Previous</button><span id="jobs-page" class="subtle">Page 1</span><button id="jobs-next" class="refresh-button" type="button">Next</button></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search title or PR #" aria-label="Search jobs by title or PR number"><div class="filter-dropdown"><button id="status-filter" class="filter-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="status-filter-menu"><span class="filter-label">Status</span><span id="status-filter-summary" class="filter-value">Default</span></button><div id="status-filter-menu" class="filter-menu" role="group" aria-label="Status options" hidden><label class="filter-option"><input type="checkbox" name="status" value="DRAFT"><span>DRAFT</span></label><label class="filter-option"><input type="checkbox" name="status" value="ACTIVE"><span>ACTIVE</span></label><label class="filter-option"><input type="checkbox" name="status" value="COMPLETED"><span>COMPLETED</span></label><label class="filter-option"><input type="checkbox" name="status" value="CANCELLED"><span>CANCELLED</span></label></div></div><div class="filter-dropdown"><button id="repo-filter" class="filter-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="repo-filter-menu"><span class="filter-label">Repositories</span><span id="repo-filter-summary" class="filter-value">All</span></button><div id="repo-filter-menu" class="filter-menu" role="group" aria-label="Repository options" hidden></div></div></div><div class="jobs-actions"><button id="jobs-reset" class="refresh-button" type="button">Reset</button><div class="jobs-pagination"><button id="jobs-prev" class="refresh-button" type="button">Previous</button><span id="jobs-page" class="subtle">Page 1</span><button id="jobs-next" class="refresh-button" type="button">Next</button></div><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -144,7 +144,11 @@ const jobsPrev=document.querySelector('#jobs-prev');
 const jobsNext=document.querySelector('#jobs-next');
 const jobsPageLabel=document.querySelector('#jobs-page');
 const repoFilter=document.querySelector('#repo-filter');
+const repoFilterMenu=document.querySelector('#repo-filter-menu');
+const repoFilterSummary=document.querySelector('#repo-filter-summary');
 const statusFilter=document.querySelector('#status-filter');
+const statusFilterMenu=document.querySelector('#status-filter-menu');
+const statusFilterSummary=document.querySelector('#status-filter-summary');
 const selectedJobRefresh=document.querySelector('#selected-job-refresh');
 const mobileJobsBack=document.querySelector('#mobile-jobs-back');
 const mobileJobs=window.matchMedia('(max-width:650px)');
@@ -221,15 +225,22 @@ function selectJob(job){selectedJob=jobSelectionKey(job);selectedTaskId=null;eve
 function matchesQuickFilter(job){const statuses=selectedStatuses.length?selectedStatuses:${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)};return statuses.some(status=>status==='DRAFT'?job.draft||job.state==='DRAFT':job.state===status);}
 function matchesSearch(job){const query=searchQuery.trim().toLowerCase();if(!query)return true;const pr=String(job.prNumber||'');const normalized=query.replace(/^pr\s*#?/,'').replace(/^#/,'');return String(job.title||job.id||'').toLowerCase().includes(query)||String(job.id||'').toLowerCase().includes(query)||shortManagedId(job.id,job.repository,'j').toLowerCase().includes(query)||pr.includes(normalized);}
 function filteredJobs(){return jobs.filter(job=>(!selectedRepos.length||selectedRepos.includes(job.repository))&&matchesQuickFilter(job)&&matchesSearch(job));}
+function selectedNames(inputs,selected){const selectedSet=new Set(selected);return [...inputs].filter(input=>selectedSet.has(input.value)).map(input=>input.value);}
+function syncFilterSummary(trigger,summary,inputs,selected,emptyLabel){const names=selectedNames(inputs,selected);summary.textContent=names.length===0?emptyLabel:names.length<=2?names.join(', '):names.length+' selected';trigger.title=names.length===0?emptyLabel:names.join(', ');}
+function closeFilterMenus(exceptMenu){for(const [trigger,menu] of [[statusFilter,statusFilterMenu],[repoFilter,repoFilterMenu]]){if(menu===exceptMenu)continue;menu.hidden=true;trigger.setAttribute('aria-expanded','false');}}
+function toggleFilterMenu(trigger,menu){const open=menu.hidden;closeFilterMenus(open?menu:null);menu.hidden=!open;trigger.setAttribute('aria-expanded',String(open));}
 function syncFilters(){
   const repos=jobRepositories.length?jobRepositories:[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
   const validRepos=new Set(repos);
-  repoFilter.replaceChildren(...repos.map(repo=>new Option(repo,repo)));
+  repoFilterMenu.replaceChildren(...repos.map(repo=>{const label=document.createElement('label');label.className='filter-option';const input=document.createElement('input');input.type='checkbox';input.name='repo';input.value=repo;label.append(input,element('span','',text(repo)));return label;}));
   selectedRepos=selectedRepos.filter(repo=>validRepos.has(repo));
-  for(const option of repoFilter.options)option.selected=selectedRepos.includes(option.value);
-  const validStatuses=new Set([...statusFilter.options].map(option=>option.value));
+  for(const input of repoFilterMenu.querySelectorAll('input'))input.checked=selectedRepos.includes(input.value);
+  const statusInputs=[...statusFilterMenu.querySelectorAll('input')];
+  const validStatuses=new Set(statusInputs.map(input=>input.value));
   selectedStatuses=selectedStatuses.filter(status=>validStatuses.has(status));
-  for(const option of statusFilter.options)option.selected=selectedStatuses.includes(option.value);
+  for(const input of statusInputs)input.checked=selectedStatuses.includes(input.value);
+  syncFilterSummary(statusFilter,statusFilterSummary,statusInputs,selectedStatuses,'Default');
+  syncFilterSummary(repoFilter,repoFilterSummary,[...repoFilterMenu.querySelectorAll('input')],selectedRepos,'All');
   jobSearch.value=searchQuery;
   jobsPageLabel.textContent='Page '+jobsPage+' of '+jobsTotalPages+(jobsTotal?' · '+jobsTotal+' jobs':'');
   jobsPrev.disabled=jobsPage<=1;
@@ -341,13 +352,17 @@ async function saveQa(){qaSave.disabled=true;qaStatus.textContent='Saving…';tr
 function showView(view){const isJobs=view==='jobs';const isUsage=view==='usage';const isGraphs=view==='graphs';const isRules=view==='rules';const isShortcuts=view==='shortcuts';const isQa=view==='qa';qaView.hidden=!isQa;qaTab.setAttribute('aria-selected',String(isQa));jobsView.hidden=!isJobs;jobsWorkspace.hidden=!isJobs;usageView.hidden=!isUsage;graphsView.hidden=!isGraphs;rulesView.hidden=!isRules;shortcutsView.hidden=!isShortcuts;jobsTab.setAttribute('aria-selected',String(isJobs));usageTab.setAttribute('aria-selected',String(isUsage));graphsTab.setAttribute('aria-selected',String(isGraphs));rulesTab.setAttribute('aria-selected',String(isRules));shortcutsTab.setAttribute('aria-selected',String(isShortcuts));if(isJobs)void refresh();else if(isUsage)void drawUsage();else if(isGraphs)void drawGraphs();else if(isRules)void drawRules();else if(isQa)void drawQa();else void drawShortcuts();}
 jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encodeURIComponent(selectedJob):'#/jobs';showView('jobs');});
 jobsRefresh.addEventListener('click',()=>void refresh(true));
-jobsReset.addEventListener('click',()=>{searchQuery='';selectedStatuses=[...${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)}];selectedRepos=[];jobsPage=1;void refresh(false);});
+jobsReset.addEventListener('click',()=>{searchQuery='';selectedStatuses=[...${JSON.stringify(DEFAULT_DASHBOARD_JOB_STATUSES)}];selectedRepos=[];jobsPage=1;closeFilterMenus();void refresh(false);});
 jobsPrev.addEventListener('click',()=>{if(jobsPage>1){jobsPage-=1;void refresh(false);}});
 jobsNext.addEventListener('click',()=>{if(jobsPage<jobsTotalPages){jobsPage+=1;void refresh(false);}});
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
-repoFilter.addEventListener('change',()=>{selectedRepos=[...repoFilter.selectedOptions].map(option=>option.value);jobsPage=1;void refresh(false);});
+repoFilter.addEventListener('click',()=>toggleFilterMenu(repoFilter,repoFilterMenu));
+repoFilterMenu.addEventListener('change',()=>{selectedRepos=[...repoFilterMenu.querySelectorAll('input:checked')].map(input=>input.value);jobsPage=1;syncFilters();void refresh(false);});
 jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;jobsPage=1;void refresh(false);});
-statusFilter.addEventListener('change',()=>{selectedStatuses=[...statusFilter.selectedOptions].map(option=>option.value);jobsPage=1;void refresh(false);});
+statusFilter.addEventListener('click',()=>toggleFilterMenu(statusFilter,statusFilterMenu));
+statusFilterMenu.addEventListener('change',()=>{selectedStatuses=[...statusFilterMenu.querySelectorAll('input:checked')].map(input=>input.value);jobsPage=1;syncFilters();void refresh(false);});
+document.addEventListener('click',event=>{const target=event.target instanceof Node?event.target:null;const inStatus=statusFilter.contains(target)||statusFilterMenu.contains(target);const inRepo=repoFilter.contains(target)||repoFilterMenu.contains(target);if(!inStatus&&!inRepo)closeFilterMenus(null);});
+document.addEventListener('keydown',event=>{if(event.key!=='Escape')return;const active=document.activeElement;if(statusFilterMenu.hidden===false&&(statusFilterMenu.contains(active)||active===statusFilter)){statusFilterMenu.hidden=true;statusFilter.setAttribute('aria-expanded','false');statusFilter.focus();}if(repoFilterMenu.hidden===false&&(repoFilterMenu.contains(active)||active===repoFilter)){repoFilterMenu.hidden=true;repoFilter.setAttribute('aria-expanded','false');repoFilter.focus();}});
 selectedJobRefresh.addEventListener('click',()=>void refreshSelected());
 mobileJobsBack.addEventListener('click',()=>{location.hash='#/jobs';syncMobileJobsView();window.scrollTo({top:0,behavior:'instant'});});
 mobileJobs.addEventListener('change',syncMobileJobsView);
