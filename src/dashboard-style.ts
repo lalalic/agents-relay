@@ -37,7 +37,7 @@ export const dashboardStyles = `  <style>
     .jobs-feedback { flex:none; min-width:0; max-width:12rem; font-size:.67rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .jobs-feedback:empty { display:none; }
     .jobs-feedback:not(:empty) { flex-basis:100%; max-width:none; text-align:right; white-space:normal; }
-    .job-search { flex:1 1 6rem; width:7rem; min-width:5rem; max-width:7rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; }
+    .job-search { flex:1 1 11rem; width:12rem; min-width:8rem; max-width:18rem; border:1px solid var(--border); border-radius:.45rem; background:var(--surface); color:var(--text); padding:.3rem .5rem; font:inherit; font-size:.72rem; }
     .job-search:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
     .quick-filter { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.27rem .42rem; font:inherit; font-size:.7rem; font-weight:750; cursor:pointer; }
     .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
