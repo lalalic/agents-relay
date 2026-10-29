@@ -72,6 +72,12 @@ test('mobile jobs toolbar uses compact accessible filter dropdowns', () => {
   assert.match(dashboardHtml, /syncFilterSummary\(repoFilter,repoFilterSummary,\[\.\.\.repoFilterMenu\.querySelectorAll\('input'\)\],selectedRepos,'All'\)/);
 });
 
+test('repository multi-selection preserves focused checkboxes across filter refreshes', () => {
+  assert.match(dashboardHtml, /existingInputs\.length!==repos\.length\|\|existingInputs\.some\(\(input,index\)=>input\.value!==repos\[index\]\)/);
+  assert.match(dashboardHtml, /repoFilterMenu\.contains\(document\.activeElement\)\?document\.activeElement\.value:null/);
+  assert.match(dashboardHtml, /if\(focusedRepo\)for\(const input of repoFilterMenu\.querySelectorAll\('input'\)\)if\(input\.value===focusedRepo\)\{input\.focus\(\);break;\}/);
+});
+
 test('refresh failure remains visible after controls are restored', () => {
   assert.match(dashboardHtml, /catch\(error\)\{if\(requestSequence!==jobsRequestSequence\)return;[^}]*jobList\.replaceChildren\(element\('li','error-state'/);
   const refreshBody = dashboardHtml.slice(dashboardHtml.indexOf('async function refresh(force=false)'), dashboardHtml.indexOf('function renderEventScope()'));

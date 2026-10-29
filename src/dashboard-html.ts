@@ -232,7 +232,13 @@ function toggleFilterMenu(trigger,menu){const open=menu.hidden;closeFilterMenus(
 function syncFilters(){
   const repos=jobRepositories.length?jobRepositories:[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
   const validRepos=new Set(repos);
-  repoFilterMenu.replaceChildren(...repos.map(repo=>{const label=document.createElement('label');label.className='filter-option';const input=document.createElement('input');input.type='checkbox';input.name='repo';input.value=repo;label.append(input,element('span','',text(repo)));return label;}));
+  const existingInputs=[...repoFilterMenu.querySelectorAll('input')];
+  // Preserve checkbox nodes while their options are unchanged so keyboard focus survives selection.
+  if(existingInputs.length!==repos.length||existingInputs.some((input,index)=>input.value!==repos[index])){
+    const focusedRepo=repoFilterMenu.contains(document.activeElement)?document.activeElement.value:null;
+    repoFilterMenu.replaceChildren(...repos.map(repo=>{const label=document.createElement('label');label.className='filter-option';const input=document.createElement('input');input.type='checkbox';input.name='repo';input.value=repo;label.append(input,element('span','',text(repo)));return label;}));
+    if(focusedRepo)for(const input of repoFilterMenu.querySelectorAll('input'))if(input.value===focusedRepo){input.focus();break;}
+  }
   selectedRepos=selectedRepos.filter(repo=>validRepos.has(repo));
   for(const input of repoFilterMenu.querySelectorAll('input'))input.checked=selectedRepos.includes(input.value);
   const statusInputs=[...statusFilterMenu.querySelectorAll('input')];
