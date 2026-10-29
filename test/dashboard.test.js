@@ -61,9 +61,11 @@ test('Jobs toolbar uses compact native single-choice filters and removes paginat
   assert.match(dashboardHtml, /id="status-filter" class="job-filter"/);
   assert.match(dashboardHtml, /id="repo-filter" class="job-filter"/);
   assert.match(dashboardHtml, /<option value="">All \(no CANCELLED\)<\/option>/);
+  for (const status of ['DRAFT','ACTIVE','COMPLETED','CANCELLED']) assert.match(dashboardHtml, new RegExp(`<option value="${status}">${status}<\\/option>`));
   assert.match(dashboardHtml, /<option value="CANCELLED">CANCELLED<\/option>/);
   assert.doesNotMatch(dashboardHtml, /type="checkbox" name="(?:status|repo)"/);
   assert.doesNotMatch(dashboardHtml, /id="jobs-(?:prev|next|page)"|>Previous<|>Next<|Page \d/);
+  assert.doesNotMatch(dashboardHtml, /params\.set\('page(?:Size)?'/);
   assert.match(dashboardHtml, /params\.set\('status',selectedStatus\)/);
   assert.match(dashboardHtml, /params\.set\('repo',selectedRepo\)/);
   assert.match(dashboardHtml, /selectedStatus=storedFilterValue\('agents-relay:status-filter'\)/);
@@ -623,6 +625,36 @@ test('Jobs search UI sends one filter value and forces fresh backend requests', 
   assert.match(dashboardHtml, /return parsed\.length===1&&typeof parsed\[0\]==='string'\?parsed\[0\]:''/);
 });
 
+test('Jobs selector values survive refresh while available and missing repositories reset to All', () => {
+  const syncFilters = dashboardHtml.match(/function syncFilters\(\)\{[\s\S]*?\n\}/)?.[0];
+  assert.ok(syncFilters);
+  const context = {
+    jobRepositories:['owner/one','owner/two'], jobs:[], selectedRepo:'owner/two', selectedStatus:'CANCELLED', searchQuery:'needle',
+    statusFilter:{value:''}, repoFilter:{options:[], value:'', replaceChildren(...options){this.options=options;}},
+    jobSearch:{value:''}, Option:class { constructor(text,value){this.text=text;this.value=value;} },
+  };
+  runInNewContext(syncFilters+';syncFilters();',context);
+  assert.equal(context.statusFilter.value,'CANCELLED');
+  assert.equal(context.repoFilter.value,'owner/two');
+  assert.equal(context.jobSearch.value,'needle');
+  assert.deepEqual(context.repoFilter.options.map(option=>option.value),['','owner/one','owner/two']);
+  context.jobRepositories=['owner/one'];
+  runInNewContext(syncFilters+';syncFilters();',context);
+  assert.equal(context.repoFilter.value,'');
+  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';void refresh\(true\);\}\)/);
+});
+
+test('Jobs query uses only the currently selected conditions and forces a fresh request', () => {
+  const queryFunction = dashboardHtml.match(/function jobsQuery\(force=false\)\{[^}]*\}/)?.[0];
+  assert.ok(queryFunction);
+  const context = {URLSearchParams, searchQuery:'  needle  ', selectedStatus:'ACTIVE', selectedRepo:'owner/one'};
+  runInNewContext(queryFunction+';this.query=jobsQuery;',context);
+  assert.equal(context.query(true),'q=needle&status=ACTIVE&repo=owner%2Fone&refresh=1');
+  assert.equal(context.query(false),'q=needle&status=ACTIVE&repo=owner%2Fone');
+  context.searchQuery=''; context.selectedStatus=''; context.selectedRepo='';
+  assert.equal(context.query(true),'refresh=1');
+});
+
 test('Jobs search defaults exclude cancelled; one status and repository combine with AND', () => {
   const jobs = [
     { id:'draft-active', state:'ACTIVE', repository:'owner/one', title:'Draft candidate', prNumber:1, draft:true },
@@ -640,7 +672,7 @@ test('Jobs search defaults exclude cancelled; one status and repository combine 
   assert.deepEqual(searchDashboardJobs(jobs, new URLSearchParams({ status:'ACTIVE', repo:'owner/one', q:'alpha' })).jobs.map(job => job.id), ['one-active']);
   assert.equal(searchDashboardJobs(jobs, new URLSearchParams({ status:'CANCELLED', q:'#4' })).jobs[0]?.id, 'cancelled');
   const many = Array.from({length:24},(_,index)=>({id:String(index+1),state:'ACTIVE',repository:'owner/one',title:`Job ${index+1}`,updatedAt:new Date(Date.UTC(2026,0,1)+index*1000).toISOString()}));
-  const limited = searchDashboardJobs(many, new URLSearchParams({ page:'2', pageSize:'1' }));
+  const limited = searchDashboardJobs(many, new URLSearchParams());
   assert.equal(limited.total,24); assert.equal(limited.jobs.length,20);
   assert.deepEqual(limited.jobs.map(job=>job.id), Array.from({length:20},(_,index)=>String(24-index)));
   const tied = [
@@ -681,7 +713,7 @@ test('Jobs API performs a fresh authoritative query and returns only the latest 
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
-  const response = await fetch(`http://127.0.0.1:${address.port}/api/jobs?refresh=1&status=ACTIVE&repo=owner%2Frepo&page=2&pageSize=50`);
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/jobs?refresh=1&status=ACTIVE&repo=owner%2Frepo`);
   assert.equal(response.status,200);
   assert.equal(response.headers.get('cache-control'),'no-store');
   const result = await response.json();
@@ -1230,15 +1262,14 @@ test('failed tasks retain failure and show resolution status in badge and detail
   assert.match(dashboardHtml, /field\('Resolution state',task\.resolution\.state\)/);
 });
 test('Jobs search keeps only the newest response across filters and Refresh', async () => {
-  const source = dashboardHtml.match(/let jobsRequestSequence=0;[\s\S]*?(?=\nfunction renderEventScope\()/)?.[0];
+  const source = dashboardHtml.match(/function jobsQuery\(force=false\)\{[^}]*\}\nlet jobsRequestSequence=0;[\s\S]*?(?=\nfunction renderEventScope\()/)?.[0];
   assert.ok(source, 'Jobs request sequence guard is present');
   const pending = [];
   const state = {
     jobsRefresh:{disabled:false,textContent:''}, jobsFeedback:{textContent:''}, jobs:[], jobRepositories:[],
-    selectedJob:null,selectedTaskId:null,searchQuery:'',selectedStatus:'',selectedRepo:'',
+    selectedJob:null,selectedTaskId:null,searchQuery:' initial ',selectedStatus:'ACTIVE',selectedRepo:'owner/one', URLSearchParams,
     connection:{textContent:'',className:'',setAttribute(name,value){this[name]=value;}},
     location:{hash:''}, jobList:{replaceChildren(){}},
-    jobsQuery(force){return 'q='+context.searchQuery+'&refresh='+Number(force);},
     loadJSON(url){return new Promise((resolve,reject)=>pending.push({url,resolve,reject}));},
     dedupeJobs(value){return value;},drawRuntimeSummary(){},compareJobs(){return 0;},
     jobForSelection(){return null;},jobSelectionKey(job){return job?.id||null;},
@@ -1252,10 +1283,15 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   Object.assign(context,state);
   runInNewContext(source+'\nthis.runRefresh=refresh;',context);
   const first=context.runRefresh(true);
-  assert.match(pending[0].url,/refresh=1/);
+  assert.equal(pending[0].url,'/api/jobs?q=initial&status=ACTIVE&repo=owner%2Fone&refresh=1');
+  assert.equal(context.jobsRefresh.disabled,true);
+  assert.equal(context.jobsRefresh.textContent,'Refreshing…');
+  assert.equal(context.jobsFeedback.textContent,'Loading…');
   context.searchQuery='latest';
+  context.selectedStatus='CANCELLED';
+  context.selectedRepo='owner/two';
   const second=context.runRefresh(true);
-  assert.match(pending[1].url,/q=latest&refresh=1/);
+  assert.equal(pending[1].url,'/api/jobs?q=latest&status=CANCELLED&repo=owner%2Ftwo&refresh=1');
   pending[1].resolve({jobs:[{id:'latest'}],repositories:['owner/repo'],total:1});
   await second;
   const renders=state.renders;
@@ -1274,4 +1310,13 @@ test('Jobs search keeps only the newest response across filters and Refresh', as
   await fourth;
   assert.equal(context.jobs[0].id,'newest');
   assert.equal(context.connection.className,'status-pill ok');
+  assert.equal(context.jobsRefresh.disabled,false);
+  assert.equal(context.jobsRefresh.textContent,'Refresh');
+  const failure=context.runRefresh(true);
+  pending[4].reject(new Error('network unavailable'));
+  await failure;
+  assert.equal(context.jobsFeedback.textContent,'Refresh failed: network unavailable');
+  assert.equal(context.connection.className,'status-pill bad');
+  assert.equal(context.jobsRefresh.disabled,false);
+  assert.equal(context.jobsRefresh.textContent,'Refresh');
 });
