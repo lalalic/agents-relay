@@ -2,7 +2,6 @@ import { access, readFile, realpath, writeFile, unlink } from 'node:fs/promises'
 import { join, relative, resolve, sep, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { DEFAULT_PROMPT_REFERENCE_DIRECTORY } from './agent-prompt-builder.js';
-import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { Task, WorkerAdapterName, Result, RoutingDecision, ChatGptTabClosePolicy, ChatGptThreadDelivery } from './types.js';
 import { ExecutionContext } from './execution-context.js';
@@ -157,8 +156,6 @@ export type ChatGptAgentRunner = (
   signal: AbortSignal,
 ) => AgentRun;
 export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner; tabClosePolicy?: ChatGptTabClosePolicy };
-export const CHATGPT_BROWSER_WORKSPACE = 'Relay';
-export const CHATGPT_BROWSER_WORKSPACE_POOL_SIZE = 6;
 
 export function chatGptTabClosePolicy(value: string | undefined, fallback: ChatGptTabClosePolicy = 'after-start'): ChatGptTabClosePolicy {
   const policy = value || fallback;
@@ -289,22 +286,15 @@ async function accessiblePromptReferences(prompt: string): Promise<Array<PromptM
   return readable;
 }
 
-type BrowserWorkspaceStatus = { admin_helper?: unknown };
-type BrowserWorkspaceAdminModule = { ensureWorkspace?: (name: string, size?: number) => Promise<unknown> | unknown };
+type BrowserWorkspaceStatus = { daemon?: { running?: unknown } };
 
-export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_WEBHELM_COMMAND): Promise<void> {
+export async function ensureChatGptWebHelmReady(command = process.env.AGENTS_RELAY_WEBHELM_COMMAND): Promise<void> {
   const cli = browserWorkspaceCli(command);
   const profile = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['platform', 'profile', 'chatgpt']));
   if (profile.platform !== 'chatgpt') throw new Error('Global WebHelm CLI cannot load the ChatGPT platform skill');
+  // All Relay sessions use WebHelm's default Harness workspace. No product-owned tab group.
   const status = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['status'])) as BrowserWorkspaceStatus;
-  if (typeof status.admin_helper !== 'string' || !status.admin_helper.startsWith('/')) {
-    throw new Error('webhelm status returned no absolute admin_helper path');
-  }
-  const admin = await import(pathToFileURL(status.admin_helper).href) as BrowserWorkspaceAdminModule;
-  if (typeof admin.ensureWorkspace !== 'function') {
-    throw new Error('webhelm admin helper does not export ensureWorkspace');
-  }
-  await admin.ensureWorkspace(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE);
+  if (status.daemon?.running !== true) throw new Error('Global WebHelm daemon is not running');
 }
 
 
@@ -313,7 +303,7 @@ async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, si
   if (action === 'new-turn') {
     return browserWorkspaceCommand(cli, ['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile], undefined, signal);
   }
-  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
+  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start'], undefined, signal));
   const sessionId = session.session_id;
   if (typeof sessionId !== 'string' || !sessionId) throw new Error('webhelm session start returned no session_id');
   try {

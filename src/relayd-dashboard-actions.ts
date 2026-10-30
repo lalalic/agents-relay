@@ -8,7 +8,7 @@ import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
+import { ChatGptAdapter, CodexAdapter, ensureChatGptWebHelmReady } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool } from './pool.js';

@@ -101,7 +101,8 @@ test('ChatGptAdapter default runner uses Browser Workspace caller-owned session'
   assert.match(source, /\['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile\]/);
   assert.match(source, /thread_id: delivery\.threadId/);
   assert.match(source, /idempotency_key: delivery\.requestId/);
-  assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
+  assert.match(source, /\['session', 'start'\]/);
+  assert.doesNotMatch(source, /CHATGPT_BROWSER_WORKSPACE|--workspace/);
   assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
 });
 

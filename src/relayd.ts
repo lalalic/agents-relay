@@ -5,7 +5,7 @@ import { spawnOwnedProcess } from './owned-process.js';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
-import { ChatGptAdapter, CodexAdapter, ensureChatGptBrowserWorkspace } from './adapters.js';
+import { ChatGptAdapter, CodexAdapter, ensureChatGptWebHelmReady } from './adapters.js';
 import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js';
 import { serveDashboard } from './dashboard.js';
 import { RepositoryWorkerPool } from './pool.js';
@@ -57,9 +57,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   configureDaemonObservability();
   configureExecutionRouterRulesPath(argv);
   try {
-    await ensureChatGptBrowserWorkspace();
+    await ensureChatGptWebHelmReady();
   } catch (error) {
-    process.stderr.write(`Browser Workspace bootstrap skipped: ${errorMessage(error)}\n`);
+    process.stderr.write(`WebHelm readiness check skipped: ${errorMessage(error)}\n`);
   }
   const noGitHub = noGitHubMode(argv);
   if (noGitHub) process.env.AGENTS_RELAY_NO_GITHUB = '1';

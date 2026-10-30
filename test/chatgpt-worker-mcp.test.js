@@ -36,6 +36,7 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     assert.equal(result.data.threadId, '6add12f0-ca3c-83e8-9457-0a6619057823');
     const entries = (await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
     assert.equal(entries.length, 3);
+    assert.deepEqual(entries[0].args, ['session', 'start']); // WebHelm chooses its default Harness group.
     assert.deepEqual(entries[1].args.slice(0,4), ['platform','run','chatgpt','new-thread']);
     assert.equal(entries[1].config.temporary, false);
     assert.match(entries[1].config.message, /Read the input through Neo/);
