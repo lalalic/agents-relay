@@ -1,6 +1,6 @@
 ---
 name: agents-relay
-description: Use when work needs durable, multi-agent orchestration across turns or processes: plan and execute Jobs/Tasks, coordinate dependencies and reviews, recover failures, and track authoritative lifecycle events. Also use for content-generation workflows (research, story, production, human review, publication) that need explicit agent roles and handoff boundaries. Not for simple one-shot tasks with no durable coordination.
+description: Use when work needs durable, multi-agent orchestration across turns or processes - plan and execute Jobs/Tasks, coordinate dependencies and reviews, recover failures, and track authoritative lifecycle events. Also use for content-generation workflows (research, story, production, human review, publication) that need explicit agent roles and handoff boundaries. Not for simple one-shot tasks with no durable coordination.
 requires:
   skills:
     - daemon-service-manage
