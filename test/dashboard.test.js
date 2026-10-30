@@ -1368,3 +1368,22 @@ test('navigating or clicking a Job never runs a Jobs backend search', () => {
   assert.match(dashboardHtml, /else showView\('jobs'\);void refresh\(false\);/);
   assert.doesNotMatch(dashboardHtml, /addEventListener\('(?:hashchange|popstate)'[^\n]*refresh\(/);
 });
+
+test('Jobs history search filters all SQLite inventory before taking top 20', () => {
+  const daemon = readFileSync(new URL('../src/relayd.ts', import.meta.url), 'utf8');
+  assert.match(daemon, /const overviews = async [^\n]*inventoryFromLocal\(false\)/);
+  assert.match(daemon, /return limitHistory \? dashboardManagedJobs\(visible\) : visible/);
+  const jobs = [
+    ...Array.from({ length: 2 }, (_, i) => ({ id: `active-${i}`, state: 'ACTIVE', repository: 'owner/one', updatedAt: `2026-10-29T22:00:${String(i).padStart(2,'0')}Z` })),
+    ...Array.from({ length: 326 }, (_, i) => ({ id: `completed-${i}`, state: 'COMPLETED', repository: 'owner/one', updatedAt: `2026-10-28T00:${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}Z` })),
+    ...Array.from({ length: 175 }, (_, i) => ({ id: `cancelled-${i}`, state: 'CANCELLED', repository: 'owner/two', updatedAt: `2026-10-29T00:${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}Z` })),
+  ];
+  const defaults = searchDashboardJobs(jobs, new URLSearchParams());
+  assert.equal(defaults.total,328);
+  assert.equal(defaults.jobs.length,20);
+  assert.ok(defaults.jobs.every(job => job.state !== 'CANCELLED'));
+  assert.equal(searchDashboardJobs(jobs,new URLSearchParams({status:'COMPLETED'})).jobs.length,20);
+  assert.equal(searchDashboardJobs(jobs,new URLSearchParams({status:'CANCELLED'})).total,175);
+  assert.equal(searchDashboardJobs(jobs,new URLSearchParams({repo:'owner/two'})).jobs.length,0);
+  assert.equal(searchDashboardJobs(jobs,new URLSearchParams({repo:'owner/two',status:'CANCELLED'})).jobs.length,20);
+});

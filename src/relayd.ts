@@ -116,7 +116,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     if (!repositories.includes(job.repository)) repositories.push(job.repository);
   }
   if (repositories.length === 0) repositories.push('local/' + basename(workspaceRoot));
-  const inventoryFromLocal = async (): Promise<ManagedJobOverview[]> => {
+  const inventoryFromLocal = async (limitHistory = true): Promise<ManagedJobOverview[]> => {
     const snapshots = await discoverLocalRelayStoreSnapshots(relayStoreDirectory());
     const known = new Set(repositories);
     const entries = snapshots.flatMap(snapshot =>
@@ -129,8 +129,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
       counts.set(item.job.id, (counts.get(item.job.id) ?? 0) + 1);
     // Hide obsolete terminal snapshots only when one live authoritative Job exists.
     // Multiple live copies remain visible for diagnosis but cannot be mutated.
-    return dashboardManagedJobs(entries.filter(item =>
-      !['COMPLETED','CANCELLED'].includes(item.job.state) || counts.get(item.job.id) !== 1));
+    const visible = entries.filter(item =>
+      !['COMPLETED','CANCELLED'].includes(item.job.state) || counts.get(item.job.id) !== 1);
+    return limitHistory ? dashboardManagedJobs(visible) : visible;
   };
   cachedOverviews = await inventoryFromLocal();
   const makeReconciler = (store: DurableStore, maxConcurrent: number) => new Reconciler(store,{ noGitHub, owner:`relayd-${process.pid}`, maxConcurrent, leaseMs:Number(value(argv,'--lease-ms','300000')), adapters:[new CodexAdapter(value(argv,'--codex','codex')),new ChatGptAdapter()], continuations:[new CodexThreadContinuation(value(argv,'--codex','codex')),new CommandContinuation(),new WebhookContinuation()], planner:runtimePlanner(argv), usageSnapshotProvider: () => usageRegistry.snapshot(), runtimeSummaryProvider: () => ({ chatgptRunning: summarizeRuntime(cachedOverviews.map(item => item.job)).workers.chatgpt }), decisionEngine:executionDecisionEngine(), decisionMode:decisionMode(), decisionAuditStore, eventBus:bus, escalationNotifier:escalationNotifierFromEnvironment(), reviewer:runtimeReviewer(argv), executionContextRoots: { workspaceRoot }, projectPathForJob: async (job, task) => { const canonical = repositoryPaths.get(job.repository) ?? await resolveManagedProjectPath(job.repository, explicitProjectPath, workspaceRoot); if (!(task ? taskRequiresManagedWorktree(job, task) : Boolean(job.localMerge?.sourceRef))) return resolveRepositoryProjectPath(canonical, job.projectPath);
@@ -149,7 +150,8 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     cachedOverviews = await inventoryFromLocal();
     return cachedOverviews;
   };
-  const overviews = async (forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => refreshAll(forceRefresh);
+  // Search the full SQLite inventory; keep the executor's bounded view unchanged.
+  const overviews = async (_forceRefresh = false, _trigger = 'internal.unknown'): Promise<ManagedJobOverview[]> => inventoryFromLocal(false);
   const refreshPullRequestSnapshot = async (repository: string, prNumber: number, _trigger: PullRequestRefreshTrigger = 'internal', _options: { force?: boolean } = {}): Promise<ManagedGitHubPullRequestSnapshot> => {
     const inventory = await refreshAll();
     return {
@@ -367,6 +369,9 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
   } : undefined;
   const exactJob = async (jobId: string, target?: { repository?: string; prNumber?: number }) => {
     let cached = dashboardOverview(jobId, target);
+    if (!cached) cached = (await inventoryFromLocal(false)).find(item => item.job.id === jobId &&
+      (!target?.repository || item.job.repository === target.repository) &&
+      (!target?.prNumber || item.job.prNumber === target.prNumber));
     if (!cached && target?.repository && target.prNumber && repositories.includes(target.repository)) {
       cached = (await refreshPullRequest(target.repository, target.prNumber, 'control.job-lookup', { force: true }))
         .find(item => item.job.id === jobId && item.job.repository === target.repository && item.job.prNumber === target.prNumber);
@@ -375,7 +380,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
     const cachedJob = () => ({ ...cached.job, githubState: cached.githubState, runtimeStatus: deriveJobRuntimeStatus(cached.job, cached.githubState), mergedAt: cached.mergedAt, closedAt: cached.closedAt, draft: cached.draft, publication: cached.publication, publicationFailure: cached.publicationFailure });
     try {
       const refreshed = (await refreshPullRequest(cached.job.repository, cached.job.prNumber, 'dashboard.selected-job', { force: true })).find(item => item.job.id === jobId);
-      if (!refreshed) return null;
+      if (!refreshed) return cachedJob();
       return { ...refreshed.job, githubState: refreshed.githubState, runtimeStatus: deriveJobRuntimeStatus(refreshed.job, refreshed.githubState), mergedAt: refreshed.mergedAt, closedAt: refreshed.closedAt, draft: refreshed.draft, publication: refreshed.publication, publicationFailure: refreshed.publicationFailure };
     } catch (error) {
       observability().record({ stage: 'daemon', event: 'daemon.refresh_failed', level: 'warn', outcome: 'failed', message: `Selected job refresh unavailable: ${errorMessage(error)}`, data: { classification: classifyFailure(error).classification, reason: errorMessage(error) } });
