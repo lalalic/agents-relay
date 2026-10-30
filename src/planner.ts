@@ -146,7 +146,7 @@ export function materializePlannerChild(job: Job, planner: Plan | Task, spec: Pl
 
 export function planningSpec(task: Task): PlannerTaskSpec {
   if (!task.output) throw new Error(`Initial task ${task.id} requires an output contract`);
-  if (!['codex', 'chatgpt'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
+  if (!['codex', 'chatgpt', 'z'].includes(task.adapter)) throw new Error(`Initial task ${task.id} requires a supported worker adapter`);
   return { id: task.id, title: task.title, parentTaskId: task.parentTaskId, input: task.input, priority: task.priority, storySize: task.storySize, projectName: task.projectName, agentName: task.agentName, agentGraph: task.agentGraph, review: task.review, dependencies: task.dependencies, capabilities: task.capabilities, workerRequirements: task.workerRequirements, adapter: task.adapter, output: task.output ?? { kind: 'task_pr' }, routing: task.routing, continuation: task.continuation, maxAttempts: task.maxAttempts, timeoutMs: task.timeoutMs, resolution: task.resolution ? { ...task.resolution, state: undefined, owner: undefined, updatedAt: undefined } as unknown as TaskResolutionProposal : undefined };
 }
 
@@ -267,7 +267,7 @@ export function parsePlannerResult(value: unknown): PlannerResult {
     if (typeof task.input !== 'string' || task.input.length === 0) throw new Error(`Planner next_tasks[${index}].input is required`);
     const parentTaskId = task.parentTaskId === undefined || task.parentTaskId === null ? task.parentTaskId as undefined | null : optionalString(task.parentTaskId, `next_tasks[${index}].parentTaskId`);
     const adapter = task.adapter;
-    if (adapter !== undefined && !['codex', 'chatgpt'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter must be codex or chatgpt when provided`);
+    if (adapter !== undefined && !['codex', 'chatgpt', 'z'].includes(String(adapter))) throw new Error(`Planner next_tasks[${index}].adapter must be codex, chatgpt, or z when provided`);
     const output = task.output === undefined ? undefined : record(task.output, `next_tasks[${index}].output`);
     if (!output || (output.kind !== 'task_pr' && output.kind !== 'file')) throw new Error(`Planner next_tasks[${index}].output is required`);
     if (output.kind === 'file' && (typeof output.path !== 'string' || output.path.length === 0)) throw new Error(`Planner next_tasks[${index}].output.path is required for file output`);

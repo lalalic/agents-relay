@@ -14,7 +14,7 @@ function dependencySatisfied(task: Task, byId: ReadonlyMap<string, Task>): boole
 }
 
 function eligibleWorkerRoute(task: Task, candidates?: readonly WorkerCandidate[]): boolean {
-  if (!['codex', 'chatgpt'].includes(task.adapter)) return false;
+  if (!['codex', 'chatgpt', 'z'].includes(task.adapter)) return false;
   const required = task.workerRequirements?.capabilities ?? task.capabilities;
   if (task.workerSelection) {
     if (task.workerSelection.adapter !== task.adapter

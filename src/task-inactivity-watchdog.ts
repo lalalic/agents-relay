@@ -17,7 +17,7 @@ export function isCorrelatedWorkerEvent(task: Task, event: EventRecord): boolean
 export function inactivityDeadline(task: Task, executionId: string, postExitGraceMs: number): number {
   const progressAt = Date.parse(task.lastProgressAt ?? task.executionHistory?.find(item => item.id === executionId)?.startedAt ?? task.updatedAt);
   const timeoutAt = (Number.isFinite(progressAt) ? progressAt : Date.now()) + Math.max(1, task.timeoutMs);
-  const exitAt = task.adapter !== 'chatgpt' && task.processExitedAt ? Date.parse(task.processExitedAt) : NaN;
+  const exitAt = task.adapter !== 'chatgpt' && task.adapter !== 'z' && task.processExitedAt ? Date.parse(task.processExitedAt) : NaN;
   return Number.isFinite(exitAt) ? Math.min(timeoutAt, exitAt + postExitGraceMs) : timeoutAt;
 }
 

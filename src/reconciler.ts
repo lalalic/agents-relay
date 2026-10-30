@@ -303,7 +303,7 @@ export class Reconciler extends ReconcilerReviewBase {
     );
   }
   private async launchCorrelated(job: Job, task: Task): Promise<void> {
-    if (['codex', 'chatgpt'].includes(task.adapter) && !this.options.eventBus) {
+    if (['codex', 'chatgpt', 'z'].includes(task.adapter) && !this.options.eventBus) {
       await transitionTaskEvent(task, 'block');
       task.error = 'Model-backed tasks require an event bus for authoritative lifecycle state';
       await this.store.saveTask(task);
@@ -320,7 +320,7 @@ export class Reconciler extends ReconcilerReviewBase {
       if ((!freshTask.routing || ((implementationThread || (freshTask.agentName === 'reviewer' && resolveReviewerThreadDestination(freshJob, this.options.reviewer?.threadId))) && freshTask.adapter !== 'chatgpt')) && freshTask.adapter !== 'orchestrator') {
         const routed = await this.routeTaskForExecutionFailClosed(freshJob, freshTask); if (!routed) return; freshTask = routed.task;
       }
-      if (['codex', 'chatgpt'].includes(freshTask.adapter) && !freshTask.routing) {
+      if (['codex', 'chatgpt', 'z'].includes(freshTask.adapter) && !freshTask.routing) {
         throw new Error('Task ' + freshTask.id + ' requires routing metadata before execution claim');
       }
       const leaseMs = Math.max(this.options.leaseMs ?? 300000, freshTask.timeoutMs);
@@ -414,9 +414,9 @@ export class Reconciler extends ReconcilerReviewBase {
       ? `${baseWorkerInput}\n\n[Canonical Neo project run]\nExecution cwd: ${executionContext.project.path}\nKeep generated artifacts under runs/.`
       : baseWorkerInput;
     const workerTask = { ...task, input: workerInput + taskCommentContext(task), routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
-    const startAckSetup = task.adapter === 'chatgpt' ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
+    const startAckSetup = (task.adapter === 'chatgpt' || task.adapter === 'z') ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
     const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
-    const terminalWait = task.adapter === 'chatgpt' && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
+    const terminalWait = (task.adapter === 'chatgpt' || task.adapter === 'z') && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     const launchContext: LaunchContext = {
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),

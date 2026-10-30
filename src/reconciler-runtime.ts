@@ -204,7 +204,7 @@ export abstract class ReconcilerRuntimeBase {
     if (!task.executionId) return true;
     const sourceId = eventSourceId(event);
     const expected = executionEventSource(jobId, task.id, task.executionId);
-    if ((task.adapter === 'codex' || task.adapter === 'chatgpt') && sourceId !== expected) return false;
+    if ((['codex', 'chatgpt', 'z'].includes(task.adapter)) && sourceId !== expected) return false;
     if (afterCommit) claimTerminalExecution(expected);
     const executionId = task.executionId;
     if (afterCommit) this.clearExecution(task.id, executionId);
@@ -292,7 +292,7 @@ export abstract class ReconcilerRuntimeBase {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) return;
-    if (task.adapter !== 'chatgpt') {
+    if (task.adapter !== 'chatgpt' && task.adapter !== 'z') {
       const exited = await this.taskTransitions.updateFact(jobId, taskId,
         current => current.executionId === executionId && ['RUNNING', 'QUEUED'].includes(current.state),
         current => { current.processExitedAt = new Date().toISOString(); });
@@ -300,10 +300,10 @@ export abstract class ReconcilerRuntimeBase {
     }
     const correlated = task.executionId === executionId || task.executionHistory?.some(item => item.id === executionId);
     if (!correlated) return;
-    if (task.adapter !== 'chatgpt' && (task.executionId !== executionId || terminalExecutionClaimed(jobId, taskId, executionId))) return;
+    if (task.adapter !== 'chatgpt' && task.adapter !== 'z' && (task.executionId !== executionId || terminalExecutionClaimed(jobId, taskId, executionId))) return;
     await this.emit(eventFor(
       jobId, taskId, task.parentTaskId,
-      task.adapter === 'chatgpt' ? 'task.process.async_exited' : 'task.process.exited',
+      (task.adapter === 'chatgpt' || task.adapter === 'z') ? 'task.process.async_exited' : 'task.process.exited',
       live?.execution.processExit ? (live.execution.processExit.exitCode === 0 ? 'succeeded' : 'failed') : (error ? 'failed' : 'succeeded'),
       result?.summary ?? (live?.execution.processExit?.terminationReason === 'parent-shutdown' ? 'Worker interrupted by daemon shutdown' : error ? `Worker exited: ${error}${live?.execution.processExit ? ` (exit=${live.execution.processExit.exitCode ?? 'null'}${live.execution.processExit.signal ? ` signal=${live.execution.processExit.signal}` : ''})` : ''}` : 'Worker runtime exited'), 'orchestrator',
       { authoritative: false, waitingForTerminalEvent: true, exitCode: live?.execution.processExit?.exitCode ?? null,
@@ -392,11 +392,11 @@ export abstract class ReconcilerRuntimeBase {
       : event.type;
     const transition = await withExecutionBoundary(event.job_id, event.task_id, () => this.taskTransitions.apply(event.job_id, event.task_id, lifecycleEvent, {
       eligible: (_job, task) => {
-        if (!['codex', 'chatgpt', 'orchestrator'].includes(task.adapter)) return false;
+        if (!['codex', 'chatgpt', 'z', 'orchestrator'].includes(task.adapter)) return false;
         if (event.type === 'task.blocked' && lifecycleEvent !== 'interactive.waiting' && (!trustedInternal || task.agentName !== 'troubleshooter')) return false;
         if (task.agentName === 'reviewer' && event.type === 'task.completed') return false;
         if (event.type === 'task.completed' && task.interactiveInvocation?.status !== undefined && task.interactiveInvocation.status !== 'approved') return false; // current interactive revision requires durable approval
-        const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
+        const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
         if (!trustedInternal && modelBacked && !isCorrelatedWorkerEvent(task, event)) {
           const eventExecutionId = executionIdFromSource(eventSourceId(event), _job.id, task.id);
           const prior = eventExecutionId ? task.executionHistory?.find(item => item.id === eventExecutionId) : undefined;
@@ -411,7 +411,7 @@ export abstract class ReconcilerRuntimeBase {
         return { recoverableExecution: isRecoverableWatchdogFailure(task) && freshEnough, awaitingInteractiveDecision: lifecycleEvent === 'interactive.waiting' && task.interactiveInvocation?.status === 'awaiting_decision' };
       },
       mutate: (job, task) => {
-        const modelBacked = task.adapter === 'codex' || task.adapter === 'chatgpt';
+        const modelBacked = ['codex', 'chatgpt', 'z'].includes(task.adapter);
         const acceptedExecutionId = task.executionId;
         const eventExecutionId = executionIdFromSource(eventSourceId(event), job.id, task.id);
         const terminalExecutionId = eventExecutionId ?? acceptedExecutionId;

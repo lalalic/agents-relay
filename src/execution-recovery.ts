@@ -39,10 +39,10 @@ export async function recoverExpiredExecutions(job: Job, now: number, ports: Exe
 }
 
 export async function recoverStartupOrphans(job: Job, ports: ExecutionRecoveryPorts): Promise<void> {
-  const candidates = job.tasks.filter(task => task.kind !== 'planner' && (task.state === 'RUNNING' || task.state === 'QUEUED') && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt');
+  const candidates = job.tasks.filter(task => task.kind !== 'planner' && (task.state === 'RUNNING' || task.state === 'QUEUED') && task.executionId && task.leaseOwner && task.leaseOwner !== ports.owner && task.adapter !== 'chatgpt' && task.adapter !== 'z');
   for (const stale of candidates) {
     const task = await currentGeneration(ports.store, job, stale);
-    if (!task || !['RUNNING', 'QUEUED'].includes(task.state) || task.adapter === 'chatgpt' || !task.executionId || !task.leaseOwner || task.leaseOwner === ports.owner) continue;
+    if (!task || !['RUNNING', 'QUEUED'].includes(task.state) || task.adapter === 'chatgpt' || task.adapter === 'z' || !task.executionId || !task.leaseOwner || task.leaseOwner === ports.owner) continue;
     if (!await reclaimStaleExecutionProcess(ports.store, task, ports.owner)) continue;
     await recoverTask(task, 'execution.orphaned', 'startup_orphaned', ports);
   }

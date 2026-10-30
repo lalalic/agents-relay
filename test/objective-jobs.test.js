@@ -317,7 +317,7 @@ test('planner persistence delegates reverse unblock registration to durable stor
 });
 
 test('planner rejects command-like shell tasks and requires output', () => {
-  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'npm test',adapter:'shell'}] }), /codex or chatgpt/);
+  assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'npm test',adapter:'shell'}] }), /codex, chatgpt, or z/);
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'work',adapter:'codex'}] }), /output is required/);
 });
 

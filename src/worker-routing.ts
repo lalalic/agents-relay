@@ -90,7 +90,7 @@ export function workerCandidates(
   return adapters.flatMap(adapter => {
     const workers = registered.filter(worker => worker.runtime.adapter === adapter.name);
     return (workers.length > 0 ? workers : [undefined]).map(worker => {
-      const provider = worker?.runtime.provider ?? (adapter.name === 'chatgpt' ? 'chatgpt' : undefined);
+      const provider = worker?.runtime.provider ?? (adapter.name === 'chatgpt' ? 'chatgpt' : adapter.name === 'z' ? 'z' : undefined);
       const resource = provider ? usageForProvider(snapshot, provider) : {};
       return {
         workerId: worker?.id ?? adapter.id,

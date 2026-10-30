@@ -12,7 +12,7 @@ export type AgentPromptBundle = {
   user: string;
   references: readonly PromptReference[];
 };
-export type PromptAdapter = 'codex' | 'chatgpt';
+export type PromptAdapter = 'codex' | 'chatgpt' | 'z';
 export const DEFAULT_PROMPT_REFERENCE_DIRECTORY = join(tmpdir(), 'agents-relay', 'prompt-references');
 
 export async function isPromptReferenceAccessible(path: string): Promise<boolean> {

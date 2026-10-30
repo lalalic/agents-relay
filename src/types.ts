@@ -4,7 +4,7 @@ export type JobRuntimeStatus = 'IDLE' | 'WAITING' | 'QUEUED' | 'RUNNING' | 'BLOC
 export type TaskState = 'DRAFT' | 'QUEUED' | 'RUNNING' | 'BLOCKED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type JobTag = { description: string; values: Record<string, string> };
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
-export type WorkerAdapterName = 'codex' | 'chatgpt';
+export type WorkerAdapterName = 'codex' | 'chatgpt' | 'z';
 /** Persisted compatibility only: new Tasks may use WorkerAdapterName values only. */
 export type AdapterName = WorkerAdapterName | 'orchestrator';
 export type ChatGptTabClosePolicy = 'after-start' | 'never' | 'after-terminal';

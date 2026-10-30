@@ -123,6 +123,7 @@ export async function discoverModelCandidates(
       model: registration.runtime.model,
     }, usage)];
   }
+  if (worker.adapter === 'z') return [withResource({ id: 'z/GLM-5.3-Flash', provider: 'z', model: 'GLM-5.3-Flash' }, usage)];
   if (worker.adapter === 'chatgpt') {
     return [withResource({ id: 'chatgpt/account-defaults', provider: 'chatgpt', model: 'account-defaults' }, usage)];
   }
