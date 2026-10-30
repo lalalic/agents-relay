@@ -249,6 +249,13 @@ Every model-backed task declares a durable output with `--output task-pr` or `--
 
 For Codex and ChatGPT, **correlated worker events are authoritative lifecycle inputs**, not a separate durable store. Event publication uses the canonical Neo `events-bus` surface (`events__publish` for sandboxed/hosted workers, or `NEO_EVENTS_EMIT` for direct local workers); Agents Relay subscribes, validates correlation, applies graph transitions, persists results in RelayStore, and projects them to GitHub. Relay publishes `task.process.launched` only after successful adapter launch; `task.started` is worker-owned and must be a new, correlated start acknowledgement. Codex publishes `task.process.exited` when its synchronous runtime exits, while ChatGPT publishes `task.process.async_exited` after its one-shot submission runtime exits; neither substitutes for `task.completed`, `task.failed`, `task.blocked`, or `task.cancelled`. The executing agent must publish exactly one correlated terminal event. Relay persists the matching durable state only from that terminal event. Model-backed tasks require an event bus and time out explicitly if no terminal event arrives.
 
+External execution uses the single global `webhelm` executable installed by the
+WebHelm skill. Before starting Relay, install the global skill and its launcher
+(`npx skills add lalalic/browser-workspace -g -y -s webhelm`, then
+`~/.agents/skills/webhelm/scripts/install-global-cli.sh`). Relay checks
+`webhelm platform profile chatgpt` before browser workspace initialization.
+Do not invoke the old `browser-workspace` executable or a separate `uvx` CLI.
+
 The ChatGPT adapter uses Relay's `agents/chatgpt-worker.agent.md` lifecycle contract. A new worker uses `webhelm platform run chatgpt new-thread --session-id SESSION_ID --config <file>` in a caller-owned Session. This is a regular persistent ChatGPT thread, which supports the connected Neo MCP in the verified account. Relay closes the Session after submission, but the ChatGPT thread remains in history. Existing-thread review and handoff continue through `new-turn`. File paths are included in the worker message for Neo MCP reading; they are not uploaded as browser attachments. Submission receipts retain `status: submitted`; the event bus owns task completion.
 
 ~~~sh
@@ -300,7 +307,7 @@ For every Job, unblock evidence becomes durable recovery context. Relay retries 
 
 ### Browser Workspace product boundary
 
-Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `webhelm status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. This bootstrap is best-effort: Browser Workspace discovery/helper failures are logged and skipped so they do not prevent `agents-relayd` from starting; ChatGPT browser work may remain unavailable until Browser Workspace recovers. Ordinary ChatGPT worker activity uses the public Browser Workspace one-shot `platform run ... --auto-session` command; orchestrator-owned self-healing flows may still use explicit session commands. Relay does not create or delete workspaces through CLI lifecycle commands.
+Agents Relay owns the persistent `Relay` browser workspace as product infrastructure. At daemon startup it runs `webhelm status`, dynamically imports the returned absolute `admin_helper`, and calls `ensureWorkspace("Relay", 6)`. This bootstrap is best-effort: Browser Workspace discovery/helper failures are logged and skipped so they do not prevent `agents-relayd` from starting; ChatGPT browser work may remain unavailable until Browser Workspace recovers. New ChatGPT workers use a Relay-owned browser Session and close it after verified submission. Existing-thread `new-turn` messages use the durable async queue directly, without creating a browser Session. Relay does not create or delete workspaces through CLI lifecycle commands.
 
 ## Shared publication reporting
 

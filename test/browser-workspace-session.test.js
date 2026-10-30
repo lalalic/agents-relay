@@ -25,7 +25,11 @@ test('ChatGPT Browser Workspace bootstrap discovers product admin helper through
     await writeFile(command, [
       '#!/bin/sh',
       'printf "%s\\n" "$*" >> "$FAKE_BW_LOG"',
-      `printf '%s\\n' '${JSON.stringify({ admin_helper: admin })}'`,
+      'if [ "$1" = "platform" ]; then',
+      '  printf \'%s\\n\' \'{"platform":"chatgpt"}\'',
+      'else',
+      `  printf '%s\\n' '${JSON.stringify({ admin_helper: admin })}'`,
+      'fi',
     ].join('\n'), { mode: 0o700 });
     const previousLog = process.env.FAKE_BW_LOG;
     const previousAdminLog = process.env.FAKE_BW_ADMIN_LOG;
@@ -37,7 +41,7 @@ test('ChatGPT Browser Workspace bootstrap discovers product admin helper through
       if (previousLog === undefined) delete process.env.FAKE_BW_LOG; else process.env.FAKE_BW_LOG = previousLog;
       if (previousAdminLog === undefined) delete process.env.FAKE_BW_ADMIN_LOG; else process.env.FAKE_BW_ADMIN_LOG = previousAdminLog;
     }
-    assert.equal((await readFile(log, 'utf8')).trim(), 'status');
+    assert.equal((await readFile(log, 'utf8')).trim(), 'platform profile chatgpt\nstatus');
     assert.deepEqual(JSON.parse((await readFile(adminLog, 'utf8')).trim()), { name: 'Relay', size: 6 });
     assert.equal(CHATGPT_BROWSER_WORKSPACE, 'Relay');
     assert.equal(CHATGPT_BROWSER_WORKSPACE_POOL_SIZE, 6);
@@ -48,8 +52,9 @@ test('ChatGPT Browser Workspace bootstrap discovers product admin helper through
 
 test('default Browser Workspace CLI uses status discovery and no lifecycle CLI command', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /\{ command: 'uvx', prefix: \['--from', 'browser-workspace', 'webhelm'\] \}/);
-  assert.match(source, /browserWorkspaceCommand\(browserWorkspaceCli\(command\), \['status'\]\)/);
+  assert.match(source, /join\(homedir\(\), '\.local', 'bin', 'webhelm'\)/);
+  assert.match(source, /browserWorkspaceCommand\(cli, \['status'\]\)/);
+  assert.match(source, /\['platform', 'profile', 'chatgpt'\]/);
   assert.match(source, /admin\.ensureWorkspace\(CHATGPT_BROWSER_WORKSPACE, CHATGPT_BROWSER_WORKSPACE_POOL_SIZE\)/);
   assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);
 });
@@ -58,10 +63,12 @@ test('ChatGPT adapter uses Browser Workspace caller-owned session platform run',
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
   assert.match(source, /browserWorkerRunner/);
   assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'async'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile\]/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /browserWorkerRunner/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, \.\.\.\(action === 'new-turn' \? \['--mode', 'async'\] : \[\]\), '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
+  assert.match(source, /\['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile\]/);
   assert.match(source, /\['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE\]/);
   assert.match(source, /\['session', 'stop', sessionId\]/);
   assert.doesNotMatch(source, /\['session', 'exec', sessionId\]/);

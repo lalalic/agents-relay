@@ -62,3 +62,39 @@ test('normal-thread receipt rejects missing durable identity', async () => {
     id:'missing-thread',input:'text',routing:{provider:'openai',model:'test'},
   },new AbortController().signal).promise,/durable ChatGPT thread/);
 });
+
+test('existing-thread async delivery uses durable WebHelm queue without a browser session', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-webhelm-async-'));
+  const executable = join(root, 'fake-webhelm');
+  const trace = join(root, 'trace.jsonl');
+  await writeFile(executable, [
+    '#!/usr/bin/env node',
+    "const fs=require('node:fs');",
+    "const args=process.argv.slice(2);",
+    "fs.appendFileSync(process.env.RELAY_MCP_PROBE_TRACE, JSON.stringify(args)+'\\n');",
+    "if(args.slice(0,4).join(' ')!=='platform run chatgpt new-turn'||args.includes('--session-id'))process.exit(17);",
+    "console.log(JSON.stringify({result:{ok:true,status:'submitted',mode:'new-turn',thread_id:'thread_12345678',queue_id:'q1',verified_by:'durable-queue'}}));",
+  ].join('\n'), {mode:0o700});
+  const oldCommand=process.env.AGENTS_RELAY_WEBHELM_COMMAND;
+  const oldTrace=process.env.RELAY_MCP_PROBE_TRACE;
+  process.env.AGENTS_RELAY_WEBHELM_COMMAND=executable;
+  process.env.RELAY_MCP_PROBE_TRACE=trace;
+  try {
+    const adapter=new ChatGptAdapter();
+    const task={
+      id:'thread-delivery',input:'continue',routing:{provider:'openai',model:'test'},
+      chatgptThreadDelivery:{threadId:'thread_12345678',requestId:'delivery-1'},
+    };
+    const result=await adapter.launch(task,new AbortController().signal).promise;
+    assert.equal(result.data.submitted,true);
+    assert.equal(result.data.mode,'new-turn');
+    const entries=(await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(entries.length,1);
+    assert.ok(entries[0].includes('--mode'));
+    assert.ok(!entries[0].includes('--session-id'));
+  } finally {
+    if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;
+    if(oldTrace===undefined)delete process.env.RELAY_MCP_PROBE_TRACE;else process.env.RELAY_MCP_PROBE_TRACE=oldTrace;
+    await rm(root,{recursive:true,force:true});
+  }
+});

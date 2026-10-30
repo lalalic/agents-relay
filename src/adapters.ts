@@ -1,5 +1,6 @@
 import { access, readFile, realpath, writeFile, unlink } from 'node:fs/promises';
 import { join, relative, resolve, sep, basename } from 'node:path';
+import { homedir } from 'node:os';
 import { DEFAULT_PROMPT_REFERENCE_DIRECTORY } from './agent-prompt-builder.js';
 import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
@@ -196,7 +197,7 @@ export function parseDriverJson(output: string): BrowserWorkerResponse {
 }
 type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_WEBHELM_COMMAND): BrowserWorkspaceCli {
-  return override ? { command: override, prefix: [] } : { command: 'uvx', prefix: ['--from', 'browser-workspace', 'webhelm'] };
+  return { command: override || join(homedir(), '.local', 'bin', 'webhelm'), prefix: [] };
 }
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return rawBrowserWorkspaceCommand(cli,args,stdin,signal);
@@ -292,7 +293,10 @@ type BrowserWorkspaceStatus = { admin_helper?: unknown };
 type BrowserWorkspaceAdminModule = { ensureWorkspace?: (name: string, size?: number) => Promise<unknown> | unknown };
 
 export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS_RELAY_WEBHELM_COMMAND): Promise<void> {
-  const status = parseWorkspaceJson(await browserWorkspaceCommand(browserWorkspaceCli(command), ['status'])) as BrowserWorkspaceStatus;
+  const cli = browserWorkspaceCli(command);
+  const profile = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['platform', 'profile', 'chatgpt']));
+  if (profile.platform !== 'chatgpt') throw new Error('Global WebHelm CLI cannot load the ChatGPT platform skill');
+  const status = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['status'])) as BrowserWorkspaceStatus;
   if (typeof status.admin_helper !== 'string' || !status.admin_helper.startsWith('/')) {
     throw new Error('webhelm status returned no absolute admin_helper path');
   }
@@ -305,13 +309,17 @@ export async function ensureChatGptBrowserWorkspace(command = process.env.AGENTS
 
 
 async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'new-thread' | 'new-turn' = 'new-thread'): Promise<string> {
+  // Durable async turns are queued without browser sessions by the WebHelm runtime.
+  if (action === 'new-turn') {
+    return browserWorkspaceCommand(cli, ['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile], undefined, signal);
+  }
   const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start', '--workspace', CHATGPT_BROWSER_WORKSPACE], undefined, signal));
   const sessionId = session.session_id;
   if (typeof sessionId !== 'string' || !sessionId) throw new Error('webhelm session start returned no session_id');
   try {
     return await browserWorkspaceCommand(
       cli,
-      ['platform', 'run', 'chatgpt', action, ...(action === 'new-turn' ? ['--mode', 'async'] : []), '--session-id', sessionId, '--config', configFile],
+      ['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile],
       undefined,
       signal,
     );
