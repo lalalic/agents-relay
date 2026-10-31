@@ -68,6 +68,10 @@ This is a worker result-content contract, not a requirement for dedicated `rootC
 
 Keep these concepts distinct: observation is not root cause; hypothesis is not root cause; requested approach is not implemented solution; implementation is not validation.
 
+### Worker self-review before success
+
+Every artifact-changing implementation worker follows the shared [worker self-review loop](worker-self-review.md), regardless of its selected agent name or runtime adapter. Complete the implement → self-review → fix → re-review cycle until the latest full review has no actionable findings. Include review rounds, fixes, validation evidence, and the clean-review result in the durable Task result. The worker's self-review never substitutes for an independent final Reviewer, human approval, or Relay's Graph-owned lifecycle gates.
+
 ### Job-defined Task tag
 
 `Task.state` is reserved for Relay lifecycle only: `DRAFT`, `QUEUED`, `RUNNING`, `BLOCKED`, `SUCCEEDED`, `FAILED`, and `CANCELLED`. `BLOCKED` is exclusive to Tasks whose `agentName` is exactly `troubleshooter`; ordinary Tasks never enter `BLOCKED` or an `UNBLOCKED` lifecycle state. A Job may additionally define one optional `tag` contract for a Job-specific result or classification that should be visible on each Task without changing its lifecycle state.
