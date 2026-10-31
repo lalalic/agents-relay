@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, utimes, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from './test-runtime.js';
@@ -99,8 +99,29 @@ test('usage registry exposes Browser Workspace capacity as a shared resource fac
   assert.deepEqual(overview.browserWorkspace, capacity);
 });
 
+test('Browser Workspace capacity uses native webhelm capacity without launching Python', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-webhelm-capacity-'));
+  const binary = join(dir, 'webhelm');
+  const observedAt = '2026-09-27T16:00:00.000Z';
+  try {
+    await writeFile(binary, `#!/bin/sh
+[ "$1" = capacity ] || exit 8
+printf '%s\\n' '{"name":"Harness","poolSize":8,"idle":3,"leased":4,"available":4,"observedAt":"${observedAt}","reason":null}'
+`);
+    await chmod(binary, 0o755);
+    const reader = new BrowserWorkspaceUsageReader(binary, 2500, () => new Date(observedAt));
+    const result = await reader.read();
+    assert.equal(result.name, 'Harness');
+    assert.equal(result.poolSize, 8);
+    assert.equal(result.available, 4);
+    assert.equal(result.reason, null);
+  } finally {
+    await rm(dir, { recursive:true, force:true });
+  }
+});
+
 test('Browser Workspace probe failures remain unknown', async () => {
-  const reader = new BrowserWorkspaceUsageReader('definitely-not-a-browser-harness-command', 50, () => new Date('2026-09-27T16:00:00.000Z'));
+  const reader = new BrowserWorkspaceUsageReader('definitely-not-a-webhelm-command', 50, () => new Date('2026-09-27T16:00:00.000Z'));
   const capacity = await reader.read();
   assert.equal(capacity.idle, null);
   assert.equal(capacity.available, null);
