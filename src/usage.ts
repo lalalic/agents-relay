@@ -64,8 +64,8 @@ export interface BrowserWorkspaceCapacityReader {
 
 export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityReader {
   constructor(
-    private readonly command = 'browser-harness',
-    private readonly timeoutMs = 10_000,
+    private readonly command = 'npx',
+    private readonly timeoutMs = 30_000,
     private readonly now: () => Date = () => new Date(),
     private readonly staleAfterMs = 15 * 60_000,
   ) {}
@@ -73,7 +73,7 @@ export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityRead
   async read(): Promise<BrowserWorkspaceCapacity> {
     const observedAt = this.now().toISOString();
     return await new Promise(resolve => {
-      const child = spawnOwnedProcess(this.command, [], { invocation: 'usage.browser-workspace', timeoutMs: this.timeoutMs, spawn: { stdio: ['pipe', 'pipe', 'ignore'] } });
+      const child = spawnOwnedProcess(this.command, this.command === 'npx' ? ['--yes', 'webhelm@latest', 'capacity'] : ['capacity'], { invocation: 'usage.browser-workspace', timeoutMs: this.timeoutMs, spawn: { stdio: ['ignore', 'pipe', 'ignore'] } });
       let output = '';
       let settled = false;
       const finish = (capacity: BrowserWorkspaceCapacity): void => {
@@ -113,11 +113,10 @@ export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityRead
               finish({ name, poolSize, idle, leased, available, observedAt: rawObservedAt, reason: null });
               return;
             }
-          } catch { /* browser-harness may print startup diagnostics before JSON */ }
+          } catch { /* Keep accepting the last valid JSON line from WebHelm. */ }
         }
         finish(unavailable(code === 0 ? 'Browser Workspace capacity probe returned no usable capacity.' : `Browser Workspace capacity probe exited with code ${code ?? 'unknown'}.`));
       });
-      child.stdin?.end('import json\nprint(json.dumps(workspace_capacity()))\n');
     });
   }
 }

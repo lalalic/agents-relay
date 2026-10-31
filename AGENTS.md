@@ -45,6 +45,8 @@ code change and classify it afterward.
 - Agents Relay owns durable orchestration, lineage, leases/retries, lifecycle events, and review gates.
 - Workers consume the resolved context. Nested workers delegate only by creating durable Relay child tasks; they must not directly spawn arbitrary child agents.
 
+- Implementation quality instructions must be applied during shared worker prompt assembly, including unnamed normal workers, rather than relying only on a named implementation agent contract. Preserve independent reviewer and specialist-review isolation, and test the immutable prompt snapshots across adapters.
+
 ## Verification levels
 
 Use L1 Graph branch and binding verification, L2 role/provider evidence, and L3 deterministic production-ingress/reconciliation/SQLite tests. Do not reference the retired standalone E2E runner or deleted `e2e/` directory. L1 and deterministic L3 passing do not imply a physical UI or provider integration was run; report those gates as `NOT_RUN` until independently verified. Keep negative, restart/dedupe, and false-completion coverage.

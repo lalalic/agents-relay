@@ -197,7 +197,7 @@ export function parseDriverJson(output: string): BrowserWorkerResponse {
 }
 type BrowserWorkspaceCli = { command: string; prefix: readonly string[] };
 function browserWorkspaceCli(override = process.env.AGENTS_RELAY_WEBHELM_COMMAND): BrowserWorkspaceCli {
-  return { command: override || join(homedir(), '.local', 'bin', 'webhelm'), prefix: [] };
+  return override ? { command: override, prefix: [] } : { command: 'npx', prefix: ['--yes', 'webhelm@latest'] };
 }
 function browserWorkspaceCommand(cli: BrowserWorkspaceCli, args: readonly string[], stdin?: string, signal?: AbortSignal): Promise<string> {
   return rawBrowserWorkspaceCommand(cli,args,stdin,signal);
