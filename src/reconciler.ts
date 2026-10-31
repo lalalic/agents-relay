@@ -467,12 +467,15 @@ export class Reconciler extends ReconcilerReviewBase {
     if(typeof url!=='string' || !/^https:\/\/(?:chatgpt\.com|chat\.z\.ai)\/c\/[A-Za-z0-9_-]+\/?$/.test(url))return;
     await this.store.mutateJob?.(jobId,current=>{
       const task=current.tasks.find(item=>item.id===taskId);
-      if(!task || task.executionId!==executionId)return current;
-      task.threadUrl=url;
+      const historical = task?.executionHistory?.some(item=>item.id===executionId);
+      if(!task || (task.executionId!==executionId && !historical))return current;
+      // The terminal event may be accepted before WebHelm returns the durable thread receipt.
+      // Keep this execution's URL even after the execution lease has been cleared.
+      if(task.executionId===executionId || task.executionId===null)task.threadUrl=url;
       if(!task.threadHistory?.some(item=>item.executionId===executionId)) {
         task.threadHistory=[...(task.threadHistory??[]),{executionId,threadUrl:url,attempt:task.attempt,at:new Date().toISOString()}].slice(-12);
       }
-      if(typeof id==='string')task.threadId=id;
+      if(typeof id==='string' && (task.executionId===executionId || task.executionId===null))task.threadId=id;
       return current;
     });
   }

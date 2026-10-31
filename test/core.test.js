@@ -2897,3 +2897,34 @@ test('failed local merge is scheduled for reconciliation when retry is due', () 
   assert.equal(needsLifecycleReconciliation(base,now),true);
   assert.equal(needsLifecycleReconciliation({...base,localMerge:{...base.localMerge,nextAttemptAt:'2026-10-16T21:01:00Z'}},now),false);
 });
+
+test('terminal-before-browser-receipt retains original worker thread in durable history',async()=>{
+  const t=task('terminal-before-receipt','SUCCEEDED');
+  t.adapter='z';t.executionId=null;t.executionHistory=[{id:'original-execution',attempt:0,startedAt:now()}];
+  const store=new InMemoryStore(job([t]));
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  try {
+    const receipt={deliveryReceipt:{thread_id:'terminal-original',thread_url:'https://chat.z.ai/c/terminal-original'}};
+    await reconciler.recordBrowserThread('j',t.id,'original-execution',receipt);
+    const saved=(await store.load('j')).tasks[0];
+    assert.equal(saved.threadUrl,receipt.deliveryReceipt.thread_url);
+    assert.equal(saved.threadHistory?.length,1);
+    assert.equal(saved.threadHistory?.[0]?.executionId,'original-execution');
+    await reconciler.recordBrowserThread('j',t.id,'original-execution',receipt);
+    assert.equal((await store.load('j')).tasks[0].threadHistory.length,1,'receipt deduplicates by execution');
+  }finally{await reconciler.close();}
+});
+
+test('late old-browser receipt cannot overwrite a newer retry thread',async()=>{
+  const t=task('out-of-order-browser-receipt','RUNNING');
+  t.adapter='chatgpt';t.executionId='new-exec';t.threadUrl='https://chatgpt.com/c/new-exec-thread';
+  t.executionHistory=[{id:'old-exec',attempt:0,startedAt:now()},{id:'new-exec',attempt:1,startedAt:now()}];
+  const store=new InMemoryStore(job([t]));
+  const reconciler=new Reconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  try{
+    await reconciler.recordBrowserThread('j',t.id,'old-exec',{deliveryReceipt:{thread_id:'old-exec-thread',thread_url:'https://chatgpt.com/c/old-exec-thread'}});
+    const saved=(await store.load('j')).tasks[0];
+    assert.equal(saved.threadUrl,'https://chatgpt.com/c/new-exec-thread');
+    assert.equal(saved.threadHistory?.[0]?.threadUrl,'https://chatgpt.com/c/old-exec-thread');
+  }finally{await reconciler.close();}
+});
