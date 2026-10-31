@@ -65,7 +65,7 @@ export interface BrowserWorkspaceCapacityReader {
 export class BrowserWorkspaceUsageReader implements BrowserWorkspaceCapacityReader {
   constructor(
     private readonly command = 'npx',
-    private readonly timeoutMs = 10_000,
+    private readonly timeoutMs = 30_000,
     private readonly now: () => Date = () => new Date(),
     private readonly staleAfterMs = 15 * 60_000,
   ) {}
