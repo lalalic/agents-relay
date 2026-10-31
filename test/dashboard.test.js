@@ -60,7 +60,7 @@ test('dashboard switches jobs list and detail into a mobile drill-down flow', ()
 test('Jobs toolbar uses compact native single-choice filters and removes pagination', () => {
   assert.match(dashboardHtml, /id="status-filter" class="job-filter"/);
   assert.match(dashboardHtml, /id="repo-filter" class="job-filter"/);
-  assert.match(dashboardHtml, /<option value="">All \(no CANCELLED\)<\/option>/);
+  assert.match(dashboardHtml, /<option value="">No cancelled<\/option>/);
   for (const status of ['DRAFT','ACTIVE','COMPLETED','CANCELLED']) assert.match(dashboardHtml, new RegExp(`<option value="${status}">${status}<\\/option>`));
   assert.match(dashboardHtml, /<option value="CANCELLED">CANCELLED<\/option>/);
   assert.doesNotMatch(dashboardHtml, /type="checkbox" name="(?:status|repo)"/);
@@ -70,8 +70,11 @@ test('Jobs toolbar uses compact native single-choice filters and removes paginat
   assert.match(dashboardHtml, /params\.set\('repo',selectedRepo\)/);
   assert.match(dashboardHtml, /selectedStatus=storedFilterValue\('agents-relay:status-filter'\)/);
   assert.match(dashboardHtml, /selectedRepo=storedFilterValue\('agents-relay:repo-filter'\)/);
-  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';syncFilters\(\);applyLocalJobFilters\(\);\}\)/);
-  assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(dashboardHtml, /id="jobs-reset"|jobsReset/);
+  assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:minmax\(0,1fr\) 5\.8rem 4\.6rem/);
+  assert.match(dashboardHtml, /#jobs-view \.jobs-actions \{ justify-content:flex-end; \}/);
+  assert.match(dashboardHtml, /#jobs-view \.job-search \{ width:100%; min-width:0; max-width:none;/);
+  assert.match(dashboardHtml, /id="jobs-refresh" class="refresh-button" type="button">Refresh<\/button>/);
 });
 
 test('refresh failure remains visible after controls are restored', () => {
@@ -608,7 +611,7 @@ test('job list keeps native repository and status filters with session persisten
 
 test('job list supports title and PR-number wildcard search', () => {
   assert.match(dashboardHtml, /id="job-search"/);
-  assert.match(dashboardHtml, /Search title or PR #/);
+  assert.match(dashboardHtml, /placeholder="Search" aria-label="Search jobs by title or PR number"/);
   assert.match(dashboardHtml, /function matchesSearch\(job\)/);
   assert.match(dashboardHtml, /agents-relay:job-search/);
 });
@@ -642,7 +645,7 @@ test('Jobs selector values survive refresh while available and missing repositor
   context.jobRepositories=['owner/one'];
   runInNewContext(syncFilters+';syncFilters();',context);
   assert.equal(context.repoFilter.value,'');
-  assert.match(dashboardHtml, /jobsReset\.addEventListener\('click',\(\)=>\{searchQuery='';selectedStatus='';selectedRepo='';syncFilters\(\);applyLocalJobFilters\(\);\}\)/);
+  assert.doesNotMatch(dashboardHtml, /jobsReset|id="jobs-reset"/);
 });
 
 test('Jobs query uses only the currently selected conditions and forces a fresh request', () => {
@@ -1328,16 +1331,14 @@ test('Jobs condition changes are local-only, stable, and capped at 20', () => {
   const to = dashboardHtml.indexOf("selectedJobRefresh.addEventListener", from);
   assert.ok(from >= 0 && to > from);
   const handlers = {};
-  let renders=0, persistence=0, syncs=0;
+  let renders=0, persistence=0;
   const context = {
     searchQuery:'', selectedStatus:'', selectedRepo:'',
     jobSearch:{value:'', addEventListener(_event,fn){handlers.search=fn;}},
     repoFilter:{value:'', addEventListener(_event,fn){handlers.repo=fn;}},
     statusFilter:{value:'', addEventListener(_event,fn){handlers.status=fn;}},
-    jobsReset:{addEventListener(_event,fn){handlers.reset=fn;}},
     rememberJobFilters(){persistence++;},
     renderJobList(){renders++;},
-    syncFilters(){syncs++;context.jobSearch.value=context.searchQuery;},
   };
   runInNewContext(dashboardHtml.slice(from,to),context);
   context.jobSearch.value='alpha';handlers.search();
@@ -1346,13 +1347,11 @@ test('Jobs condition changes are local-only, stable, and capped at 20', () => {
   assert.equal(context.selectedStatus,'ACTIVE');
   context.repoFilter.value='owner/repo';handlers.repo();
   assert.equal(context.selectedRepo,'owner/repo');
-  handlers.reset();
-  assert.equal(context.searchQuery,'');
-  assert.equal(context.selectedStatus,'');
-  assert.equal(context.selectedRepo,'');
-  assert.equal(renders,4);
-  assert.equal(persistence,4);
-  assert.equal(syncs,1);
+  assert.equal(renders,3);
+  assert.equal(persistence,3);
+  assert.equal(context.searchQuery,'alpha');
+  assert.equal(context.selectedStatus,'ACTIVE');
+  assert.equal(context.selectedRepo,'owner/repo');
   assert.match(dashboardHtml, /function filteredJobs\(\)\{[^}]*\.slice\(0,20\)/);
   assert.match(dashboardHtml, /jobs=dedupeJobs\([^;]*\)\.sort\(compareJobs\)\.slice\(0,20\)/);
   assert.match(dashboardHtml, /jobsRefresh\.addEventListener\('click',\(\)=>void refresh\(true\)\)/);
