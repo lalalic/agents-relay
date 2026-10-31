@@ -20,6 +20,7 @@ test('every executable graph is loaded by production, without an orphan or silen
  const expectedGraphs=[
   'authoritative-unblock.mmd',
   'blocker-resolution.mmd',
+  'browser-worker-pool.mmd',
   'escalation.mmd',
   'force-restate-validation.mmd',
   'interactive-invocation.mmd',

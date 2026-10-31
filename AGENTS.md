@@ -65,3 +65,9 @@ P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-w
 - Retain each browser Slot until a correlated terminal event; keep a durable original Thread URL for the dashboard and test any recovery Turn in the same thread and execution. Bound automated recovery attempts.
 - WebHelm owns browser groups and stale-tab reclaim. Pool-owned browser activation is only a keepalive and never a Task progress signal. Only independently observed new assistant output or correlated worker events may extend inactivity deadlines.
 - Use an isolated SQLite store and caller-owned WebHelm Session in tests. Always stop test-owned Sessions; never stop all Sessions or modify the public WebHelm runtime/extension for Pool policy.
+
+## Browser Worker Pool Graph and live tests
+
+- `workflow/browser-worker-pool.mmd` owns Browser Pool resource decisions, separate from the Relay Task Graph. Keep production bindings in `src/browser-worker-pool-graph.ts` through the shared dispatcher facade; do not make direct graph-evaluate calls in production.
+- Pool timeout renewal requires new assistant output and a correlated Relay `task.progress`; a page spinner, lease keepalive, or a submitted recovery Turn can never renew the Task deadline.
+- Browser Pool regressions require deterministic negative/healing cases and, for releases that alter WebHelm lifecycle, opt-in real ChatGPT/Z.ai browser tests as described in `docs/BROWSER_WORKER_POOL.md`. Do not count fake CLI tests as real site E2E or interrupt unrelated Sessions.

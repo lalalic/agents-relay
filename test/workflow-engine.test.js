@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseExecutableMermaid, WorkflowEngine } from '../dist/workflow/mermaid.js';
 import { parseGraphV2 } from '../dist/workflow/graph-v2.js';
+import { browserPoolGraph } from '../dist/browser-worker-pool-graph.js';
 import { jobLifecycleV2, taskLifecycleV2 } from '../dist/workflow/definitions-v2.js';
 import { plannerTriggerV2 } from '../dist/workflow/planner-trigger-v2.js';
 import { plannerOrchestrationV2 } from '../dist/workflow/planner-orchestration-v2.js';
@@ -83,6 +84,7 @@ test('every repository lifecycle graph file parses and validates with the produc
       const runtimes = new Map([
         ['job-lifecycle.mmd', jobLifecycleV2],
         ['task-lifecycle.mmd', taskLifecycleV2],
+        ['browser-worker-pool.mmd',browserPoolGraph],
         ['review-lifecycle.mmd', reviewLifecycleV2],
         ['planner-trigger.mmd', plannerTriggerV2],
         ['planner-orchestration.mmd', plannerOrchestrationV2],

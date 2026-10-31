@@ -83,3 +83,55 @@ test('unsafe cross-site URLs and duplicate execution reuse are rejected',async()
     pool.release(a);
   });
 });
+
+test('cancelled FIFO waiter is removed without stopping another worker',async()=>{
+  await withPool({capacity:1,queueWaitMs:300,pollMs:5},async pool=>{
+    const owner=await pool.acquire('chatgpt','live-owner');
+    const controller=new AbortController();
+    const waiting=pool.acquire('chatgpt','cancelled-waiter',controller.signal);
+    await delay(20);
+    assert.equal(pool.snapshot('chatgpt').queued,1);
+    controller.abort();
+    await assert.rejects(waiting,/aborted/);
+    assert.equal(pool.snapshot('chatgpt').queued,0);
+    assert.equal(pool.snapshot('chatgpt').leased,1);
+    pool.release(owner);
+  });
+});
+test('process restart preserves lease; only verified stop can heal orphaned resource',async()=>{
+  await withPool({capacity:1,queueWaitMs:40,pollMs:5},async(first,path)=>{
+    const lease=await first.acquire('z','old-process');
+    first.bindSession(lease,'owned-session-from-dead-process');
+    const restarted=new BrowserWorkerPoolManager({path,capacity:1,queueWaitMs:40,pollMs:5});
+    try{
+      assert.equal(restarted.snapshot('z').leased,1,'restart must preserve lease, not duplicate');
+      await assert.rejects(restarted.acquire('z','new-process'),error=>error.code==='POOL_WAIT_EXPIRED');
+      restarted.quarantine(lease);
+      assert.equal(restarted.snapshot('z').quarantined,1);
+      assert.throws(()=>restarted.releaseQuarantine(lease,false),/verif/);
+      restarted.releaseQuarantine(lease,true); // Independent browser stop verification.
+      const newLease=await restarted.acquire('z','recovered-process');
+      assert.ok(newLease.generation>lease.generation);
+      restarted.release(newLease);
+    }finally{restarted.close();}
+  });
+});
+
+test('cross-process FIFO waiting never exceeds configured max queue capacity',async()=>{
+  await withPool({capacity:1,maxQueue:1,queueWaitMs:200,pollMs:5},async(first,path)=>{
+    const second=new BrowserWorkerPoolManager({path,capacity:1,maxQueue:1,queueWaitMs:200,pollMs:5});
+    try{
+      const owner=await first.acquire('chatgpt','owner');
+      const waiting=second.acquire('chatgpt','first-waiter');
+      await delay(30);
+      assert.equal(first.snapshot('chatgpt').queued,1);
+      await assert.rejects(first.acquire('chatgpt','overcapacity'),error=>error.code==='POOL_CAPACITY_FULL');
+      assert.equal(first.snapshot('chatgpt').queued,1);
+      first.release(owner);
+      const woke=await waiting;
+      assert.equal(woke.executionId,'first-waiter');
+      second.release(woke);
+      assert.equal(first.snapshot('chatgpt').queued,0);
+    }finally{second.close();}
+  });
+});

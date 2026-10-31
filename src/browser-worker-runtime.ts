@@ -4,16 +4,22 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnOwnedProcess } from './owned-process.js';
 import { BrowserWorkerPoolManager, BrowserPoolAdmissionError, type BrowserProvider, type BrowserSlot } from './browser-worker-pool.js';
+import { monitorPoolDecision, progressPoolDecision } from './browser-worker-pool-graph.js';
 
 export type BrowserReceipt = { status: string; thread_id?: string | null; thread_url?: string | null; verified_by?: string | null };
 export type PoolSubmission = {
   provider: BrowserProvider; executionId: string; timeoutMs: number;
+  /** Optional isolated store for test-owned pools and nondefault deployments. */
+  pool?: BrowserWorkerPoolManager;
   build: () => Promise<{action: 'new-thread'|'new-turn';config:Record<string,unknown>}>;
   recover?: (threadId: string) => Promise<Record<string,unknown>>;
   onActivity?: (message: string) => void | Promise<void>;
+  /** Recovery is telemetry only; it must not synthesize task.progress. */
+  onRecovery?: (threadId: string, verifiedBy: string) => void | Promise<void>;
   monitorIntervalMs?: number; // injection for deterministic runtime tests
   recoveryMinMs?: number;
   heartbeatIntervalMs?: number;
+  completionRecoveryGraceMs?: number;
 };
 export type PooledRun = { submitted: Promise<string>; promise: Promise<string>; release: () => Promise<void>; cancel: () => void };
 const WORKSPACE = 'Neo';
@@ -26,6 +32,7 @@ function cliCommand(args: string[], input?: string, signal?: AbortSignal): Promi
   return new Promise((resolve,reject)=>{
     const child = spawnOwnedProcess(executable,args,{
       invocation:'browser-worker-pool:webhelm',signal,
+      timeoutMs: args[0]==='session' && args[1]==='exec' ? 25_000 : 150_000,
       spawn:{shell:false,stdio:[input===undefined?'ignore':'pipe','pipe','pipe']},
     });
     let out='',err='';
@@ -74,26 +81,46 @@ type Observation={url?:string;state?:{text?:string;generating?:boolean;streamLen
 function fingerprint(data:Observation):string{return `${data.state?.text||''}|${data.state?.streamLength||0}`;}
 
 export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): PooledRun {
+  const pool=request.pool ?? browserWorkerPool();
   let lease:BrowserSlot|undefined;
   let sessionId:string|undefined;
   let released=false;
   let stopped=false;
   let monitor:ReturnType<typeof setInterval>|undefined;
+  let completionRecoveryTimer:ReturnType<typeof setTimeout>|undefined;
   let browserKeepAliveAt=0, observedAt=Date.now(), lastFingerprint='', sampled=false;
   let recoveries=0, monitoring=false, threadId:string|undefined;
   let submissionAttempted=false, verifiedSubmitted=false, uncertain=false, recoveryOutcomeUncertain=false;
+  let providerPreflightFailed=false;
   const stop = async ():Promise<void>=>{
     if(stopped)return;
     stopped=true;
     if(monitor)clearInterval(monitor);
+    if(completionRecoveryTimer)clearTimeout(completionRecoveryTimer);
     if(!lease)return;
-    if(uncertain){browserWorkerPool().quarantine(lease);return;}
-    if(!sessionId){browserWorkerPool().release(lease);return;}
-    try { await cliCommand(['session','stop',sessionId]);browserWorkerPool().release(lease); }
-    catch { browserWorkerPool().quarantine(lease); }
+    if(uncertain){pool.quarantine(lease);return;}
+    if(!sessionId){pool.release(lease);return;}
+    try { await cliCommand(['session','stop',sessionId]);pool.release(lease); }
+    catch { pool.quarantine(lease); }
   };
   const release=async():Promise<void>=>{released=true;if(lease)await stop();};
-  const cancel=():void=>{released=true;if(!lease)return;if(verifiedSubmitted || submissionAttempted){uncertain=true;browserWorkerPool().quarantine(lease);}else void stop().catch(()=>{});};
+  const cancel=():void=>{released=true;if(!lease)return;if(verifiedSubmitted || submissionAttempted){uncertain=true;pool.quarantine(lease);}else void stop().catch(()=>{});};
+  const sendRecovery=async():Promise<void>=>{
+    if(stopped||released||uncertain||recoveryOutcomeUncertain||!sessionId||!threadId||!request.recover||recoveries>=2)return;
+    recoveries++;
+    const cfg=await request.recover(threadId);
+    try{
+      const answer=await configRun(request.provider,'new-turn',sessionId,cfg);
+      if(!['submitted','completed'].includes(String(answer.status)) || !answer.verified_by)
+        throw Error('Recovery turn not independently verified');
+      await request.onRecovery?.(threadId,String(answer.verified_by));
+    }catch(error){
+      // An ambiguous recovery can already have been delivered. Preserve the original session.
+      recoveryOutcomeUncertain=true;uncertain=true;
+      if(lease)pool.quarantine(lease);
+      throw error;
+    }
+  };
   const probe=async():Promise<void>=>{
     if(stopped||monitoring||!sessionId||!lease?.threadUrl)return;
     monitoring=true;
@@ -108,24 +135,18 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       if(observation.url && observation.url.split('?')[0].replace(/\/$/,'')!==lease.threadUrl.replace(/\/$/,'')) return;
       const current=fingerprint(observation);
       if(!sampled){sampled=true;lastFingerprint=current;return;}
-      if(current!==lastFingerprint && current!=='|0'){
-        lastFingerprint=current;observedAt=now;browserWorkerPool().touch(lease);
+      const fresh=current!==lastFingerprint && current!=='|0';
+      if(progressPoolDecision(fresh)==='extendTimeout'){
+        lastFingerprint=current;observedAt=now;pool.touch(lease);
+        // Relay correlates task.progress with the original execution and re-arms its inactivity watchdog.
         await request.onActivity?.('Browser Worker produced new assistant output');
       }
-      if(now-observedAt>=Math.max(request.recoveryMinMs ?? 60_000,Math.round(request.timeoutMs*.6)) &&
-         !observation.state?.generating && !recoveryOutcomeUncertain && recoveries<2 && request.recover && threadId){
+      const due=now-observedAt>=Math.max(request.recoveryMinMs ?? 60_000,Math.round(request.timeoutMs*.6)) &&
+        !observation.state?.generating && !recoveryOutcomeUncertain && recoveries<2 && !!request.recover && !!threadId;
+      if(monitorPoolDecision(due)==='recoverTurn' && request.recover && threadId){
         // Count before the send. An ambiguous response must never cause automatic retransmission.
-        recoveries++;observedAt=now;
-        const cfg=await request.recover(threadId);
-        try {
-          const answer=await configRun(request.provider,'new-turn',sessionId,cfg);
-          if(answer.status!=='submitted' || !answer.verified_by) throw Error('Recovery turn not independently verified');
-          await request.onActivity?.('Verified same-thread recovery turn submitted');
-        } catch(error) {
-          // The recovery may have reached the remote site: never submit another automatically.
-          recoveryOutcomeUncertain=true;
-          throw error;
-        }
+        observedAt=now;
+        await sendRecovery(); // A recovery receipt cannot extend Relay's inactivity deadline.
       }
     } catch {
       // An uncertain browser operation is not a verified task failure. Leave its lease reserved.
@@ -134,29 +155,40 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
   };
   const promise=(async():Promise<string>=>{
     try {
-      lease=await browserWorkerPool().acquire(request.provider,request.executionId,signal);
+      lease=await pool.acquire(request.provider,request.executionId,signal);
       if(released || signal.aborted)throw Error('Browser worker cancelled before submission');
       // Provider code must be present before opening any site or submitting work.
-      const profile=parseEnvelope(await cliCommand(['platform','profile',request.provider],undefined,signal));
+      let profile:Record<string,unknown>;
+      try {profile=parseEnvelope(await cliCommand(['platform','profile',request.provider],undefined,signal));}
+      catch(error) {providerPreflightFailed=true;throw error;}
       if(profile.platform!==request.provider)throw Error(`WebHelm platform ${request.provider} missing`);
-      const session=parseEnvelope(await cliCommand(['session','start','--workspace',WORKSPACE],undefined,signal));
+      let session:Record<string,unknown>;
+      try {session=parseEnvelope(await cliCommand(['session','start','--workspace',WORKSPACE],undefined,signal));}
+      catch(error) {providerPreflightFailed=true;throw error;}
       if(typeof session.session_id!=='string')throw Error('No WebHelm session ID');
       sessionId=session.session_id;
-      browserWorkerPool().bindSession(lease,sessionId);
+      pool.bindSession(lease,sessionId);
       // Preserve WebHelm's existing extension lifecycle. Pool capacity is six tabs total.
       await cliCommand(['session','exec',sessionId],`await workspace_resize(${JSON.stringify(WORKSPACE)},6);`);
       if(released || signal.aborted)throw Error('Browser worker cancelled before submission');
       const cfg=await request.build();
       submissionAttempted=true;
       const receipt=await configRun(request.provider,cfg.action,sessionId,cfg.config,signal);
-      if(receipt.status!=='submitted' || !receipt.verified_by)throw Error('Submission outcome unknown: no verified receipt');
+      if(!['submitted','completed'].includes(String(receipt.status)) || !receipt.verified_by)
+        throw Error('Submission outcome unknown: no verified receipt');
       verifiedSubmitted=true;
       const url=typeof receipt.thread_url==='string' ? receipt.thread_url :
         typeof receipt.thread_id==='string' ? `https://${request.provider==='z'?'chat.z.ai':'chatgpt.com'}/c/${receipt.thread_id}` : '';
-      browserWorkerPool().bindThread(lease,url);
+      pool.bindThread(lease,url);
       threadId=String(receipt.thread_id||new URL(url).pathname.split('/').at(-1));
-      browserWorkerPool().reportHealthy(request.provider);
+      pool.reportHealthy(request.provider);
       if(released){await stop();return JSON.stringify(receipt);}
+      // Completion proof is independent of CDP polling. Give the worker time to emit
+      // its correlated terminal event; the terminal event closes this lease before recovery.
+      if(receipt.status==='completed' && request.recover){
+        completionRecoveryTimer=setTimeout(()=>{void sendRecovery().catch(()=>{});},request.completionRecoveryGraceMs ?? 12_000);
+        completionRecoveryTimer.unref();
+      }
       monitor=setInterval(()=>{void probe();},request.monitorIntervalMs ?? 30_000);
       monitor.unref();
       return JSON.stringify(receipt);
@@ -169,9 +201,11 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       const rejection = safe && !cancelled && !(error instanceof BrowserPoolAdmissionError)
         ? new BrowserPoolAdmissionError('PROVIDER_UNAVAILABLE', `${request.provider} pre-submission failure: ${reason}`)
         : error;
-      if (safe && !cancelled && lease && !(error instanceof BrowserPoolAdmissionError)) browserWorkerPool().reportPreSubmissionOutage(request.provider);
+      // A local prompt/configuration error is not evidence that the remote provider is down.
+      if (safe && !cancelled && providerPreflightFailed && lease && !(error instanceof BrowserPoolAdmissionError))
+        pool.reportPreSubmissionOutage(request.provider);
       if(lease && !stopped){
-        if(!safe){uncertain=true;browserWorkerPool().quarantine(lease);}
+        if(!safe){uncertain=true;pool.quarantine(lease);}
         else await stop();
       }
       throw rejection;

@@ -1,0 +1,73 @@
+---
+title: Browser Worker Pool Lifecycle
+description: Resource admission, FIFO queue, provider-health rejection, exclusive lease, terminal release and uncertain-outcome quarantine; Relay Task Graph remains authoritative for Task completion.
+---
+flowchart LR
+%% relay: initial available
+available["state: AVAILABLE"]
+waiting["state: WAITING"]
+leased["state: LEASED"]
+quarantined["state: QUARANTINED"]
+healthyDirect["guard: providerHealthy"]
+healthyQueued["guard: providerHealthy"]
+assignDirect["action: pool.assign"]
+assignQueued["action: pool.assign"]
+rejectDirect["action: pool.reject"]
+rejectQueued["action: pool.reject"]
+enqueue["action: pool.enqueue"]
+expire["action: pool.dequeue"]
+cancel["action: pool.dequeue"]
+circuit["action: pool.dequeue"]
+bindSession["action: pool.bindSession"]
+bindThread["action: pool.bindThread"]
+activity["action: pool.touch"]
+release["action: pool.release"]
+quarantine["action: pool.quarantine"]
+verifiedRelease["action: pool.releaseQuarantine"]
+keepQuarantine["action: pool.keepQuarantine"]
+recoveryAllowed["guard: recoveryDue"]
+recoverTurn["action: pool.recoverTurn"]
+keepMonitoring["action: pool.keepMonitoring"]
+verifiedProgress["guard: freshOutput"]
+extendTimeout["action: pool.extendTimeout"]
+available -->|on: pool.claim| healthyDirect
+healthyDirect -->|true| assignDirect
+assignDirect --> leased
+healthyDirect -->|false| rejectDirect
+rejectDirect --> available
+available -->|on: pool.enqueue| enqueue
+enqueue --> waiting
+waiting -->|on: pool.claim| healthyQueued
+healthyQueued -->|true| assignQueued
+assignQueued --> leased
+healthyQueued -->|false| rejectQueued
+rejectQueued --> waiting
+waiting -->|on: pool.expired| expire
+expire --> available
+waiting -->|on: pool.cancel| cancel
+cancel --> available
+waiting -->|on: pool.unavailable| circuit
+circuit --> available
+leased -->|on: pool.sessionBound| bindSession
+bindSession --> leased
+leased -->|on: pool.threadBound| bindThread
+bindThread --> leased
+leased -->|on: pool.activity| activity
+activity --> leased
+leased -->|on: pool.terminalVerified| release
+release --> available
+leased -->|on: pool.outcomeUnknown| quarantine
+quarantine --> quarantined
+quarantined -->|on: pool.stopVerified| verifiedRelease
+verifiedRelease --> available
+quarantined -->|on: pool.outcomeUnknown| keepQuarantine
+keepQuarantine --> quarantined
+leased -->|on: pool.poll| recoveryAllowed
+recoveryAllowed -->|true| recoverTurn
+recoverTurn --> leased
+recoveryAllowed -->|false| keepMonitoring
+keepMonitoring --> leased
+leased -->|on: pool.progressObserved| verifiedProgress
+verifiedProgress -->|true| extendTimeout
+extendTimeout --> leased
+verifiedProgress -->|false| keepMonitoring

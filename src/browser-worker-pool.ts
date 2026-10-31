@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { requirePoolDecision, type PoolGraphEvent } from './browser-worker-pool-graph.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -102,7 +103,11 @@ export class BrowserWorkerPoolManager {
     try {
       const now = this.clock();
       const health = this.db.prepare('SELECT unavailable_until FROM browser_provider_health WHERE provider=?').get(provider) as {unavailable_until:number};
-      if (health.unavailable_until > now) throw new BrowserPoolAdmissionError('PROVIDER_UNAVAILABLE',`${provider} circuit open until ${health.unavailable_until}`);
+      if (health.unavailable_until > now) {
+        const waiting = this.db.prepare('SELECT 1 FROM browser_queue WHERE execution_id=? AND provider=?').get(executionId,provider);
+        requirePoolDecision(waiting ? 'WAITING' : 'AVAILABLE','pool.claim','reject',false);
+        throw new BrowserPoolAdmissionError('PROVIDER_UNAVAILABLE',`${provider} circuit open until ${health.unavailable_until}`);
+      }
       const existing = this.db.prepare('SELECT * FROM browser_slots WHERE execution_id=? AND provider=?').get(executionId,provider) as (SqlSlot & {state:BrowserPoolState}) | undefined;
       if (existing) throw new Error(`Execution ${executionId} already owns ${provider}-${existing.slot}: refuse duplicate browser submission`);
       this.db.prepare('DELETE FROM browser_queue WHERE queued_at < ?').run(now-this.queueWaitMs-30000);
@@ -110,6 +115,7 @@ export class BrowserWorkerPoolManager {
       if (!row || row.execution_id === executionId) {
         const idle = this.db.prepare("SELECT * FROM browser_slots WHERE provider=? AND state='IDLE' ORDER BY slot LIMIT 1").get(provider) as SqlSlot|undefined;
         if (idle) {
+          requirePoolDecision(row ? 'WAITING' : 'AVAILABLE','pool.claim','assign',true);
           const generation = idle.generation+1;
           this.db.prepare("UPDATE browser_slots SET state='LEASED',execution_id=?,generation=?,session_id=NULL,thread_url=NULL,touched_at=? WHERE provider=? AND slot=? AND state='IDLE'")
             .run(executionId,generation,now,provider,idle.slot);
@@ -120,7 +126,10 @@ export class BrowserWorkerPoolManager {
       return null;
     } finally { this.db.exec('COMMIT'); }
   }
-  private dequeue(executionId: string): void {
+  private dequeue(executionId: string, event: PoolGraphEvent): void {
+    const queued = this.db.prepare('SELECT 1 FROM browser_queue WHERE execution_id=?').get(executionId);
+    if (!queued) return;
+    requirePoolDecision('WAITING',event,'dequeue');
     this.db.prepare('DELETE FROM browser_queue WHERE execution_id=?').run(executionId);
   }
   async acquire(provider: BrowserProvider, executionId: string, signal?: AbortSignal): Promise<BrowserSlot> {
@@ -128,44 +137,63 @@ export class BrowserWorkerPoolManager {
     // First claim is eager. Busy slots never count as provider outages.
     const immediate = this.tryClaim(provider, executionId);
     if (immediate) return immediate;
-    const count = (this.db.prepare('SELECT count(*) AS n FROM browser_queue WHERE provider=?').get(provider) as {n:number}).n;
-    if (count >= this.maxQueue) throw new BrowserPoolAdmissionError('POOL_CAPACITY_FULL',`${provider} queue is full`);
-    this.db.prepare('INSERT OR IGNORE INTO browser_queue(execution_id,provider,queued_at) VALUES(?,?,?)').run(executionId,provider,this.clock());
+    // Queue capacity is a cross-process resource constraint; hold SQLite's writer lock
+    // across the queue count and insertion (not only during slot claiming).
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const count = (this.db.prepare('SELECT count(*) AS n FROM browser_queue WHERE provider=?').get(provider) as {n:number}).n;
+      const present = this.db.prepare('SELECT 1 FROM browser_queue WHERE execution_id=?').get(executionId);
+      if (count >= this.maxQueue && !present) throw new BrowserPoolAdmissionError('POOL_CAPACITY_FULL',`${provider} queue is full`);
+      if (!present) {
+        requirePoolDecision('AVAILABLE','pool.enqueue','enqueue');
+        this.db.prepare('INSERT INTO browser_queue(execution_id,provider,queued_at) VALUES(?,?,?)').run(executionId,provider,this.clock());
+      }
+    } finally { this.db.exec('COMMIT'); }
+    let dequeueEvent: PoolGraphEvent = 'pool.cancel';
     try {
       for (;;) {
         if (signal?.aborted) throw Error('Browser pool acquire aborted');
         const result = this.tryClaim(provider, executionId);
         if (result) return result;
-        if (this.clock() >= deadline) throw new BrowserPoolAdmissionError('POOL_WAIT_EXPIRED',`${provider} queue wait expired without browser submission`);
+        if (this.clock() >= deadline) {dequeueEvent='pool.expired';throw new BrowserPoolAdmissionError('POOL_WAIT_EXPIRED',`${provider} queue wait expired without browser submission`);}
         await sleep(this.pollMs);
       }
-    } finally { this.dequeue(executionId); }
+    } catch(error) { if(error instanceof BrowserPoolAdmissionError && error.code==='PROVIDER_UNAVAILABLE') dequeueEvent='pool.unavailable'; throw error; }
+    finally { this.dequeue(executionId,dequeueEvent); }
   }
-  private update(lease: BrowserSlot, state: BrowserPoolState, sessionId: string | null, threadUrl: string | null): void {
-    const result = this.db.prepare('UPDATE browser_slots SET state=?,session_id=?,thread_url=?,touched_at=? WHERE provider=? AND slot=? AND execution_id=? AND generation=?')
+  private update(lease: BrowserSlot, state: BrowserPoolState, sessionId: string | null, threadUrl: string | null, event: PoolGraphEvent, action: string): void {
+    requirePoolDecision('LEASED',event,action);
+    const result = this.db.prepare("UPDATE browser_slots SET state=?,session_id=?,thread_url=?,touched_at=? WHERE provider=? AND slot=? AND execution_id=? AND generation=? AND state='LEASED'")
       .run(state,sessionId,threadUrl,this.clock(),lease.provider,lease.slot,lease.executionId,lease.generation);
     if (Number(result.changes) !== 1) throw Error('Stale browser pool lease generation; refusing mutation');
   }
   bindSession(lease: BrowserSlot, sessionId: string): void {
-    lease.sessionId=sessionId; this.update(lease,'LEASED',sessionId,lease.threadUrl);
+    lease.sessionId=sessionId; this.update(lease,'LEASED',sessionId,lease.threadUrl,'pool.sessionBound','bindSession');
   }
   bindThread(lease: BrowserSlot, url: string): void {
     const expected = lease.provider === 'z' ? 'chat.z.ai' : 'chatgpt.com';
     const parsed = new URL(url);
     if (parsed.protocol!=='https:' || parsed.hostname!==expected || !/^\/c\/[\w-]+\/?$/.test(parsed.pathname)) throw Error('Unsafe browser thread URL');
     lease.threadUrl=parsed.origin+parsed.pathname;
-    this.update(lease,'LEASED',lease.sessionId,lease.threadUrl);
+    this.update(lease,'LEASED',lease.sessionId,lease.threadUrl,'pool.threadBound','bindThread');
   }
-  touch(lease: BrowserSlot): void { this.update(lease,'LEASED',lease.sessionId,lease.threadUrl); }
+  touch(lease: BrowserSlot): void { this.update(lease,'LEASED',lease.sessionId,lease.threadUrl,'pool.activity','touch'); }
   release(lease: BrowserSlot): void {
+    requirePoolDecision('LEASED','pool.terminalVerified','release');
     const result = this.db.prepare("UPDATE browser_slots SET state='IDLE',execution_id=NULL,session_id=NULL,thread_url=NULL,touched_at=? WHERE provider=? AND slot=? AND execution_id=? AND generation=? AND state='LEASED'")
       .run(this.clock(),lease.provider,lease.slot,lease.executionId,lease.generation);
     if (Number(result.changes)!==1) throw Error('Stale browser pool lease release');
   }
-  quarantine(lease: BrowserSlot): void { this.update(lease,'QUARANTINED',lease.sessionId,lease.threadUrl); }
+  quarantine(lease: BrowserSlot): void {
+    const row=this.db.prepare('SELECT state FROM browser_slots WHERE provider=? AND slot=? AND execution_id=? AND generation=?')
+      .get(lease.provider,lease.slot,lease.executionId,lease.generation) as {state:string}|undefined;
+    if(row?.state==='QUARANTINED') {requirePoolDecision('QUARANTINED','pool.outcomeUnknown','keepQuarantine');return;}
+    this.update(lease,'QUARANTINED',lease.sessionId,lease.threadUrl,'pool.outcomeUnknown','quarantine');
+  }
   /** Recovery can only release quarantined slots after verifying the old worker is no longer active. */
   releaseQuarantine(lease: BrowserSlot, verifiedStopped: boolean): void {
     if (!verifiedStopped) throw Error('Cannot release quarantined slot without independent stop verification');
+    requirePoolDecision('QUARANTINED','pool.stopVerified','releaseQuarantine');
     const result=this.db.prepare("UPDATE browser_slots SET state='IDLE',execution_id=NULL,session_id=NULL,thread_url=NULL,touched_at=? WHERE provider=? AND slot=? AND execution_id=? AND generation=? AND state='QUARANTINED'")
       .run(this.clock(),lease.provider,lease.slot,lease.executionId,lease.generation);
     if (Number(result.changes)!==1) throw Error('Stale quarantine release');
