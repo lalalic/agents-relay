@@ -48,7 +48,7 @@ test('ChatGptAdapter is one-shot submit and returns delivery receipt only', asyn
     const execution = adapter.launch(task(), new AbortController().signal);
     const result = await execution.promise;
     assert.equal(requests.length, 1);
-    assert.deepEqual(requests[0], { prompt: 'do the work', tabClosePolicy: 'after-start' });
+    assert.deepEqual(requests[0], { prompt: 'do the work', tabClosePolicy: 'after-terminal' });
     assert.equal(execution.threadId, undefined);
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.diagnosticThreadId, 'diagnostic-only');
@@ -93,17 +93,17 @@ test('ChatGptAdapter uses the Relay-owned chatgpt-worker agent contract, not a r
   assert.match(definition, /Browser Workspace/);
 });
 
-test('ChatGptAdapter default runner uses Browser Workspace caller-owned session', async () => {
-  const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
-  assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile\]/);
-  assert.match(source, /thread_id: delivery\.threadId/);
-  assert.match(source, /idempotency_key: delivery\.requestId/);
-  assert.match(source, /\['session', 'start'\]/);
-  assert.doesNotMatch(source, /CHATGPT_BROWSER_WORKSPACE|--workspace/);
-  assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
+test('ChatGptAdapter default runner uses pooled, terminal-owned WebHelm sessions', async () => {
+  const source = await readFile(new URL('../src/adapters.ts', import.meta.url),'utf8');
+  const pooled = await readFile(new URL('../src/browser-worker-runtime.ts',import.meta.url),'utf8');
+  assert.match(source,/this\.runner \?\? browserWorkerRunner\(\)/);
+  assert.match(source,/pooledWebHelmRun/);
+  assert.match(source,/thread_id:delivery\.threadId/);
+  assert.match(source,/mode:'sync'/);
+  assert.match(pooled,/\['session','start','--workspace',WORKSPACE\]/);
+  assert.match(pooled,/\['session','stop',sessionId\]/);
+  assert.match(pooled,/workspace_resize/);
+  assert.doesNotMatch(pooled,/new-turn.*--mode.*async/);
 });
 
 test('ChatGptAdapter submits an existing-thread reviewer request as one verified new turn', async () => {
@@ -369,7 +369,9 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     "const fs=require('node:fs');",
     "const a=process.argv.slice(2);",
     "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,a.join(' ')+'\\n');",
-    "if(a[0]==='session'&&a[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
+    "if(a[0]==='platform'&&a[1]==='profile') console.log(JSON.stringify({platform:a[2]}));",
+    "else if(a[0]==='session'&&a[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
+    "else if(a[0]==='session'&&a[1]==='exec') console.log(JSON.stringify({ok:true}));",
     "else if(a[0]==='platform'&&a[1]==='run') {",
     "const config=JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1]));",
     "if(config.idempotency_key!=='job:review:sha')process.exit(12);",
@@ -390,9 +392,9 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     }
     const calls=await readFile(log,'utf8');
     assert.equal((calls.match(/platform run/g)||[]).length,2);
-    assert.equal((calls.match(/new-turn --mode async --config/g)||[]).length,2);
-    assert.equal((calls.match(/session start/g)||[]).length,0);
-    assert.equal((calls.match(/session exec/g)||[]).length,0);
+    assert.equal((calls.match(/new-turn --session-id test-session --config/g)||[]).length,2);
+    assert.equal((calls.match(/session start --workspace Neo/g)||[]).length,2);
+    assert.ok((calls.match(/session exec/g)||[]).length>=2);
   } finally {
     if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;
     if(oldLog===undefined)delete process.env.FAKE_REVIEW_CALLS;else process.env.FAKE_REVIEW_CALLS=oldLog;

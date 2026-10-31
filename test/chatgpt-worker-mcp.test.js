@@ -15,7 +15,9 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     "const args=process.argv.slice(2);",
     "const config=args.includes('--config')?JSON.parse(fs.readFileSync(args[args.indexOf('--config')+1],'utf8')):null;",
     "fs.appendFileSync(process.env.RELAY_MCP_PROBE_TRACE,JSON.stringify({args,config})+'\\n');",
-    "if(args[0]==='session'&&args[1]==='start')console.log(JSON.stringify({session_id:'owned-one'}));",
+    "if(args[0]==='platform'&&args[1]==='profile')console.log(JSON.stringify({platform:args[2]}));",
+    "else if(args[0]==='session'&&args[1]==='start')console.log(JSON.stringify({session_id:'owned-one'}));",
+    "else if(args[0]==='session'&&args[1]==='exec')console.log(JSON.stringify({ok:true}));",
     "else if(args[0]==='session'&&args[1]==='stop')console.log(JSON.stringify({stopped:true}));",
     "else if(args[0]==='platform'&&args[3]==='new-thread')console.log(JSON.stringify({result:{ok:true,stdout:JSON.stringify({status:'submitted',mode:'new-thread',temporary:false,thread_id:'6add12f0-ca3c-83e8-9457-0a6619057823',thread_url:'https://chatgpt.com/c/6add12f0-ca3c-83e8-9457-0a6619057823',verified_by:'send-button-disabled'})}}));",
     "else process.exit(12);",
@@ -35,14 +37,14 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     assert.equal(result.data.submitted, true);
     assert.equal(result.data.threadId, '6add12f0-ca3c-83e8-9457-0a6619057823');
     const entries = (await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
-    assert.equal(entries.length, 3);
-    assert.deepEqual(entries[0].args, ['session', 'start']); // WebHelm chooses its default Harness group.
-    assert.deepEqual(entries[1].args.slice(0,4), ['platform','run','chatgpt','new-thread']);
-    assert.equal(entries[1].config.temporary, false);
-    assert.match(entries[1].config.message, /Read the input through Neo/);
-    assert.match(entries[1].config.message, /\/tmp\/evidence\.txt/);
-    assert.equal(entries[1].config.file, undefined);
-    assert.deepEqual(entries[2].args.slice(0,3), ['session','stop','owned-one']);
+    assert.equal(entries.length, 5);
+    assert.deepEqual(entries[1].args, ['session','start','--workspace','Neo']);
+    assert.deepEqual(entries[3].args.slice(0,4), ['platform','run','chatgpt','new-thread']);
+    assert.equal(entries[3].config.temporary, false);
+    assert.match(entries[3].config.message, /Read the input through Neo/);
+    assert.match(entries[3].config.message, /\/tmp\/evidence\.txt/);
+    assert.equal(entries[3].config.file, undefined);
+    assert.deepEqual(entries[4].args.slice(0,3), ['session','stop','owned-one']);
   } finally {
     if (previousCommand === undefined) delete process.env.AGENTS_RELAY_WEBHELM_COMMAND; else process.env.AGENTS_RELAY_WEBHELM_COMMAND = previousCommand;
     if (previousTrace === undefined) delete process.env.RELAY_MCP_PROBE_TRACE; else process.env.RELAY_MCP_PROBE_TRACE = previousTrace;
@@ -64,36 +66,39 @@ test('normal-thread receipt rejects missing durable identity', async () => {
   },new AbortController().signal).promise,/durable ChatGPT thread/);
 });
 
-test('existing-thread async delivery uses durable WebHelm queue without a browser session', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'relay-webhelm-async-'));
-  const executable = join(root, 'fake-webhelm');
-  const trace = join(root, 'trace.jsonl');
-  await writeFile(executable, [
+test('existing-thread delivery uses a leased synchronous WebHelm Session until terminal', async () => {
+  const root=await mkdtemp(join(tmpdir(),'relay-webhelm-sync-'));
+  const executable=join(root,'fake-webhelm'); const trace=join(root,'trace.jsonl');
+  await writeFile(executable,[
     '#!/usr/bin/env node',
-    "const fs=require('node:fs');",
-    "const args=process.argv.slice(2);",
-    "fs.appendFileSync(process.env.RELAY_MCP_PROBE_TRACE, JSON.stringify(args)+'\\n');",
-    "if(args.slice(0,4).join(' ')!=='platform run chatgpt new-turn'||args.includes('--session-id'))process.exit(17);",
-    "console.log(JSON.stringify({result:{ok:true,status:'submitted',mode:'new-turn',thread_id:'thread_12345678',queue_id:'q1',verified_by:'durable-queue'}}));",
-  ].join('\n'), {mode:0o700});
-  const oldCommand=process.env.AGENTS_RELAY_WEBHELM_COMMAND;
-  const oldTrace=process.env.RELAY_MCP_PROBE_TRACE;
+    "const fs=require('node:fs');const args=process.argv.slice(2);",
+    "const config=args.includes('--config')?JSON.parse(fs.readFileSync(args[args.indexOf('--config')+1],'utf8')):null;",
+    "fs.appendFileSync(process.env.RELAY_MCP_PROBE_TRACE,JSON.stringify({args,config})+'\\n');",
+    "if(args[0]==='platform'&&args[1]==='profile')console.log(JSON.stringify({platform:args[2]}));",
+    "else if(args[0]==='session'&&args[1]==='start')console.log(JSON.stringify({session_id:'sync-owned'}));",
+    "else if(args[0]==='session'&&args[1]==='exec')console.log(JSON.stringify({ok:true}));",
+    "else if(args.slice(0,4).join(' ')==='platform run chatgpt new-turn')console.log(JSON.stringify({result:{ok:true,stdout:JSON.stringify({status:'submitted',mode:'new-turn',thread_id:'thread_12345678',verified_by:'user-turn'})}}));",
+    "else if(args[0]==='session'&&args[1]==='stop')console.log(JSON.stringify({stopped:true}));",
+    'else process.exit(17);',
+  ].join('\n'),{mode:0o700});
+  const oldCommand=process.env.AGENTS_RELAY_WEBHELM_COMMAND,oldTrace=process.env.RELAY_MCP_PROBE_TRACE;
   process.env.AGENTS_RELAY_WEBHELM_COMMAND=executable;
   process.env.RELAY_MCP_PROBE_TRACE=trace;
   try {
-    const adapter=new ChatGptAdapter();
-    const task={
-      id:'thread-delivery',input:'continue',routing:{provider:'openai',model:'test'},
-      chatgptThreadDelivery:{threadId:'thread_12345678',requestId:'delivery-1'},
-    };
-    const result=await adapter.launch(task,new AbortController().signal).promise;
-    assert.equal(result.data.submitted,true);
-    assert.equal(result.data.mode,'new-turn');
-    const entries=(await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
-    assert.equal(entries.length,1);
-    assert.ok(entries[0].includes('--mode'));
-    assert.ok(!entries[0].includes('--session-id'));
-  } finally {
+    const task={id:'thread-delivery',jobId:'job',executionId:'12345678-1234-1234-1234-123456789abc',input:'continue',timeoutMs:900000,routing:{provider:'openai',model:'test'},
+      chatgptThreadDelivery:{threadId:'thread_12345678',requestId:'delivery-1'}};
+    let resolveTerminal;const terminal=new Promise(resolve=>resolveTerminal=resolve);
+    const execution=new ChatGptAdapter().launch(task,new AbortController().signal,{waitForTerminal:terminal});
+    await execution.launched;
+    let entries=(await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(entries.filter(e=>e.args[0]==='session'&&e.args[1]==='stop').length,0);
+    const submitted=entries.find(e=>e.args.slice(0,4).join(' ')==='platform run chatgpt new-turn');
+    assert.equal(submitted.config.mode,'sync');
+    assert.equal(submitted.config.idempotency_key,'delivery-1');
+    resolveTerminal();await execution.promise;
+    entries=(await readFile(trace,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(entries.filter(e=>e.args[0]==='session'&&e.args[1]==='stop').length,1);
+  }finally{
     if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;
     if(oldTrace===undefined)delete process.env.RELAY_MCP_PROBE_TRACE;else process.env.RELAY_MCP_PROBE_TRACE=oldTrace;
     await rm(root,{recursive:true,force:true});

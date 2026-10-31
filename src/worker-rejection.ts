@@ -10,7 +10,7 @@ export const reroutableWorkerRejections = new Set(['rate_limit_exceeded','model_
 export type ChatGptPlatformFailureClassification =
   | 'adapter_failure' | 'transport_failure' | 'launch_failure' | 'start_ack_timeout'
   | 'browser_workspace_unavailable' | 'mcp_login_required' | 'project_setup_unavailable'
-  | 'model_unavailable' | 'outcome_unknown';
+  | 'model_unavailable' | 'pool_capacity_full' | 'provider_unavailable' | 'outcome_unknown';
 
 export type SafePreSubmissionFailure = Exclude<ChatGptPlatformFailureClassification,
   'adapter_failure' | 'transport_failure' | 'launch_failure' | 'start_ack_timeout' | 'outcome_unknown'>;
@@ -32,6 +32,9 @@ export class PreSubmissionRejection extends Error {
       MCP_LOGIN_REQUIRED: 'mcp_login_required',
       PROJECT_SETUP_UNAVAILABLE: 'project_setup_unavailable',
       BROWSER_WORKSPACE_UNAVAILABLE: 'browser_workspace_unavailable',
+      POOL_CAPACITY_FULL: 'pool_capacity_full',
+      POOL_WAIT_EXPIRED: 'pool_capacity_full',
+      PROVIDER_UNAVAILABLE: 'provider_unavailable',
     };
     const classification = classifications[result.code];
     if (!classification) return undefined;

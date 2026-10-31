@@ -568,7 +568,8 @@ test('task details expose ChatGPT thread as chat link instead of raw execution i
   assert.match(dashboardHtml, /function chatField\(task\)/);
   assert.match(dashboardHtml, /https:\/\/chatgpt\.com\/c\//);
   assert.match(dashboardHtml, /encodeURIComponent\(task\.threadId\)/);
-  assert.match(dashboardHtml, /link\.textContent='Open chat'/);
+  assert.match(dashboardHtml, /link\.textContent='Open '\+\(task\.adapter==='z'/);
+  assert.match(dashboardHtml,/task\.threadHistory/);
   assert.doesNotMatch(dashboardHtml, /field\('Execution \/ thread'/);
 });
 

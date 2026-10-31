@@ -415,12 +415,15 @@ export class Reconciler extends ReconcilerReviewBase {
       : baseWorkerInput;
     const workerTask = { ...task, input: workerInput + taskCommentContext(task), routing: task.routing ? { ...task.routing, cwd: executionContext.project.path } : task.routing };
     const startAckSetup = (task.adapter === 'chatgpt' || task.adapter === 'z') ? await this.startAck(job.id, task.id, sourceId, Date.now(), this.options.startAckTimeoutMs ?? chatGptStartAckTimeoutMs(task.timeoutMs)) : null;
-    const closePolicy = task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
+    const closePolicy = task.adapter === 'chatgpt' || task.adapter === 'z' ? 'after-terminal' : task.chatgptTabClosePolicy ?? this.options.chatgptTabClosePolicy ?? adapter.tabClosePolicy ?? 'after-start';
     const terminalWait = (task.adapter === 'chatgpt' || task.adapter === 'z') && closePolicy === 'after-terminal' ? this.terminalWait(task.id, durableExecutionId, startedAt - 1) : null;
     const launchContext: LaunchContext = {
       ...(startAckSetup ? { waitForWorkerStart: startAckSetup.ack } : {}),
       ...(terminalWait ? { waitForTerminal: terminalWait.promise } : {}),
       executionContext,
+      onObservedWorkerActivity: message => this.emit(eventFor(job.id,task.id,task.parentTaskId,'task.progress','running',message,'user',
+        {observedBy:'browser-worker-pool',executionId:durableExecutionId},
+        {id:sourceId,agent:'browser-pool',component:'agents-relay'})),
     };
     try {
       execution = adapter.launch(workerTask, controller.signal, launchContext);
@@ -430,7 +433,7 @@ export class Reconciler extends ReconcilerReviewBase {
       await this.failLaunch(job.id, task.id, task.executionId, error);
       return;
     }
-    void (execution.launched ?? Promise.resolve()).then(() => Promise.all([recordThreadDelivery(this.store, job.id, task.id, durableExecutionId, workerTask), this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model, pid: execution.pid ?? null, executionId: durableExecutionId }, { agent: 'relay', component: 'agents-relay' }))])).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error, 'launch'));
+    void (execution.launched ?? Promise.resolve()).then(() => Promise.all([this.recordBrowserThread(job.id,task.id,durableExecutionId,execution),recordThreadDelivery(this.store, job.id, task.id, durableExecutionId, workerTask), this.emit(eventFor(job.id, task.id, task.parentTaskId, 'task.process.launched', 'running', `Task ${task.id} process launched`, 'user', { adapter: adapter.id, model: task.routing?.model, pid: execution.pid ?? null, executionId: durableExecutionId }, { agent: 'relay', component: 'agents-relay' }))])).catch(error => this.failLaunch(job.id, task.id, durableExecutionId, error, 'launch'));
     if (startAckSetup) void startAckSetup.ack.finally(() => { void startAckSetup.stop(); }).catch(() => {});
     this.live.set(task.id, { jobId: job.id, taskId: task.id, executionId: durableExecutionId, execution, controller, launchBarrier: startedAt, workerStarted: false, processSettled: false });
     this.registerExecutionOwner(job.id, task.id, durableExecutionId);
@@ -455,6 +458,23 @@ export class Reconciler extends ReconcilerReviewBase {
       task.id,
       'worker runtime completion',
     );
+  }
+  private async recordBrowserThread(jobId:string,taskId:string,executionId:string,execution:Execution):Promise<void> {
+    const receipt=execution.deliveryReceipt;
+    if(!receipt)return;
+    const url=receipt.thread_url;
+    const id=receipt.thread_id;
+    if(typeof url!=='string' || !/^https:\/\/(?:chatgpt\.com|chat\.z\.ai)\/c\/[A-Za-z0-9_-]+\/?$/.test(url))return;
+    await this.store.mutateJob?.(jobId,current=>{
+      const task=current.tasks.find(item=>item.id===taskId);
+      if(!task || task.executionId!==executionId)return current;
+      task.threadUrl=url;
+      if(!task.threadHistory?.some(item=>item.executionId===executionId)) {
+        task.threadHistory=[...(task.threadHistory??[]),{executionId,threadUrl:url,attempt:task.attempt,at:new Date().toISOString()}].slice(-12);
+      }
+      if(typeof id==='string')task.threadId=id;
+      return current;
+    });
   }
   async applyPlannerTree(jobId: string, planId: string, executionId: string, proposal: unknown): Promise<Plan> { const { finishPlanner, PlannerApplyValidationError } = await import('./planner-runtime.js'); const { parsePlannerResult } = await import('./planner.js'); const ports = { store:this.store, options:this.options, live:this.plannerLive, plannerContext:(job:Job,plan:Plan)=>this.plannerContext(job,plan), emit:(event:EventRecord)=>this.emit(event), detach:(promise:Promise<unknown>,id:string,task:string,label:string)=>this.detach(promise,id,task, label), reconcile:(id:string)=>this.reconcile(id) };
     let candidate; try { candidate = parsePlannerResult(proposal); } catch (error) { throw new PlannerApplyValidationError('candidate', [error instanceof Error ? error.message : String(error), 'Correct the candidate and retry plan apply with the same active Planner execution.']); } await finishPlanner(ports, jobId, planId, executionId, null, candidate, true); const updated = (await this.store.load(jobId)).plans?.find(plan => plan.id === planId); if (!updated || updated.status !== 'SUCCEEDED') throw new Error(`Plan ${planId} was not committed`); return updated;  }

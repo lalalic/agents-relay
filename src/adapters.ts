@@ -1,4 +1,4 @@
-import { access, readFile, realpath, writeFile, unlink } from 'node:fs/promises';
+import { access, readFile, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { DEFAULT_PROMPT_REFERENCE_DIRECTORY } from './agent-prompt-builder.js';
@@ -8,6 +8,8 @@ import { ExecutionContext } from './execution-context.js';
 import { taskReferencePrompt } from './task-context.js';
 import { spawnOwnedProcess, terminateOwnedProcess, ownedProcessTerminationReason } from './owned-process.js';
 import { PreSubmissionRejection } from './worker-rejection.js';
+import { pooledWebHelmRun } from './browser-worker-runtime.js';
+import { BrowserPoolAdmissionError } from './browser-worker-pool.js';
 
 export type Execution = {
   id: string;
@@ -20,7 +22,7 @@ export type Execution = {
   pid?: number;
   deliveryReceipt?: Record<string, unknown>;
 };
-export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext };
+export type LaunchContext = { waitForWorkerStart?: Promise<void>; waitForTerminal?: Promise<void>; executionContext?: ExecutionContext; onObservedWorkerActivity?: (message:string) => void | Promise<void> };
 export interface WorkerAdapter {
   readonly name: WorkerAdapterName;
   readonly id: string;
@@ -133,7 +135,7 @@ export class CodexAdapter implements WorkerAdapter {
   }
 }
 
-export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabClosePolicy?: ChatGptTabClosePolicy; thread?: ChatGptThreadDelivery };
+export type BrowserWorkerRequest = { prompt: string; files?: string[]; tabClosePolicy?: ChatGptTabClosePolicy; thread?: ChatGptThreadDelivery; execution?: { jobId:string; taskId:string; executionId:string; timeoutMs:number } };
 export type BrowserWorkerResponse = {
   operation?: 'submit' | 'new-turn';
   status: 'submitted';
@@ -148,12 +150,13 @@ export type BrowserWorkerResponse = {
   verified?: boolean;
   error?: { code?: string; message?: string; retryable?: boolean } | null;
 };
-export type AgentRun = { promise: Promise<string>; cancel: () => void; submitted?: Promise<string>; release?: () => void };
+export type AgentRun = { promise: Promise<string>; cancel: () => void; submitted?: Promise<string>; release?: () => void | Promise<void> };
 export type ChatGptAgentRunner = (
   definition: string,
   request: BrowserWorkerRequest,
   route: RoutingDecision,
   signal: AbortSignal,
+  context?: LaunchContext,
 ) => AgentRun;
 export type ChatGptAdapterOptions = { agentPath?: string; agentRunner?: ChatGptAgentRunner; tabClosePolicy?: ChatGptTabClosePolicy };
 
@@ -298,56 +301,28 @@ export async function ensureChatGptWebHelmReady(command = process.env.AGENTS_REL
 }
 
 
-async function runBrowserWorker(cli: BrowserWorkspaceCli, configFile: string, signal: AbortSignal, action: 'new-thread' | 'new-turn' = 'new-thread'): Promise<string> {
-  // Durable async turns are queued without browser sessions by the WebHelm runtime.
-  if (action === 'new-turn') {
-    return browserWorkspaceCommand(cli, ['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile], undefined, signal);
-  }
-  const session = parseWorkspaceJson(await browserWorkspaceCommand(cli, ['session', 'start'], undefined, signal));
-  const sessionId = session.session_id;
-  if (typeof sessionId !== 'string' || !sessionId) throw new Error('webhelm session start returned no session_id');
-  try {
-    return await browserWorkspaceCommand(
-      cli,
-      ['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile],
-      undefined,
-      signal,
-    );
-  } finally {
-    await browserWorkspaceCommand(cli, ['session', 'stop', sessionId]).catch(() => {});
-  }
-}
 
 function browserWorkerRunner(): ChatGptAgentRunner {
-  const cli = browserWorkspaceCli();
-  return (_definition, request, _route, signal): AgentRun => {
-    const promise = (async (): Promise<string> => {
-      const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
-      try {
-        const delivery = request.thread;
-        // Temporary Chat lacks Neo MCP tools on this verified account.
-        // File paths remain accessible to normal workers through Neo MCP.
-        const message = request.files?.length
-          ? `${request.prompt}\n\nTask file paths (read with Neo MCP; files are not browser-uploaded):\n${request.files.map(file => `- ${JSON.stringify(file)}`).join('\n')}`
-          : request.prompt;
-        await writeFile(configFile, JSON.stringify(delivery ? {
-          project_id: delivery.projectId ?? _route.projectId ?? null,
-          thread_id: delivery.threadId,
-          message: `${request.prompt}\n\nRelay delivery ID: ${delivery.requestId}`,
-          idempotency_key: delivery.requestId,
-        } : {
-          message,
-          temporary: false,
-        }));
-        if (signal.aborted) throw new Error('browser-worker execution aborted');
-        const action = delivery ? 'new-turn' : 'new-thread';
-        const output = await runBrowserWorker(cli, configFile, signal, action);
-        return JSON.stringify(parseDriverJson(output));
-      } finally {
-        await unlink(configFile).catch(() => {});
-      }
-    })();
-    return { promise, submitted: promise, cancel: () => {} };
+  return (_definition,request,_route,signal,context) => {
+    const delivery=request.thread;
+    const message=request.files?.length
+      ? `${request.prompt}\n\nTask file paths (read with Neo MCP; files are not browser-uploaded):\n${request.files.map(file=>`- ${JSON.stringify(file)}`).join('\n')}`
+      : request.prompt;
+    return pooledWebHelmRun({
+      provider:'chatgpt', executionId:request.execution?.executionId ?? randomUUID(),
+      timeoutMs:request.execution?.timeoutMs ?? 900_000,
+      onActivity:context?.onObservedWorkerActivity,
+      build:async()=>({action:delivery?'new-turn':'new-thread',config:delivery?{
+        project_id:delivery.projectId ?? _route.projectId ?? null,
+        thread_id:delivery.threadId,
+        message:`${request.prompt}\n\nRelay delivery ID: ${delivery.requestId}`,
+        mode:'sync',idempotency_key:delivery.requestId,
+      }:{message,temporary:false}}),
+      recover:async threadId=>({
+        thread_id:threadId,mode:'sync',
+        message:`[Relay Browser Worker recovery: ${request.execution?.executionId ?? 'unknown'}]\nInspect this Task's authoritative Neo events and durable outputs. If an original correlated terminal event exists, report it without duplicating. If the output is complete and verified, publish task.completed using the ORIGINAL execution identity. Otherwise continue the remaining work with task.progress, or publish task.failed with a real reason. Do not claim completion without evidence.`,
+      }),
+    },signal);
   };
 }
 
@@ -382,7 +357,7 @@ export class ChatGptAdapter implements WorkerAdapter {
 
   constructor(options: ChatGptAdapterOptions = {}) {
     this.runner = options.agentRunner;
-    this.tabClosePolicy = chatGptTabClosePolicy(options.tabClosePolicy ?? process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY);
+    this.tabClosePolicy = chatGptTabClosePolicy(options.tabClosePolicy ?? process.env.AGENTS_RELAY_CHATGPT_TAB_CLOSE_POLICY, 'after-terminal');
   }
 
   launch(task: Task, signal: AbortSignal, context: LaunchContext = {}): Execution {
@@ -424,7 +399,8 @@ export class ChatGptAdapter implements WorkerAdapter {
           ...((task.attachments?.length || references.length && !task.chatgptThreadDelivery) ? { files: [...new Set([...(task.attachments ?? []), ...references.map(reference => reference.path)])] } : {}),
           ...(task.chatgptThreadDelivery ? { thread: task.chatgptThreadDelivery } : {}),
           tabClosePolicy: policy,
-        }, route, controller.signal);
+          ...(task.jobId && task.executionId ? {execution:{jobId:task.jobId,taskId:task.id,executionId:task.executionId,timeoutMs:task.timeoutMs}} : {}),
+        }, route, controller.signal, context);
       };
       const run = await submit();
       try {
@@ -447,10 +423,10 @@ export class ChatGptAdapter implements WorkerAdapter {
         launchResolve();
         if (policy === 'after-start' && context.waitForWorkerStart) await context.waitForWorkerStart;
         else if (policy === 'after-terminal') {
-          if (!context.waitForTerminal) throw new Error('ChatGPT after-terminal compatibility policy requires a terminal event barrier');
-          await context.waitForTerminal;
+          if (!context.waitForTerminal && task.executionId) throw new Error('Browser worker requires terminal event barrier');
+          if (context.waitForTerminal) await context.waitForTerminal;
         }
-        if (policy !== 'never') run.release?.();
+        if (policy !== 'never') await run.release?.();
         if (run.submitted) await run.promise;
         return {
           summary: (this.name === 'z' ? 'Z.ai' : 'ChatGPT') + ' task submitted; terminal task state is event-owned',
@@ -465,10 +441,13 @@ export class ChatGptAdapter implements WorkerAdapter {
         };
       } catch (error) {
         launchReject(error);
-        if (policy !== 'never') run.release?.();
+        if (policy !== 'never') { if (controller.signal.aborted) run.cancel(); else await run.release?.(); }
         if (controller.signal.aborted) throw error;
         if (error instanceof StartAckTimeout) throw error;
         if (error instanceof PreSubmissionRejection) throw error;
+        if (error instanceof BrowserPoolAdmissionError) {
+          throw PreSubmissionRejection.fromPlatformResponse({status:'rejected',submitted:false,code:error.code,message:error.message}) ?? error;
+        }
         throw new LaunchFailure(error instanceof Error ? error.message : String(error));
       }
     })();

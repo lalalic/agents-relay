@@ -51,7 +51,7 @@ export async function quarantineUnavailableCodexFallback(
   error: unknown,
 ): Promise<void> {
   const transition = await transitions.apply(jobId, taskId, 'worker.platform_failure', {
-    eligible: (_job, task) => task.state === 'QUEUED' && task.adapter === 'chatgpt' && task.platformFailure?.safeToReroute === true,
+    eligible: (_job, task) => task.state === 'QUEUED' && (task.adapter === 'chatgpt' || task.adapter === 'z') && task.platformFailure?.safeToReroute === true,
     facts: () => ({ platformFallbackSafe: false }),
     mutate: (_job, task) => { task.error = `Codex fallback route became unavailable: ${error instanceof Error ? error.message : String(error)}`; },
   });
@@ -67,17 +67,17 @@ export function persistChatGptPlatformFailure(
   safeToReroute: boolean,
 ): void {
   const route = original?.routing;
-  const workerId = original?.workerSelection?.workerId ?? 'chatgpt';
+  const workerId = original?.workerSelection?.workerId ?? (original?.adapter ?? 'chatgpt');
   const at = new Date().toISOString();
   task.platformFailure = {
     classification,
     executionId: executionId ?? 'unknown',
-    route: { workerId, adapter: 'chatgpt', provider: route?.provider ?? 'unknown', model: route?.model ?? 'unknown', ...(route?.profile ? { profile: route.profile } : {}) },
+    route: { workerId, adapter: original?.adapter === 'z' ? 'z' : 'chatgpt', provider: route?.provider ?? 'unknown', model: route?.model ?? 'unknown', ...(route?.profile ? { profile: route.profile } : {}) },
     evidence,
     safeToReroute,
     at,
   };
-  if (!task.routingExclusions?.some(item => item.workerId === workerId && item.adapter === 'chatgpt')) {
+  if (!task.routingExclusions?.some(item => item.workerId === workerId && item.adapter === task.platformFailure?.route.adapter)) {
     task.routingExclusions = [...(task.routingExclusions ?? []), {
       ...task.platformFailure.route,
       reason: classification,

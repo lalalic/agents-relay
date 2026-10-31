@@ -1,3 +1,4 @@
+import { hasSafeAlternativeWorker } from './browser-worker-routing.js';
 import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { executionEventSource, eventSourceId, executionIdFromSource, claimTerminalExecution, terminalExecutionClaimed } from './execution-event-identity.js';
 export { executionEventSource } from './execution-event-identity.js'; import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
@@ -222,8 +223,10 @@ export abstract class ReconcilerRuntimeBase {
     const message = failure instanceof Error ? failure.message : String(failure);
     const currentJob = await this.store.load(jobId);
     const currentTask = currentJob.tasks.find(task => task.id === taskId);
+    const alternative = hasSafeAlternativeWorker(currentTask,this.options.adapters,await this.store.listAgents(),
+      this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined);
     const activeExecution = this.live.get(taskId);
-    const platformFailure = currentTask?.adapter === 'chatgpt' ? classifyChatGptPlatformFailure(failure, phase) : undefined;
+    const platformFailure = (currentTask?.adapter === 'chatgpt' || currentTask?.adapter === 'z') ? classifyChatGptPlatformFailure(failure, phase) : undefined;
     const unknownOutcome = phase === 'start-ack' || ['outcome_unknown', 'start_ack_timeout'].includes(platformFailure?.classification ?? '')
       || (phase === 'delivery' && activeExecution?.executionId === executionId && activeExecution.workerStarted);
     const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
@@ -238,10 +241,11 @@ export abstract class ReconcilerRuntimeBase {
     const workflowEvent = platformFailure ? 'worker.platform_failure' : phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
     const transition = await this.taskTransitions.apply(jobId, taskId, platformFailure ? 'worker.platform_failure' : workflowEvent, {
       eligible: (_job, task) => task.executionId === executionId,
+      facts: () => ({ platformFallbackSafe: platformFailure?.safeToReroute === true && alternative }),
       mutate: (_job, task, decision) => {
         if (platformFailure) persistChatGptPlatformFailure(task, currentTask, executionId, platformFailure.classification, platformFailure.evidence, platformFailure.safeToReroute);
         task.error = decision.target === 'QUEUED' ? null : `Worker ${phase} failed: ${message}`;
-        task.failureReason = unknownOutcome
+        task.failureReason = decision.target === 'QUEUED' ? undefined : unknownOutcome
           ? 'worker_outcome_unknown' : platformFailure ? 'worker_platform_failure' : failureReason;
         task.leaseOwner = null;
         task.leaseExpiresAt = null;
@@ -275,8 +279,8 @@ export abstract class ReconcilerRuntimeBase {
       jobId,
       taskId,
       transition.task.parentTaskId,
-      'task.failed',
-      'failed',
+      transition.task.state === 'QUEUED' ? 'worker.pre_submission_rejected' : 'task.failed',
+      transition.task.state === 'QUEUED' ? 'queued' : 'failed',
       transition.task.error ?? `Worker ${phase} failed: ${message}`,
       'user',
       { phase, reason: transition.task.failureReason ?? failureReason, workflowEvent, ...(transition.task.platformFailure ? { platformFailure: transition.task.platformFailure } : {}) },

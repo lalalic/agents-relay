@@ -46,6 +46,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   troubleshooterTask: boolGuard('troubleshooterTask'),
   awaitingInteractiveDecision: facts => facts.durableFacts.awaitingInteractiveDecision === true,
   retryAvailable: boolGuard('retryAvailable'),
+  platformFallbackSafe: facts => facts.durableFacts.platformFallbackSafe === true,
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {

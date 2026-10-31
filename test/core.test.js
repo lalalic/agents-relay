@@ -928,12 +928,12 @@ test('async transport exit is observable after an authoritative terminal event',
   await stop();await stopEvents();
 });
 
-test('after-start ChatGPT policy does not install a terminal close barrier', async () => {
+test('pooled ChatGPT owns the terminal barrier even with legacy after-start policy', async () => {
   const t=task('chat-after-start'); t.adapter='chatgpt'; const store=new InMemoryStore(job([t])); const bus=new MemoryEventBus(); let terminalBarrier;
   const adapter={name:'chatgpt',id:'fake-chatgpt',capabilities:['model','chatgpt'],launch(_task,_signal,context){terminalBarrier=context.waitForTerminal; return {id:'chat-runtime',launched:Promise.resolve(),promise:(context.waitForWorkerStart ?? Promise.resolve()).then(()=>({summary:'submitted'})),cancel(){}};}};
   const reconciler=managedReconciler(store,{owner:'test',adapters:[adapter],eventBus:bus,startAckTimeoutMs:100,chatgptTabClosePolicy:'after-start'});
   const stop=await reconciler.watch('j'); await reconciler.reconcile('j');
-  assert.equal(terminalBarrier,undefined);
+  assert.ok(terminalBarrier instanceof Promise);
   await bus.publish(eventFor('j','chat-after-start',null,'task.started','running','worker began','user',undefined,await activeEventSource(store,'chat-after-start')));
   await bus.publish(eventFor('j','chat-after-start',null,'task.completed','succeeded','durable output','user',undefined,await activeEventSource(store,'chat-after-start')));
   await new Promise(resolve=>setImmediate(resolve));
@@ -1166,7 +1166,7 @@ test('stale old-generation failure cannot cancel or mutate the current execution
   await reconciler.close();
 });
 
-test('confirmed ChatGPT platform rejection fails the same Task without automatic rerouting', async () => {
+test('confirmed ChatGPT pre-submission rejection requeues safely when a second Worker exists', async () => {
   const t=task('chat-platform-reroute');
   t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
   t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
@@ -1183,8 +1183,8 @@ test('confirmed ChatGPT platform rejection fails the same Task without automatic
   await reconciler.trigger(); await new Promise(resolve=>setTimeout(resolve,30));
   const saved=(await store.load('j')).tasks.find(item=>item.id===t.id);
   assert.equal(saved.id,t.id);
-  assert.equal(saved.state,'FAILED');
-  assert.equal(saved.failureReason,'worker_platform_failure');
+  assert.equal(saved.state,'QUEUED');
+  assert.equal(saved.failureReason,undefined);
   assert.equal(saved.adapter,'chatgpt');
   assert.equal(saved.routing,undefined);
   assert.equal(saved.workerSelection,undefined);
@@ -1193,8 +1193,8 @@ test('confirmed ChatGPT platform rejection fails the same Task without automatic
   assert.equal(saved.platformFailure?.classification,'model_unavailable');
   assert.equal(saved.platformFailure?.executionId,'chat-platform-exec');
   assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
-  assert.equal(events.filter(event=>event.type==='task.rerouting').length,0);
-  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),true);
+  assert.ok(events.some(event=>event.type==='worker.pre_submission_rejected'));
+  assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
   await reconciler.close(); await stopEvents();
 });
 

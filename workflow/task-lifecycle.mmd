@@ -35,6 +35,8 @@ recoveryReopenClearLease["action: mutation.clearLease"]
 recoveryReopenClearExecution["action: mutation.clearExecution"]
 
 plannerRetryAvailable["guard: retryAvailable"]
+platformFallbackSafe["guard: platformFallbackSafe"]
+preparePlatformFallback["action: mutation.preparePlatformFallback"]
 plannerUnavailableMark["action: mutation.markPlannerUnavailable"]
 orphanFailMark["action: mutation.markUnknownOutcome"]
 orphanFailClearLease["action: mutation.clearLease"]
@@ -127,7 +129,10 @@ queued -->|on: effect.launchTask.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
-queued -->|on: worker.platform_failure| platformFallbackQuarantine
+queued -->|on: worker.platform_failure| platformFallbackSafe
+platformFallbackSafe -->|true| preparePlatformFallback
+preparePlatformFallback --> queued
+platformFallbackSafe -->|false| platformFallbackQuarantine
 platformFallbackQuarantine["action: mutation.quarantinePlatformFailure"]
 platformFallbackQuarantine --> failed
 queued -->|on: planner.unavailable| plannerUnavailableMark

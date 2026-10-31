@@ -48,17 +48,16 @@ test('global WebHelm CLI preflight does not create a Relay workspace', async () 
   assert.doesNotMatch(source, /browserWorkspaceCommand\([^\n]+\['(?:workspace',\s*'create|create|workspace',\s*'delete|delete)'/);
 });
 
-test('ChatGPT adapter uses Browser Workspace caller-owned session platform run', async () => {
-  const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /browserWorkerRunner/);
-  assert.match(source, /const action = delivery \? 'new-turn' : 'new-thread';/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', action, '--session-id', sessionId, '--config', configFile\]/);
-  assert.match(source, /\['platform', 'run', 'chatgpt', 'new-turn', '--mode', 'async', '--config', configFile\]/);
-  assert.match(source, /\['session', 'start'\]/);
-  assert.match(source, /\['session', 'stop', sessionId\]/);  assert.doesNotMatch(source, /\['session', 'exec', sessionId\]/);
-  assert.doesNotMatch(source, /\['platform', 'source', 'chatgpt', 'temporary-submit'/);
-  assert.match(source, /this\.runner \?\? browserWorkerRunner\(\)/);
-  assert.deepEqual(new ChatGptAdapter().capabilities, ['model', 'chatgpt', 'webhelm']);
+test('ChatGPT adapter wraps WebHelm in a leased Browser Pool without modifying WebHelm', async () => {
+  const adapter=await readFile(new URL('../src/adapters.ts',import.meta.url),'utf8');
+  const runtime=await readFile(new URL('../src/browser-worker-runtime.ts',import.meta.url),'utf8');
+  assert.match(adapter,/browserWorkerRunner/);
+  assert.match(adapter,/pooledWebHelmRun/);
+  assert.match(runtime,/\['session','start','--workspace',WORKSPACE\]/);
+  assert.match(runtime,/\['session','stop',sessionId\]/);
+  assert.match(runtime,/activate_tab/);
+  assert.match(runtime,/workspace_resize/);
+  assert.deepEqual(new ChatGptAdapter().capabilities,['model','chatgpt','webhelm']);
 });
 
 test('Browser Workspace runner unwraps the generic platform result envelope', () => {

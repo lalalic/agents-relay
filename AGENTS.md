@@ -55,3 +55,11 @@ Jobs filter input, select changes, and Job navigation must only update the clien
 ## Operational workflows
 
 P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-workflows.md`. Task/job semantics are defined by `skills/agents-relay/contracts/task-job-contract.md`. These are Agents Relay orchestration contracts, not global agent policy.
+
+## Browser Worker Pool safety (ChatGPT / Z.ai)
+
+- Relay Graph/SQLite owns Task transitions. The Browser Worker Pool owns only capacity, FIFO admission, provider health, session leases and recovery effects; it never authors Task success from an HTTP or browser receipt.
+- Treat a platform submission as **uncertain** after the browser send may have happened. Never automatically resend or release the occupied Slot until the original execution is reconciled. A verified pre-submission rejection may route to another eligible worker.
+- Retain each browser Slot until a correlated terminal event; keep a durable original Thread URL for the dashboard and test any recovery Turn in the same thread and execution. Bound automated recovery attempts.
+- WebHelm owns browser groups and stale-tab reclaim. Pool-owned browser activation is only a keepalive and never a Task progress signal. Only independently observed new assistant output or correlated worker events may extend inactivity deadlines.
+- Use an isolated SQLite store and caller-owned WebHelm Session in tests. Always stop test-owned Sessions; never stop all Sessions or modify the public WebHelm runtime/extension for Pool policy.
