@@ -22,7 +22,7 @@ async function fakeWebHelm(mode,run){
     "console.log(JSON.stringify({session_id:'owned-pool',ok:true,stdout:JSON.stringify({url:'https://chat.z.ai/c/thread-live',state:{text:process.env.POOL_TEST_MODE==='idle'?'':count>1?'new assistant output':'',generating:false,streamLength:0}})}));",
     "} else if(a[0]==='session'&&a[1]==='exec')console.log(JSON.stringify({ok:true}));",
     "else if(a[0]==='platform'&&a[1]==='run'){",
-    "if(process.env.POOL_TEST_MODE==='uncertain')process.exit(19);",
+    "if(process.env.POOL_TEST_MODE==='uncertain'||(process.env.POOL_TEST_MODE==='recovery-uncertain'&&a[3]==='new-turn'))process.exit(19);",
     "console.log(JSON.stringify({result:{ok:true,stdout:JSON.stringify({status:'submitted',mode:a[3],thread_id:'thread-live',thread_url:'https://chat.z.ai/c/thread-live',verified_by:'matching-user-turn'})}}));",
     "}else if(a[0]==='session'&&a[1]==='stop')console.log(JSON.stringify({stopped:true}));",
     "else process.exit(22);",
@@ -89,6 +89,21 @@ test('idle thread requests at most two same-thread terminal recovery turns, neve
     assert.ok(turns.every(row=>row.cfg.thread_id==='thread-live'));
     assert.ok(activities.every(s=>s.includes('recovery')));
     assert.equal(activities.length,2);
+    await run.release();
+  });
+});
+
+test('uncertain recovery turn is never automatically resent',async()=>{
+  await fakeWebHelm('recovery-uncertain',async log=>{
+    const run=pooledWebHelmRun({provider:'z',executionId:'recovery-uncertain',timeoutMs:100,
+      monitorIntervalMs:20,recoveryMinMs:40,heartbeatIntervalMs:15,
+      build:async()=>({action:'new-thread',config:{message:'start',wait:false}}),
+      recover:async id=>({thread_id:id,message:'Check terminal event',wait:false}),
+    },new AbortController().signal);
+    await run.submitted;await wait(950);
+    const entries=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    const turns=entries.filter(row=>row.a.slice(0,4).join(' ')==='platform run z new-turn');
+    assert.equal(turns.length,1,'uncertain recovery must not be resent');
     await run.release();
   });
 });

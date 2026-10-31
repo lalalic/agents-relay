@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { spawnOwnedProcess, terminateOwnedProcess } from './owned-process.js';
+import { spawnOwnedProcess } from './owned-process.js';
 import { BrowserWorkerPoolManager, BrowserPoolAdmissionError, type BrowserProvider, type BrowserSlot } from './browser-worker-pool.js';
 
 export type BrowserReceipt = { status: string; thread_id?: string | null; thread_url?: string | null; verified_by?: string | null };
@@ -81,7 +81,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
   let monitor:ReturnType<typeof setInterval>|undefined;
   let browserKeepAliveAt=0, observedAt=Date.now(), lastFingerprint='', sampled=false;
   let recoveries=0, monitoring=false, threadId:string|undefined;
-  let submissionAttempted=false, verifiedSubmitted=false, uncertain=false;
+  let submissionAttempted=false, verifiedSubmitted=false, uncertain=false, recoveryOutcomeUncertain=false;
   const stop = async ():Promise<void>=>{
     if(stopped)return;
     stopped=true;
@@ -113,13 +113,19 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
         await request.onActivity?.('Browser Worker produced new assistant output');
       }
       if(now-observedAt>=Math.max(request.recoveryMinMs ?? 60_000,Math.round(request.timeoutMs*.6)) &&
-         !observation.state?.generating && recoveries<2 && request.recover && threadId){
+         !observation.state?.generating && !recoveryOutcomeUncertain && recoveries<2 && request.recover && threadId){
         // Count before the send. An ambiguous response must never cause automatic retransmission.
         recoveries++;observedAt=now;
         const cfg=await request.recover(threadId);
-        const answer=await configRun(request.provider,'new-turn',sessionId,cfg);
-        if(answer.status!=='submitted' || !answer.verified_by) throw Error('Recovery turn not independently verified');
-        await request.onActivity?.('Verified same-thread recovery turn submitted');
+        try {
+          const answer=await configRun(request.provider,'new-turn',sessionId,cfg);
+          if(answer.status!=='submitted' || !answer.verified_by) throw Error('Recovery turn not independently verified');
+          await request.onActivity?.('Verified same-thread recovery turn submitted');
+        } catch(error) {
+          // The recovery may have reached the remote site: never submit another automatically.
+          recoveryOutcomeUncertain=true;
+          throw error;
+        }
       }
     } catch {
       // An uncertain browser operation is not a verified task failure. Leave its lease reserved.
@@ -158,11 +164,12 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       // Safe pre-submission errors can be rejected to Relay for immediate rerouting.
       // A submission whose outcome is uncertain is quarantined, not retried or released.
       const safe = !submissionAttempted;
+      const cancelled = released || signal.aborted;
       const reason = error instanceof Error ? error.message : String(error);
-      const rejection = safe && !(error instanceof BrowserPoolAdmissionError)
+      const rejection = safe && !cancelled && !(error instanceof BrowserPoolAdmissionError)
         ? new BrowserPoolAdmissionError('PROVIDER_UNAVAILABLE', `${request.provider} pre-submission failure: ${reason}`)
         : error;
-      if (safe && lease && !(error instanceof BrowserPoolAdmissionError)) browserWorkerPool().reportPreSubmissionOutage(request.provider);
+      if (safe && !cancelled && lease && !(error instanceof BrowserPoolAdmissionError)) browserWorkerPool().reportPreSubmissionOutage(request.provider);
       if(lease && !stopped){
         if(!safe){uncertain=true;browserWorkerPool().quarantine(lease);}
         else await stop();
