@@ -53,6 +53,7 @@ Use L1 Graph branch and binding verification, L2 role/provider evidence, and L3 
 
 Dashboard Jobs search is read-only over the SQLite inventory. Keep UI parameters aligned with the documented `/api/jobs` contract, apply all filters and ordering before server pagination, and verify explicit Refresh reaches the backend with the active conditions.
 Jobs filter input, select changes, and Job navigation must only update the client-side list; only the explicit list Refresh button queries `/api/jobs` after initial load. Keep both Refresh labels stable and cap displayed Jobs to the newest 20.
+On mobile Jobs screens, keep Search, Status, Repository, and Refresh in one row without a Reset control. Verify at 320–430 CSS pixels and ensure the page has no horizontal overflow.
 
 ## Operational workflows
 

@@ -38,7 +38,7 @@ ${dashboardStyles}
 </header>
 <main>
   <section id="jobs-view" role="tabpanel" aria-labelledby="jobs-tab" class="panel jobs-panel">
-    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search title or PR #" aria-label="Search jobs by title or PR number"><select id="status-filter" class="job-filter" aria-label="Filter jobs by status"><option value="">All (no CANCELLED)</option><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repositories</option></select></div><div class="jobs-actions"><button id="jobs-reset" class="refresh-button" type="button">Reset</button><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div><span id="jobs-feedback" class="jobs-feedback subtle" role="status" aria-live="polite"></span></div></div>
+    <div class="panel-head"><h2>Jobs</h2><div class="panel-actions"><div class="job-filters"><input id="job-search" class="job-search" type="search" placeholder="Search" aria-label="Search jobs by title or PR number"><select id="status-filter" class="job-filter" aria-label="Filter jobs by status (default excludes cancelled)"><option value="">No cancelled</option><option value="DRAFT">DRAFT</option><option value="ACTIVE">ACTIVE</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select><select id="repo-filter" class="job-filter" aria-label="Filter jobs by repository"><option value="">All repos</option></select></div><div class="jobs-actions"><button id="jobs-refresh" class="refresh-button" type="button">Refresh</button></div><span id="jobs-feedback" class="jobs-feedback subtle" role="status" aria-live="polite"></span></div></div>
     <div class="panel-body" aria-live="polite"><ul id="job-list" class="job-list"><li class="skeleton" aria-hidden="true"></li></ul></div>
   </section>
   <div class="workspace" id="jobs-workspace">
@@ -138,7 +138,6 @@ const shortcutsView=document.querySelector('#shortcuts-view');
 const jobsWorkspace=document.querySelector('#jobs-workspace');
 const jobList=document.querySelector('#job-list');
 const jobsRefresh=document.querySelector('#jobs-refresh');
-const jobsReset=document.querySelector('#jobs-reset');
 const jobSearch=document.querySelector('#job-search');
 const repoFilter=document.querySelector('#repo-filter');
 const statusFilter=document.querySelector('#status-filter');
@@ -219,7 +218,7 @@ function matchesSearch(job){const query=searchQuery.trim().toLowerCase();if(!que
 function filteredJobs(){return jobs.filter(job=>(!selectedRepo||selectedRepo===job.repository)&&matchesQuickFilter(job)&&matchesSearch(job)).slice(0,20);}
 function syncFilters(){
   const repos=jobRepositories.length?jobRepositories:[...new Set(jobs.map(job=>job.repository).filter(Boolean))].sort();
-  const repoOptions=[new Option('All repositories',''),...repos.map(repo=>new Option(repo,repo))];
+  const repoOptions=[new Option('All repos',''),...repos.map(repo=>new Option(repo,repo))];
   if(repoFilter.options.length!==repoOptions.length||[...repoFilter.options].some((option,index)=>option.value!==repoOptions[index].value))repoFilter.replaceChildren(...repoOptions);
   if(selectedRepo&&!repos.includes(selectedRepo))selectedRepo='';
   if(!['','DRAFT','ACTIVE','COMPLETED','CANCELLED'].includes(selectedStatus))selectedStatus='';
@@ -333,7 +332,6 @@ jobsTab.addEventListener('click',()=>{location.hash=selectedJob?'#/jobs/'+encode
 jobsRefresh.addEventListener('click',()=>void refresh(true));
 eventsAllTasks.addEventListener('click',()=>{eventTaskId=null;clearEvents();renderEventScope();void loadEventHistory();});
 function applyLocalJobFilters(){rememberJobFilters();renderJobList();}
-jobsReset.addEventListener('click',()=>{searchQuery='';selectedStatus='';selectedRepo='';syncFilters();applyLocalJobFilters();});
 repoFilter.addEventListener('change',()=>{selectedRepo=repoFilter.value;applyLocalJobFilters();});
 jobSearch.addEventListener('input',()=>{searchQuery=jobSearch.value;applyLocalJobFilters();});
 statusFilter.addEventListener('change',()=>{selectedStatus=statusFilter.value;applyLocalJobFilters();});
