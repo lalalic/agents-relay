@@ -40,7 +40,7 @@ test('ChatGPT WebHelm preflight validates platform and daemon without creating a
 
 test('global WebHelm CLI preflight does not create a Relay workspace', async () => {
   const source = await readFile(new URL('../src/adapters.ts', import.meta.url), 'utf8');
-  assert.match(source, /join\(homedir\(\), '\.local', 'bin', 'webhelm'\)/);
+  assert.match(source, /prefix: \['--yes', 'webhelm@latest'\]/);
   assert.match(source, /browserWorkspaceCommand\(cli, \['status'\]\)/);
   assert.match(source, /\['platform', 'profile', 'chatgpt'\]/);
   assert.match(source, /status\.daemon\?\.running !== true/);
