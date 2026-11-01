@@ -4,6 +4,7 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pooledWebHelmRun} from '../dist/browser-worker-runtime.js';
+import {ChatGptAdapter} from '../dist/adapters.js';
 import {BrowserWorkerPoolManager} from '../dist/browser-worker-pool.js';
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -60,6 +61,32 @@ test('a live pooled Z worker keeps its slot, observes real output, and releases 
     assert.equal(pool.snapshot('z').leased,0);
     const after=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
     assert.equal(after.filter(row=>row.a[1]==='stop').length,1);
+  });
+});
+
+test('Z WebHelm pool receipt passes through shared adapter and releases after terminal', async () => {
+  await fakeWebHelm('normal', async (log,pool) => {
+    class ZReceiptAdapter extends ChatGptAdapter { name = 'z'; }
+    let completeTerminal;
+    const terminal = new Promise(resolve => { completeTerminal=resolve; });
+    const adapter = new ZReceiptAdapter({tabClosePolicy:'after-terminal',agentRunner:(_agent,request,_route,signal)=>
+      pooledWebHelmRun({pool,provider:'z',executionId:'integrated-z-receipt',timeoutMs:90000,
+        build:async()=>({action:'new-thread',config:{message:request.prompt,wait:false}})},signal),
+    });
+    const task = {id:'integrated-z-receipt',input:'inert Z receipt test',routing:{provider:'z',model:'GLM-5.3-Flash'}};
+    const execution = adapter.launch(task,new AbortController().signal,{waitForTerminal:terminal});
+    await execution.launched;
+    assert.equal(pool.snapshot('z').leased,1,'keep lease after verified submission');
+    completeTerminal();
+    const result=await execution.promise;
+    assert.equal(result.data.threadId,'thread-live');
+    assert.equal(result.data.submitted,true);
+    assert.match(result.summary,/Z.ai task submitted/);
+    for(let i=0;i<30&&pool.snapshot('z').leased!==0;i++)await wait(50);
+    assert.equal(pool.snapshot('z').leased,0,'release only after terminal barrier');
+    const calls=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(calls.filter(row=>row.a.slice(0,4).join(' ')==='platform run z new-thread').length,1);
+    assert.equal(calls.filter(row=>row.a[1]==='stop').length,1);
   });
 });
 

@@ -163,6 +163,37 @@ test('ChatGptAdapter never reports an existing-thread turn on the wrong thread',
 
 });
 
+test('Z shared adapter accepts a verified persistent Z.ai thread with no temporary flag', async () => {
+  class ZReceiptAdapter extends ChatGptAdapter { name = 'z'; }
+  const id = 'c96fc0e6-cf41-480b-bfe9-756b5ce58f8c';
+  const adapter = new ZReceiptAdapter({ tabClosePolicy:'after-start', agentRunner:fakeRunner({
+    status:'submitted', mode:'new-thread', thread_id:id,
+    thread_url:`https://chat.z.ai/c/${id}`,
+    verified_by:'matching user message + cleared composer + durable thread URL',
+  }) });
+  const result = await adapter.launch(task({routing:{provider:'z',model:'GLM-5.3-Flash'}}), new AbortController().signal).promise;
+  assert.equal(result.data.threadId,id);
+  assert.equal(result.data.submitted,true);
+  assert.match(result.summary,/Z.ai task submitted/);
+});
+
+test('new-thread receipts reject temporary chats, invalid IDs and cross-provider URLs', async () => {
+  class ZReceiptAdapter extends ChatGptAdapter { name = 'z'; }
+  const id='c96fc0e6-cf41-480b-bfe9-756b5ce58f8c';
+  const basic = {status:'submitted',mode:'new-thread',thread_id:id,verified_by:'verified'};
+  const z = (response) => new ZReceiptAdapter({tabClosePolicy:'after-start',agentRunner:fakeRunner(response)});
+  const chatgpt = (response) => new ChatGptAdapter({tabClosePolicy:'after-start',agentRunner:fakeRunner(response)});
+  const run = adapter => adapter.launch(task(),new AbortController().signal).promise;
+  await assert.rejects(run(z({...basic,thread_url:`https://chat.z.ai/c/${id}`,temporary:true})),/durable Z.ai thread/);
+  await assert.rejects(run(z({...basic,thread_url:`https://chatgpt.com/c/${id}`})),/durable Z.ai thread/);
+  await assert.rejects(run(z({...basic,thread_url:'https://chat.z.ai/c/other-thread'})),/durable Z.ai thread/);
+  await assert.rejects(run(z({...basic,thread_url:'https://chat.z.ai/c/x'})),/durable Z.ai thread/);
+  await assert.rejects(run(chatgpt({...basic,thread_url:`https://chatgpt.com/c/${id}`})),/durable ChatGPT thread/);
+  await assert.rejects(run(chatgpt({...basic,thread_url:`https://chatgpt.com/c/${id}`,temporary:true})),/durable ChatGPT thread/);
+  const valid = await run(chatgpt({...basic,thread_url:`https://chatgpt.com/c/${id}`,temporary:false}));
+  assert.equal(valid.data.threadId,id);
+});
+
 test('Browser Workspace generic runner receipt is accepted when nested under result', () => {
   const receipt = parseDriverJson(JSON.stringify({
     platform: 'chatgpt',

@@ -326,7 +326,7 @@ function browserWorkerRunner(): ChatGptAgentRunner {
   };
 }
 
-function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
+function parseBrowserWorkerResponse(output: string, provider: 'chatgpt' | 'z'): BrowserWorkerResponse {
   const text = output.trim().replace(/^\`\`\`(?:json)?\s*|\s*\`\`\`$/g, '').trim();
   let value: unknown;
   try {
@@ -336,11 +336,22 @@ function parseBrowserWorkerResponse(output: string): BrowserWorkerResponse {
   }
   if (!value || typeof value !== 'object') throw new Error('browser-worker returned an invalid JSON response');
   const response = value as BrowserWorkerResponse;
-  if (response.mode === 'new-thread' && (
-    response.temporary !== false ||
-    typeof response.thread_id !== 'string' || !/^[A-Za-z0-9_-]{8,160}$/.test(response.thread_id) ||
-    typeof response.thread_url !== 'string' || !/^https:\/\/(?:chatgpt\.com|chat\.z\.ai)\/c\//.test(response.thread_url)
-  )) throw new Error('browser-worker did not return a durable ChatGPT thread');
+  if (response.mode === 'new-thread') {
+    const id = response.thread_id;
+    let durableUrl = false;
+    if (typeof id === 'string' && /^[A-Za-z0-9_-]{8,160}$/.test(id) && typeof response.thread_url === 'string') {
+      try {
+        const url = new URL(response.thread_url);
+        durableUrl = url.protocol === 'https:' && url.hostname === (provider === 'z' ? 'chat.z.ai' : 'chatgpt.com')
+          && url.pathname === `/c/${id}` && !url.username && !url.password;
+      } catch { /* Invalid URLs cannot establish thread durability. */ }
+    }
+    // Z.ai's durable-thread receipt has no `temporary` field. ChatGPT's
+    // normal-thread contract still requires an explicit temporary:false.
+    if (!durableUrl || response.temporary === true || (provider === 'chatgpt' && response.temporary !== false)) {
+      throw new Error('browser-worker did not return a durable ' + (provider === 'z' ? 'Z.ai' : 'ChatGPT') + ' thread');
+    }
+  }
   const verified = response.verified === true || response.verified_by !== undefined;
   if (response.status !== 'submitted' || !verified) {
     throw new Error('browser-worker did not return a submitted receipt');
@@ -415,7 +426,7 @@ export class ChatGptAdapter implements WorkerAdapter {
         const output = await (startAckFailure
           ? Promise.race([submission, startAckFailure])
           : submission);
-        const response = parseBrowserWorkerResponse(output);
+        const response = parseBrowserWorkerResponse(output, this.name === 'z' ? 'z' : 'chatgpt');
         if (task.chatgptThreadDelivery && (typeof response.thread_id !== 'string' || response.thread_id !== task.chatgptThreadDelivery.threadId)) {
           throw new Error('browser-worker submitted to an unexpected ChatGPT thread');
         }
