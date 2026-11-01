@@ -11,7 +11,7 @@ Role Skill or second Prompt registry exists.
   shared `buildRelayWorkPrompt()` Action in `agent-prompt-builder.ts`.
 - `task-lifecycle.mmd` selects `effect.launchTask`. Its Reconciler effect calls
   `managedWorkerInput()`, which calls the **same** `buildRelayWorkPrompt()`.
-- `agents-relay prompt --repo REPO --id JOB --plan-id PLAN --adapter ...` and
+- `node <matching-absolute-dist/cli.js> prompt --id JOB --plan-id PLAN --adapter ...` and
   `--task-id TASK` call those **same entry points**, with no separate mock
   assembly, no alternative business Prompt, and no lifecycle changes.
 
@@ -49,8 +49,8 @@ references include exact SHA-256 digests. Global rules belong to Bootstrap.
 It now documents two read-only, execution-bound SQLite commands:
 
 ```sh
-agents-relay plan context --id JOB --plan-id PLAN --execution-id EXECUTION
-agents-relay task context --id JOB --task-id TASK --execution-id EXECUTION
+node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --execution-id EXECUTION
+node <matching-absolute-dist/cli.js> task context --id JOB --task-id TASK --execution-id EXECUTION
 ```
 
 Both reject stale execution bindings. The Worker does not discover Task

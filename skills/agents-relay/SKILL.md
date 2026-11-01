@@ -18,7 +18,7 @@ Before creating, planning, reviewing, or managing a job/task, read and follow `c
 
 ## Content-generation workflow
 
-For content-generation objectives, read `workflows/content-generation.md` before choosing agents, review boundaries, or durable Tasks. This workflow is a planning guide; the shared task/job contract remains authoritative.
+For content-generation objectives, read the active Neo Project `AGENTS.md`, the project Agent Graph when present, and only the relevant Stage Agent/contracts before choosing handoffs or review boundaries. Do not assume a universal stage order or load every project document. The shared Task/Job Contract remains authoritative for durable Tasks.
 
 ## Execution-scoped Job and Task loading
 
