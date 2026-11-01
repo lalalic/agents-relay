@@ -120,7 +120,7 @@ for(const adapter of adapters)for(const role of roles) {
       await writeFile(join(target,`${role}-${adapter}.txt`),prompt+'\n',{mode:0o600});
     }
     assert.equal(parsed.role.name,role);
-    assert.ok(!prompt.includes('PRIVATE L4 BUSINESS TASK CONTENT'),'Task details must come from SQLite only');
+    assert.ok(!prompt.includes('PRIVATE L4 BUSINESS TASK CONTENT'),'Task details must come from execution-bound Relay CLI context only');
     assert.match(parsed.Task,new RegExp(`Job: ${jobId}\\nTask: ${role==='planner'?'plan-1':'L4-TASK'}\\nExecution: ${execution}`));
     assert.match(parsed.Task,/agents-relay skill.*Relay CLI/);
     assert.match(parsed.Task,/All Relay state reads and operations use that version-matched CLI/);
@@ -137,6 +137,9 @@ for(const adapter of adapters)for(const role of roles) {
     assert.doesNotMatch(prompt,/inline immutable local reference snapshots|Job URL: null|Task URL: null/);
     if(role==='planner'){
       assert.match(refs.agent,/Vlog Graph-first Episode planning/);
+      assert.match(refs.agent,/Submit this object as a file to `apply_cli`/);
+      assert.match(refs.agent,/After successful apply, respond with only the exact `PLAN_APPLIED:/);
+      assert.doesNotMatch(refs.agent,/Return this JSON object directly|Return no prose outside the JSON result/);
       assert.match(refs.agent,/read `graph\.mmd` from the resolved Vlog project root/);
       assert.doesNotMatch(refs.agent,/`vlog\/graph\.mmd`/);
       await readFile(join(vlog,'graph.mmd'));
@@ -155,8 +158,24 @@ for(const adapter of adapters)for(const role of roles) {
       assert.match(parsed.Contracts,new RegExp(`EVENT SOURCE \\(exact\\): job/${jobId}/task/L4-TASK/execution/${execution}`));
       for(const word of ['task.started','task.progress','task.completed','task.failed'])assert.ok(parsed.Contracts.includes(word),word);
       assert.match(parsed.Contracts,/exactly ONE/);
-      if(role==='reviewer')assert.match(refs.agent,/verdict|head_sha|review target/i);
-      if(role==='troubleshooter')assert.match(refs.agent,/diagnos|recovery|failed task/i);
+      if(role==='reviewer'){
+        assert.match(refs.agent,/verdict|head_sha|review target/i);
+        assert.match(refs.agent,/entire Job objective/);
+        assert.match(refs.agent,/`task.completed.data` MUST contain/);
+        assert.doesNotMatch(refs.agent,/`review\.(?:started|approved|changes_required|blocked)`/,
+          'Merged Reviewer must not require legacy review.* lifecycle events');
+        assert.match(refs.agent,/Do not emit `review\.\*` or `task.blocked`/);
+        assert.match(refs.agent,/publish `task.failed` with failure phase/);
+      }
+      if(role==='troubleshooter'){
+        assert.match(refs.agent,/diagnos|recovery|failed task/i);
+        assert.match(refs.agent,/task recover --id JOB --task-id ORIGINAL_FAILED_TASK --recovery-task-id THIS_TROUBLESHOOTER_TASK/);
+        assert.match(refs.agent,/Only when a shared defect requires a P0\/self-job, load `contracts\/orchestrator-workflows\.md`/);
+        const conditional=resolve(dirname(skillPath),'contracts/orchestrator-workflows.md');
+        await readFile(conditional);
+        assert.doesNotMatch(parsed.Contexts,/orchestrator-workflows\.md/,
+          'Ordinary recovery must not preload optional P0 workflow');
+      }
       if(role==='implementation')assert.match(refs.agent,/implement|task/i);
       if(role==='vlog-producer')assert.match(refs.agent,/episode stage contract|episode-stage-contract/);
       if(role==='vlog-final-qa')assert.match(refs.agent,/QA|review|evidence/i);

@@ -123,11 +123,11 @@ If evidence is absent or execution outcome is unknown, disposition that historic
 - Do not create bookkeeping, waiting, status-checking, wrapper, or planning Tasks. Your response itself is the planning round.
 - Relay owns lifecycle delivery for local-first Jobs. Never create a worker Task whose job is to perform the local Git merge, mark the Job `COMPLETED`, merge the projected GitHub PR, or wait/check for those Relay-owned effects. After implementation and required review are satisfied, return no lifecycle-completion Task; let the canonical Review/Local-Merge/Job Graph advance the Job.
 - When all executable implementation work is complete and the only remaining steps are Relay-owned final review, local merge, Job completion, or projected PR convergence, return `objective_status: "satisfied"` with `next_tasks: []`. Do not return `in_progress` with an empty task list before final review; that would leave the Job with no executable progress path.
-- Return no prose outside the JSON result.
+- Do not print the candidate JSON as the final reply. Write it to a temporary file, invoke the execution-bound `apply_cli` with that file, and only return the exact successful `PLAN_APPLIED:<plan-id>:<execution-id>` receipt.
 
 ## Output
 
-Return exactly one JSON object with `objective_status`, `assessment`, `next_tasks`, and optional top-level `unblocks`. In forced cleanup mode, also return required `history_cleanup` as specified above.
+Construct one **candidate Plan JSON object** with `objective_status`, `assessment`, `next_tasks`, and optional top-level `unblocks`. In forced cleanup mode, include the required `history_cleanup`. Submit this object as a file to `apply_cli`; it is not the terminal chat output.
 
 For `objective_status: "in_progress"`, `assessment` must be Markdown containing:
 
@@ -152,7 +152,7 @@ Use these exact serialized forms:
 - `storySize` is exactly `"S"`, `"M"`, or `"L"`.
 - `parentTaskId`, when present, is the durable parent work Task ID in the current Job. Never point it at a `plan-N` planner round.
 
-A valid non-satisfied response:
+Example candidate JSON file for a non-satisfied Plan:
 
 ```json
 {
@@ -174,4 +174,4 @@ A valid non-satisfied response:
 }
 ```
 
-Return this JSON object directly. Do not wrap the whole result in another JSON string.
+Save this candidate JSON to a file and pass it to the exact `apply_cli` command supplied by `plan context`. After successful apply, respond with only the exact `PLAN_APPLIED:<plan-id>:<execution-id>` receipt. If apply fails or its receipt is unknown, follow the failure/uncertainty rules above; never claim successful application or return unsubmitted JSON as the result.
