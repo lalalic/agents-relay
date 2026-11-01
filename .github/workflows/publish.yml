@@ -17,8 +17,18 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # The Prompt/Agent tests require the shared Neo contract repository,
+      # which is not part of the agents-relay npm package.
+      AGENTS_RELAY_WORKSPACE_ROOT: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout Neo Agent contracts for Prompt integration tests
+        uses: actions/checkout@v4
+        with:
+          repository: lalalic/neo
+          path: neo
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 24
