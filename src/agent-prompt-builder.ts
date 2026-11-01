@@ -166,6 +166,7 @@ export async function buildRelayWorkPrompt(input: {
     ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path} (sha256:${ref.sha256})`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
     '', '## Task',
     `Use the agents-relay skill at ${skill.path} (sha256:${skill.sha256}) to read authoritative Job and Task/Plan details via the Relay CLI.`,
+    'All Relay state reads and operations use that version-matched CLI. Publish only required Task events through the separately listed Neo events-bus protocol; never inspect Relay backing storage or HTTP APIs.',
     `Job: ${input.jobId}`,
     `Task: ${input.taskId}`,
     `Execution: ${input.executionId}`,

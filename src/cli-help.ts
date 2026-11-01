@@ -140,7 +140,7 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|list|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|events|list|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -177,6 +177,9 @@ Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID.`,
   'task context': `Read the authoritative execution-scoped Task contract.
 
 Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Fails closed on stale execution.`,
+  'task events': `Read the latest Task-scoped lifecycle events via Relay.
+
+Required: --id JOB_ID --task-id TASK_ID and normal Job storage options; optional --limit 1..60 (default 60). Read-only; failure to obtain history is not a successful empty result.`,
   'task show': `Show one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

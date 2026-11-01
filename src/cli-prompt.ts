@@ -6,6 +6,7 @@ import { buildPlannerExecutionPrompt, type PlannerContext } from './planner.js';
 import { managedWorkerInput } from './managed-worker-input.js';
 import { resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { taskExecutionContext } from './task-context.js';
+import { eventsBusHistory } from './events-bus-runtime.js';
 import type { PromptAdapter } from './agent-prompt-builder.js';
 
 /** Print the actual prompt emitted by the same production Builder entry point.
@@ -81,4 +82,18 @@ export async function runTaskContextCommand(args:string[]):Promise<void>{
   if(!id)throw new Error('task context requires --task-id');
   const {job}=await storeFor(args,true);
   console.log(JSON.stringify(taskExecutionContext(job,id,arg(args,'--execution-id')),null,2));
+}
+
+/** Read Task-scoped event history via the Relay CLI; never require workers to query backing services directly. */
+export async function runTaskEventsCommand(args: string[]): Promise<void> {
+  const id=arg(args,'--task-id');
+  if(!id)throw new Error('task events requires --task-id');
+  const {job}=await storeFor(args,true);
+  if(!job.tasks.some(task=>task.id===id))throw new Error(`Task ${id} not found in Job ${job.id}`);
+  const requested=Number(arg(args,'--limit','60'));
+  if(!Number.isInteger(requested)||requested<1||requested>60)
+    throw new Error('task events --limit must be an integer from 1 to 60');
+  const events=(await eventsBusHistory(job.id,id,requested))
+    .filter(event=>event.job_id===job.id&&event.task_id===id);
+  console.log(JSON.stringify({jobId:job.id,taskId:id,order:'newest-first',events},null,2));
 }

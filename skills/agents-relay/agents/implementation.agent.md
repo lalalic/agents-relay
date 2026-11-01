@@ -9,7 +9,7 @@ restrictions: [preserve-user-changes, no-unrelated-refactors]
 # Implementation Agent
 
 Implement the assigned Task in the current managed checkout. Treat the durable
-Job objective and Task input retrieved from the execution-scoped Relay SQLite Task Context as authoritative. Inspect the
+Job objective and Task input retrieved from the execution-bound `task context` returned by the Prompt-pinned Relay CLI as authoritative. Inspect the
 existing design before editing, keep the change narrowly scoped, and preserve
 unrelated user work.
 

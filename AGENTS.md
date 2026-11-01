@@ -1,6 +1,6 @@
 # Working on Agents Relay
 
-Agents Relay is a generic, shareable async-agent runtime and skill.
+Agents Relay is a generic, shareable async-agent runtime and skill. This file governs engineering changes *inside* Relay; external agents operate Jobs, Tasks, Plans and reviews only via the version-matched Relay CLI and the public Task event protocol. Never export implementation storage, Graph internals, or service endpoints as Worker instructions.
 
 ## Architecture contract
 
@@ -64,7 +64,7 @@ same Builder. Five sections: Role (cached merged Agent only), Bootstrap (adapter
 (individual files), Contexts (individual ordered files), Task (identity only).
 Platform Bootstrap is separate: Codex relies on cwd, ChatGPT on account Default
 Instructions, Z on the standard interactive bootstrap URL and runtime OAuth.
-Task bodies remain in SQLite `task context`; Plans use `plan context`. Reject
+External Task bodies are obtained only with Relay CLI `task context`; Plans use `plan context`. Reject
 stale execution identities and missing Agent snapshots. L4 evaluates each
 role/adapter Prompt from the same Builder, verifies file SHA and SQLite reachability,
 and fails closed on incompatible runtime requirements; a real browser submit

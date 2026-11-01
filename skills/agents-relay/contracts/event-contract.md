@@ -33,7 +33,7 @@ Every Implementation, Reviewer, and Troubleshooter execution publishes `task.sta
 | Reviewer | `verdict` (`approved` or `changes-required`), exact immutable `head_sha`, actionable `findings` as necessary | Validate current immutable review target and apply verdict; defects are a successful Reviewer execution, not `task.failed` |
 | Troubleshooter | Recovery action and durable evidence of verified original Task retry, blocker-Job handoff, or other authorized recovery | Complete recovery Task only; original Task state changes through separately authorized Relay operations |
 
-A Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay normalizes an authenticated structured Reviewer terminal event into its internal Review decision; native `review.*` events may be accepted for backward compatibility.
+A Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay validates the Reviewer verdict; read the accepted review outcome through the matching Relay CLI.
 
 ## Troubleshooter human escalation
 
@@ -49,6 +49,9 @@ A host-mediated interactive invocation is a separate Relay-controlled wait. It r
 
 A legacy Job-level `review: blocked` gate is reset to `pending` only after authoritative `task.unblocked` metadata exists on its bound Reviewer Task and the immutable review head still matches. The same Reviewer Task then resumes without creating a duplicate.
 
-## Local Git merge delivery history
+## Delivery outcome
 
-The Relay-owned merge effect persists the current `job.localMerge` receipt in SQLite. Every attempted delivery also emits `job.merge.failed` or `job.merge.succeeded` to the canonical events-bus, keyed by the Job and merge attempt. Failure `data` contains `reason`, exact `message`, `attempts`, `retryable`, and `nextAttemptAt`; success contains `mergedCommitSha` and `sourceSha`. A dirty checked-out target is `reason: dirty_target_worktree`. The dashboard displays the durable failure reason while `localMerge.status=failed`. After the retry deadline, periodic reconciliation must select ACTIVE Jobs with failed local merges even when all Tasks have succeeded. Historical failure events remain visible after successful recovery.
+Relay owns merge and delivery. Workers must not emit `job.merge.*` or mark
+the Job complete. Inspect delivery status and its failure reason/receipt through
+the version-matched Relay CLI. A prior failed attempt or successful browser
+submission is not proof of final delivery.

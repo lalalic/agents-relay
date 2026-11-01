@@ -43,6 +43,11 @@ function parsePrompt(prompt) {
   }
   return {role:{name:role[1],path:role[2],sha256:role[3]},...segments};
 }
+function parsedAgentPath(prompt) {
+  const match=/^You are [^\n]+ at (\/[^\s]+\.md) \(sha256:[a-f0-9]{64}\)\./m.exec(prompt);
+  assert.ok(match,'Role reference missing');
+  return match[1];
+}
 async function validateReferences(prompt) {
   const {role}=parsePrompt(prompt);
   const agent=await readFile(role.path);
@@ -91,6 +96,16 @@ for(const adapter of adapters)for(const role of roles) {
     }finally{await rm(cliRoot,{recursive:true,force:true});}
     const parsed=parsePrompt(prompt);
     const refs=await validateReferences(prompt);
+    // External Role/Contract/Skill instructions must not expose Relay internals.
+    // They may describe the CLI and the separately owned Task event protocol.
+    const publicRefs=[parsedAgentPath(prompt),...refs.refs.filter(path=>
+      path.includes('/contracts/')||path.endsWith('/SKILL.md'))];
+    for(const path of publicRefs) {
+      const content=await readFile(path,'utf8');
+      assert.doesNotMatch(content,/sqlite|relaystore|reconciler|projection outbox|\/api\/events|127\.0\.0\.1:8787/i,
+        `Private Relay implementation leaked into externally consumed instruction: ${path}`);
+    }
+
     assert.match(gate,/^(?:BOOTSTRAP_CAPABLE|UNSUPPORTED|PREVIEW_ONLY|NEEDS_)/);
     if(role==='troubleshooter' && adapter!=='codex')assert.equal(cx.agents.find(item=>item.name===role)?.runtime,'codex');
     if(role==='vlog-producer' && adapter!=='chatgpt')assert.match(refs.agent,/ChatGPT|interactive preview/i);
@@ -108,6 +123,7 @@ for(const adapter of adapters)for(const role of roles) {
     assert.ok(!prompt.includes('PRIVATE L4 BUSINESS TASK CONTENT'),'Task details must come from SQLite only');
     assert.match(parsed.Task,new RegExp(`Job: ${jobId}\\nTask: ${role==='planner'?'plan-1':'L4-TASK'}\\nExecution: ${execution}`));
     assert.match(parsed.Task,/agents-relay skill.*Relay CLI/);
+    assert.match(parsed.Task,/All Relay state reads and operations use that version-matched CLI/);
     const skillPath=/Use the agents-relay skill at (\/\S+\/SKILL\.md)/.exec(parsed.Task)?.[1];
     assert.ok(skillPath,'Work bootstrap must specify an exact installed Skill');
     const packageCli=resolve(dirname(skillPath),'../../dist/cli.js');

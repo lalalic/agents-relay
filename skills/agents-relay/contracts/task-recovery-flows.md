@@ -1,6 +1,6 @@
 # Task Failure Recovery and Human Escalation — Current Contract
 
-**Status:** Current recovery contract. SQLite Task snapshots retain append-only typed comments alongside authoritative state.
+**Status:** Current recovery contract. Query Task state, recovery status, and comments through the matching Relay CLI.
 
 ## Principles and ownership
 
@@ -8,29 +8,17 @@
 - **One agent Task event contract** applies to Implementation, Reviewer, and Troubleshooter: `task.started`, optional `task.progress`, then exactly one agent terminal event, `task.completed` or `task.failed`. Role-specific results belong in `data`. A review with findings is a *completed* review, not a failed agent execution.
 - **`task.blocked` and `task.unblocked` are authoritative Relay lifecycle transitions**, not ordinary agent terminal events. A human may authorize unblocking a Troubleshooter but does not directly unblock the failed original Task.
 - **Troubleshooter owns diagnosis and recovery decisions.** It chooses technical repair/retry, blocker-Job dependency, or human escalation. There is no separate Escalator agent.
-- **Relay owns transitions and dispatch.** Troubleshooter requests authorized operations; the reconciler/engine validates and durably applies them. An event arriving over the bus is not proof its transition was applied.
+- **Relay owns transitions and dispatch.** Troubleshooter requests authorized operations through Relay CLI, then checks the CLI response and fresh Task Context. Event transport acceptance alone is not confirmation of a Task transition.
 - Preserve the original failure, exact execution correlation, evidence, and idempotency throughout retries and resumes.
 
-## Unified architecture
+## External recovery interface
 
-All three agent roles publish through the **same Task event contract**. Events Bus treats `data` as opaque; Relay interprets role-specific results and alone changes durable Task/Job state.
-
-```mermaid
-flowchart TD
-    I["Implementation"] --> U["Unified Task events"]
-    V["Reviewer"] --> U
-    T["Troubleshooter"] --> U
-    U --> B["Neutral Events Bus"]
-    B --> C["Relay event consumer"]
-    C --> S["Validate execution identity and role-specific data"]
-    S --> W["Relay workflow engine / reconciler"]
-    W --> D[("Durable Task and Job state")]
-    W --> R["Execution / recovery / human-interaction operations"]
-```
-
-- Agents publish `task.completed` or `task.failed` as terminal execution outcomes; Reviewer verdicts and Troubleshooter recovery evidence are results inside `data`.
-- `task.blocked` / `task.unblocked` describe Relay-authorized state changes, not a third agent terminal outcome.
-- Transport does not interpret verdicts, execution IDs, blocker relations, or recovery decisions.
+Task agents publish their required Task events via the canonical Neo Events Bus
+protocol. All Relay status reads and authorized changes use the Prompt-pinned
+Relay CLI (`task context`, `task show`, `task events`, `task recover`,
+`task escalate`, or other documented commands as appropriate). Event transport
+acceptance does not confirm a Task transition. Never access Relay backing
+storage, PR markers, or private HTTP endpoints to infer or change state.
 
 ## Overall flow — Task outcome and recovery branches
 
@@ -78,7 +66,7 @@ flowchart TD
 ```
 
 1. Original agent reports `task.failed` with useful diagnostic `data`; Relay durably records `FAILED`.
-2. Reconciler starts a correlated Troubleshooter Task. Troubleshooter examines durable Task history and technical evidence before choosing a resolution.
+2. Relay assigns a correlated Troubleshooter Task. Troubleshooter examines durable Task history and technical evidence before choosing a resolution.
 3. For a technical remedy, Troubleshooter repairs/validates, requests authorized retry, confirms the original Task requeued, and completes **its own** Task.
 4. For a blocker Job, Troubleshooter registers a durable dependency, then completes **its own** Task; the dependency mechanism later wakes the original Task after verified resolution.
 5. Only a **real user action** calls for human escalation (Flow 2). Missing credentials that can be found or configured automatically, crashes, and retries are Troubleshooter work, not escalation.
@@ -131,10 +119,9 @@ flowchart TD
 
 `Task.input` remains the stable objective and original evidence. `Task.resolution` and
 `Task.escalation` remain the current authoritative states; comments are append-only
-history, not a second state authority. SQLite mutation transactions compare the
-before/after authoritative values and append typed comments with Job, Task,
-execution, transition, and idempotency identity in the same commit. Do not add a
-`resolutionHistory` field.
+history, not current state. Use `task context` through the matching Relay CLI
+to read the current recovery state and history; do not read internal storage
+or invent a second recovery-history source.
 
 Human responses are comments. Resuming a Troubleshooter must not rewrite its
 input or append a stale “Required resolution condition” as new objective text.
