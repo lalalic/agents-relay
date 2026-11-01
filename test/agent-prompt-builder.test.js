@@ -47,3 +47,12 @@ test('unavailable reference storage keeps the complete contract inline', async (
     assert.equal(bundle.system, 'FULL REVIEW CONTRACT');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('production strict reference rejects an unavailable snapshot rather than inlining a large Agent contract', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relay-prompt-strict-'));
+  try {
+    const file = join(root, 'not-a-directory');
+    await writeFile(file, 'occupied');
+    await assert.rejects(buildReferenceFirstPrompt({role:'worker',adapter:'chatgpt',system:'SENSITIVE CONTRACT',user:'task-1',referenceDirectory:file,strictReference:true}));
+  } finally { await rm(root,{recursive:true,force:true}); }
+});

@@ -20,6 +20,30 @@ Before creating, planning, reviewing, or managing a job/task, read and follow `c
 
 For content-generation objectives, read `workflows/content-generation.md` before choosing agents, review boundaries, or durable Tasks. This workflow is a planning guide; the shared task/job contract remains authoritative.
 
+## Execution-scoped Job and Task loading
+
+The Graph-selected Prompt Action passes an execution identity, **not** Task
+prose or a GitHub/PR URL. Read the Task or Plan through the Relay CLI on Neo
+Master before doing work. For a normal Worker, Reviewer or Troubleshooter:
+
+```sh
+agents-relay task context --id JOB --task-id TASK --execution-id EXECUTION
+```
+
+For a Planner (the Prompt names a Plan in its `Task:` field):
+
+```sh
+agents-relay plan context --id JOB --plan-id PLAN --execution-id EXECUTION
+```
+
+Both operations read the SQLite-authoritative context and reject stale or
+inactive execution bindings; do not use `job show`, GitHub, or guessed input as a
+fallback to evade this check. Optional `--repo` further fences the immutable SQLite Job identity.
+No GitHub fetch or Relay HTTP service is needed for either read-only command. The Planner uses the returned `apply_cli`, verifies the Plan
+apply receipt, and does not invent task contents. Publish required Task events
+for actual Tasks according to the separate event contract. A Plan follows its
+existing Plan lifecycle rather than inventing task.started or task.completed.
+
 ## Core task contract
 
 A managed child task is always a descriptive unit of work. It says what an agent must accomplish; it is never a shell command.
@@ -81,16 +105,20 @@ Use `--output file --output-path PATH` when the authoritative result is a file.
 
 ## Worker prompt
 
-For Codex and ChatGPT workers, Agents Relay adds only durable execution identity and contracts around the stored descriptive task input:
-- PR URL
-- job ID
-- task ID
-- parent task ID
-- project name
-- declared output
-- mandatory terminal-event contract
+The canonical Task lifecycle Graph selects `effect.launchTask`; its Action
+gets the exact same four-section Prompt from `buildRelayWorkPrompt()` as the
+read-only `agents-relay prompt` CLI. A Planner uses the same Prompt Action
+through the planner-orchestration Graph. It includes only:
 
-The job/task descriptions remain the durable source of intent. Adapters do not invent task meaning.
+- **Role:** selected Agent identity and immutable cached merged Agent path;
+- **Contracts:** independently listed shared contract paths, in order;
+- **Contexts:** independently listed global/Neo/project paths, in priority order;
+- **Task:** this skill's path, Job ID, Task/Plan ID and Execution ID.
+
+No Task body, PR URL, copied Agent catalog, merged Contracts or merged Contexts.
+The exact work objective, output and acceptance are retrieved with the
+execution-bound SQLite Context Action above. A new Adapter must transport the
+Graph Action Prompt unchanged; bootstrap and authentication are platform-owned.
 
 ## Shared execution context
 
@@ -108,7 +136,7 @@ ChatGPT thread identity is diagnostic only. It is not persisted as a resumable t
 
 Direct orchestrator-created Tasks do not require a Plan. The orchestrator may create the initial batch with `task create`; those Tasks remain top-level unless the orchestrator explicitly gives them normal task parentage. When planner-driven decomposition is desired instead, use `agents-relay plan --repo OWNER/REPO --pr N --id JOB_ID [--prompt TEXT | --prompt-file PATH|-]`.
 
-For explicit `plan` and automatic continuation, Relay invokes the same planner agent as a pure decision function. The planner receives durable Job/Task state, previous planner rounds, and resolved execution context, then returns structured `{ objective_status, assessment, next_tasks }` output. The planner does not call Relay CLI and does not persist Tasks itself.
+For explicit `plan` and automatic continuation, Relay invokes the selected Planner Agent. It reads execution-bound Plan Context through the CLI, builds a structured `{ objective_status, assessment, next_tasks }` candidate and commits that candidate only through `agents-relay plan apply`. The exact `PLAN_APPLIED:<plan-id>:<execution-id>` receipt is mandatory. It never mutates SQLite directly.
 
 Each successful planner invocation is one real `plan-N` planning round. Relay persists that planner result, then creates returned work Tasks with provenance back to that planning round. `parentTaskId` expresses semantic ownership among work Tasks; it is not inherited from the Plan and must never point to a `plan-N` record. `dependencies` independently express execution prerequisites. Historical `planner-N` records remain readable. Only planner execution creates planner rounds; Relay never manufactures synthetic `plan-*` records for direct Task creation. In the dashboard, planner rounds remain provenance/grouping metadata, not semantic parents.
 

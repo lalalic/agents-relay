@@ -392,7 +392,7 @@ test('Plan marker round-trips independently from Job and Task markers', () => {
   assert.equal(parseTask(body), null);
 });
 
-test('default planner uses the production reference-first prompt and preserves Plan apply contract', async () => {
+test('default planner uses the Graph Prompt Action with a cached Agent and separate contract references', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agents-relay-planner-agent-'));
   try {
     const command = join(root, 'model-runtime');
@@ -408,13 +408,15 @@ process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_mes
     const planner = new AgentObjectivePlanner(command);
     assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal)).cliApplied, true);
     const prompt = await readFile(promptFile, 'utf8');
-    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
+    const reference=prompt.match(/with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/);
     assert.ok(reference);
-    assert.match(await readFile(reference[1], 'utf8'), /agents-relay plan apply/);
-    assert.doesNotMatch(prompt, /Verify its SHA-256|Effective planner contract SHA-256/);
-    assert.match(prompt, /Relay owns snapshot integrity/);
-    assert.match(prompt, /## Durable planner input/);
-    assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
+    const agent=await readFile(reference[1],'utf8');
+    assert.match(agent,/Planner Agent|Planner/);
+    assert.doesNotMatch(agent,/BEGIN AGENT CONTRACT|## Shared Task \/ Job Contract/);
+    assert.match(prompt,/## Contracts\n/);assert.match(prompt,/task-job-contract\.md/);
+    assert.match(prompt,/## Contexts\n/);assert.match(prompt,/## Task\n/);
+    assert.match(prompt,/Job: auto\nTask: plan-1\nExecution: execution-1/);
+    assert.doesNotMatch(prompt,/## Durable planner input|\[Agent instructions/);
     const args = JSON.parse(await readFile(argsFile, 'utf8'));
     assert.ok(args.includes('--sandbox') && args[args.indexOf('--sandbox') + 1] === 'workspace-write');
     assert.ok(args.includes('--add-dir') && args[args.indexOf('--add-dir') + 1].startsWith('/'));

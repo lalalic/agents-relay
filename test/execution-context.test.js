@@ -141,46 +141,41 @@ test('Neo Shared Root is always derived from Workspace Root and ignores NEO_SHAR
   }
 });
 
-test('managed worker prompt exposes resolved context and durable retrieval guidance', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-nested-context-'));
-  try {
-    const project = join(root, 'project');
-    await mkdir(project, { recursive: true });
-    const context = await resolveExecutionContext(project, 'nested-worker', { workspaceRoot: root, globalRoot: join(root, 'global') });
-    const job = { id:'j', title:'job', prNumber:54, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
-    const task = { id:'child', taskUrl:'https://github.com/lalalic/agents-relay/pull/54#issuecomment-1', parentTaskId:'parent', dependencies:[], capabilities:[], adapter:'codex', input:'do work', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, executionId:'nested-exec', threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
-    const prompt = await managedWorkerInput(job, task, context);
-    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
-    assert.ok(reference);
-    assert.match(await readFile(reference[1], 'utf8'), /Role: nested-worker/);
-    assert.match(prompt, /Retrieve the durable job and task from GitHub before doing the work/);
-    assert.match(prompt, /Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/54#issuecomment-1/);
-    assert.doesNotMatch(prompt, /do work/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+test('managed worker Prompt lists independent context files in priority order',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'relay-prompt-context-priority-'));
+  try{
+    const project=join(root,'project');const global=join(root,'global');await Promise.all([mkdir(project,{recursive:true}),mkdir(global,{recursive:true})]);
+    await writeFile(join(global,'AGENTS.md'),'GLOBAL RULE');
+    await writeFile(join(project,'AGENTS.md'),'PROJECT RULE');
+    const context=await resolveExecutionContext(project,'nested-worker',{workspaceRoot:root,globalRoot:global});
+    const job={id:'j',title:'job',repository:'lalalic/agents-relay',state:'ACTIVE',tasks:[]};
+    const task={id:'child',agentName:'implementation',parentTaskId:'parent',dependencies:[],adapter:'codex',input:'PRIVATE TASK INPUT',output:{kind:'task_pr'},state:'QUEUED',executionId:'nested-exec'};
+    const prompt=await managedWorkerInput(job,task,context);
+    assert.match(prompt,/^# Role\nYou are implementation/);
+    assert.match(prompt,/## Contracts[\s\S]*## Contexts[\s\S]*## Task/);
+    assert.ok(prompt.indexOf('/global/AGENTS.md') < prompt.indexOf('/project/AGENTS.md'));
+    assert.match(prompt,/Job: j\nTask: child\nExecution: nested-exec/);
+    assert.doesNotMatch(prompt,/PRIVATE TASK INPUT|github\.com/);
+  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-
-
-test('managed worker input loads the selected agent Markdown contract by agentName', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-agent-contract-'));
-  try {
-    const workspace = join(root, 'workspace');
-    const neo = join(workspace, 'neo');
-    const project = join(workspace, 'project');
-    await Promise.all([mkdir(project, { recursive: true }), mkdir(neo, { recursive: true })]);
-    const reviewerPath = await agent(project, 'reviewer', 'review');
-    await writeFile(reviewerPath, `---\nname: reviewer\ntype: reviewer\ncapabilities: [review]\n---\n\nCANONICAL REVIEW CONTRACT: emit review.started then one decision.`);
-    const context = await resolveExecutionContext(project, 'reviewer', { workspaceRoot: workspace, globalRoot: join(root, 'global') });
-    const job = { id:'j', title:'job', objective:'ship safely', prNumber:75, repository:'lalalic/agents-relay', state:'ACTIVE', continuation:null, createdAt:'', updatedAt:'', tasks:[] };
-    const task = { id:'review', agentName:'reviewer', executionId:'review-exec', parentTaskId:null, dependencies:[], capabilities:['review'], adapter:'codex', input:'review exact head abc', output:{kind:'task_pr'}, routing:{provider:'openai',model:'gpt',decidedBy:'test',decidedAt:''}, state:'QUEUED', attempt:0, maxAttempts:1, leaseOwner:null, leaseExpiresAt:null, threadId:null, result:null, error:null, timeoutMs:1000, createdAt:'', updatedAt:'' };
-    const prompt = await managedWorkerInput(job, task, context);
-    const reference = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
-    assert.ok(reference, 'effective agent contract must have an immutable reference');
-    const contract = await readFile(reference[1], 'utf8');
-    assert.match(contract, /Agent: reviewer/);
-    assert.match(contract, /CANONICAL REVIEW CONTRACT: emit review\.started then one decision/);
-    assert.match(contract, /Worker\/model routing\s+does not change the selected agent identity/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+test('managed worker caches only the resolved Agent, not concatenated Contracts and Contexts',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'relay-cached-agent-only-'));
+  try{
+    const project=join(root,'project');await mkdir(project,{recursive:true});
+    const reviewerPath=await agent(project,'reviewer','review');
+    await writeFile(reviewerPath,`---\nname: reviewer\ntype: reviewer\n---\n\nCANONICAL REVIEW CONTRACT.`);
+    const context=await resolveExecutionContext(project,'reviewer',{workspaceRoot:root,globalRoot:join(root,'global')});
+    const job={id:'j',title:'job',repository:'lalalic/agents-relay',state:'ACTIVE',tasks:[]};
+    const task={id:'review',agentName:'reviewer',dependencies:[],adapter:'codex',input:'PRIVATE HEAD',output:{kind:'task_pr'},state:'QUEUED',executionId:'review-exec'};
+    const prompt=await managedWorkerInput(job,task,context);
+    const reference=/with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/.exec(prompt);
+    assert.ok(reference);
+    const contract=await readFile(reference[1],'utf8');
+    assert.match(contract,/CANONICAL REVIEW CONTRACT/);
+    assert.doesNotMatch(contract,/BEGIN AGENT CONTRACT|Shared Task \/ Job Contract|event-contract|PRIVATE HEAD/);
+    assert.match(prompt,/## Contracts\n/);
+  }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('context resolve CLI exposes the same resolver for XChat without durable state', async () => {

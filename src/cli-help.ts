@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|review|artifact|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|review|artifact|plan|prompt|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
@@ -14,6 +14,8 @@ Commands:
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
+  plan context             Read execution-bound Planner context from SQLite
+  prompt                   Print raw Planner/Worker prompt from the production Builder
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
   escalation               Run the canonical escalation graph and Neo escalation executor
@@ -51,6 +53,16 @@ Common options:
 
 Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
+  prompt: `Read-only exact PromptBuilder output for a durable Plan or Task.
+
+  agents-relay prompt --id JOB --plan-id PLAN --adapter codex|chatgpt|z [--output FILE]
+  agents-relay prompt --id JOB --task-id TASK --adapter codex|chatgpt|z [--output FILE]
+
+Raw worker-facing text on stdout, no profile wrapper. --repo selects local SQLite,
+not GitHub. Old completed Plans are reconstructed from recorded IDs and prior
+Task history; their original historical prompt bytes are not persisted. Only
+Codex currently has production Planner dispatch. Web Planner variants show the
+same Builder message targeting the other transports, not a live delivery.`,
   review: `Use review run for an Agent-owned outcome review, or request for the SHA-bound final review.
 
 Outcome: agents-relay review run --prompt-file PATH --agents video-director,market --project-path DIR [--output PATH]

@@ -10,6 +10,9 @@ export async function runCliEntrypoint(
     console.error(error instanceof Error ? error.message : String(error));
     exitCode = 1;
   }
+  // A successful main() may intentionally set a non-zero status (for example,
+  // a read-only validation returning FAIL). Never overwrite that status with 0.
+  exitCode = Math.max(exitCode, Number(process.exitCode ?? 0) || 0);
   process.exitCode = exitCode;
   if (options.serve) return;
   const timer = setTimeout(() => (options.forceExit ?? process.exit)(exitCode), options.graceMs ?? 2_000);

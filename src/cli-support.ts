@@ -51,15 +51,15 @@ export function repository(args: string[]): string { const value = arg(args, '--
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
-export async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+export async function storeFor(args: string[], allowIdOnly = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
   const file = arg(args, '--file');
   if (file) { const loaded = await localStore(file); return { ...loaded, localFile: file }; }
-  const repo = noGitHubMode(args) ? repository(args) : arg(args, '--repo');
+  const repo = allowIdOnly ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
-  if (!repo || !jobId) throw new Error('Local Job requires --repo and --id (or explicit --file)');
+  if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
   const directory = arg(args, '--store-dir') || relayStoreDirectory();
   const binding = await createJobIdRegistryResolver(directory, new Map())(jobId);
-  if (!binding || binding.job.repository !== repo)
+  if (!binding || (repo && binding.job.repository !== repo))
     throw new Error('Immutable local Job not found for repository: ' + jobId);
   const suppliedPr = arg(args, '--pr');
   const boundPr = binding.job.prNumber > 0 ? binding.job.prNumber : 0;
