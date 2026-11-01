@@ -96,6 +96,9 @@ test('task events CLI pages through full history without skipping or duplicating
     assert.deepEqual(requested.map(r=>r.after),[0,60,120]);
     assert.ok(requested.every(r=>r.order==='asc'&&r.task==='t1'));
     await assert.rejects(run(process.execPath,[...base,'--after','bad'],{cwd:process.cwd(),env}),/non-negative integer cursor/);
+    await assert.rejects(run(process.execPath,[...base,'--after'],{cwd:process.cwd(),env}),/--after requires a value/);
+    await assert.rejects(run(process.execPath,[...base,'--order'],{cwd:process.cwd(),env}),/--order may not be repeated/);
+    await assert.rejects(run(process.execPath,[...base.slice(0,-2),'--order'],{cwd:process.cwd(),env}),/--order requires a value/);
     await assert.rejects(run(process.execPath,[...base.slice(0,-2),'--order','desc','--after','2'],{cwd:process.cwd(),env}),/--after requires --order asc/);
   }finally{await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));await rm(dir,{recursive:true,force:true});}
 });
@@ -113,6 +116,8 @@ test('read-only Task show/comments support explicit local --file input',async()=
     const {stdout:comments}=await run(process.execPath,[...base,'comments','--file',fixture,'--id','job1','--task-id','t1'],{cwd:process.cwd(),timeout:10000});
     assert.equal(JSON.parse(comments).length,1);
     await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','missing'],{cwd:process.cwd(),timeout:10000}),/Task missing not found/);
+    await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','other-job','--task-id','t1'],{cwd:process.cwd(),timeout:10000}),/Local --file Job ID binding mismatch/);
+    await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','t1','--repo','other/repo'],{cwd:process.cwd(),timeout:10000}),/Local --file repository binding mismatch/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
@@ -152,6 +157,8 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
     assert.equal(JSON.parse(await runAction('show')).title,'real ID only task');
     assert.equal(JSON.parse(await runAction('comments')).length,1);
     assert.deepEqual(JSON.parse(await runAction('events')).events.map(e=>e.event_id),['e1']);
+    await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--task-id','t1','--repo'],
+      {cwd:process.cwd(),env,timeout:10000}),/--repo requires a repository value/);
     await assert.rejects(run(process.execPath,
       [...args,'show','--id','job-id-only','--task-id','t1','--repo','other/repo'],
       {cwd:process.cwd(),env,timeout:10000}),/Immutable local Job not found/);

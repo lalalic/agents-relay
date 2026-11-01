@@ -31,9 +31,13 @@ export type EventsHistoryPage = {
  * cursor pagination path; never read its private history backing file. */
 export async function eventsBusHistoryPage(
   jobId: string, taskId: string | null, limit: number,
-  options: { order?: 'asc' | 'desc'; after?: number } = {},
+  options: { order?: 'asc' | 'desc'; after?: number; timeoutMs?: number } = {},
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<EventsHistoryPage> {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Invalid event history page limit');
+  const timeoutMs = options.timeoutMs ?? 12000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000)
+    throw new Error('Invalid event history timeout');
   const runtime = resolveEventsBusRuntime(env);
   const url = new URL('/events', runtime.apiUrl);
   const order = options.order ?? 'desc';
@@ -47,14 +51,22 @@ export async function eventsBusHistoryPage(
   url.searchParams.set('limit', String(boundedLimit));
   url.searchParams.set('order', order);
   if (order === 'asc') url.searchParams.set('after', String(after));
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`events-bus history unavailable: HTTP ${response.status}`);
-  const body = await response.json() as {
+  let body: {
     job_id?: string; order?: string;
     events?: { cursor?: number; event?: import('./types.js').EventRecord }[];
     next_cursor?: number;
   };
-  if (body.job_id !== jobId || body.order !== order || !Array.isArray(body.events) ||
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    body = await response.json() as typeof body;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`events-bus history unavailable: ${reason}`);
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      body.job_id !== jobId || body.order !== order || !Array.isArray(body.events) ||
       body.events.length > boundedLimit)
     throw new Error('events-bus history returned an unexpected Job, order, or events payload');
   const events: import('./types.js').EventRecord[] = [];

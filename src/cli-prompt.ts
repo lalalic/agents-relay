@@ -90,6 +90,11 @@ export async function runTaskEventsCommand(args: string[]): Promise<void> {
   if(!id)throw new Error('task events requires --task-id');
   const {job}=await storeFor(args,true);
   if(!job.tasks.some(task=>task.id===id))throw new Error(`Task ${id} not found in Job ${job.id}`);
+  for(const flag of ['--limit','--order','--after']) {
+    if(args.filter(value=>value===flag).length>1)throw new Error(`task events ${flag} may not be repeated`);
+    if(args.includes(flag) && (!arg(args,flag) || arg(args,flag).startsWith('--')))
+      throw new Error(`task events ${flag} requires a value`);
+  }
   const requested=Number(arg(args,'--limit','60'));
   if(!Number.isInteger(requested)||requested<1||requested>60)
     throw new Error('task events --limit must be an integer from 1 to 60');

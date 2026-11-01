@@ -53,7 +53,20 @@ async function localStore(file: string): Promise<{ store: InMemoryStore; job: Jo
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
 export async function storeFor(args: string[], allowIdOnly = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
   const file = arg(args, '--file');
-  if (file) { const loaded = await localStore(file); return { ...loaded, localFile: file }; }
+  if (file) {
+    const loaded = await localStore(file);
+    if (allowIdOnly) {
+      const requestedId = arg(args,'--id'), requestedRepo = arg(args,'--repo');
+      if (requestedId && requestedId !== loaded.job.id) throw new Error('Local --file Job ID binding mismatch');
+      if (hasArg(args,'--repo') && (!requestedRepo || requestedRepo.startsWith('--') ||
+          loaded.job.repository !== requestedRepo)) throw new Error('Local --file repository binding mismatch');
+    }
+    return { ...loaded, localFile: file };
+  }
+  if (allowIdOnly && args.filter(value=>value==='--repo').length>1)
+    throw new Error('--repo may not be repeated');
+  if (allowIdOnly && hasArg(args,'--repo') && (!arg(args,'--repo') || arg(args,'--repo').startsWith('--')))
+    throw new Error('--repo requires a repository value');
   const repo = allowIdOnly ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
   if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
