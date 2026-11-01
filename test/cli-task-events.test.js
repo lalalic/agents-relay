@@ -118,6 +118,22 @@ test('read-only Task show/comments support explicit local --file input',async()=
     await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','missing'],{cwd:process.cwd(),timeout:10000}),/Task missing not found/);
     await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','other-job','--task-id','t1'],{cwd:process.cwd(),timeout:10000}),/Local --file Job ID binding mismatch/);
     await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','t1','--repo','other/repo'],{cwd:process.cwd(),timeout:10000}),/Local --file repository binding mismatch/);
+    const local=['dist/cli.js','task','show','--file',fixture,'--task-id','t1'];
+    for(const [extra,expected] of [
+      [[],/--id is required/],
+      [['--id'],/--id requires a value/],
+      [['--id','job1','--id','other'],/--id may not be repeated/],
+      [['--id','job1','--task-id','other'],/--task-id may not be repeated/],
+      [['--id','job1','--repo','example/repo','--repo','other/repo'],/--repo may not be repeated/],
+      [['--id','job1','--file',fixture],/--file may not be repeated/],
+      [['--id','job1','--pr'],/--pr requires a value/],
+      [['--id','job1','--pr','0'],/--pr must be a positive integer/],
+      [['--id','job1','--pr','1'],/Local --file PR binding mismatch/],
+      [['--id','job1','--store-dir'],/--store-dir requires a value/],
+    ]) {
+      await assert.rejects(run(process.execPath,[...local,...extra],
+        {cwd:process.cwd(),timeout:10000}),expected);
+    }
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
@@ -158,7 +174,11 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
     assert.equal(JSON.parse(await runAction('comments')).length,1);
     assert.deepEqual(JSON.parse(await runAction('events')).events.map(e=>e.event_id),['e1']);
     await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--task-id','t1','--repo'],
-      {cwd:process.cwd(),env,timeout:10000}),/--repo requires a repository value/);
+      {cwd:process.cwd(),env,timeout:10000}),/--repo requires a value/);
+    await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--id','other','--task-id','t1'],
+      {cwd:process.cwd(),env,timeout:10000}),/--id may not be repeated/);
+    await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--task-id','t1','--pr','1'],
+      {cwd:process.cwd(),env,timeout:10000}),/Local Job\/PR binding mismatch/);
     await assert.rejects(run(process.execPath,
       [...args,'show','--id','job-id-only','--task-id','t1','--repo','other/repo'],
       {cwd:process.cwd(),env,timeout:10000}),/Immutable local Job not found/);

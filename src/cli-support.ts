@@ -51,22 +51,36 @@ export function repository(args: string[]): string { const value = arg(args, '--
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
+/** The public read-only commands must fail closed on ambiguous Job bindings. */
+function validateReadOnlyJobBinding(args: string[]): void {
+  for (const flag of ['--id','--repo','--pr','--file','--store-dir','--task-id','--plan-id','--execution-id']) {
+    const count=args.filter(value=>value===flag).length;
+    if (count>1) throw new Error(`${flag} may not be repeated`);
+    if (count===1 && (!arg(args,flag) || arg(args,flag).startsWith('--')))
+      throw new Error(`${flag} requires a value`);
+  }
+  if (!hasArg(args,'--id')) throw new Error('--id is required for read-only Relay commands');
+  if (hasArg(args,'--pr')) {
+    const pr=Number(arg(args,'--pr'));
+    if (!Number.isSafeInteger(pr) || pr<=0) throw new Error('--pr must be a positive integer');
+  }
+}
 export async function storeFor(args: string[], allowIdOnly = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+  if (allowIdOnly) validateReadOnlyJobBinding(args);
   const file = arg(args, '--file');
   if (file) {
     const loaded = await localStore(file);
     if (allowIdOnly) {
-      const requestedId = arg(args,'--id'), requestedRepo = arg(args,'--repo');
-      if (requestedId && requestedId !== loaded.job.id) throw new Error('Local --file Job ID binding mismatch');
-      if (hasArg(args,'--repo') && (!requestedRepo || requestedRepo.startsWith('--') ||
-          loaded.job.repository !== requestedRepo)) throw new Error('Local --file repository binding mismatch');
+      const requestedId=arg(args,'--id'), requestedRepo=arg(args,'--repo');
+      if (requestedId!==loaded.job.id) throw new Error('Local --file Job ID binding mismatch');
+      if (requestedRepo && loaded.job.repository!==requestedRepo)
+        throw new Error('Local --file repository binding mismatch');
+      const boundPr=loaded.job.prNumber>0 ? loaded.job.prNumber:0;
+      if (hasArg(args,'--pr') && boundPr!==Number(arg(args,'--pr')))
+        throw new Error('Local --file PR binding mismatch');
     }
     return { ...loaded, localFile: file };
   }
-  if (allowIdOnly && args.filter(value=>value==='--repo').length>1)
-    throw new Error('--repo may not be repeated');
-  if (allowIdOnly && hasArg(args,'--repo') && (!arg(args,'--repo') || arg(args,'--repo').startsWith('--')))
-    throw new Error('--repo requires a repository value');
   const repo = allowIdOnly ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
   if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
