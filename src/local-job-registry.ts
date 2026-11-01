@@ -2,6 +2,16 @@ import { GitHubStore, InMemoryStore, type GitHubClient } from './store.js';
 import { LocalAuthorityDurableStore } from './local-authority-store.js';
 import { discoverLocalRelayStoreSnapshots, SQLiteRelayStore } from './relay-store.js';
 
+/** Read the unique snapshot without constructing a writable Store. */
+export async function findJobIdSnapshot(directory: string, jobId: string) {
+  const snapshots = await discoverLocalRelayStoreSnapshots(directory);
+  const matches = snapshots.flatMap(snapshot =>
+    snapshot.jobs.filter(job => job.id === jobId).map(job => ({ snapshot, job })));
+  const live = matches.filter(item => !['COMPLETED','CANCELLED'].includes(item.job.state));
+  return live.length === 1 ? live[0]
+    : live.length === 0 && matches.length === 1 ? matches[0] : null;
+}
+
 /** Resolve exactly one SQLite-backed Job from its immutable ID, independent of PR binding. */
 export function createJobIdRegistryResolver(
   directory: string,
@@ -9,12 +19,7 @@ export function createJobIdRegistryResolver(
   options: { client?: GitHubClient; trustedAuthors?: ReadonlySet<string>; noGitHub?: boolean } = {},
 ) {
   return async (jobId: string) => {
-    const snapshots = await discoverLocalRelayStoreSnapshots(directory);
-    const matches = snapshots.flatMap(snapshot =>
-      snapshot.jobs.filter(job => job.id === jobId).map(job => ({ snapshot, job })));
-    // Retain historical terminal snapshots without shadowing a uniquely live Job.
-    const live = matches.filter(item => !['COMPLETED', 'CANCELLED'].includes(item.job.state));
-    const selected = live.length === 1 ? live[0] : live.length === 0 && matches.length === 1 ? matches[0] : null;
+    const selected = await findJobIdSnapshot(directory, jobId);
     if (!selected) return null;
     const { snapshot, job } = selected;
     const scopedKey = `${snapshot.path}#${job.id}`;

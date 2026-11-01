@@ -3,8 +3,9 @@ import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
-import { createJobIdRegistryResolver } from './local-job-registry.js';
+import { createJobIdRegistryResolver, findJobIdSnapshot } from './local-job-registry.js';
 import { relayStoreDirectory } from './relay-store.js';
+import { normalizeRelayJob } from './relay-job-snapshot-reads.js';
 import { EventRecord, Job, Task, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobTagJson } from './task-tag.js';
@@ -85,6 +86,18 @@ export async function storeFor(args: string[], allowIdOnly = false): Promise<{ s
   const jobId = arg(args, '--id');
   if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
   const directory = arg(args, '--store-dir') || relayStoreDirectory();
+  if (allowIdOnly) {
+    // Read-only CLI must not initialize SQLiteRelayStore: its constructor
+    // runs migrations and reclaims processing outbox actions.
+    const selected = await findJobIdSnapshot(directory, jobId);
+    if (!selected || (repo && selected.job.repository !== repo))
+      throw new Error('Immutable local Job not found for repository: ' + jobId);
+    const job = normalizeRelayJob(JSON.stringify(selected.job));
+    const suppliedPr = arg(args, '--pr');
+    if (suppliedPr && (job.prNumber > 0 ? job.prNumber : 0) !== Number(suppliedPr))
+      throw new Error('Local Job/PR binding mismatch');
+    return { store: new InMemoryStore(job), job, localFile: null };
+  }
   const binding = await createJobIdRegistryResolver(directory, new Map())(jobId);
   if (!binding || (repo && binding.job.repository !== repo))
     throw new Error('Immutable local Job not found for repository: ' + jobId);

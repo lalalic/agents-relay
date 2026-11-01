@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 import { SQLiteRelayStore } from '../dist/relay-store.js';
+import { DatabaseSync } from 'node:sqlite';
 
 test('task events CLI returns only Task-scoped history through the supported command', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-cli-task-events-'));
@@ -164,6 +165,20 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
   const addr=server.address();assert.ok(addr&&typeof addr==='object');
   try {
     await store.saveJob(job);
+    // Exercise the real outbox while a read-only CLI is invoked. A read must
+    // not reclaim a stale processing action; the writer's retry loop owns it.
+    await store.enqueueProjection({idempotencyKey:'read-must-not-requeue',
+      operation:'update_pr_body',payload:{operation:'update_pr_body',body:'test'}});
+    const [claimed]=await store.claimDueProjections();
+    assert.ok(claimed,'Isolated external action was not claimed');
+    const inspection=new DatabaseSync(join(dir,'relay.sqlite'));
+    const aged=new Date(Date.now()-180000).toISOString();
+    inspection.prepare("UPDATE projection_outbox SET updated_at=? WHERE id=?")
+      .run(aged,claimed.id);
+    const readProjection=()=>inspection.prepare(
+      "SELECT status,updated_at FROM projection_outbox WHERE id=?").get(claimed.id);
+    const beforeRead=readProjection();
+    assert.equal(beforeRead.status,'processing');
     const env={...process.env,AGENTS_RELAY_STORE_DIR:join(dir,'stores'),
       NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`};
     const args=['dist/cli.js','task'];
@@ -173,6 +188,9 @@ test('read-only Task show/comments/events resolve a real isolated Job by ID with
     assert.equal(JSON.parse(await runAction('show')).title,'real ID only task');
     assert.equal(JSON.parse(await runAction('comments')).length,1);
     assert.deepEqual(JSON.parse(await runAction('events')).events.map(e=>e.event_id),['e1']);
+    assert.deepEqual(readProjection(),beforeRead,
+      'Read-only CLI must not requeue or touch an in-flight external action');
+    inspection.close();
     await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--task-id','t1','--repo'],
       {cwd:process.cwd(),env,timeout:10000}),/--repo requires a value/);
     await assert.rejects(run(process.execPath,[...args,'show','--id','job-id-only','--id','other','--task-id','t1'],
