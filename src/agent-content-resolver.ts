@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 export type AgentMergeMode = 'extend' | 'replace';
 export type EffectiveAgentContent = { content: string; hash: string; sources: string[]; metadata: Record<string, string | undefined> };
@@ -28,6 +28,25 @@ function parseDocument(raw: string) {
     }
   }
   return { body: raw.slice(match[0].length).trim(), name, extendsAgent, mode, replace: sections.replace, extend: sections.extend };
+}
+
+/** A cached merged Agent has no useful directory for source-relative links.
+ * Canonicalize link destinations in each layer BEFORE merging, preserving the
+ * real source file's link base without inlining the linked document. */
+function absoluteAgentLinks(body: string, sourcePath: string): string {
+  let fence: string | undefined;
+  return body.split('\n').map(line => {
+    const open = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (open) { if (!fence) fence = open[0]; else if (fence === open[0]) fence = undefined; return line; }
+    if (fence) return line;
+    return line.replace(/(\]\()([^\s)]+)(\))/g, (full, prefix: string, destination: string, suffix: string) => {
+      if (destination.startsWith('/') || destination.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(destination)) return full;
+      const hash = destination.search(/[?#]/);
+      const pathname = hash === -1 ? destination : destination.slice(0, hash);
+      const fragment = hash === -1 ? '' : destination.slice(hash);
+      return `${prefix}${resolve(dirname(sourcePath),pathname)}${fragment}${suffix}`;
+    });
+  }).join('\n');
 }
 
 type Section = { path: string; start: number; end: number; level: number };
@@ -84,6 +103,7 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
     if (!(canonical === canonicalRoot || canonical.startsWith(canonicalRoot + '/'))) throw new Error('Agent file escapes context root');
     const raw = await readFile(canonical, 'utf8');
     const source = parseDocument(raw);
+    source.body = absoluteAgentLinks(source.body, canonical);
     if (source.name && source.name !== name) throw new Error(`Agent name mismatch ${source.name} != ${name}`);
     return { ...source, path: canonical, metadata: Object.fromEntries(raw.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1].split(/\r?\n/).flatMap(line => {
       const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);

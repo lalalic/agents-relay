@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import { resolveExecutionContext } from '../../../dist/execution-context.js';
+import { resolveExecutionContext, resolveAgentContract } from '../../../dist/execution-context.js';
 import { managedWorkerInput } from '../../../dist/managed-worker-input.js';
 import { buildPlannerExecutionPrompt } from '../../../dist/planner.js';
 import { zBootstrap, zTaskBrief, zExecutionSource } from '../../../dist/z-adapter.js';
@@ -204,6 +204,29 @@ for(const adapter of adapters)for(const role of roles) {
     }
   });
 }
+
+test('L4 Vlog role snapshots resolve their original Markdown links before caching',async()=>{
+  const cx=await context();
+  for(const name of ['vlog-director','vlog-editor','vlog-producer']){
+    const {definition,sources}=await resolveAgentContract(cx,name);
+    if(name==='vlog-director'){
+      assert.match(definition,/`runs\/personal-library\/tour-director\.json`/);
+      assert.match(definition,/`lib\/tour-director-index\.mjs`/);
+      assert.doesNotMatch(definition,/`vlog\/(?:runs|lib)\//);
+      await readFile(join(vlog,'runs/personal-library/tour-director.json'));
+      await readFile(join(vlog,'lib/tour-director-index.mjs'));
+    }
+    assert.ok(sources.length>0);
+    const links=[...definition.matchAll(/\]\(([^)\s]+)\)/g)].map(x=>x[1])
+      .filter(x=>!x.startsWith('#') && !/^[a-z][a-z0-9+.-]*:/i.test(x));
+    assert.ok(links.length>0,`${name} should have document links`);
+    for(const link of links){
+      assert.ok(link.startsWith('/'),`${name}: unresolved cache-relative link ${link}`);
+      const local=link.split(/[?#]/,1)[0];
+      await readFile(local); // The path must be usable from the immutable cache.
+    }
+  }
+});
 
 test('L4 execution-scoped CLI loads a real isolated SQLite Plan and Task, rejects stale identities',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'relay-prompt-l4-sqlite-'));
