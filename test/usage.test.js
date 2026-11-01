@@ -120,6 +120,32 @@ printf '%s\\n' '{"name":"Harness","poolSize":8,"idle":3,"leased":4,"available":4
   }
 });
 
+test('Browser Workspace probe uses configured stable WebHelm CLI under npm worker settings', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'relay-webhelm-npm-env-'));
+  const binary = join(dir, 'webhelm');
+  const observedAt = '2026-09-27T16:00:00.000Z';
+  const oldCommand = process.env.AGENTS_RELAY_WEBHELM_COMMAND;
+  const oldPackage = process.env.npm_config_package;
+  try {
+    await writeFile(binary, `#!/bin/sh
+[ "$1" = capacity ] && [ "$#" -eq 1 ] || exit 127
+printf '%s\\n' '{"name":"Harness","poolSize":8,"idle":3,"leased":0,"available":8,"observedAt":"${observedAt}"}'
+`);
+    await chmod(binary, 0o755);
+    process.env.AGENTS_RELAY_WEBHELM_COMMAND = binary;
+    process.env.npm_config_package = 'unrelated@latest';
+    const result = await new BrowserWorkspaceUsageReader(undefined, 2500, () => new Date(observedAt)).read();
+    assert.equal(result.available, 8);
+    assert.equal(result.reason, null);
+  } finally {
+    if (oldCommand === undefined) delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;
+    else process.env.AGENTS_RELAY_WEBHELM_COMMAND = oldCommand;
+    if (oldPackage === undefined) delete process.env.npm_config_package;
+    else process.env.npm_config_package = oldPackage;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('Browser Workspace probe failures remain unknown', async () => {
   const reader = new BrowserWorkspaceUsageReader('definitely-not-a-webhelm-command', 50, () => new Date('2026-09-27T16:00:00.000Z'));
   const capacity = await reader.read();
