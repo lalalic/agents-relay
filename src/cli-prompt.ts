@@ -100,7 +100,7 @@ export async function runTaskEventsCommand(args: string[]): Promise<void> {
   if(!Number.isSafeInteger(after)||after<0)throw new Error('task events --after must be a non-negative integer cursor');
   if(args.includes('--after') && order!=='asc')throw new Error('task events --after requires --order asc');
   const page=await eventsBusHistoryPage(job.id,id,requested,{order,after});
-  const events=page.events.filter(event=>event.job_id===job.id&&event.task_id===id);
+  const events=page.events; // Source validates Job/Task identity and cursor before exposing evidence.
   console.log(JSON.stringify({jobId:job.id,taskId:id,order:order==='asc'?'oldest-first':'newest-first',
     ...(order==='asc'?{nextCursor:page.nextCursor,morePossible:events.length===requested}:{}),events},null,2));
 }

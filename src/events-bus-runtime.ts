@@ -43,16 +43,38 @@ export async function eventsBusHistoryPage(
   if (order === 'desc' && after !== 0) throw new Error('Event history cursor requires ascending order');
   url.searchParams.set('job', jobId);
   if (taskId) url.searchParams.set('task', taskId);
-  url.searchParams.set('limit', String(Math.max(1, Math.min(60, limit))));
+  const boundedLimit = Math.max(1, Math.min(60, limit));
+  url.searchParams.set('limit', String(boundedLimit));
   url.searchParams.set('order', order);
   if (order === 'asc') url.searchParams.set('after', String(after));
   const response = await fetch(url);
   if (!response.ok) throw new Error(`events-bus history unavailable: HTTP ${response.status}`);
-  const body = await response.json() as { events?: { cursor?: number; event?: import('./types.js').EventRecord }[]; next_cursor?: number };
-  if (!Array.isArray(body.events)) throw new Error('events-bus history returned no events array');
-  const events = body.events.map(row => row.event).filter((event): event is import('./types.js').EventRecord => Boolean(event));
-  const nextCursor = body.next_cursor ?? (order === 'asc' && body.events.length === 0 ? after : 0);
-  if (order === 'asc' && (!Number.isSafeInteger(nextCursor) || nextCursor < after || (events.length > 0 && nextCursor === after)))
+  const body = await response.json() as {
+    job_id?: string; order?: string;
+    events?: { cursor?: number; event?: import('./types.js').EventRecord }[];
+    next_cursor?: number;
+  };
+  if (body.job_id !== jobId || body.order !== order || !Array.isArray(body.events) ||
+      body.events.length > boundedLimit)
+    throw new Error('events-bus history returned an unexpected Job, order, or events payload');
+  const events: import('./types.js').EventRecord[] = [];
+  let previous = order === 'asc' ? after : Number.POSITIVE_INFINITY;
+  for (const row of body.events) {
+    const cursor = row?.cursor;
+    const event = row?.event;
+    if (typeof cursor !== 'number' || !Number.isSafeInteger(cursor) || cursor <= 0 || !event ||
+        event.job_id !== jobId || (taskId !== null && event.task_id !== taskId) ||
+        (order === 'asc' ? cursor <= previous : cursor >= previous))
+      throw new Error('events-bus history returned invalid, out-of-order, or cross-Task event data');
+    previous = cursor;
+    events.push(event);
+  }
+  const nextCursor = body.next_cursor;
+  const expectedCursor = body.events.length
+    ? (order === 'asc' ? body.events.at(-1)!.cursor : body.events[0].cursor)
+    : after;
+  if (typeof nextCursor !== 'number' || !Number.isSafeInteger(nextCursor) || nextCursor !== expectedCursor ||
+      (order === 'asc' && events.length > 0 && nextCursor <= after))
     throw new Error('events-bus history returned an invalid or non-advancing cursor');
   return { events, nextCursor };
 }

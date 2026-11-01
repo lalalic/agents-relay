@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
+import { SQLiteRelayStore } from '../dist/relay-store.js';
 
 test('task events CLI returns only Task-scoped history through the supported command', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'relay-cli-task-events-'));
@@ -24,7 +25,7 @@ test('task events CLI returns only Task-scoped history through the supported com
     assert.equal(url.searchParams.get('task'), 't1');
     assert.equal(url.searchParams.get('limit'), '2');
     res.writeHead(200, {'content-type':'application/json'});
-    res.end(JSON.stringify({events:[{event},{event:{...event,job_id:'other'}}]}));
+    res.end(JSON.stringify({job_id:'job1',order:'desc',next_cursor:1,events:[{cursor:1,event}]}));
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -99,7 +100,7 @@ test('task events CLI pages through full history without skipping or duplicating
   }finally{await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));await rm(dir,{recursive:true,force:true});}
 });
 
-test('read-only task show/comments can find a Job by immutable ID without --repo',async()=>{
+test('read-only Task show/comments support explicit local --file input',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'relay-cli-show-id-'));
   const fixture=join(dir,'job.json');
   try {
@@ -113,4 +114,50 @@ test('read-only task show/comments can find a Job by immutable ID without --repo
     assert.equal(JSON.parse(comments).length,1);
     await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','missing'],{cwd:process.cwd(),timeout:10000}),/Task missing not found/);
   }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('read-only Task show/comments/events resolve a real isolated Job by ID without --repo or --file',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'relay-id-only-live-'));
+  const store=new SQLiteRelayStore(join(dir,'relay.sqlite'),'job-id-only');
+  const at='2026-11-01T17:00:00.000Z';
+  const task={id:'t1',jobId:'job-id-only',title:'real ID only task',kind:'work',
+    state:'FAILED',parentTaskId:null,dependencies:[],input:'private input',
+    comments:[{id:'c1',message:'diagnostic note',createdAt:at}],
+    output:{kind:'file',path:'result.txt'},attempt:1,maxAttempts:1,
+    createdAt:at,updatedAt:at};
+  const job={id:'job-id-only',repository:'example/repo',prNumber:0,title:'real isolated Job',
+    objective:'Review Task events',state:'ACTIVE',continuation:null,
+    createdAt:at,updatedAt:at,tasks:[task],plans:[]};
+  const event={version:1,event_id:'e1',job_id:'job-id-only',task_id:'t1',
+    parent_task_id:null,type:'task.failed',status:'failed',
+    timestamp:at,visibility:'orchestrator',level:'error',message:'test'};
+  const server=createServer((req,res)=>{
+    const url=new URL(req.url,'http://127.0.0.1');
+    assert.equal(url.searchParams.get('job'),'job-id-only');
+    assert.equal(url.searchParams.get('task'),'t1');
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify({job_id:'job-id-only',order:'desc',
+      events:[{cursor:1,event}],next_cursor:1}));
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address();assert.ok(addr&&typeof addr==='object');
+  try {
+    await store.saveJob(job);
+    const env={...process.env,AGENTS_RELAY_STORE_DIR:join(dir,'stores'),
+      NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`};
+    const args=['dist/cli.js','task'];
+    const runAction=async action=>(await run(process.execPath,
+      [...args,action,'--id','job-id-only','--task-id','t1'],
+      {cwd:process.cwd(),env,timeout:10000})).stdout;
+    assert.equal(JSON.parse(await runAction('show')).title,'real ID only task');
+    assert.equal(JSON.parse(await runAction('comments')).length,1);
+    assert.deepEqual(JSON.parse(await runAction('events')).events.map(e=>e.event_id),['e1']);
+    await assert.rejects(run(process.execPath,
+      [...args,'show','--id','job-id-only','--task-id','t1','--repo','other/repo'],
+      {cwd:process.cwd(),env,timeout:10000}),/Immutable local Job not found/);
+  }finally{
+    store.close();
+    await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));
+    await rm(dir,{recursive:true,force:true});
+  }
 });
