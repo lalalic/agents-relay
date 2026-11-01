@@ -148,14 +148,16 @@ export async function buildRelayWorkPrompt(input: {
     '', '## Bootstrap',
     ...bootstrap,
     '', '## Contracts',
-    'MANDATORY: Read and obey every listed contract before handling the Task. Do not skip the Events contract.',
+    ...(input.agentName === 'planner'
+      ? ['MANDATORY: Read the listed Plan/Task contract before planning. A Plan does not publish Task events.']
+      : ['MANDATORY: Read every listed Task and Events contract before execution.']),
     'Read independently, in order. Later, more specific contracts take precedence over general rules.',
     ...contracts.map((ref, i) => `${i + 1}. ${ref.path} (sha256:${ref.sha256})`),
     ...(input.agentName === 'planner' ? [
       'Planner lifecycle: use the execution-bound `plan context` from the matching Relay CLI described by the Skill. Run the returned same-version `apply_cli`, and return the exact PLAN_APPLIED receipt. Do not emit Task events for a Plan.',
     ] : [
       `EVENT SOURCE (exact): job/${input.jobId}/task/${input.taskId}/execution/${input.executionId}`,
-      'START: As the first execution action after Bootstrap, publish `task.started` through the canonical events-bus. Verify the publish response. Never begin Task work without the start event.',
+      'START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.',
       'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
       'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
       'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',

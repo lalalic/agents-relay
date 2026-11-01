@@ -1,11 +1,11 @@
-# Task Failure Recovery and Human Escalation — Agreed Target Design
+# Task Failure Recovery and Human Escalation — Current Contract
 
 **Status:** Current recovery contract. SQLite Task snapshots retain append-only typed comments alongside authoritative state.
 
 ## Principles and ownership
 
 - **Events Bus is neutral.** Its generic event envelope consists of event identity, type, time, and opaque client-defined data (plus any transport metadata needed by the bus). It must not understand Relay Jobs, Tasks, roles, or verdicts.
-- **One agent Task event contract** applies to Implementation, Reviewer, and Troubleshooter: optional progress, then exactly one agent terminal event, `task.completed` or `task.failed`. Role-specific results belong in `data`. A review with findings is a *completed* review, not a failed agent execution.
+- **One agent Task event contract** applies to Implementation, Reviewer, and Troubleshooter: `task.started`, optional `task.progress`, then exactly one agent terminal event, `task.completed` or `task.failed`. Role-specific results belong in `data`. A review with findings is a *completed* review, not a failed agent execution.
 - **`task.blocked` and `task.unblocked` are authoritative Relay lifecycle transitions**, not ordinary agent terminal events. A human may authorize unblocking a Troubleshooter but does not directly unblock the failed original Task.
 - **Troubleshooter owns diagnosis and recovery decisions.** It chooses technical repair/retry, blocker-Job dependency, or human escalation. There is no separate Escalator agent.
 - **Relay owns transitions and dispatch.** Troubleshooter requests authorized operations; the reconciler/engine validates and durably applies them. An event arriving over the bus is not proof its transition was applied.
@@ -126,13 +126,6 @@ flowchart TD
 | Events Bus | Transport generic events | No knowledge of task roles, blocker semantics, or response structure |
 
 `BLOCKED` is a durable Task state and `task.blocked` may be published by Relay as a state-change fact; it is **not** an agent-selected terminal outcome. Human unblocking resumes the blocked Troubleshooter Task rather than terminating or re-creating its recovery responsibility.
-
-## Required follow-up implementation alignment
-
-- Align `skills/agents-relay/SKILL.md` and role instructions with the two agent terminal events; remove agent-directed `task.blocked` emission.
-- Align escalation graph, CLI, reconciler, and unblock commands so human intervention blocks **Troubleshooter**, not the original failed Task; preserve the original failure and correlated recovery context.
-- Ensure the blocked Troubleshooter can resume after an authorized human unblock rather than being treated as a finished terminal execution.
-- Add integrated checks: technical retry, blocker-Job handoff, human request/block, human unblock/resume, failed verification/re-escalation, stale/duplicate responses, and correct original-Task retry.
 
 ## Durable recovery history
 

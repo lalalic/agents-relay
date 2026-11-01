@@ -70,7 +70,7 @@ Relay then runs one Execution Router decision over complete worker+model routes 
 
 ## Lifecycle contract
 
-Events are authoritative for model-backed task state.
+Accepted, execution-correlated Task events drive Relay transitions; SQLite remains the durable lifecycle authority.
 
 Agents Relay may launch a Codex process or submit a one-shot ChatGPT browser task, but runtime/process completion is only delivery/runtime evidence. It never means the task completed.
 
@@ -111,13 +111,14 @@ Use `--output file --output-path PATH` when the authoritative result is a file.
 ## Worker prompt
 
 The canonical Task lifecycle Graph selects `effect.launchTask`; its Action
-gets the exact same four-section Prompt from `buildRelayWorkPrompt()` as the
+gets the exact same five-section Prompt from `buildRelayWorkPrompt()` as the
 read-only `agents-relay prompt` CLI. A Planner uses the same Prompt Action
 through the planner-orchestration Graph. It includes only:
 
 - **Role:** selected Agent identity and immutable cached merged Agent path;
+- **Bootstrap:** adapter-specific initialization without copying global rules;
 - **Contracts:** independently listed shared contract paths, in order;
-- **Contexts:** independently listed global/Neo/project paths, in priority order;
+- **Contexts:** only adapter-required project instructions; global rules belong to Bootstrap;
 - **Task:** this skill's path, Job ID, Task/Plan ID and Execution ID.
 
 No Task body, PR URL, copied Agent catalog, merged Contracts or merged Contexts.

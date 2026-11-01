@@ -15,7 +15,7 @@ For long-form content, use files instead of shell-quoted arguments:
 
 When creating a new Job from an active discussion, the orchestrator must consolidate **all context needed to finish the Job without the originating thread** into the Job objective before creation. Include, as applicable: goal, relevant background, decisions already made, requirements, constraints, lifecycle/workflow semantics, non-goals, implementation boundaries, acceptance criteria, delivery/review instructions, and any important known issues. Do not create a Job whose objective is only a one-line summary when the discussion contains material implementation context.
 
-Ordinary `job create` requires standalone objective Markdown. An external display PR is projected after the first meaningful code commit; existing PRs are adopted with `job adopt`. The PR body is the single durable Job surface: one hidden `agents-relay:job:v1` marker followed by the objective Markdown. Updating Job metadata or objective updates that same body. New Jobs must not create a separate Job comment that repeats the objective. Readers must remain backward-compatible with legacy Job-comment markers, and a successful Job save may migrate such a legacy marker into the PR body only after validating the replacement before deleting the redundant legacy Job comment.
+Ordinary `job create` requires standalone objective Markdown. An external display PR is projected after the first meaningful code commit; existing PRs are adopted with `job adopt`. SQLite is the durable Job and objective authority. When a PR is projected, its body displays an `agents-relay:job:v1` marker followed by the human-readable objective; it is a collaboration projection, not lifecycle state. Updating Job metadata or objective updates that same body. New Jobs must not create a separate Job comment that repeats the objective. Readers must remain backward-compatible with legacy Job-comment markers, and a successful Job save may migrate such a legacy marker into the PR body only after validating the replacement before deleting the redundant legacy Job comment.
 
 ## Task producers
 
@@ -182,7 +182,7 @@ A BLOCKED Troubleshooter cannot be resumed through retry, queue, dashboard state
 
 The old `UNBLOCKED` state is compatibility-only input. It normalizes to QUEUED only for Troubleshooter Tasks and to FAILED for ordinary Tasks, pending diagnosis.
 
-Each Planner round is also a first-class durable Plan entity stored in its own `agents-relay:plan:v1` PR comment. Relay creates the Plan comment before the internal planner execution record and before any generated Task comments, then updates that same Plan comment with the final assessment and generated Task IDs. Unblock/change facts belong to the Plan trigger/context, not to new Job-level Change Cycle state. Historical `kind=planner` Task records and legacy Job `changeCycle` fields remain readable for compatibility only.
+Each Planner round is first-class durable SQLite Plan state. For PR-bound Jobs, Relay projects an `agents-relay:plan:v1` comment for collaboration and updates it with assessment and generated Task IDs; this comment is not Plan lifecycle authority. Unblock/change facts belong to the Plan trigger and context.
 
 A blocker Job owns reverse `unblocks` references. When it resolves, Relay releases matching dependency-waiting Tasks through their ordinary DRAFT/QUEUED path. It cannot unblock ordinary work or resume a Troubleshooter without the authoritative response flow.
 

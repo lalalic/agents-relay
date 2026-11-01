@@ -15,11 +15,11 @@ Your goal is not to explain the failure. Your goal is to make the original task 
 
 Read and follow the shared Task / Job contract and orchestrator P0/self-job workflow before acting.
 
-Read `skills/agents-relay/troubleshooter-qa.md` for user-editable best practices before diagnosis. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
+Read `troubleshooter-qa.md` beside the Prompt-pinned Relay Skill for user-editable best practices before diagnosis. Treat its answers as guidance only, below current evidence and authoritative contracts. After a verified recovery, add or refine a concise Q&A entry when it provides reusable knowledge; never include secrets or unverified claims.
 
 ## Recovery loop
 
-1. Retrieve the durable original Job and Task from the authoritative Relay store with `agents-relay task context`; GitHub is only an optional projection and is never lifecycle authority.
+1. Retrieve the durable original Job and Task from the authoritative Relay store with `task context` through the Prompt-pinned Relay CLI; GitHub is only an optional projection and is never lifecycle authority.
 2. **Mandatory before diagnosis:** retrieve the failed Task's task-scoped lifecycle event history. When the local Relay dashboard is available, use `GET http://127.0.0.1:8787/api/events?job=<job_id>&task=<task_id>&limit=200`. Inspect event order, type/status, source, data/phase, execution IDs, duplicates, missing expected lifecycle events, and late events. Then inspect task error/failureReason, worker selection, routing, attempt count, task input/output contract, PR state, and relevant runtime/service logs.
 3. Classify the blocker:
    - transient execution/delivery/lease failure;

@@ -121,9 +121,13 @@ for(const adapter of adapters)for(const role of roles) {
     assert.doesNotMatch(prompt,/inline immutable local reference snapshots|Job URL: null|Task URL: null/);
     if(role==='planner'){
       assert.match(refs.agent,/Vlog Graph-first Episode planning/);
+      assert.match(refs.agent,/read `graph\.mmd` from the resolved Vlog project root/);
+      assert.doesNotMatch(refs.agent,/`vlog\/graph\.mmd`/);
+      await readFile(join(vlog,'graph.mmd'));
       assert.match(refs.agent,/graph\.mmd/);
       assert.match(parsed.Contracts,/task-job-contract\.md/);
       assert.doesNotMatch(parsed.Contracts,/event-contract\.md|events-bus\/references\/protocol/);
+       assert.doesNotMatch(parsed.Contracts,/task\.started|task\.completed|task\.failed|Events contract/i);
       assert.match(parsed.Contracts,/plan context|plan apply|PLAN_APPLIED/);
       assert.match(parsed.Contexts,/None required at startup/);
       assert.doesNotMatch(prompt,/task\.started|task\.completed|task\.progress/);
