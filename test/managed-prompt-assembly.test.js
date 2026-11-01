@@ -13,8 +13,9 @@ test('production worker prompt assembly separates roles and snapshots each effec
   const snapshotDir = await mkdtemp(join(tmpdir(), 'relay-prompt-snapshots-'));
   process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR = snapshotDir;
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { globalRoot: emptyGlobal });
     for (const role of ['planner', 'reviewer', 'troubleshooter', 'worker']) for (const adapter of ['codex', 'chatgpt']) {
+      if (role === 'troubleshooter' && adapter !== 'codex') continue; // Agent runtime is codex-only.
       const task = { id: `task-${role}`, jobId: 'prompt-test', title: `Test ${role}`, state: 'QUEUED', kind: 'work',
         agentName: role === 'worker' ? 'implementation' : role, adapter, input: `UNTRUSTED TASK EVIDENCE ${role}`,
         output: { kind: 'task_pr' }, executionId: `execution-${role}`, attempt: 1, maxAttempts: 1, dependencies: [] };
@@ -45,7 +46,7 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
   const projectPath = resolve('.');
   const emptyGlobal = await mkdtemp(join(tmpdir(), 'relay-prompt-eval-global-'));
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { globalRoot: emptyGlobal });
     const task = { id: 'task-reviewer', jobId: 'prompt-test', title: 'Test reviewer', state: 'QUEUED', kind: 'work',
       agentName: 'reviewer', adapter: 'codex', input: 'Evidence: end-to-end verification did not run.',
       output: { kind: 'task_pr' }, executionId: 'execution-reviewer', attempt: 1, maxAttempts: 1, dependencies: [] };
@@ -57,7 +58,7 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
 });
 
 test('Job without PR or localMerge still dispatches only a Task ID and authoritative SQLite lookup', async () => {
-  const context = await resolveExecutionContext(resolve('.'), 'worker', { workspaceRoot: resolve('.') });
+  const context = await resolveExecutionContext(resolve('.'), 'worker');
   const task = {id:'476',jobId:'537',title:'Production',state:'QUEUED',kind:'work',adapter:'chatgpt',
     agentName:'implementation',input:'PRIVATE EPISODE INSTRUCTIONS MUST NOT LEAK',output:{kind:'file',path:'runs/result.md'},
     executionId:'123e4567-e89b-12d3-a456-426614174000',attempt:1,maxAttempts:3,dependencies:[],comments:[{id:'c1',text:'PRIVATE TASK COMMENT MUST NOT LEAK',author:'owner',createdAt:'now'}]};

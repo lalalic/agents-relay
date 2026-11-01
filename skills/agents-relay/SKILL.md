@@ -24,23 +24,28 @@ For content-generation objectives, read `workflows/content-generation.md` before
 
 The Graph-selected Prompt Action passes an execution identity, **not** Task
 prose or a GitHub/PR URL. Read the Task or Plan through the Relay CLI on Neo
-Master before doing work. For a normal Worker, Reviewer or Troubleshooter:
+Master before doing work. **Do not use an unrelated global `agents-relay`
+executable.** The Prompt identifies this exact installed Skill by absolute
+path and hash. Resolve the matching CLI as `../../dist/cli.js` relative to
+this Skill's directory and run `node <matching-absolute-dist/cli.js>`.
+This preserves version identity for local Codex and hosted Neo MCP workers.
+For a normal Worker, Reviewer or Troubleshooter:
 
 ```sh
-agents-relay task context --id JOB --task-id TASK --execution-id EXECUTION
+node <matching-absolute-dist/cli.js> task context --id JOB --task-id TASK --execution-id EXECUTION
 ```
 
 For a Planner (the Prompt names a Plan in its `Task:` field):
 
 ```sh
-agents-relay plan context --id JOB --plan-id PLAN --execution-id EXECUTION
+node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --execution-id EXECUTION
 ```
 
 Both operations read the SQLite-authoritative context and reject stale or
 inactive execution bindings; do not use `job show`, GitHub, or guessed input as a
 fallback to evade this check. Optional `--repo` further fences the immutable SQLite Job identity.
-No GitHub fetch or Relay HTTP service is needed for either read-only command. The Planner uses the returned `apply_cli`, verifies the Plan
-apply receipt, and does not invent task contents. Publish required Task events
+No GitHub fetch or Relay HTTP service is needed for either read-only command. The Planner uses the returned `apply_cli` (bound to the same installed
+Relay package), verifies the Plan apply receipt, and does not invent task contents. Publish required Task events
 for actual Tasks according to the separate event contract. A Plan follows its
 existing Plan lifecycle rather than inventing task.started or task.completed.
 

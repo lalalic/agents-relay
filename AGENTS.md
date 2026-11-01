@@ -60,10 +60,13 @@ P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-w
 
 Keep one `agent-prompt-builder.ts` for Planner, Reviewer, Troubleshooter and Workers.
 The existing Graph-selected launch Actions and read-only `prompt` CLI call the
-same Builder. Four sections: Role (cached merged Agent only), Contracts
+same Builder. Five sections: Role (cached merged Agent only), Bootstrap (adapter-specific), Contracts
 (individual files), Contexts (individual ordered files), Task (identity only).
 Platform Bootstrap is separate: Codex relies on cwd, ChatGPT on account Default
 Instructions, Z on the standard interactive bootstrap URL and runtime OAuth.
 Task bodies remain in SQLite `task context`; Plans use `plan context`. Reject
-stale execution identities and missing Agent snapshots.
+stale execution identities and missing Agent snapshots. L4 evaluates each
+role/adapter Prompt from the same Builder, verifies file SHA and SQLite reachability,
+and fails closed on incompatible runtime requirements; a real browser submit
+receipt is not a terminal Task event.
 See `docs/agent-prompt-builder.md` for the exact Codex/ChatGPT/Z delivery rules.

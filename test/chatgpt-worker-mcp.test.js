@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ChatGptAdapter, parseDriverJson } from '../dist/adapters.js';
 
-test('new ChatGPT worker uses durable regular thread with Neo-accessible file paths', async () => {
+test('new ChatGPT worker sends exact Graph Action Prompt without attachment prose', async () => {
   const root = await mkdtemp(join(tmpdir(), 'relay-new-thread-mcp-'));
   const executable = join(root, 'fake-webhelm');
   const trace = join(root, 'trace.jsonl');
@@ -39,8 +39,8 @@ test('new ChatGPT worker uses durable regular thread with Neo-accessible file pa
     assert.deepEqual(entries[0].args, ['session', 'start']); // WebHelm chooses its default Harness group.
     assert.deepEqual(entries[1].args.slice(0,4), ['platform','run','chatgpt','new-thread']);
     assert.equal(entries[1].config.temporary, false);
-    assert.match(entries[1].config.message, /Read the input through Neo/);
-    assert.match(entries[1].config.message, /\/tmp\/evidence\.txt/);
+    assert.equal(entries[1].config.message, 'Read the input through Neo');
+    assert.doesNotMatch(entries[1].config.message, /\/tmp\/evidence\.txt/);
     assert.equal(entries[1].config.file, undefined);
     assert.deepEqual(entries[2].args.slice(0,3), ['session','stop','owned-one']);
   } finally {

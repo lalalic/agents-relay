@@ -390,7 +390,7 @@ export function plannerInput(context: PlannerContext): string {
   const project = context.executionContext?.project;
   return JSON.stringify({
     objective: context.objective,
-    apply_cli: context.planExecution ? `agents-relay plan apply --repo ${context.job.repository} ${context.job.prNumber > 0 ? `--pr ${context.job.prNumber} ` : ''}--id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
+    apply_cli: context.planExecution ? `node ${JSON.stringify(join(dirname(fileURLToPath(import.meta.url)), 'cli.js'))} plan apply --repo ${context.job.repository} ${context.job.prNumber > 0 ? `--pr ${context.job.prNumber} ` : ''}--id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
     plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     force_restate: context.forceRestate === true,
@@ -458,8 +458,8 @@ export async function buildPlannerExecutionPrompt(context: PlannerContext, agent
   if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
   const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.neoRoot) : undefined;
   return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
-    contracts:['/Users/chengli/Workspace/neo/skills/events-bus/references/protocol.md', '/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/task-job-contract.md', '/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md'],
-    contexts:ctx?.instructions ?? [],skillPath:'/Users/chengli/Workspace/agents-relay/skills/agents-relay/SKILL.md',jobId:context.job.id,
+    contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md')],
+    contexts:[],projectPath:ctx?.project.path ?? process.cwd(),skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
     taskId:context.planExecution.planId,executionId:context.planExecution.executionId,
   });
 }

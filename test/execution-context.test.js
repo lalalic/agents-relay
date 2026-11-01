@@ -147,13 +147,15 @@ test('managed worker Prompt lists independent context files in priority order',a
     const project=join(root,'project');const global=join(root,'global');await Promise.all([mkdir(project,{recursive:true}),mkdir(global,{recursive:true})]);
     await writeFile(join(global,'AGENTS.md'),'GLOBAL RULE');
     await writeFile(join(project,'AGENTS.md'),'PROJECT RULE');
+    const protocol=join(root,'neo/skills/events-bus/references');await mkdir(protocol,{recursive:true});await writeFile(join(protocol,'protocol.md'),'# L4 Synthetic Events Bus Protocol');
     const context=await resolveExecutionContext(project,'nested-worker',{workspaceRoot:root,globalRoot:global});
     const job={id:'j',title:'job',repository:'lalalic/agents-relay',state:'ACTIVE',tasks:[]};
-    const task={id:'child',agentName:'implementation',parentTaskId:'parent',dependencies:[],adapter:'codex',input:'PRIVATE TASK INPUT',output:{kind:'task_pr'},state:'QUEUED',executionId:'nested-exec'};
+    const task={id:'child',agentName:'implementation',parentTaskId:'parent',dependencies:[],adapter:'chatgpt',input:'PRIVATE TASK INPUT',output:{kind:'task_pr'},state:'QUEUED',executionId:'nested-exec'};
     const prompt=await managedWorkerInput(job,task,context);
     assert.match(prompt,/^# Role\nYou are implementation/);
     assert.match(prompt,/## Contracts[\s\S]*## Contexts[\s\S]*## Task/);
-    assert.ok(prompt.indexOf('/global/AGENTS.md') < prompt.indexOf('/project/AGENTS.md'));
+    assert.match(prompt,/\[project\].*\/project\/AGENTS\.md/);
+    assert.doesNotMatch(prompt,/\[global\].*AGENTS\.md/);
     assert.match(prompt,/Job: j\nTask: child\nExecution: nested-exec/);
     assert.doesNotMatch(prompt,/PRIVATE TASK INPUT|github\.com/);
   }finally{await rm(root,{recursive:true,force:true});}
@@ -163,6 +165,7 @@ test('managed worker caches only the resolved Agent, not concatenated Contracts 
   const root=await mkdtemp(join(tmpdir(),'relay-cached-agent-only-'));
   try{
     const project=join(root,'project');await mkdir(project,{recursive:true});
+    const protocol=join(root,'neo/skills/events-bus/references');await mkdir(protocol,{recursive:true});await writeFile(join(protocol,'protocol.md'),'# L4 Synthetic Events Bus Protocol');
     const reviewerPath=await agent(project,'reviewer','review');
     await writeFile(reviewerPath,`---\nname: reviewer\ntype: reviewer\n---\n\nCANONICAL REVIEW CONTRACT.`);
     const context=await resolveExecutionContext(project,'reviewer',{workspaceRoot:root,globalRoot:join(root,'global')});

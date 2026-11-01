@@ -2,7 +2,8 @@ import { buildAgentPrompt, buildRelayWorkPrompt, renderAgentPrompt, type PromptA
 import type { Job, Task } from './types.js';
 import { resolveAgentContract, type ExecutionContext } from './execution-context.js';
 
-import { executionEventSource } from './reconciler-runtime.js';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Shared entry point for every managed Agent. Runtime Task intent lives in SQLite;
@@ -17,23 +18,34 @@ export async function managedWorkerInput(job: Job, task: Task, context?: Executi
   if (!context) throw new Error(`Task ${task.id} requires resolved execution context`);
   const agentName = task.agentName ?? 'implementation';
   const selected = await resolveAgentContract(context,agentName);
+  if (mode === 'production') {
+    const requiredRuntime = task.workerRequirements?.runtime ?? selected.agent.runtime;
+    if (requiredRuntime && requiredRuntime !== adapter)
+      throw new Error(`Agent ${agentName} requires ${requiredRuntime} runtime; ${adapter} cannot launch this Task`);
+  }
   const agent = selected.definition;
   const role = agentName === 'planner' || agentName === 'reviewer' || agentName === 'troubleshooter' ? agentName : 'worker';
   if (mode === 'evaluation') {
     const safeAgent = agent.replace(/^.*(?:task\.started|task\.completed|task\.failed|events__publish|NEO_EVENTS_EMIT).*\n?/gm, '');
     return renderAgentPrompt(buildAgentPrompt({ role, system: [safeAgent, '[Read-only evaluation safety boundary]\nDo not use tools, files, events or external services. Evaluate the role instructions as criteria only.'].filter(Boolean).join('\n\n'), user: `[Isolated prompt evaluation mode]\nTask: ${task.id}\n${task.input}` }), adapter);
   }
+  const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  if (!context.project.neoRoot) throw new Error('Neo events-bus root is unavailable for Relay worker');
   return buildRelayWorkPrompt({
     agentName,
     agentContent:agent,
     adapter,
     contracts: [
-      '/Users/chengli/Workspace/neo/skills/events-bus/references/protocol.md',
-      '/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/task-job-contract.md',
-      '/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md',
+      join(context.project.neoRoot, 'skills/events-bus/references/protocol.md'),
+      join(packageRoot, 'skills/agents-relay/contracts/task-job-contract.md'),
+      join(packageRoot, 'skills/agents-relay/contracts/event-contract.md'),
     ],
-    contexts:context.instructions,
-    skillPath:'/Users/chengli/Workspace/agents-relay/skills/agents-relay/SKILL.md',
+    // Codex loads project AGENTS from cwd. Web workers do not: give them only
+    // the current project policy; parent Neo rules are linked from that file.
+    contexts:adapter === 'codex' ? [] : context.instructions.filter(item =>
+      item.source === 'project' && item.path.endsWith('/AGENTS.md')),
+    projectPath:context.project.path,
+    skillPath:join(packageRoot, 'skills/agents-relay/SKILL.md'),
     jobId:job.id,
     taskId:task.id,
     executionId:task.executionId,

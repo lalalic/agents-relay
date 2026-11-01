@@ -328,18 +328,15 @@ function browserWorkerRunner(): ChatGptAgentRunner {
       const configFile = join(process.env.TMPDIR ?? '/tmp', `agents-relay-chatgpt-${randomUUID()}.json`);
       try {
         const delivery = request.thread;
-        // Temporary Chat lacks Neo MCP tools on this verified account.
-        // File paths remain accessible to normal workers through Neo MCP.
-        const message = request.files?.length
-          ? `${request.prompt}\n\nTask file paths (read with Neo MCP; files are not browser-uploaded):\n${request.files.map(file => `- ${JSON.stringify(file)}`).join('\n')}`
-          : request.prompt;
+        // The Graph Action owns the prompt bytes. Attachments and delivery
+        // identity live in durable Task Context/config, not appended prose.
         await writeFile(configFile, JSON.stringify(delivery ? {
           project_id: delivery.projectId ?? _route.projectId ?? null,
           thread_id: delivery.threadId,
-          message: `${request.prompt}\n\nRelay delivery ID: ${delivery.requestId}`,
+          message: request.prompt,
           idempotency_key: delivery.requestId,
         } : {
-          message,
+          message: request.prompt,
           temporary: false,
         }));
         if (signal.aborted) throw new Error('browser-worker execution aborted');

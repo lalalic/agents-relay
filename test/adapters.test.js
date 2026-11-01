@@ -373,6 +373,7 @@ test('ChatGPT thread delivery delegates deduplication to Browser Workspace platf
     "else if(a[0]==='platform'&&a[1]==='run') {",
     "const config=JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1]));",
     "if(config.idempotency_key!=='job:review:sha')process.exit(12);",
+    "if(config.message!=='do the work')process.exit(14);",
     "console.log(JSON.stringify({result:{status:'submitted',mode:'new-turn',thread_id:config.thread_id,verified_by:'platform-dedup',user_message_id:'prior-turn'}}));",
     "} else if(a[0]==='session'&&a[1]==='stop') console.log(JSON.stringify({stopped:true}));",
     "else process.exit(13);",

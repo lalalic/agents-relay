@@ -108,30 +108,60 @@ export async function buildRelayWorkPrompt(input: {
   taskId: string;
   executionId: string;
   adapter: PromptAdapter;
+  projectPath: string;
 }): Promise<string> {
   if (!input.jobId || !input.taskId || !input.executionId) throw new Error('Relay prompt requires a full execution binding');
   const reference = await snapshotAgentInstructions(input.agentContent,
     process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR ?? DEFAULT_PROMPT_REFERENCE_DIRECTORY);
   const contracts = await Promise.all(input.contracts.map(path => promptFileReference(path, 'context')));
-  // Precedence: global < Neo < project. Within each layer, README is
-  // context only and comes before AGENTS.md, which is the stronger rule file.
-  const ranks: Record<string, number> = {global: 0, neo: 1, project: 2};
-  const orderedContext = [...input.contexts].sort((a,b) => {
-    const priority = (item: {path:string;source:string}) =>
-      (ranks[item.source] ?? 1) * 10 + (item.path.endsWith('/README.md') ? 0 : 1);
-    return priority(a) - priority(b);
-  });
+  // Global AGENTS is Bootstrap-owned and README is human documentation.
+  // The calling Role Action selects context intentionally, not by a directory dump.
+  const ranks: Record<string, number> = { neo: 0, project: 1 };
+  const orderedContext = input.contexts.filter(item =>
+    (item.source === 'neo' || item.source === 'project') && item.path.endsWith('/AGENTS.md'))
+    .sort((a,b) => (ranks[a.source] ?? 0) - (ranks[b.source] ?? 0));
   const contexts = await Promise.all(orderedContext.map(item => promptFileReference(item.path, 'context')));
+  const global = input.adapter === 'codex'
+    ? input.contexts.find(item => item.source === 'global' && item.path.endsWith('/AGENTS.md'))
+    : undefined;
+  const globalReference = global ? await promptFileReference(global.path, 'context') : undefined;
+  const bootstrap = input.adapter === 'codex'
+    ? [
+        `Use Codex CLI with project cwd: ${input.projectPath}. Codex -C loads directory AGENTS.md instructions.`,
+        ...(globalReference ? [`Read global Neo rules once if they are not already loaded: ${globalReference.path} (sha256:${globalReference.sha256}).`] : []),
+        'Use local shell and files for referenced contracts and the Relay CLI. Do not call neo bootstrap.',
+      ]
+    : input.adapter === 'chatgpt'
+      ? [
+          'Account Default Instructions already initialize the Neo/XChat Harness.',
+          'Use the connected Neo MCP fs/shell tools to read the listed Neo Master files and execute Relay CLI. Do not run neo bootstrap again.',
+        ]
+      : [
+          'The Z runtime supplies a one-hour Neo OAuth access token (never the operator or refresh token). Do not ask the user to copy a token.',
+          'Use the same Z interactive bootstrap entry: https://neoy.qili2.com/files/z-chat/bootstrap.md.',
+          'Run Neo MCP through authenticated HTTPS. The Z cloud filesystem is not Neo Master. Continue the assigned Task after bootstrap; do not wait for another user message.',
+        ];
   const skill = await promptFileReference(input.skillPath, 'context');
   const lines = [
     '# Role',
     `You are ${input.agentName} with responsibility at ${reference.path} (sha256:${reference.sha256}).`,
+    '', '## Bootstrap',
+    ...bootstrap,
     '', '## Contracts',
+    'MANDATORY: Read and obey every listed contract before handling the Task. Do not skip the Events contract.',
     'Read independently, in order. Later, more specific contracts take precedence over general rules.',
     ...contracts.map((ref, i) => `${i + 1}. ${ref.path} (sha256:${ref.sha256})`),
+    ...(input.agentName === 'planner' ? [
+      'Planner lifecycle: use the execution-bound `plan context` from the matching Relay CLI described by the Skill. Run the returned same-version `apply_cli`, and return the exact PLAN_APPLIED receipt. Do not emit Task events for a Plan.',
+    ] : [
+      `EVENT SOURCE (exact): job/${input.jobId}/task/${input.taskId}/execution/${input.executionId}`,
+      'START: As the first execution action after Bootstrap, publish `task.started` through the canonical events-bus. Verify the publish response. Never begin Task work without the start event.',
+      'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
+      'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
+      'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
+    ]),
     '', '## Contexts',
-    'Read independently, in order. Later project-local context has higher priority than global context.',
-    ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path} (sha256:${ref.sha256})`),
+    ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path} (sha256:${ref.sha256})`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
     '', '## Task',
     `Use the agents-relay skill at ${skill.path} (sha256:${skill.sha256}) to read authoritative Job and Task/Plan details via the Relay CLI.`,
     `Job: ${input.jobId}`,
