@@ -80,11 +80,12 @@ test('troubleshooter recovery is P0, evidence-rich, local-capable, and idempoten
   assert.match(recovery.input, /Temporary Chat toggle was not uniquely observed/);
   assert.match(recovery.input, /P0\/self-job/);
   assert.match(recovery.input, /MANDATORY EVENT EVIDENCE BEFORE DIAGNOSIS/);
-  assert.match(recovery.input, /api\/events\?job=neo-pr40&task=final-review-3a941f98a1ad&limit=200/);
+  assert.match(recovery.input, /task events --id neo-pr40 --task-id final-review-3a941f98a1ad --limit 60/);
+  assert.doesNotMatch(recovery.input, /sqlite|\/api\/events|http:\/\/127\.0\.0\.1/i);
   assert.match(recovery.input, /duplicate events/);
   assert.match(recovery.input, /Do not treat the final task\.error string as the complete root cause/);
   assert.match(recovery.input, /agents-relay escalation/);
-  assert.match(recovery.input, /canonical escalation graph invokes Neo escalation and owns the resolved\/failed\/needs_user branch/);
+  assert.match(recovery.input, /Relay CLI escalation result \(resolved, failed, or needs_user\)/);
   assert.deepEqual(pendingTroubleshooterTasks(job([failed, recovery])), []);
 });
 
@@ -235,7 +236,7 @@ test('troubleshooter is a discoverable orchestrator-side execution role', async 
   assert.match(prompt, /P0\/self-job repair authority/);
   const agentContract = await import('node:fs/promises').then(fs => fs.readFile(agent.path, 'utf8'));
   assert.match(agentContract, /Mandatory before diagnosis/);
-  assert.match(agentContract, /api\/events\?job=<job_id>&task=<task_id>&limit=200/);
+  assert.match(agentContract, /task events --id JOB --task-id FAILED_TASK --limit 60/);
   assert.match(agentContract, /event history cannot be retrieved/);
   assert.match(agentContract, /agents-relay escalation/);
   assert.match(agentContract, /`resolved`/);

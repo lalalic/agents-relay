@@ -1,7 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveAgentMarkdown } from '../dist/agent-content-resolver.js';
 
@@ -53,4 +53,22 @@ test('invalid parents, conflicting sections, unknown headings and unsafe links f
   await rm(join(f.project,'agents','planner.agent.md'));
   await symlink(join(f.builtin,'planner.agent.md'),join(f.project,'agents','planner.agent.md'));
   await assert.rejects(resolveAgentMarkdown('planner',f.builtin,f.project),/escapes context root/);
+});
+
+
+test('a merged cached Agent anchors links to each original layer, without importing linked document content',async t=>{
+  const f=await fixture(t);
+  await mkdir(join(f.project,'docs'),{recursive:true});
+  await mkdir(join(f.root,'relay','references'),{recursive:true});
+  await writeFile(join(f.root,'relay','references','base.md'),'BASE CONSTRAINT; never inline this');
+  await writeFile(join(f.project,'docs','stage.md'),'PROJECT STAGE CONSTRAINT; never inline this');
+  await writeFile(join(f.builtin,'planner.agent.md'),'---\nname: planner\n---\n# Planner\nRead [base](./references/base.md)');
+  await f.write('---\nname: planner\nextends: relay/planner\n---\n# Stage\nRead [stage](../docs/stage.md#Review)\nExternal [site](https://example.com/foo)\n```md\n[example](../docs/should-not-rewrite.md)\n```');
+  const result=await resolveAgentMarkdown('planner',f.builtin,f.project);
+  assert.ok(result.content.includes(`[base](${join(dirname(result.sources[0]),'references','base.md')})`));
+  assert.ok(result.content.includes(`[stage](${resolve(dirname(result.sources[1]),'..','docs','stage.md')}#Review)`));
+  assert.ok(result.content.includes('[site](https://example.com/foo)'));
+  assert.ok(result.content.includes('[example](../docs/should-not-rewrite.md)'));
+  assert.doesNotMatch(result.content,/BASE CONSTRAINT|PROJECT STAGE CONSTRAINT/);
+  assert.equal(result.sources.length,2);
 });

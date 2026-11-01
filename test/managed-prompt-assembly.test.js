@@ -13,20 +13,26 @@ test('production worker prompt assembly separates roles and snapshots each effec
   const snapshotDir = await mkdtemp(join(tmpdir(), 'relay-prompt-snapshots-'));
   process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR = snapshotDir;
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { globalRoot: emptyGlobal });
     for (const role of ['planner', 'reviewer', 'troubleshooter', 'worker']) for (const adapter of ['codex', 'chatgpt']) {
+      if (role === 'troubleshooter' && adapter !== 'codex') continue; // Agent runtime is codex-only.
       const task = { id: `task-${role}`, jobId: 'prompt-test', title: `Test ${role}`, state: 'QUEUED', kind: 'work',
         agentName: role === 'worker' ? 'implementation' : role, adapter, input: `UNTRUSTED TASK EVIDENCE ${role}`,
         output: { kind: 'task_pr' }, executionId: `execution-${role}`, attempt: 1, maxAttempts: 1, dependencies: [] };
       const prompt = await managedWorkerInput({ id: 'prompt-test', repository: 'example/repo', title: 'Prompt test', objective: 'Verify assembled prompts', state: 'ACTIVE', localMerge: { sourceRef: 'prompt-test' }, tasks: [task], plans: [] }, task, context);
-      assert.match(prompt, new RegExp(`Relay agent: ${role}; adapter: ${adapter}`));
-      assert.match(prompt, /\[Versioned local references\]/);
-      assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
-      assert.match(prompt, /\[Required event contracts\][\s\S]*Execution source: job\/prompt-test\/task\//);
-      assert.match(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
-      const match = prompt.match(/^- instructions: (.+) \(sha256:([a-f0-9]{64})\)$/m);
-      assert.ok(match, `${role}/${adapter} must carry an immutable contract reference`);
-      assert.match(await readFile(match[1], 'utf8'), new RegExp(`Agent: ${role === 'worker' ? 'implementation' : role}`));
+      assert.match(prompt, /^# Role\nYou are /);
+      assert.match(prompt, /## Contracts\n/);
+      assert.match(prompt, /## Contexts\n/);
+      assert.match(prompt, /## Task\n/);
+      assert.match(prompt, new RegExp(`Task: task-${role}\\nExecution: execution-${role}`));
+      assert.doesNotMatch(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
+      assert.doesNotMatch(prompt, /GitHub is the source of truth|Job URL: null|\[Resolved execution context\]/);
+      const match = prompt.match(/^You are [^\n]+ with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/m);
+      assert.ok(match, `${role}/${adapter} must carry the resolved Agent snapshot`);
+      assert.match(await readFile(match[1], 'utf8'), new RegExp(role === 'worker' ? 'implementation' : role, 'i'));
+      assert.ok(prompt.length < 4500, `${role}/${adapter} must remain compact`);
+      assert.ok(prompt.indexOf('## Contracts') < prompt.indexOf('## Contexts'));
+      assert.ok(prompt.indexOf('## Contexts') < prompt.indexOf('## Task'));
     }
   } finally {
     if (refDir === undefined) delete process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR;
@@ -40,7 +46,7 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
   const projectPath = resolve('.');
   const emptyGlobal = await mkdtemp(join(tmpdir(), 'relay-prompt-eval-global-'));
   try {
-    const context = await resolveExecutionContext(projectPath, 'worker', { workspaceRoot: projectPath, globalRoot: emptyGlobal });
+    const context = await resolveExecutionContext(projectPath, 'worker', { globalRoot: emptyGlobal });
     const task = { id: 'task-reviewer', jobId: 'prompt-test', title: 'Test reviewer', state: 'QUEUED', kind: 'work',
       agentName: 'reviewer', adapter: 'codex', input: 'Evidence: end-to-end verification did not run.',
       output: { kind: 'task_pr' }, executionId: 'execution-reviewer', attempt: 1, maxAttempts: 1, dependencies: [] };
@@ -49,4 +55,15 @@ test('evaluation mode preserves reviewer guidance without production lifecycle a
     assert.match(prompt, /read-only evaluation/i);
     assert.doesNotMatch(prompt, /publish exactly one canonical task\.(?:started|completed|failed)|events__publish|NEO_EVENTS_EMIT/);
   } finally { await rm(emptyGlobal, { recursive: true, force: true }); }
+});
+
+test('Job without PR or localMerge still dispatches only a Task ID and authoritative SQLite lookup', async () => {
+  const context = await resolveExecutionContext(resolve('.'), 'worker');
+  const task = {id:'476',jobId:'537',title:'Production',state:'QUEUED',kind:'work',adapter:'chatgpt',
+    agentName:'implementation',input:'PRIVATE EPISODE INSTRUCTIONS MUST NOT LEAK',output:{kind:'file',path:'runs/result.md'},
+    executionId:'123e4567-e89b-12d3-a456-426614174000',attempt:1,maxAttempts:3,dependencies:[],comments:[{id:'c1',text:'PRIVATE TASK COMMENT MUST NOT LEAK',author:'owner',createdAt:'now'}]};
+  const prompt = await managedWorkerInput({id:'537',repository:'lalalic/neo',prNumber:0,title:'Vlog',objective:'PRIVATE JOB OBJECTIVE MUST NOT LEAK',state:'ACTIVE',tasks:[task],plans:[]},task,context);
+  assert.match(prompt,/Job: 537\nTask: 476\nExecution: 123e4567/);
+  for (const forbidden of ['Job URL: null','GitHub is the source of truth','PRIVATE EPISODE','PRIVATE TASK COMMENT','PRIVATE JOB OBJECTIVE', 'Resolved execution context']) assert.ok(!prompt.includes(forbidden),forbidden);
+  assert.ok(prompt.length < 3500);
 });

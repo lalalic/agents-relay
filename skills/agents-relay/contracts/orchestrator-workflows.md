@@ -40,16 +40,18 @@ orchestrator-worker lifecycle, and new Task creation rejects
 unless the user explicitly asks for review; Relay-owned merge and completion
 lifecycle remain in their canonical graphs.
 
-Legacy recovery: existing `adapter: orchestrator` work Tasks may be repaired only
-through the canonical rescue graph. The repair converts only never-started QUEUED records in place to declarative worker requirements and lets Execution Router select the route. A legacy RUNNING record with an unknown outcome is quarantined as BLOCKED instead of replayed; only explicit durable external-completion verification may complete it without execution. Process reclamation is attempted only after the record is proven eligible for this legacy path, so normal live workers are never touched by the migration scan.
+For legacy Tasks with an unsupported runtime or unknown execution outcome,
+inspect the actual state and supported recovery options using the matching
+Relay CLI. Do not edit task records, infer completion, or relaunch uncertain
+executions directly. Report a concrete blocker if CLI recovery cannot proceed.
 
 `job create --initial-plan` remains the normal way to create durable planning
 state and hand subsequent execution to Relay.
 
 ## Merge completion vs deployment evidence
 
-For a managed Job, the canonical Job lifecycle Graph owns completion. A satisfied Plan, successful implementation evidence, applicable SHA-bound review, and a verified local merge/delivery receipt are required. Remote GitHub `pr.merged` facts are audit-only and never independently complete a local Job. Deployment code must not invent another completion gate after durable Job completion.
+For a managed Job, Relay owns Job completion. A satisfied Plan, successful implementation evidence, applicable SHA-bound review, and a verified local merge/delivery receipt are required. A GitHub merge alone is not proof of Job completion; verify the outcome with the Relay CLI. Deployment code must not invent another completion gate after durable Job completion.
 
 Post-merge publication and deployment activity is separate from Job lifecycle. Events or evidence such as `package.published`, published version metadata, service restart, and deployment verification may be attached after the Job is already `COMPLETED`; they must not hold the Job open, reopen it, or redefine completion. If post-merge deployment needs remediation, record that as separate deployment/recovery work rather than mutating the completed implementation Job lifecycle.
 
-A PR closed without merge follows the same graph-owned rule through `pr.closed -> CANCELLED`.
+If a PR closes without merge, check the Job state through Relay CLI; do not infer a successful completion.

@@ -305,8 +305,9 @@ export async function ensureChatGptWebHelmReady(command = process.env.AGENTS_REL
 function browserWorkerRunner(): ChatGptAgentRunner {
   return (_definition,request,_route,signal,context) => {
     const delivery=request.thread;
-    const message=request.files?.length
-      ? `${request.prompt}\n\nTask file paths (read with Neo MCP; files are not browser-uploaded):\n${request.files.map(file=>`- ${JSON.stringify(file)}`).join('\n')}`
+    const message=request.files?.length && !request.prompt.startsWith('# Role')
+      && !request.prompt.startsWith('[Relay agent:')
+      ? `${request.prompt}\n\nTask file paths (read with Neo MCP):\n${request.files.map(file=>`- ${JSON.stringify(file)}`).join('\n')}`
       : request.prompt;
     return pooledWebHelmRun({
       provider:'chatgpt', executionId:request.execution?.executionId ?? randomUUID(),
@@ -315,7 +316,7 @@ function browserWorkerRunner(): ChatGptAgentRunner {
       build:async()=>({action:delivery?'new-turn':'new-thread',config:delivery?{
         project_id:delivery.projectId ?? _route.projectId ?? null,
         thread_id:delivery.threadId,
-        message:`${request.prompt}\n\nRelay delivery ID: ${delivery.requestId}`,
+        message:request.prompt,
         mode:'sync',idempotency_key:delivery.requestId,
       }:{message,temporary:false}}),
       recover:async threadId=>({
@@ -393,7 +394,10 @@ export class ChatGptAdapter implements WorkerAdapter {
       const policy = chatGptTabClosePolicy(task.chatgptTabClosePolicy, this.tabClosePolicy);
       const submit = async (): Promise<AgentRun> => {
         const references = await accessiblePromptReferences(task.input);
-        let prompt = task.chatgptThreadDelivery?.repository && task.chatgptThreadDelivery.executionId
+        // The Graph Action owns immutable Prompt bytes; legacy Task prose alone
+        // uses the compatibility new-turn wrapper.
+        const graphPrompt = task.input.startsWith('# Role') || task.input.startsWith('[Relay agent:');
+        let prompt = task.chatgptThreadDelivery?.repository && task.chatgptThreadDelivery.executionId && !graphPrompt
           ? taskReferencePrompt(task.chatgptThreadDelivery.repository, task.chatgptThreadDelivery.jobId, task.id, task.chatgptThreadDelivery.executionId, task.input) : task.input;
         const referencePrompt = task.chatgptThreadDelivery && references.length
           ? `\n\n[Inline immutable local reference snapshots]\nThese complete verified snapshots are included in this message because this thread delivery does not attach local files. Follow their contents according to their declared roles.\n${references.map(reference => `\n--- ${reference.role}: ${reference.path} (sha256:${reference.sha256}) ---\n${reference.content}\n--- end snapshot ---`).join('\n')}`
@@ -403,10 +407,10 @@ export class ChatGptAdapter implements WorkerAdapter {
         if (task.chatgptThreadDelivery && declaredPromptReferences(task.input).length) {
           const unresolved = declaredPromptReferences(task.input)
             .map(item => item.path).filter(path => !references.some(reference => reference.path === path));
-          if (unresolved.length) prompt += `\n\n[Local contract snapshots unavailable]\nThese referenced local contracts could not be read and verified for this thread: ${unresolved.join(', ')}. Do not claim to have read or followed them; report that they are unavailable and request accessible copies.`;
+          if (unresolved.length) throw new Error(`Agent Contract snapshot unavailable or corrupt: ${unresolved.join(', ')}`);
         }
         return (this.runner ?? browserWorkerRunner())(definition, {
-          prompt: prompt + referencePrompt,
+          prompt: graphPrompt ? prompt : prompt + referencePrompt,
           ...((task.attachments?.length || references.length && !task.chatgptThreadDelivery) ? { files: [...new Set([...(task.attachments ?? []), ...references.map(reference => reference.path)])] } : {}),
           ...(task.chatgptThreadDelivery ? { thread: task.chatgptThreadDelivery } : {}),
           tabClosePolicy: policy,

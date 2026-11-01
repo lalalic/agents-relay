@@ -6,10 +6,8 @@ import { AgentRegistration, Priority } from './types.js'; import { discoverAgent
 import { transitionJobEvent } from './task-transitions.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
 import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { classifyFailedTask } from './task-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
-import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, chatGptTabClosePolicy, continuation, rejectRemovedJobOptions, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, chatGptTabClosePolicy } from './cli-support.js';
-import { recoveryDiagnosisFromArgs, workerTaskFromArgs } from './cli-worker-task.js';
-import { taskExecutionContext } from './task-context.js';
-import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
+import { runPromptCommand, runPlanContextCommand, runTaskContextCommand, runTaskEventsCommand, runTaskReadCommand } from './cli-prompt.js'; import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, chatGptTabClosePolicy, continuation, rejectRemovedJobOptions, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, chatGptTabClosePolicy } from './cli-support.js';
+import { recoveryDiagnosisFromArgs, workerTaskFromArgs } from './cli-worker-task.js'; import { taskExecutionContext } from './task-context.js'; import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
@@ -32,16 +30,15 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   console.log(JSON.stringify(task, null, 2));
 }
 async function runTaskCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'update', 'show', 'context', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede', 'classify'].includes(action)) throw new Error(usage);
+  if (!['create', 'update', 'show', 'context', 'events', 'comment', 'comments', 'list', 'retry', 'recover', 'unblock', 'escalate', 'resume-troubleshooter', 'cancel', 'supersede', 'classify'].includes(action)) throw new Error(usage);
+  if (action === 'context' || action === 'events') { await (action === 'context' ? runTaskContextCommand(args) : runTaskEventsCommand(args)); return; }
+  if (action === 'show' || action === 'comments') { await runTaskReadCommand(action,args); return; }
   const managed = !arg(args, '--file') && Boolean(arg(args, '--repo') && arg(args, '--id'));
   if (managed) {
     const jobId = arg(args, '--id');
     if (action === 'list') { const job = await relayControlJob(args, jobId); console.log(JSON.stringify(job.tasks, null, 2)); return; }
     const taskId = arg(args, '--task-id');
     if (action === 'comment') { if (!taskId) throw new Error('task comment requires --task-id'); const message = await textOption(args, '--message', '--message-file'); console.log(JSON.stringify(await relayControlCommand(args, { command: 'task.comment', jobId, taskId, message }), null, 2)); return; }
-    if (action === 'comments') { if (!taskId) throw new Error('task comments requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task.comments ?? [], null, 2)); return; }
-    if (action === 'context') { if (!taskId) throw new Error('task context requires --task-id'); const job = await relayControlJob(args, jobId); console.log(JSON.stringify(taskExecutionContext(job, taskId, arg(args, '--execution-id')), null, 2)); return; }
-    if (action === 'show') { if (!taskId) throw new Error('task show requires --task-id'); const job = await relayControlJob(args, jobId); const task = job.tasks.find(item => item.id === taskId); if (!task) throw new Error(`Task ${taskId} not found`); console.log(JSON.stringify(task, null, 2)); return; }
     if (action === 'classify') { if (!taskId) throw new Error('task classify requires --task-id'); const kind = arg(args, '--classification'); if (kind !== 'superseded' && kind !== 'invalid') throw new Error('--classification must be superseded or invalid'); const result = await relayControlCommand<Job>(args, { command: 'task.classify', jobId, taskId, classification: { kind, targetTaskId: arg(args, '--target-task-id'), evidence: await textOption(args, '--evidence', '--evidence-file'), reason: await textOption(args, '--reason', '--reason-file') } }); console.log(JSON.stringify(result.tasks.find(item => item.id === taskId), null, 2)); return; }
     if (['create','retry','cancel'].includes(action)) { await runManagedTaskCommand(action as 'create'|'retry'|'cancel', args); return; }
     if (action === 'supersede') { if (!taskId) throw new Error('task supersede requires --task-id'); const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('task supersede requires --reason'); const job = await relayControlCommand<Job>(args, { command: 'task.supersede', jobId, taskId, reason }); console.log(JSON.stringify(job.tasks.find(item => item.id === taskId), null, 2)); return; }
@@ -392,7 +389,8 @@ export function isEntrypoint(moduleUrl: string): boolean {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2).filter(value => value !== '--no-github');
   if (!command || command === '--help' || command === '-h') { console.log(helpText()); return; }
-  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' || command === 'context' || command === 'review' ? args[0] : undefined)); return; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(helpText(command, command === 'job' || command === 'task' || command === 'context' || command === 'review' || command === 'prompt' ? args[0] : undefined)); return; }
+  if (command === 'plan' && args[0] === 'context') { await runPlanContextCommand(args.slice(1)); return; }
   if (command === 'plan' && args[0] === 'apply') {
     const options = args.slice(1); const jobId = arg(options, '--id');
     const planId = arg(options, '--plan-id'); const executionId = arg(options, '--execution-id');
@@ -421,6 +419,7 @@ async function main(): Promise<void> {
   if (command === 'job') { const [action, ...jobArgs] = args; await runJobCommand(action ?? '', jobArgs); return; }
   if (command === 'artifact') { const [action, ...artifactArgs] = args; await runArtifactCommand(action ?? '', artifactArgs); return; } if (command === 'task') { const [action, ...taskArgs] = args; await runTaskCommand(action ?? '', taskArgs); return; }
   if (command === 'review') { const [action, ...reviewArgs] = args; await runReviewCommand(action ?? '', reviewArgs); return; }
+  if (command === 'prompt') { await runPromptCommand(args); return; }
   if (command === 'context') { const [action, ...contextArgs] = args; await runContextCommand(action ?? '', contextArgs); return; }
   if (command === 'blocker') { const [action, ...blockerArgs] = args; await runBlockerCommand(action ?? '', blockerArgs); return; }
   if (command === 'projection') { const [action, ...projectionArgs] = args; await runProjectionCommand(action ?? '', projectionArgs); return; }

@@ -2,7 +2,6 @@
 name: implementation
 description: Implement the assigned Agents Relay task in the managed checkout and verify the durable result.
 capabilities: [implementation, local_repo, iterative_tools]
-runtime: codex
 delegation: [relay-child-task]
 restrictions: [preserve-user-changes, no-unrelated-refactors]
 ---
@@ -10,7 +9,7 @@ restrictions: [preserve-user-changes, no-unrelated-refactors]
 # Implementation Agent
 
 Implement the assigned Task in the current managed checkout. Treat the durable
-Job objective and Task input retrieved from GitHub as authoritative. Inspect the
+Job objective and Task input retrieved from the execution-bound `task context` returned by the Prompt-pinned Relay CLI as authoritative. Inspect the
 existing design before editing, keep the change narrowly scoped, and preserve
 unrelated user work.
 

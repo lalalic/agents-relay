@@ -26,3 +26,64 @@ test('Relay history client reads events-bus API and returns newest requested eve
     assert.deepEqual(events.map(e=>e.event_id),['e4','e3']);
   } finally { await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
 });
+
+test('Relay fails closed on mismatched or malformed Task history pages', async () => {
+  const { eventsBusHistoryPage } = await import('../dist/events-bus-runtime.js');
+  const event = { version: 1, event_id:'e1', job_id:'job1', task_id:'task1',
+    parent_task_id:null, type:'task.failed', status:'failed', timestamp:'2026-11-01T17:00:00Z',
+    visibility:'orchestrator',level:'error',message:'failed' };
+  const valid = { job_id:'job1', order:'asc', events:[{cursor:10,event}], next_cursor:10 };
+  let responseBody=valid;
+  const server=http.createServer((req,res)=>{
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify(responseBody));
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address(); assert.ok(addr && typeof addr==='object');
+  const env={NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`,
+    NEO_EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
+  try {
+    const read=()=>eventsBusHistoryPage('job1','task1',60,{order:'asc',after:0},env);
+    assert.deepEqual((await read()).events.map(e=>e.event_id),['e1']);
+    responseBody={...valid,events:[{cursor:9,event},{cursor:10,event}]};
+    await assert.rejects(eventsBusHistoryPage('job1','task1',1,{order:'asc',after:0},env),
+      /unexpected Job, order, or events payload/);
+    responseBody=valid;
+    for (const bad of [
+      null,
+      [],
+      {...valid,job_id:'other'},
+      {...valid,order:'desc'},
+      {...valid,events:[{cursor:10,event:{...event,task_id:'task2'}}]},
+      {...valid,events:[{cursor:10,event:{...event,job_id:'other'}}]},
+      {...valid,events:[{cursor:10,event},{cursor:9,event}]},
+      {...valid,events:[{cursor:10,event}],next_cursor:9},
+      {...valid,events:[{cursor:10,event}],next_cursor:0},
+      {...valid,events:[{event}]},
+      {...valid,events:[{cursor:10}]},
+    ]) {
+      responseBody=bad;
+      await assert.rejects(read(),/events-bus history returned/,JSON.stringify(bad));
+    }
+  }finally{
+    await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  }
+});
+
+test('event history enforces a bounded deadline for a stalled Events Bus connection',async()=>{
+  const {eventsBusHistoryPage}=await import('../dist/events-bus-runtime.js');
+  const server=http.createServer((_req,_res)=>{/* deliberate stalled HTTP response */});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address();assert.ok(addr&&typeof addr==='object');
+  const env={NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`,
+    NEO_EVENTS_BUS_CONFIG:path.join(os.tmpdir(),'missing-events-config.json')};
+  try{
+    await assert.rejects(eventsBusHistoryPage('job1','task1',10,{order:'asc',timeoutMs:100},env),
+      /events-bus history unavailable:.*(timed|aborted|Timeout|timeout)/i);
+    await assert.rejects(eventsBusHistoryPage('job1','task1',NaN,{order:'asc'},env),/Invalid event history page limit/);
+    await assert.rejects(eventsBusHistoryPage('job1','task1',10,{timeoutMs:0},env),/Invalid event history timeout/);
+  }finally{
+    server.closeAllConnections();
+    await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  }
+});

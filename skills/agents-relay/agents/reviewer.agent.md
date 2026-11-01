@@ -26,4 +26,4 @@ negative verdict is a successful review, not `task.failed`. If review
 execution fails or required validation evidence is unavailable, publish `task.failed`.
 Never emit `review.*` as the agent's terminal event. The event source must
 match the execution identity supplied by Relay. See
-`../contracts/event-contract.md`.
+the independently referenced Event Contract in the Relay Prompt (the cached Agent snapshot is not the repository directory).

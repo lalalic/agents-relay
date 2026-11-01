@@ -22,6 +22,7 @@ import { relayControlJob, relayJobStateCommand } from '../dist/cli-support.js';
 import { dispatchTaskAction } from '../dist/task-actions.js';
 import { bindPlannedReviewHead } from '../dist/planned-review-head.js';
 import { DurableTaskTransitionRuntime } from '../dist/workflow/durable-transition.js';
+import { resolveExecutionContext } from '../dist/execution-context.js';
 
 const now = () => new Date().toISOString();
 const task = (id, state='QUEUED', dependencies=[]) => ({jobId:'j',id,parentTaskId:null,dependencies,capabilities:[],adapter:'codex',input:'do the described work',output:{kind:'task_pr'},routing:{provider:'openai',model:'gpt-test',decidedBy:'test',decidedAt:now()},state,attempt:0,maxAttempts:2,leaseOwner:null,leaseExpiresAt:null,executionId:null,threadId:null,result:null,error:null,timeoutMs:1000,createdAt:now(),updatedAt:now(),continuation:null,continuationDeliveredAt:null});
@@ -1910,47 +1911,41 @@ test('dashboard usage failure returns 503 without double-sending headers', async
 });
 
 
-test('managed model worker input contains durable links without duplicating stored task input', async () => {
-  const { managedWorkerInput } = await import('../dist/reconciler.js');
-  const t=task('prompt-context'); t.executionId='prompt-execution'; t.adapter='chatgpt'; t.projectName='agents-relay'; t.parentTaskId='parent'; t.taskUrl='https://github.com/lalalic/agents-relay/pull/7#issuecomment-5754690474'; t.input='implement the change'; t.output={kind:'task_pr'};
-  const root=job([t]); root.prNumber=7; root.repository='lalalic/agents-relay';
-  const input=await managedWorkerInput(root,t);
-  assert.match(input,/Job URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7/);
-  assert.match(input,/Job ID: j/);
-  assert.match(input,/Task URL: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/7#issuecomment-5754690474/);
-  assert.match(input,/Task ID: prompt-context/);
-  assert.match(input,/Project: agents-relay/);
-  assert.doesNotMatch(input,/implement the change/); assert.match(input,/\[Output contract\]/); assert.match(input,/task\/PR/); assert.match(input,/\[Required event contracts\]/); assert.match(input,/skills\/events-bus\/references\/protocol\.md/); assert.match(input,/contracts\/event-contract\.md/); assert.doesNotMatch(input,/source\.id|FIRST execution action|Final event gate/);
-  assert.equal(t.input,'implement the change');
+test('model worker gets the same minimal Graph Action prompt without repeating PR or Task content', async () => {
+  const {managedWorkerInput}=await import('../dist/reconciler.js');
+  const t=task('prompt-context');t.executionId='prompt-execution';t.adapter='chatgpt';t.agentName='implementation';
+  t.input='implement private change';t.output={kind:'task_pr'};
+  t.taskUrl='https://github.com/lalalic/agents-relay/pull/7#issuecomment-5754690474';
+  const root=job([t]);root.prNumber=7;root.repository='lalalic/agents-relay';
+  const cx=await resolveExecutionContext(process.cwd(),'worker');
+  const input=await managedWorkerInput(root,t,cx);
+  assert.match(input,/^# Role\nYou are implementation/);
+  assert.match(input,/## Contracts\n/);assert.match(input,/## Contexts\n/);assert.match(input,/## Task\n/);
+  assert.match(input,/Job: j\nTask: prompt-context\nExecution: prompt-execution/);
+  assert.doesNotMatch(input,/implement private change|pull\/7|Job URL|Task URL/);
+  assert.equal(t.input,'implement private change');
 });
 
-test('local projected reviewer input exposes external PR while keeping local lifecycle authority', async () => {
-  const { managedWorkerInput } = await import('../dist/reconciler.js');
-  const t=task('local-reviewer'); t.executionId='review-execution'; t.adapter='chatgpt'; t.projectName='agents-relay'; t.agentName='reviewer'; t.input='Review PR #17 at exactly head SHA abc123.'; t.output={kind:'task_pr'};
-  const root=job([t]); root.prNumber=17; root.localMerge={sourceRef:'refs/heads/local-review',targetRef:'refs/heads/main',status:'pending'}; root.repository='lalalic/agents-relay';
-  const input=await managedWorkerInput(root,t);
-  assert.match(input,/Job: local j \(lifecycle authority\)/);
-  assert.match(input,/Projected GitHub PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
-  assert.match(input,/local SQLite Job is the lifecycle authority/);
-  assert.match(input,/Review the projected PR at https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
-  assert.match(input,/Review PR #17 at exactly head SHA abc123/);
-  assert.match(input,/Projected PR: https:\/\/github\.com\/lalalic\/agents-relay\/pull\/17/);
-  assert.doesNotMatch(input,/do not query GitHub/);
+test('projected reviewer Prompt preserves local authority without leaking the external PR into the launch message',async()=>{
+  const {managedWorkerInput}=await import('../dist/reconciler.js');
+  const t=task('local-reviewer');t.executionId='review-execution';t.adapter='chatgpt';t.agentName='reviewer';
+  t.input='Review PR #17 at exactly head SHA abc123.';t.output={kind:'task_pr'};
+  const root=job([t]);root.prNumber=17;root.localMerge={sourceRef:'refs/heads/local-review',targetRef:'refs/heads/main',status:'pending'};root.repository='lalalic/agents-relay';
+  const cx=await resolveExecutionContext(process.cwd(),'reviewer');
+  const input=await managedWorkerInput(root,t,cx);
+  assert.match(input,/You are reviewer/);assert.match(input,/Job: j\nTask: local-reviewer\nExecution: review-execution/);
+  assert.doesNotMatch(input,/Review PR #17|github\.com|pull\/17|Projected PR/);
 });
 
-test('local model worker input includes authoritative task input and event contract', async () => {
-  const { managedWorkerInput } = await import('../dist/reconciler.js');
-  const t=task('local-worker'); t.executionId='local-execution'; t.adapter='codex'; t.projectName='agents-relay'; t.input='local durable work contract'; t.output={kind:'task_pr'};
-  const root=job([t]); root.prNumber=0; root.localMerge={sourceRef:'refs/heads/local-worker',targetRef:'refs/heads/main',status:'pending'}; root.repository='lalalic/agents-relay';
-  const input=await managedWorkerInput(root,t);
-  assert.match(input,/\[Agents Relay managed task\]/);
-  assert.match(input,/Job: local j/);
-  assert.match(input,/Task URL: local:j\/task\/local-worker/);
-  assert.match(input,/Treat the following durable task input as the authoritative work contract; do not query GitHub\./);
-  assert.match(input,/local durable work contract/);
-  assert.match(input,/\[Required event contracts\]/);
-  assert.match(input,/Execution source: job\/j\/task\/local-worker\/execution\/local-execution/);
-  assert.doesNotMatch(input,/Retrieve the durable job and task from GitHub/);
+test('local model worker uses separate contracts and the execution-bound Task identity',async()=>{
+  const {managedWorkerInput}=await import('../dist/reconciler.js');
+  const t=task('local-worker');t.executionId='local-execution';t.adapter='codex';t.agentName='implementation';t.input='local durable work contract';
+  const root=job([t]);root.prNumber=0;root.repository='lalalic/agents-relay';
+  const cx=await resolveExecutionContext(process.cwd(),'worker');
+  const input=await managedWorkerInput(root,t,cx);
+  assert.match(input,/## Contracts\n/);assert.match(input,/event-contract\.md/);
+  assert.match(input,/Job: j\nTask: local-worker\nExecution: local-execution/);
+  assert.doesNotMatch(input,/local durable work contract|\[Agents Relay managed task\]|Task URL/);
   assert.equal(t.input,'local durable work contract');
 });
 

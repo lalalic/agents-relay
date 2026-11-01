@@ -20,3 +20,13 @@ test('daemon CLI mode never forces a terminal process exit', async () => {
     assert.deepEqual(codes,[]);
   } finally { process.exitCode=before; }
 });
+
+test('one-shot CLI preserves a validation failure exit status', async () => {
+  const before=process.exitCode;
+  try {
+    const codes=[];
+    await runCliEntrypoint(async () => { process.exitCode=1; }, {graceMs:10,forceExit:code=>codes.push(code)});
+    await new Promise(resolve=>setTimeout(resolve,35));
+    assert.deepEqual(codes,[1]);
+  } finally {process.exitCode=before;}
+});

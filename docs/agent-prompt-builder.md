@@ -1,19 +1,133 @@
-# Unified Agent PromptBuilder
+# Graph-owned Prompt Action
 
-## Scope
+Relay uses a single effective Agent resolver and a single prompt Action for
+Planner, Reviewer, Troubleshooter and Implementation Workers. No additional
+Role Skill or second Prompt registry exists.
 
-Planner, Reviewer, Troubleshooter, and Implementation Workers share `src/agent-prompt-builder.ts`.
-The builder creates a logical `system` (role instructions/contracts) and `user` (durable task evidence) bundle, independently of whether the target adapter exposes an API system role. ChatGPT receives a single rendered user message. The Codex Planner and managed Worker paths use the same builder. Existing `plan apply` and first `task.started` event requirements remain in force.
+## Graph → Action → Adapter
 
-## References
+- The existing `planner-orchestration.mmd` selects a Planner launch. The
+  Planner runtime calls `buildPlannerExecutionPrompt()`, which calls the
+  shared `buildRelayWorkPrompt()` Action in `agent-prompt-builder.ts`.
+- `task-lifecycle.mmd` selects `effect.launchTask`. Its Reconciler effect calls
+  `managedWorkerInput()`, which calls the **same** `buildRelayWorkPrompt()`.
+- `node <matching-absolute-dist/cli.js> prompt --id JOB --plan-id PLAN --adapter ...` and
+  `--task-id TASK` call those **same entry points**, with no separate mock
+  assembly, no alternative business Prompt, and no lifecycle changes.
 
-Effective, merged contracts are snapshotted to private content-addressed Markdown files (`sha256.md`, directory mode 0700, file mode 0600). Prompts include absolute paths and SHA-256 for accessible snapshots, otherwise fall back to inline instructions. The ChatGPT threaded delivery path includes verified snapshot contents inline because threaded browser delivery does not attach local files. The adapter reads only runtime-assembled manifests before the untrusted Task data boundary and only canonical paths within the configured snapshot directory; malformed, forged, or out-of-root entries cannot authorize file reads.
+The worker-facing Prompt has five short sections; Bootstrap differs by adapter:
 
-## Test levels
+```text
+# Role
+You are <agent> with responsibility at <cached merged agent absolute path>.
 
-- L1 covers bundle rendering, isolation boundaries, hash integrity, snapshot access, Planner contract, Event contract, and both adapter renderings.
-- L2 is `npm run test:l2:agents`. It prepares cases for all four roles on both renderings. The default is `NOT_RUN` rather than a fabricated PASS.
-- Optional model-only L2 requires `AGENTS_RELAY_L2_LIVE=1`, an OpenAI API key (`AGENTS_RELAY_L2_OPENAI_API_KEY` or `OPENAI_API_KEY`), and `AGENTS_RELAY_L2_OPENAI_MODEL`. The runner calls the fixed OpenAI Responses endpoint with no tools, `tool_choice: none`, no storage, and verifies the provider model identity. The public ChatGPT UI does not currently expose a model-only transport through this test harness, so its real-model cases are explicitly `NOT_RUN`. Do not substitute Codex responses for ChatGPT.
-- L3 remains the authoritative lifecycle integration suite (`npm test`) and does not treat prompt-only checks as proof of Worker recovery or full objective completion.
+## Bootstrap
+<adapter-specific initialization, no duplicated global instructions>
 
-The separate `evaluation` mode removes production lifecycle instructions and retains role guidance as read-only evaluation criteria. It does not call Relay actions, event tools, or browser sessions. In production the Relay Graph and CLI remain authoritative for Action Guards, persisted state, and verified completion.
+## Contracts
+<independent, ordered, sha256-pinned contract file references>
+
+## Contexts
+<only additional project-specific AGENTS.md when the adapter cannot auto-load it>
+
+## Task
+Use the agents-relay skill at <absolute skill path> to read Job/Task/Plan.
+Job: <job-id>
+Task: <task-or-plan-id>
+Execution: <execution-id>
+```
+
+Planner reads the Task/Job/Plan Contract, but not Task lifecycle event contracts: a Plan is not a Task and does not emit `task.started`/`task.progress`/`task.completed`. Planner starts with **no Context files**. Its merged project Agent selects `graph.mmd`, stage contracts, and downstream Agent definitions as needed. For normal Tasks, Codex loads project rules through cwd, while ChatGPT/Z receive only the active project `AGENTS.md` because their Web harness does not automatically load local project instructions. This is deliberate per-adapter/context selection, not a directory dump.
+
+Only the Agent is inherited/merged by the **existing** Agent resolver and
+content-addressed to a private 0600 file. Contracts and Contexts are NOT
+merged, copied into the Agent, or expanded into launch Prompt text. Source
+references include exact SHA-256 digests. Global rules belong to Bootstrap.
+`README.md` is human documentation and is never included as Agent Context.
+
+`agents-relay` is the actual existing skill name (not a new `agents-skill`).
+It now documents two read-only, execution-bound SQLite commands:
+
+```sh
+node <matching-absolute-dist/cli.js> plan context --id JOB --plan-id PLAN --execution-id EXECUTION
+node <matching-absolute-dist/cli.js> task context --id JOB --task-id TASK --execution-id EXECUTION
+```
+
+Both reject stale execution bindings. The Worker does not discover Task
+content in GitHub/PRs or trust a bare Task ID as authorization. For Plan work,
+`plan apply` and its exact durable receipt remain the completion authority;
+for Task work, the existing events-bus protocol and Graph own started and
+terminal state. `prompt` inspection never launches a model or alters state.
+
+## Adapter Bootstrap boundary
+
+| Adapter | Runtime bootstrap | Task Prompt transport |
+| --- | --- | --- |
+| Codex | Execution cwd is resolved project; Codex's local instructions plus explicit Context files | Exact Action output as CLI initial prompt |
+| ChatGPT Web | Account Default Instructions initialize Neo/XChat harness automatically; no extra per-Task Neo bootstrap | Exact Action output as a regular User turn, readable through Neo MCP |
+| Z Web | Transport issues a short-lived OAuth token and uses the canonical interactive Z bootstrap URL, then Neo MCP. A real `task.started` must be accepted before the Task | Exact Action output appended *unaltered* after runtime bootstrap, via Z WebHelm |
+
+Each worker uses the **same CLI version as the Skill pinned by its Prompt**:
+resolve `../../dist/cli.js` from `skills/agents-relay/SKILL.md` and invoke
+`node <matching-absolute-dist/cli.js>`. Do not invoke a stale global
+`agents-relay` CLI. The `plan context` result's `apply_cli` is also bound to
+that exact `dist/cli.js`. Task body and review/evidence attachments remain
+in SQLite; ChatGPT `new-thread`/`new-turn` transports the Graph Action Prompt
+unaltered and keeps idempotency/attachment metadata outside user-message
+prose. This byte-for-byte transport check is part of regression tests.
+
+Z's dynamic OAuth credential is a **separate runtime-only secret**, not part
+of the reusable Task Prompt. The print-only CLI does not disclose it. Z uses
+the existing `https://neoy.qili2.com/files/z-chat/bootstrap.md` entry, rather
+than carrying another full copy of global rules or Skill catalogs.
+
+Planner dispatch is currently Codex-only; `prompt --plan-id ... --adapter
+chatgpt|z` produces a corresponding **Task Prompt preview**, not a working
+non-Codex Planner delivery. Completed historical Plan Prompt bytes were not
+persisted: CLI reconstruction uses the recorded execution ID and excludes
+Tasks created after the Plan began, but should not be mistaken for the exact
+historical bytes or current runnable authority.
+
+## L4 Prompt Evals
+
+`npm run test:verification:l4` evaluates **18 role/adapter pairs**: 6 Agent
+roles × 3 adapters. It generates 14 real Prompts and verifies four hard
+runtime rejections before dispatch (Troubleshooter and interactive Vlog
+Producer on unsupported adapters). For each generated Prompt it compares the CLI's bytes against the Graph
+Action Builder, reads and SHA-verifies the actual cached
+Agent and all Contracts, verifies role identity and domain-specific
+instructions, rejects duplicate Bootstrap/README/Neo-root contexts, checks
+minimal per-adapter Context counts, validates mandatory event obligations,
+and proves Task/Plan Context retrieval from isolated **real SQLite** with stale
+execution rejection. It also records runtime feasibility separately: Planner
+is currently Codex-only; a Final QA on Codex/Z requires additional real
+playback/audio capability evidence before it can be accepted. This is a local code/contract evaluation, not an
+external model completion.
+
+`npm run test:verification:l4:live` tests the installed Codex CLI/project cwd,
+ChatGPT's WebHelm readiness, and a newly issued temporary Z OAuth credential
+against the real remote Neo MCP `tools/list`, **pinned Agent snapshot** `fs`
+read, and `shell` `neo bootstrap`. Results are saved as a private JSON
+report (`/tmp/relay-prompt-l4-live.json` by default), without secrets. Set
+`RELAY_L4_CODEX_MODEL_EVIDENCE_FILE` and
+`RELAY_L4_CHATGPT_TOOL_PROBE_FILE` to authenticated, independently observed
+model-tool probe evidence when available. A submitted Web turn is never proof
+that the model used tools. Provider terminal events and real Job outcome are
+not exercised by the L4 bootstrap smoke checks: those remain separate E2E
+requirements.
+
+The L4 project suite targets the actual Neo Master `neo/vlog` project, not a
+fabricated Vlog Agent; override `RELAY_L4_VLOG_PROJECT` for a valid project.
+L4 requires access to that project, so it is a **separate verification gate**
+from portable unit tests and does not run on generic GitHub runners without
+the Neo workspace.
+
+## Validation
+
+- Unit/integration: `test/prompt-action-parity.test.js`,
+  `test/prompt-cli.test.js`, `test/managed-prompt-assembly.test.js`,
+  `test/adapters.test.js`, `test/z-bootstrap.test.js`.
+- Graph and lifecycle: `npm run test:verification:l1`, then the relevant L3
+  integration tests. Model-only checks do not prove event completion.
+- The no-GitHub local Job path and stale execution rejections are verified
+  independently. A browser submit receipt is *not* a Task completion receipt.

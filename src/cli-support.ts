@@ -3,8 +3,9 @@ import { InMemoryStore, DurableStore, GitHubStore } from './store.js';
 import { githubAuthContext } from './github-auth.js';
 import { noGitHubMode } from './no-github.js';
 import { basename } from 'node:path';
-import { createJobIdRegistryResolver } from './local-job-registry.js';
+import { createJobIdRegistryResolver, findJobIdSnapshot } from './local-job-registry.js';
 import { relayStoreDirectory } from './relay-store.js';
+import { normalizeRelayJob } from './relay-job-snapshot-reads.js';
 import { EventRecord, Job, Task, ChatGptTabClosePolicy, StorySize, Priority } from './types.js';
 import { NatsEventBus, eventFor, EventBus } from './events.js';
 import { parseJobTagJson } from './task-tag.js';
@@ -51,15 +52,54 @@ export function repository(args: string[]): string { const value = arg(args, '--
 export function pullRequest(args: string[]): number { const value = Number(arg(args, '--pr')); if (!Number.isInteger(value) || value <= 0) throw new Error('--pr is required for GitHub-backed operation'); return value; }
 async function localStore(file: string): Promise<{ store: InMemoryStore; job: Job }> { const parsed = JSON.parse(await readFile(file, 'utf8')) as Job; const store = new InMemoryStore(parsed); return { store, job: await store.load(parsed.id) }; }
 export async function githubStore(args: string[]): Promise<GitHubStore> { const auth = await githubAuthContext(args); return new GitHubStore(auth.client, repository(args), pullRequest(args), auth.trustedAuthors); }
-export async function storeFor(args: string[]): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+/** The public read-only commands must fail closed on ambiguous Job bindings. */
+function validateReadOnlyJobBinding(args: string[]): void {
+  for (const flag of ['--id','--repo','--pr','--file','--store-dir','--task-id','--plan-id','--execution-id']) {
+    const count=args.filter(value=>value===flag).length;
+    if (count>1) throw new Error(`${flag} may not be repeated`);
+    if (count===1 && (!arg(args,flag) || arg(args,flag).startsWith('--')))
+      throw new Error(`${flag} requires a value`);
+  }
+  if (!hasArg(args,'--id')) throw new Error('--id is required for read-only Relay commands');
+  if (hasArg(args,'--pr')) {
+    const pr=Number(arg(args,'--pr'));
+    if (!Number.isSafeInteger(pr) || pr<=0) throw new Error('--pr must be a positive integer');
+  }
+}
+export async function storeFor(args: string[], allowIdOnly = false): Promise<{ store: DurableStore; job: Job; localFile: string | null }> {
+  if (allowIdOnly) validateReadOnlyJobBinding(args);
   const file = arg(args, '--file');
-  if (file) { const loaded = await localStore(file); return { ...loaded, localFile: file }; }
-  const repo = noGitHubMode(args) ? repository(args) : arg(args, '--repo');
+  if (file) {
+    const loaded = await localStore(file);
+    if (allowIdOnly) {
+      const requestedId=arg(args,'--id'), requestedRepo=arg(args,'--repo');
+      if (requestedId!==loaded.job.id) throw new Error('Local --file Job ID binding mismatch');
+      if (requestedRepo && loaded.job.repository!==requestedRepo)
+        throw new Error('Local --file repository binding mismatch');
+      const boundPr=loaded.job.prNumber>0 ? loaded.job.prNumber:0;
+      if (hasArg(args,'--pr') && boundPr!==Number(arg(args,'--pr')))
+        throw new Error('Local --file PR binding mismatch');
+    }
+    return { ...loaded, localFile: file };
+  }
+  const repo = allowIdOnly ? arg(args, '--repo') : noGitHubMode(args) ? repository(args) : arg(args, '--repo');
   const jobId = arg(args, '--id');
-  if (!repo || !jobId) throw new Error('Local Job requires --repo and --id (or explicit --file)');
+  if (!jobId || (!repo && !allowIdOnly)) throw new Error('Local Job requires --repo and --id (or explicit --file)');
   const directory = arg(args, '--store-dir') || relayStoreDirectory();
+  if (allowIdOnly) {
+    // Read-only CLI must not initialize SQLiteRelayStore: its constructor
+    // runs migrations and reclaims processing outbox actions.
+    const selected = await findJobIdSnapshot(directory, jobId);
+    if (!selected || (repo && selected.job.repository !== repo))
+      throw new Error('Immutable local Job not found for repository: ' + jobId);
+    const job = normalizeRelayJob(JSON.stringify(selected.job));
+    const suppliedPr = arg(args, '--pr');
+    if (suppliedPr && (job.prNumber > 0 ? job.prNumber : 0) !== Number(suppliedPr))
+      throw new Error('Local Job/PR binding mismatch');
+    return { store: new InMemoryStore(job), job, localFile: null };
+  }
   const binding = await createJobIdRegistryResolver(directory, new Map())(jobId);
-  if (!binding || binding.job.repository !== repo)
+  if (!binding || (repo && binding.job.repository !== repo))
     throw new Error('Immutable local Job not found for repository: ' + jobId);
   const suppliedPr = arg(args, '--pr');
   const boundPr = binding.job.prNumber > 0 ? binding.job.prNumber : 0;

@@ -1,4 +1,4 @@
-export const usage = 'agents-relay <job|task|review|artifact|plan|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
+export const usage = 'agents-relay <job|task|review|artifact|plan|prompt|blocker|projection|escalation|context|init|record|agent-register|agent-discover|status|reconcile|serve> [options]';
 const help = {
   root: `Agents Relay coordinates durable asynchronous agent jobs through local SQLite and workflow graphs.
 
@@ -14,6 +14,8 @@ Commands:
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
   plan apply               Submit a validated Task Tree within one active Plan
+  plan context             Read execution-bound Planner context from SQLite
+  prompt                   Print raw Planner/Worker prompt from the production Builder
   blocker add|resolve|show  Manage cross-Job blocker dependencies
   projection conflicts|resolve  Inspect and repair deterministic GitHub projection conflicts
   escalation               Run the canonical escalation graph and Neo escalation executor
@@ -51,6 +53,16 @@ Common options:
 
 Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
+  prompt: `Read-only exact PromptBuilder output for a durable Plan or Task.
+
+  agents-relay prompt --id JOB --plan-id PLAN --adapter codex|chatgpt|z [--output FILE]
+  agents-relay prompt --id JOB --task-id TASK --adapter codex|chatgpt|z [--output FILE]
+
+Raw worker-facing text on stdout, no profile wrapper. --repo selects local SQLite,
+not GitHub. Old completed Plans are reconstructed from recorded IDs and prior
+Task history; their original historical prompt bytes are not persisted. Only
+Codex currently has production Planner dispatch. Web Planner variants show the
+same Builder message targeting the other transports, not a live delivery.`,
   review: `Use review run for an Agent-owned outcome review, or request for the SHA-bound final review.
 
 Outcome: agents-relay review run --prompt-file PATH --agents video-director,market --project-path DIR [--output PATH]
@@ -128,7 +140,7 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|list|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|events|list|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
@@ -149,7 +161,7 @@ Example:
   npx agents-relay task create --repo OWNER/REPO --id j-5-owner-repo-1 --output file --output-path story.md --input-file task.md`,
   'task update': `Update mutable durable Task fields in place.
 
-Required: --task-id ID and the normal Job storage options.
+Required: --id JOB_ID --task-id ID. Optional --repo OWNER/REPO fences the Job identity.
 Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
 Use --clear-routing to remove routing metadata.
@@ -161,10 +173,13 @@ Example:
 Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID and --message TEXT or --message-file FILE.`,
   'task comments': `List append-only Task comments.
 
-Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID.`,
+Required: --id JOB_ID --task-id TASK_ID. Optional --repo OWNER/REPO fences the Job identity.`,
   'task context': `Read the authoritative execution-scoped Task contract.
 
-Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Fails closed on stale execution.`,
+Required: --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Optional --repo OWNER/REPO fences the Job identity. Fails closed on stale execution.`,
+  'task events': `Read the latest Task-scoped lifecycle events via Relay.
+
+Required: --id JOB_ID --task-id TASK_ID. Optional --repo, --limit 1..60 (default 60), --order asc|desc (default desc), --after CURSOR (for asc). To read full history: start with --order asc --after 0, then repeat with nextCursor until a page has fewer than --limit events. Failure to retrieve history is not success.`,
   'task show': `Show one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

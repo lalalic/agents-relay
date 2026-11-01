@@ -71,20 +71,105 @@ export async function buildReferenceFirstPrompt(input: {
   adapter: PromptAdapter;
   referenceDirectory?: string;
   bootstrap?: string;
+  contextRefs?: readonly PromptReference[];
+  strictReference?: boolean;
 }): Promise<AgentPromptBundle> {
   const referenceDirectory = input.referenceDirectory ?? process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR ?? DEFAULT_PROMPT_REFERENCE_DIRECTORY;
   let reference: PromptReference;
   try { reference = await snapshotAgentInstructions(input.system, referenceDirectory); }
   catch (error) {
-    if (error instanceof Error && error.message === 'Prompt snapshot digest mismatch') throw error;
+    if (input.strictReference || (error instanceof Error && error.message === 'Prompt snapshot digest mismatch')) throw error;
     return buildAgentPrompt(input);
   }
-  if (!await isPromptReferenceAccessible(reference.path)) return buildAgentPrompt(input);
+  if (!await isPromptReferenceAccessible(reference.path)) {
+    if (input.strictReference) throw new Error(`Immutable Agent Contract unavailable: ${reference.path}`);
+    return buildAgentPrompt(input);
+  }
   return buildAgentPrompt({
     role: input.role,
     system: (input.bootstrap ? input.bootstrap.trim() + '\n' : '') +
       'After the required execution startup action, read the referenced immutable Agent Contract snapshot and follow it. Relay owns snapshot integrity and version identity; do not compute a hash of the source .agent.md or compare it to the snapshot. If the snapshot is unreadable, report a concrete failure; never guess its instructions.',
     user: input.user,
-    references: [reference],
+    references: [reference, ...(input.contextRefs ?? [])],
   });
+}
+
+/** The one Graph dispatch / CLI action for production worker-facing instructions.
+ * Only an Agent can be resolved/merged; contracts and project contexts remain
+ * independent files, listed from base to higher-precedence project instructions.
+ */
+export async function buildRelayWorkPrompt(input: {
+  agentName: string;
+  agentContent: string;
+  contracts: readonly string[];
+  contexts: readonly { path: string; source: string }[];
+  skillPath: string;
+  jobId: string;
+  taskId: string;
+  executionId: string;
+  adapter: PromptAdapter;
+  projectPath: string;
+}): Promise<string> {
+  if (!input.jobId || !input.taskId || !input.executionId) throw new Error('Relay prompt requires a full execution binding');
+  const reference = await snapshotAgentInstructions(input.agentContent,
+    process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR ?? DEFAULT_PROMPT_REFERENCE_DIRECTORY);
+  const contracts = await Promise.all(input.contracts.map(path => promptFileReference(path, 'context')));
+  // Global AGENTS is Bootstrap-owned and README is human documentation.
+  // The calling Role Action selects context intentionally, not by a directory dump.
+  const ranks: Record<string, number> = { neo: 0, project: 1 };
+  const orderedContext = input.contexts.filter(item =>
+    (item.source === 'neo' || item.source === 'project') && item.path.endsWith('/AGENTS.md'))
+    .sort((a,b) => (ranks[a.source] ?? 0) - (ranks[b.source] ?? 0));
+  const contexts = await Promise.all(orderedContext.map(item => promptFileReference(item.path, 'context')));
+  const global = input.adapter === 'codex'
+    ? input.contexts.find(item => item.source === 'global' && item.path.endsWith('/AGENTS.md'))
+    : undefined;
+  const globalReference = global ? await promptFileReference(global.path, 'context') : undefined;
+  const bootstrap = input.adapter === 'codex'
+    ? [
+        `Use Codex CLI with project cwd: ${input.projectPath}. Codex -C loads directory AGENTS.md instructions.`,
+        ...(globalReference ? [`Read global Neo rules once if they are not already loaded: ${globalReference.path} (sha256:${globalReference.sha256}).`] : []),
+        'Use local shell and files for referenced contracts and the Relay CLI. Do not call neo bootstrap.',
+      ]
+    : input.adapter === 'chatgpt'
+      ? [
+          'Account Default Instructions already initialize the Neo/XChat Harness.',
+          'Use the connected Neo MCP fs/shell tools to read the listed Neo Master files and execute Relay CLI. Do not run neo bootstrap again.',
+        ]
+      : [
+          'The Z runtime supplies a one-hour Neo OAuth access token (never the operator or refresh token). Do not ask the user to copy a token.',
+          'Use the same Z interactive bootstrap entry: https://neoy.qili2.com/files/z-chat/bootstrap.md.',
+          'Run Neo MCP through authenticated HTTPS. The Z cloud filesystem is not Neo Master. Continue the assigned Task after bootstrap; do not wait for another user message.',
+        ];
+  const skill = await promptFileReference(input.skillPath, 'context');
+  const lines = [
+    '# Role',
+    `You are ${input.agentName} with responsibility at ${reference.path} (sha256:${reference.sha256}).`,
+    '', '## Bootstrap',
+    ...bootstrap,
+    '', '## Contracts',
+    ...(input.agentName === 'planner'
+      ? ['MANDATORY: Read the listed Plan/Task contract before planning. A Plan does not publish Task events.']
+      : ['MANDATORY: Read every listed Task and Events contract before execution.']),
+    'Read independently, in order. Later, more specific contracts take precedence over general rules.',
+    ...contracts.map((ref, i) => `${i + 1}. ${ref.path} (sha256:${ref.sha256})`),
+    ...(input.agentName === 'planner' ? [
+      'Planner lifecycle: use the execution-bound `plan context` from the matching Relay CLI described by the Skill. Run the returned same-version `apply_cli`, and return the exact PLAN_APPLIED receipt. Do not emit Task events for a Plan.',
+    ] : [
+      `EVENT SOURCE (exact): job/${input.jobId}/task/${input.taskId}/execution/${input.executionId}`,
+      'START: After Bootstrap and the minimal event-contract preflight, publish `task.started` through the canonical events-bus before beginning Task work. Verify the publish response.',
+      'PROGRESS: Publish `task.progress` with concrete progress/evidence during long-running work and before the inactivity timeout. Progress is not completion.',
+      'TERMINAL: After verifying durable output, publish exactly ONE `task.completed`; if you cannot fulfill the Task, publish `task.failed` with phase, reason and evidence. Do not silently exit or treat a process/browser receipt as completion.',
+      'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
+    ]),
+    '', '## Contexts',
+    ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path} (sha256:${ref.sha256})`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
+    '', '## Task',
+    `Use the agents-relay skill at ${skill.path} (sha256:${skill.sha256}) to read authoritative Job and Task/Plan details via the Relay CLI.`,
+    'All Relay state reads and operations use that version-matched CLI. Publish only required Task events through the separately listed Neo events-bus protocol; never inspect Relay backing storage or HTTP APIs.',
+    `Job: ${input.jobId}`,
+    `Task: ${input.taskId}`,
+    `Execution: ${input.executionId}`,
+  ];
+  return lines.join('\n');
 }

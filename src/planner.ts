@@ -1,10 +1,10 @@
-import { buildReferenceFirstPrompt, renderAgentPrompt } from './agent-prompt-builder.js';
+import { buildRelayWorkPrompt, type PromptAdapter } from './agent-prompt-builder.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { Job, Plan, Priority, StorySize, Task, AdapterName, RoutingDecision, TaskOutput, PlanningDecisionSource, PlanTrigger, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements, ReviewTaskMetadata, TaskResolutionProposal } from './types.js';
 import { unresolvedTask } from './workflow/task-resolution.js';
-import { ExecutionContext, executionContextPrompt, BUNDLED_AGENTS_ROOT } from './execution-context.js';
+import { ExecutionContext, BUNDLED_AGENTS_ROOT } from './execution-context.js';
 import { resolveAgentMarkdown } from './agent-content-resolver.js';
 import { parseAgentGraph, validateAgentSelection } from './agent-graph.js';
 import { dispatchPlannerTrigger } from './workflow/planner-trigger-v2.js';
@@ -390,7 +390,7 @@ export function plannerInput(context: PlannerContext): string {
   const project = context.executionContext?.project;
   return JSON.stringify({
     objective: context.objective,
-    apply_cli: context.planExecution ? `agents-relay plan apply --repo ${context.job.repository} --pr ${context.job.prNumber} --id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
+    apply_cli: context.planExecution ? `node ${JSON.stringify(join(dirname(fileURLToPath(import.meta.url)), 'cli.js'))} plan apply --repo ${context.job.repository} ${context.job.prNumber > 0 ? `--pr ${context.job.prNumber} ` : ''}--id ${context.job.id} --plan-id ${context.planExecution.planId} --execution-id ${context.planExecution.executionId} --file PATH` : undefined,
     plan_execution: context.planExecution, retry_feedback: context.retryFeedback,
     caller_prompt: context.guidance,
     force_restate: context.forceRestate === true,
@@ -454,14 +454,20 @@ function parsePlannerAgentMessage(line: string): string | undefined {
   } catch { /* ignore non-JSON runtime diagnostics */ }
   return undefined;
 }
+export async function buildPlannerExecutionPrompt(context: PlannerContext, agentFile = DEFAULT_PLANNER_AGENT, adapter: PromptAdapter = 'codex'): Promise<string> {
+  if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
+  const ctx = context.executionContext, selected = ctx ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, ctx.project.path, ctx.project.neoRoot) : undefined;
+  return buildRelayWorkPrompt({ agentName:'planner', agentContent:selected?.content ?? await readFile(agentFile,'utf8'),adapter,
+    contracts:[join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/contracts/task-job-contract.md')],
+    contexts:[],projectPath:ctx?.project.path ?? process.cwd(),skillPath:join(dirname(fileURLToPath(import.meta.url)), '..', 'skills/agents-relay/SKILL.md'),jobId:context.job.id,
+    taskId:context.planExecution.planId,executionId:context.planExecution.executionId,
+  });
+}
 export class AgentObjectivePlanner implements ObjectivePlanner {
   constructor(private readonly command = 'codex', private readonly agentFile = DEFAULT_PLANNER_AGENT) {}
   async plan(context: PlannerContext, signal: AbortSignal): Promise<PlannerResult> {
-    const effectivePlanner = context.executionContext ? await resolveAgentMarkdown('planner', BUNDLED_AGENTS_ROOT, context.executionContext.project.path) : undefined;
-    const instructions = effectivePlanner?.content ?? await readFile(this.agentFile, 'utf8');
-    const contract = await readFile(DEFAULT_TASK_JOB_CONTRACT, 'utf8');
-    const resolvedContext = context.executionContext ? executionContextPrompt(context.executionContext) + '\n\n' : '';
-    const prompt = renderAgentPrompt(await buildReferenceFirstPrompt({ role: 'planner', adapter: 'codex', system: instructions.trim() + '\n\n## Shared Task / Job Contract\n\n' + contract.trim(), user: resolvedContext + '## Durable planner input\n\n' + plannerInput(context) }), 'codex');
+    if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
+    const prompt = await buildPlannerExecutionPrompt(context, this.agentFile);
     const runAgent = (input: string): Promise<string> => new Promise<string>((resolve, reject) => {
       // Plan apply writes unified relay.sqlite beside AGENTS_RELAY_STORE_DIR.
       const child = spawnOwnedProcess(this.command, buildPlannerCodexArgs(relayStoreDirectory(), input), { invocation: 'planner.agent', signal, correlation: { jobId: context.job.id }, spawn: { cwd: context.executionContext?.project.path, stdio: ['ignore', 'pipe', 'pipe'] } });
@@ -481,7 +487,6 @@ export class AgentObjectivePlanner implements ObjectivePlanner {
         resolve(finalMessage);
       });
     });
-    if (!context.planExecution) throw new Error('Planner execution is missing its durable Plan and execution identity');
     const response = await runAgent(prompt);
     const expected = `PLAN_APPLIED:${context.planExecution.planId}:${context.planExecution.executionId}`;
     if (response !== expected) {

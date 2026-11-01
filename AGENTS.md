@@ -73,3 +73,17 @@ P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-w
 - `workflow/browser-worker-pool.mmd` owns Browser Pool resource decisions, separate from the Relay Task Graph. Keep production bindings in `src/browser-worker-pool-graph.ts` through the shared dispatcher facade; do not make direct graph-evaluate calls in production.
 - Pool timeout renewal requires new assistant output and a correlated Relay `task.progress`; a page spinner, lease keepalive, or a submitted recovery Turn can never renew the Task deadline.
 - Browser Pool regressions require deterministic negative/healing cases and, for releases that alter WebHelm lifecycle, opt-in real ChatGPT/Z.ai browser tests as described in `docs/BROWSER_WORKER_POOL.md`. Do not count fake CLI tests as real site E2E or interrupt unrelated Sessions.
+
+
+## Prompt delivery boundary
+
+Planner, Reviewer, Troubleshooter, and Workers use one Graph-selected
+`buildRelayWorkPrompt` Action, shared with the read-only `agents-relay prompt`
+CLI. Its five logical sections are Role (immutable merged Agent), Bootstrap
+(adapter-specific), Contracts (independently pinned files), Contexts (only
+relevant project instruction paths), and Task (execution identity only).
+Task intent/state is retrieved through the matching Relay CLI (`task context`
+or `plan context`), not GitHub/PR projections or backend internals.
+L4 verifies each supported role/adapter combination and SHA-pinned references.
+A browser submission receipt alone cannot finalize a Task.
+See `docs/agent-prompt-builder.md`.
