@@ -74,7 +74,22 @@ test('Jobs toolbar uses compact native single-choice filters and removes paginat
   assert.match(dashboardHtml, /#jobs-view \.job-filters \{[^}]*grid-template-columns:minmax\(0,1fr\) 5\.8rem 4\.6rem/);
   assert.match(dashboardHtml, /#jobs-view \.jobs-actions \{ justify-content:flex-end; \}/);
   assert.match(dashboardHtml, /#jobs-view \.job-search \{ width:100%; min-width:0; max-width:none;/);
-  assert.match(dashboardHtml, /id="jobs-refresh" class="refresh-button" type="button">Refresh<\/button>/);
+  assert.match(dashboardHtml, /id="jobs-refresh" class="icon-button" type="button" aria-label="Refresh jobs"/);
+});
+
+test('Jobs and detail actions use borderless accessible icons and a state-colored detail button', () => {
+  for (const id of ['jobs-refresh','mobile-jobs-back','job-content-open','selected-job-refresh','events-all-tasks']) {
+    assert.match(dashboardHtml, new RegExp('id="'+id+'" class="icon-button[^"]*" type="button" aria-label="[^"]+"'));
+  }
+  assert.doesNotMatch(dashboardHtml, /id="job-content-open"[^>]*>Job details<\/button>/);
+  assert.match(dashboardHtml, /jobContentButton\.dataset\.state=JOB_STATES\.includes\(job\.state\)/);
+  assert.match(dashboardHtml, /jobContentButton\.setAttribute\('aria-label','Job details · '/);
+  assert.match(dashboardHtml, /\.job-status-button\[data-state="ACTIVE"\]/);
+  assert.match(dashboardHtml, /\.job-state-select\[data-state="ACTIVE"\]/);
+  assert.match(dashboardHtml, /\.icon-button \{[^}]*border:0;/);
+  assert.match(dashboardHtml, /function iconSvg\(name\)/);
+  assert.match(dashboardHtml, /details\.append\(iconSvg\('detail'\)\)/);
+  assert.match(dashboardHtml, /close\.append\(iconSvg\('close'\)\)/);
 });
 
 test('refresh failure remains visible after controls are restored', () => {

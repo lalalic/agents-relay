@@ -52,7 +52,8 @@ code change and classify it afterward.
 Use L1 Graph branch and binding verification, L2 role/provider evidence, and L3 deterministic production-ingress/reconciliation/SQLite tests. Do not reference the retired standalone E2E runner or deleted `e2e/` directory. L1 and deterministic L3 passing do not imply a physical UI or provider integration was run; report those gates as `NOT_RUN` until independently verified. Keep negative, restart/dedupe, and false-completion coverage.
 
 Dashboard Jobs search is read-only over the SQLite inventory. Keep UI parameters aligned with the documented `/api/jobs` contract, apply all filters and ordering before server pagination, and verify explicit Refresh reaches the backend with the active conditions.
-Jobs filter input, select changes, and Job navigation must only update the client-side list; only the explicit list Refresh button queries `/api/jobs` after initial load. Keep both Refresh labels stable and cap displayed Jobs to the newest 20.
+Jobs filter input, select changes, and Job navigation must only update the client-side list; only the explicit list Refresh button queries `/api/jobs` after initial load. Jobs Refresh and selected Job Refresh must keep stable accessible labels and unchanged request behavior, even when presented as icons. Cap displayed Jobs to the newest 20.
+Mobile Jobs and Job detail header controls use borderless icon-only buttons with accessible labels; the status-colored Job details icon reflects the current durable lifecycle state, not connection health. Preserve native select controls and keyboard focus styles.
 On mobile Jobs screens, keep Search, Status, Repository, and Refresh in one row without a Reset control. Verify at 320–430 CSS pixels and ensure the page has no horizontal overflow.
 
 ## Operational workflows

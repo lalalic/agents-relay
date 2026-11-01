@@ -43,6 +43,18 @@ export const dashboardStyles = `  <style>
     .quick-filter[aria-pressed="true"] { border-color:var(--accent); background:var(--accent2); color:var(--accent); }
     .refresh-button { border:1px solid var(--border); border-radius:.35rem; background:var(--surface); color:var(--muted); padding:.28rem .55rem; font:inherit; font-size:.72rem; font-weight:700; cursor:pointer; }
     .refresh-button:disabled { cursor:default; opacity:.55; }
+    .icon-button { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:2.5rem; height:2.5rem; padding:0; border:0; border-radius:50%; color:var(--muted); background:transparent; cursor:pointer; }
+    .icon-button svg { display:block; width:1.3rem; height:1.3rem; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+    .icon-button:hover { color:var(--accent); background:var(--accent2); }
+    .icon-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .icon-button:disabled { cursor:default; opacity:.4; }
+    .job-status-button[data-state="ACTIVE"],.job-status-button[data-state="COMPLETED"] { color:var(--ok); background:#e5f3e9; }
+    .job-status-button[data-state="DRAFT"] { color:#3f51b5; background:#eef2ff; }
+    .job-status-button[data-state="CANCELLED"],.job-status-button[data-state="IDLE"] { color:var(--muted); background:#edf0f4; }
+    .job-status-button .status-center { fill:currentColor; stroke:none; }
+    .job-state-select[data-state="ACTIVE"],.job-state-select[data-state="COMPLETED"] { color:var(--ok); background:#e5f3e9; border-color:transparent; }
+    .job-state-select[data-state="DRAFT"] { color:#3f51b5; background:#eef2ff; border-color:transparent; }
+    .job-state-select[data-state="CANCELLED"] { color:var(--muted); background:#edf0f4; border-color:transparent; }
     .mobile-only { display:none; }
     .panel-body { padding:.75rem; overflow:auto; max-height:calc(100vh - 11.5rem); }
     #jobs-workspace > .panel:first-child .panel-body { overflow:visible; max-height:none; }
@@ -165,7 +177,10 @@ export const dashboardStyles = `  <style>
       #jobs-view .job-filter { width:100%; max-width:none; min-width:0; text-transform:none; font-size:.69rem; min-height:2.25rem; padding:.2rem .15rem; }
       #jobs-view .jobs-actions { justify-content:flex-end; }
       #jobs-view .jobs-feedback { grid-column:1 / -1; text-align:left; }
-      #jobs-view #jobs-refresh { min-height:2.25rem; padding:.28rem .35rem; }
+      #jobs-view #jobs-refresh { width:2.25rem; height:2.25rem; }
+      #jobs-workspace > .panel:first-child > .panel-head { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:.3rem; align-items:center; }
+      #jobs-workspace > .panel:first-child > .panel-head .panel-actions { flex-wrap:nowrap; gap:.05rem; }
+      #jobs-workspace > .panel:first-child > .panel-head #connection { display:none; }
       #jobs-view .panel-body { max-height:none; }
       #jobs-workspace { gap:.65rem; }
       #jobs-workspace .panel-body { max-height:none; }
