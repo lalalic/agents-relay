@@ -20,6 +20,7 @@ async function fakeWebHelm(mode,run){
     "if(a[0]==='platform'&&a[1]==='profile'){if(process.env.POOL_TEST_MODE==='profile-outage')process.exit(23);console.log(JSON.stringify({platform:a[2]}));}",
     "else if(a[0]==='session'&&a[1]==='start')console.log(JSON.stringify({session_id:'owned-pool'}));",
     "else if(a[0]==='session'&&a[1]==='exec'&&stdin.includes('const url=')){",
+    "if(process.env.POOL_TEST_MODE==='slow-observe')Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,250);",
     "const p=process.env.POOL_TEST_LOG+'.count';let count=0;try{count=Number(fs.readFileSync(p,'utf8'))}catch{}fs.writeFileSync(p,String(++count));",
     "console.log(JSON.stringify({session_id:'owned-pool',ok:true,stdout:JSON.stringify({url:'https://chat.z.ai/c/thread-live',state:{text:process.env.POOL_TEST_MODE==='idle'?'':process.env.POOL_TEST_MODE==='spinner'?'unchanged output':count>1?'new assistant output':'',generating:process.env.POOL_TEST_MODE==='spinner',streamLength:0}})}));",
     "} else if(a[0]==='session'&&a[1]==='exec')console.log(JSON.stringify({ok:true}));",
@@ -60,6 +61,32 @@ test('a live pooled Z worker keeps its slot, observes real output, and releases 
     await run.release();
     assert.equal(pool.snapshot('z').leased,0);
     const after=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(after.filter(row=>row.a[1]==='stop').length,1);
+  });
+});
+
+test('release waits for an already running browser probe before closing its session',async()=>{
+  await fakeWebHelm('slow-observe',async(log,pool)=>{
+    const run=pooledWebHelmRun({pool,provider:'z',executionId:'drain-probe',
+      timeoutMs:90000,monitorIntervalMs:10,heartbeatIntervalMs:20000,
+      build:async()=>({action:'new-thread',config:{message:'probe drain',wait:false}})},
+    new AbortController().signal);
+    await run.submitted;
+    let probing=false;
+    for(let i=0;i<150;i++){
+      const lines=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+      if(lines.some(row=>row.a[0]==='session'&&row.a[1]==='exec'&&row.stdin.includes('const url='))){probing=true;break;}
+      await wait(10);
+    }
+    assert.equal(probing,true,'Must exercise release while a probe is running');
+    await run.release();
+    assert.equal(pool.snapshot('z').leased,0);
+    const logAtRelease=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    const countAtRelease=Number(await readFile(log+'.count','utf8'));
+    await wait(80);
+    const after=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(after,logAtRelease,'No worker subprocess may write after release');
+    assert.equal(Number(await readFile(log+'.count','utf8')),countAtRelease);
     assert.equal(after.filter(row=>row.a[1]==='stop').length,1);
   });
 });

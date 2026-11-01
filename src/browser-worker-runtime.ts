@@ -88,20 +88,28 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
   let stopped=false;
   let monitor:ReturnType<typeof setInterval>|undefined;
   let completionRecoveryTimer:ReturnType<typeof setTimeout>|undefined;
+  let pendingProbe:Promise<void>|undefined, pendingCompletionRecovery:Promise<void>|undefined;
+  let stopping:Promise<void>|undefined;
   let browserKeepAliveAt=0, observedAt=Date.now(), lastFingerprint='', sampled=false;
   let recoveries=0, monitoring=false, threadId:string|undefined;
   let submissionAttempted=false, verifiedSubmitted=false, uncertain=false, recoveryOutcomeUncertain=false;
   let providerPreflightFailed=false;
-  const stop = async ():Promise<void>=>{
-    if(stopped)return;
+  const stop = ():Promise<void>=>{
+    if(stopping)return stopping;
     stopped=true;
     if(monitor)clearInterval(monitor);
     if(completionRecoveryTimer)clearTimeout(completionRecoveryTimer);
-    if(!lease)return;
-    if(uncertain){pool.quarantine(lease);return;}
-    if(!sessionId){pool.release(lease);return;}
-    try { await cliCommand(['session','stop',sessionId]);pool.release(lease); }
-    catch { pool.quarantine(lease); }
+    stopping=(async()=>{
+      // Clearing the interval does not cancel an already running WebHelm
+      // command. Drain it before closing the session or releasing the slot.
+      await Promise.allSettled([pendingProbe,pendingCompletionRecovery]);
+      if(!lease)return;
+      if(uncertain){pool.quarantine(lease);return;}
+      if(!sessionId){pool.release(lease);return;}
+      try { await cliCommand(['session','stop',sessionId]);pool.release(lease); }
+      catch { pool.quarantine(lease); }
+    })();
+    return stopping;
   };
   const release=async():Promise<void>=>{released=true;if(lease)await stop();};
   const cancel=():void=>{released=true;if(!lease)return;if(verifiedSubmitted || submissionAttempted){uncertain=true;pool.quarantine(lease);}else void stop().catch(()=>{});};
@@ -186,10 +194,20 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       // Completion proof is independent of CDP polling. Give the worker time to emit
       // its correlated terminal event; the terminal event closes this lease before recovery.
       if(receipt.status==='completed' && request.recover){
-        completionRecoveryTimer=setTimeout(()=>{void sendRecovery().catch(()=>{});},request.completionRecoveryGraceMs ?? 12_000);
+        completionRecoveryTimer=setTimeout(()=>{
+          pendingCompletionRecovery=sendRecovery().catch(()=>{});
+        },request.completionRecoveryGraceMs ?? 12_000);
         completionRecoveryTimer.unref();
       }
-      monitor=setInterval(()=>{void probe();},request.monitorIntervalMs ?? 30_000);
+      monitor=setInterval(()=>{
+        if(monitoring || stopped)return;
+        const running=probe();
+        pendingProbe=running;
+        void running.then(
+          ()=>{if(pendingProbe===running)pendingProbe=undefined;},
+          ()=>{if(pendingProbe===running)pendingProbe=undefined;},
+        );
+      },request.monitorIntervalMs ?? 30_000);
       monitor.unref();
       return JSON.stringify(receipt);
     } catch(error) {
