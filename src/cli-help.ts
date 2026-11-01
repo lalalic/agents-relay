@@ -161,7 +161,7 @@ Example:
   npx agents-relay task create --repo OWNER/REPO --id j-5-owner-repo-1 --output file --output-path story.md --input-file task.md`,
   'task update': `Update mutable durable Task fields in place.
 
-Required: --task-id ID and the normal Job storage options.
+Required: --id JOB_ID --task-id ID. Optional --repo OWNER/REPO fences the Job identity.
 Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
 Use --clear-routing to remove routing metadata.
@@ -173,13 +173,13 @@ Example:
 Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID and --message TEXT or --message-file FILE.`,
   'task comments': `List append-only Task comments.
 
-Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID.`,
+Required: --id JOB_ID --task-id TASK_ID. Optional --repo OWNER/REPO fences the Job identity.`,
   'task context': `Read the authoritative execution-scoped Task contract.
 
-Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Fails closed on stale execution.`,
+Required: --id JOB_ID --task-id TASK_ID --execution-id EXECUTION_ID. Optional --repo OWNER/REPO fences the Job identity. Fails closed on stale execution.`,
   'task events': `Read the latest Task-scoped lifecycle events via Relay.
 
-Required: --id JOB_ID --task-id TASK_ID and normal Job storage options; optional --limit 1..60 (default 60). Read-only; failure to obtain history is not a successful empty result.`,
+Required: --id JOB_ID --task-id TASK_ID. Optional --repo, --limit 1..60 (default 60), --order asc|desc (default desc), --after CURSOR (for asc). To read full history: start with --order asc --after 0, then repeat with nextCursor until a page has fewer than --limit events. Failure to retrieve history is not success.`,
   'task show': `Show one durable Task.
 
 Required: --task-id ID and the normal Job storage options.`,

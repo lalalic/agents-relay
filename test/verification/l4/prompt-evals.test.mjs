@@ -160,12 +160,13 @@ for(const adapter of adapters)for(const role of roles) {
       assert.match(parsed.Contracts,/exactly ONE/);
       if(role==='reviewer'){
         assert.match(refs.agent,/verdict|head_sha|review target/i);
-        assert.match(refs.agent,/entire Job objective/);
+        assert.match(refs.agent,/objective-level review invariant/i);
+        assert.match(refs.agent,/whole durable Job objective|entire Job objective/i);
         assert.match(refs.agent,/`task.completed.data` MUST contain/);
         assert.doesNotMatch(refs.agent,/`review\.(?:started|approved|changes_required|blocked)`/,
           'Merged Reviewer must not require legacy review.* lifecycle events');
         assert.match(refs.agent,/Do not emit `review\.\*` or `task.blocked`/);
-        assert.match(refs.agent,/publish `task.failed` with failure phase/);
+        assert.match(refs.agent,/`task.failed` with failure phase|publish `task.failed` with[^\n]*phase/);
       }
       if(role==='troubleshooter'){
         assert.match(refs.agent,/diagnos|recovery|failed task/i);

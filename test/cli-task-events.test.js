@@ -58,3 +58,59 @@ test('task events CLI returns only Task-scoped history through the supported com
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+test('task events CLI pages through full history without skipping or duplicating task events', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'relay-cli-events-pages-'));
+  const fixture=join(dir,'job.json');
+  const events=Array.from({length:135},(_,i)=>({cursor:i+1,event:{
+    version:1,event_id:`ev${i+1}`,job_id:'job1',task_id:'t1',
+    type:i===0?'task.started':'task.progress',status:'running',
+    timestamp:'2026-11-01T17:00:00Z',visibility:'orchestrator',level:'info',message:'progress'}}));
+  const requested=[];
+  const server=createServer((req,res)=>{
+    const url=new URL(req.url,'http://127.0.0.1');
+    const after=Number(url.searchParams.get('after')??'0'),limit=Number(url.searchParams.get('limit'));
+    requested.push({after,limit,order:url.searchParams.get('order'),task:url.searchParams.get('task')});
+    const page=events.filter(row=>row.cursor>after).slice(0,limit);
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify({job_id:'job1',order:'asc',events:page,next_cursor:page.at(-1)?.cursor??after}));
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address();assert.ok(addr && typeof addr==='object');
+  try {
+    await writeFile(fixture,JSON.stringify({id:'job1',repository:'example/repo',title:'test',objective:'test',state:'ACTIVE',
+      prNumber:0,tasks:[{id:'t1',jobId:'job1',state:'FAILED',kind:'work',title:'failed',dependencies:[],output:{kind:'task_pr'},attempt:1,maxAttempts:1}],plans:[]}));
+    const base=['dist/cli.js','task','events','--file',fixture,'--id','job1','--task-id','t1','--limit','60','--order','asc'];
+    const env={...process.env,NEO_EVENTS_API_URL:`http://127.0.0.1:${addr.port}`};
+    let after=0;const all=[];
+    for(let i=0;i<4;i++){
+      const {stdout}=await run(process.execPath,[...base,'--after',String(after)],{cwd:process.cwd(),env,timeout:10000});
+      const result=JSON.parse(stdout);
+      assert.equal(result.order,'oldest-first');assert.ok(result.nextCursor>=after);
+      all.push(...result.events.map(e=>e.event_id));after=result.nextCursor;
+      if(!result.morePossible)break;
+    }
+    assert.equal(all.length,135);assert.equal(new Set(all).size,135);
+    assert.equal(all[0],'ev1');assert.equal(all.at(-1),'ev135');
+    assert.deepEqual(requested.map(r=>r.after),[0,60,120]);
+    assert.ok(requested.every(r=>r.order==='asc'&&r.task==='t1'));
+    await assert.rejects(run(process.execPath,[...base,'--after','bad'],{cwd:process.cwd(),env}),/non-negative integer cursor/);
+    await assert.rejects(run(process.execPath,[...base.slice(0,-2),'--order','desc','--after','2'],{cwd:process.cwd(),env}),/--after requires --order asc/);
+  }finally{await new Promise((resolve,reject)=>server.close(e=>e?reject(e):resolve()));await rm(dir,{recursive:true,force:true});}
+});
+
+test('read-only task show/comments can find a Job by immutable ID without --repo',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'relay-cli-show-id-'));
+  const fixture=join(dir,'job.json');
+  try {
+    await writeFile(fixture,JSON.stringify({id:'job1',repository:'example/repo',title:'test',objective:'test',state:'ACTIVE',
+      prNumber:0,tasks:[{id:'t1',jobId:'job1',title:'found',state:'FAILED',kind:'work',dependencies:[],
+        comments:[{text:'evidence'}],output:{kind:'task_pr'},attempt:1,maxAttempts:1}],plans:[]}));
+    const base=['dist/cli.js','task'];
+    const {stdout:show}=await run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','t1'],{cwd:process.cwd(),timeout:10000});
+    assert.equal(JSON.parse(show).title,'found');
+    const {stdout:comments}=await run(process.execPath,[...base,'comments','--file',fixture,'--id','job1','--task-id','t1'],{cwd:process.cwd(),timeout:10000});
+    assert.equal(JSON.parse(comments).length,1);
+    await assert.rejects(run(process.execPath,[...base,'show','--file',fixture,'--id','job1','--task-id','missing'],{cwd:process.cwd(),timeout:10000}),/Task missing not found/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});

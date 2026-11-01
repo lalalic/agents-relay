@@ -6,7 +6,7 @@ import { buildPlannerExecutionPrompt, type PlannerContext } from './planner.js';
 import { managedWorkerInput } from './managed-worker-input.js';
 import { resolveManagedProjectPath, resolveRepositoryProjectPath } from './workspace.js';
 import { taskExecutionContext } from './task-context.js';
-import { eventsBusHistory } from './events-bus-runtime.js';
+import { eventsBusHistoryPage } from './events-bus-runtime.js';
 import type { PromptAdapter } from './agent-prompt-builder.js';
 
 /** Print the actual prompt emitted by the same production Builder entry point.
@@ -93,7 +93,24 @@ export async function runTaskEventsCommand(args: string[]): Promise<void> {
   const requested=Number(arg(args,'--limit','60'));
   if(!Number.isInteger(requested)||requested<1||requested>60)
     throw new Error('task events --limit must be an integer from 1 to 60');
-  const events=(await eventsBusHistory(job.id,id,requested))
-    .filter(event=>event.job_id===job.id&&event.task_id===id);
-  console.log(JSON.stringify({jobId:job.id,taskId:id,order:'newest-first',events},null,2));
+  const order=arg(args,'--order','desc');
+  if(order!=='asc' && order!=='desc')throw new Error('task events --order must be asc or desc');
+  const afterRaw=arg(args,'--after','0');
+  const after=Number(afterRaw);
+  if(!Number.isSafeInteger(after)||after<0)throw new Error('task events --after must be a non-negative integer cursor');
+  if(args.includes('--after') && order!=='asc')throw new Error('task events --after requires --order asc');
+  const page=await eventsBusHistoryPage(job.id,id,requested,{order,after});
+  const events=page.events.filter(event=>event.job_id===job.id&&event.task_id===id);
+  console.log(JSON.stringify({jobId:job.id,taskId:id,order:order==='asc'?'oldest-first':'newest-first',
+    ...(order==='asc'?{nextCursor:page.nextCursor,morePossible:events.length===requested}:{}),events},null,2));
+}
+
+/** Read-only Task details/comments. ID-only lookup uses the immutable local Job index. */
+export async function runTaskReadCommand(action: 'show'|'comments', args: string[]): Promise<void> {
+  const id=arg(args,'--task-id');
+  if(!id)throw new Error(`task ${action} requires --task-id`);
+  const {job}=await storeFor(args,true);
+  const task=job.tasks.find(item=>item.id===id);
+  if(!task)throw new Error(`Task ${id} not found in Job ${job.id}`);
+  console.log(JSON.stringify(action==='show'?task:task.comments??[],null,2));
 }

@@ -22,17 +22,42 @@ export function resolveEventsBusRuntime(env: NodeJS.ProcessEnv = process.env): E
   };
 }
 
-export async function eventsBusHistory(jobId: string, taskId: string | null, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<import('./types.js').EventRecord[]> {
+export type EventsHistoryPage = {
+  events: import('./types.js').EventRecord[];
+  nextCursor: number;
+};
+
+/** Query the public Events Bus history API. `asc` + `after` is the supported
+ * cursor pagination path; never read its private history backing file. */
+export async function eventsBusHistoryPage(
+  jobId: string, taskId: string | null, limit: number,
+  options: { order?: 'asc' | 'desc'; after?: number } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EventsHistoryPage> {
   const runtime = resolveEventsBusRuntime(env);
   const url = new URL('/events', runtime.apiUrl);
+  const order = options.order ?? 'desc';
+  const after = options.after ?? 0;
+  if (order !== 'asc' && order !== 'desc') throw new Error('Invalid event history order');
+  if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid event history cursor');
+  if (order === 'desc' && after !== 0) throw new Error('Event history cursor requires ascending order');
   url.searchParams.set('job', jobId);
   if (taskId) url.searchParams.set('task', taskId);
-  const boundedLimit = Math.max(1, Math.min(60, limit));
-  url.searchParams.set('limit', String(boundedLimit));
-  url.searchParams.set('order', 'desc');
+  url.searchParams.set('limit', String(Math.max(1, Math.min(60, limit))));
+  url.searchParams.set('order', order);
+  if (order === 'asc') url.searchParams.set('after', String(after));
   const response = await fetch(url);
   if (!response.ok) throw new Error(`events-bus history unavailable: HTTP ${response.status}`);
-  const body = await response.json() as { events?: { event?: import('./types.js').EventRecord }[] };
-  const rows = Array.isArray(body.events) ? body.events : [];
-  return rows.map(row => row.event).filter((event): event is import('./types.js').EventRecord => Boolean(event));
+  const body = await response.json() as { events?: { cursor?: number; event?: import('./types.js').EventRecord }[]; next_cursor?: number };
+  if (!Array.isArray(body.events)) throw new Error('events-bus history returned no events array');
+  const events = body.events.map(row => row.event).filter((event): event is import('./types.js').EventRecord => Boolean(event));
+  const nextCursor = body.next_cursor ?? (order === 'asc' && body.events.length === 0 ? after : 0);
+  if (order === 'asc' && (!Number.isSafeInteger(nextCursor) || nextCursor < after || (events.length > 0 && nextCursor === after)))
+    throw new Error('events-bus history returned an invalid or non-advancing cursor');
+  return { events, nextCursor };
+}
+
+/** Existing newest-first reader for dashboard and runtime summaries. */
+export async function eventsBusHistory(jobId: string, taskId: string | null, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<import('./types.js').EventRecord[]> {
+  return (await eventsBusHistoryPage(jobId, taskId, limit, { order: 'desc' }, env)).events;
 }
