@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { plannerInput } from './planner.js';
 import { arg, storeFor } from './cli-support.js';
 import { resolveExecutionContext } from './execution-context.js';
@@ -8,6 +8,7 @@ import { resolveManagedProjectPath, resolveRepositoryProjectPath } from './works
 import { taskExecutionContext } from './task-context.js';
 import { eventsBusHistoryPage } from './events-bus-runtime.js';
 import type { PromptAdapter } from './agent-prompt-builder.js';
+import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js';
 
 /** Print the actual prompt emitted by the same production Builder entry point.
  * This is read-only: it does not start an adapter, create a Plan or mutate a Task.
@@ -15,6 +16,40 @@ import type { PromptAdapter } from './agent-prompt-builder.js';
 export async function runPromptCommand(args: string[]): Promise<void> {
   const adapter = arg(args, '--adapter', 'codex') as PromptAdapter;
   if (!['codex', 'chatgpt', 'z'].includes(adapter)) throw new Error('prompt --adapter must be codex|chatgpt|z');
+  const evalFile = arg(args, '--eval-file');
+  if (evalFile) {
+    if (arg(args, '--id') || arg(args, '--repo') || arg(args, '--plan-id') || arg(args, '--task-id'))
+      throw new Error('prompt --eval-file cannot bind a durable Job or Task');
+    // Isolated, read-only Builder invocation: no persisted Job, Task or Events Bus.
+    const scenario = JSON.parse(await readFile(evalFile, 'utf8')) as { projectPath?: string; agentName?: string; taskInput?: string; caseId?: string };
+    if (!scenario.projectPath || !scenario.agentName || !scenario.taskInput?.trim() || !/^[a-z0-9-]+$/.test(scenario.agentName))
+      throw new Error('prompt --eval-file requires projectPath, agentName and taskInput');
+    const projectPath = scenario.projectPath;
+    const context = await resolveExecutionContext(projectPath, 'worker');
+    const now = new Date().toISOString();
+    const caseId = scenario.caseId && /^[a-zA-Z0-9_-]+$/.test(scenario.caseId) ? scenario.caseId : 'case';
+    const job = createJobEntity({
+      id: 'EVAL_ONLY', title: 'Isolated prompt quality evaluation', repository: 'eval/isolated', prNumber: 0,
+      continuation: null, tasks: [], createdAt: now, updatedAt: now, projectPath,
+    });
+    const task = createTaskEntity(job, {
+      id: `eval-${caseId}`, jobId: 'EVAL_ONLY', title: caseId, agentName: scenario.agentName,
+      adapter, input: scenario.taskInput, output: { kind: 'file', path: '.evals/reports/evaluation-only.json' },
+      parentTaskId: null, dependencies: [], capabilities: [], attempt: 0, maxAttempts: 1,
+      leaseOwner: null, leaseExpiresAt: null, executionId: `eval-${caseId}-isolated`, threadId: null,
+      result: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now,
+    }, { defer: true });
+    job.tasks.push(task);
+    const productionPrompt = await managedWorkerInput(job, task, context);
+    const evaluationPrompt = await managedWorkerInput(job, task, context, 'evaluation');
+    const result = JSON.stringify({ builder: 'managedWorkerInput', mode: 'isolated-evaluation',
+      projectPath: context.project.path, agentName: scenario.agentName, adapter,
+      productionPrompt, evaluationPrompt }, null, 2);
+    const output = arg(args, '--output');
+    if (output) await writeFile(output, result + '\n', { mode: 0o600 });
+    else console.log(result);
+    return;
+  }
   const planId = arg(args, '--plan-id'), taskId = arg(args, '--task-id');
   if (!!planId === !!taskId) throw new Error('prompt requires exactly one of --plan-id or --task-id');
   const {job} = await storeFor(args,true);
