@@ -40,15 +40,16 @@ test('reviewer failure is not approval',()=>{
   assert.equal(normalized.type,'task.failed');
 });
 
-test('managed agent prompt references canonical contracts without duplicating lifecycle rules', async () => {
+test('managed agent production prompts pin the canonical contracts without inline lifecycle duplication', async () => {
   const { taskReferencePrompt } = await import('../../dist/task-context.js');
-  const path='/Users/chengli/Workspace/agents-relay/skills/agents-relay/contracts/event-contract.md';
-  const managed='[Required event contracts]\nExecution source: job/481/task/46/execution/exec';
-  const prompt=taskReferencePrompt('lalalic/agents-relay','481','46','exec',managed);
+  const legacy = taskReferencePrompt('lalalic/agents-relay','481','46','exec',
+    '[Required event contracts]\nExecution source: job/481/task/46/execution/exec');
+  assert.match(legacy,/Read and follow both contracts before execution/);
   const source=read('src/managed-worker-input.ts');
-  assert.ok(prompt.includes(path));
-  assert.ok(prompt.includes('Read and follow both contracts before execution'));
-  assert.ok(source.includes('[Required event contracts]'));
-  assert.ok(source.includes(path));
-  assert.ok(!source.includes('Every lifecycle event for this execution MUST set source.id'));
+  assert.match(source,/buildRelayWorkPrompt/);
+  assert.match(source,/skills\/events-bus\/references\/protocol\.md/);
+  assert.match(source,/skills\/agents-relay\/contracts\/task-job-contract\.md/);
+  assert.match(source,/skills\/agents-relay\/contracts\/event-contract\.md/);
+  assert.match(source,/skillPath:join\(packageRoot/);
+  assert.doesNotMatch(source,/Every lifecycle event for this execution MUST set source\.id/);
 });

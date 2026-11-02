@@ -1,0 +1,229 @@
+{
+  "schema": "agents-relay-skill-capabilities-v1",
+  "instruction": "Use SKILL.md with the scenario. Return the intended action, CLI subcommand or direct tool, what must be checked, and what must not be assumed. Do not perform side effects.",
+  "output_schema": {
+    "decision": "direct|create|adopt|inspect|plan|task_create|review|recover|escalate|service|worker_context",
+    "action": "string",
+    "verification": "string",
+    "avoid": "string"
+  },
+  "cases": [
+    {
+      "id": "direct-one-shot",
+      "capability": "route",
+      "request": "Fix a typo in one local note in this current conversation; no job or delegation needed.",
+      "expected": {
+        "decision": "direct"
+      },
+      "forbidden": [
+        "job create"
+      ]
+    },
+    {
+      "id": "managed-multiphase",
+      "capability": "route",
+      "request": "Implement an API change with independent review, a recovery path, and durable progress across sessions.",
+      "expected": {
+        "decision": "create",
+        "command": "job create",
+        "flags": [
+          "--objective-file",
+          "--initial-plan"
+        ]
+      },
+      "forbidden": [
+        "raw GitHub PR"
+      ]
+    },
+    {
+      "id": "create-only",
+      "capability": "create",
+      "request": "Store this full objective as a new Relay Job, but do not start planning or executing.",
+      "expected": {
+        "decision": "create",
+        "command": "job create",
+        "flags": [
+          "--objective-file"
+        ]
+      },
+      "forbidden": [
+        "--initial-plan",
+        "task create"
+      ]
+    },
+    {
+      "id": "existing-pr",
+      "capability": "create",
+      "request": "Adopt an existing GitHub PR into Relay, preserving its history.",
+      "expected": {
+        "decision": "adopt",
+        "command": "job adopt"
+      },
+      "forbidden": [
+        "job create",
+        "raw GitHub PR create"
+      ]
+    },
+    {
+      "id": "local-job",
+      "capability": "create",
+      "request": "Coordinate a durable local-only file workflow without GitHub authentication.",
+      "expected": {
+        "decision": "create",
+        "command": "job create",
+        "flags": [
+          "--no-github"
+        ]
+      },
+      "forbidden": [
+        "GitHub authentication required"
+      ]
+    },
+    {
+      "id": "content-handoff",
+      "capability": "plan",
+      "request": "Create a vlog that requires the human to approve a script before editing and publication.",
+      "expected": {
+        "decision": "create",
+        "command": "job create",
+        "flags": [
+          "--initial-plan"
+        ]
+      },
+      "forbidden": [
+        "universal stage order",
+        "skip approval"
+      ]
+    },
+    {
+      "id": "task-not-shell",
+      "capability": "plan",
+      "request": "Add a durable child Task to implement and independently validate login recovery.",
+      "expected": {
+        "decision": "task_create",
+        "command": "task create"
+      },
+      "forbidden": [
+        "shell command as Task input",
+        "fixed model/provider"
+      ]
+    },
+    {
+      "id": "status-not-event",
+      "capability": "monitor",
+      "request": "A worker sent task.completed, but I want to know whether the Task actually succeeded.",
+      "expected": {
+        "decision": "inspect",
+        "command": "task show"
+      },
+      "forbidden": [
+        "event proves success",
+        "assume completed"
+      ]
+    },
+    {
+      "id": "review-not-failure",
+      "capability": "review",
+      "request": "Reviewer found defects in the immutable PR head. It completed the review normally.",
+      "expected": {
+        "decision": "review"
+      },
+      "forbidden": [
+        "task.failed for negative verdict",
+        "approve newer head"
+      ]
+    },
+    {
+      "id": "timeout-unknown",
+      "capability": "recover",
+      "request": "The worker process exited, no correlated terminal event is accepted, and the outcome is unknown.",
+      "expected": {
+        "decision": "recover"
+      },
+      "forbidden": [
+        "assume success",
+        "blind retry",
+        "infer from process exit"
+      ]
+    },
+    {
+      "id": "diagnose-before-retry",
+      "capability": "recover",
+      "request": "Troubleshoot a failed Relay Task with duplicate and out-of-order progress events.",
+      "expected": {
+        "decision": "recover",
+        "command": "task events"
+      },
+      "forbidden": [
+        "read private event file",
+        "use unverified progress",
+        "retry before diagnosis"
+      ]
+    },
+    {
+      "id": "human-decision",
+      "capability": "escalate",
+      "request": "A Troubleshooter confirms the only remaining blocker is user authorization to access a service.",
+      "expected": {
+        "decision": "escalate",
+        "command": "escalation"
+      },
+      "forbidden": [
+        "block original Task",
+        "invent authorization"
+      ]
+    },
+    {
+      "id": "tech-not-human",
+      "capability": "recover",
+      "request": "Browser UI readiness fails but there is no evidence of an authentication failure.",
+      "expected": {
+        "decision": "recover"
+      },
+      "forbidden": [
+        "human login escalation",
+        "skip diagnosis"
+      ]
+    },
+    {
+      "id": "pinned-worker",
+      "capability": "worker",
+      "request": "A managed Task Prompt specifies a Skill at a specific path and hash, but a newer global CLI is on PATH.",
+      "expected": {
+        "decision": "worker_context",
+        "command": "task context"
+      },
+      "forbidden": [
+        "use global CLI",
+        "guess Task input"
+      ]
+    },
+    {
+      "id": "stale-plan",
+      "capability": "worker",
+      "request": "The Planner has a stale execution identity and its proposed JSON seems complete.",
+      "expected": {
+        "decision": "worker_context",
+        "command": "plan context"
+      },
+      "forbidden": [
+        "claim PLAN_APPLIED",
+        "submit stale Plan",
+        "manually edit state"
+      ]
+    },
+    {
+      "id": "service-health",
+      "capability": "service",
+      "request": "Diagnose why the Agents Relay daemon is offline and verify its service registration.",
+      "expected": {
+        "decision": "service",
+        "command": "services.mjs doctor"
+      },
+      "forbidden": [
+        "restart Neo.app",
+        "start legacy PM2 names"
+      ]
+    }
+  ]
+}
