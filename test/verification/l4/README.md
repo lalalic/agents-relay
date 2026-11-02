@@ -1,10 +1,21 @@
 # L4 Prompt Evals
 
-## 1. Generate, audit and compare all real Builder prompts
+L4 runs **real-model behavioral evaluations** using generated production Graph Action Prompts and immutable Agent snapshots. Static Builder contract checks are prerequisites, not a substitute for reasoning/effective role behavior.
 
 ```sh
-RELAY_L4_OUTPUT_DIR=/Users/chengli/Workspace/prompt-profiles-20261101/537/l4-evals npm run test:verification:l4
+# Full suite: build -> deterministic Prompt/CLI parity -> model behavior through authenticated Codex Luna
+npm run test:verification:l4
+# Static-only contract suite (no model invocation)
+RELAY_L4_OUTPUT_DIR=/tmp/relay-l4-prompts npm run test:verification:l4:contracts
+# Change model and report path without modifying fixtures:
+RELAY_L4_MODEL=gpt-6-luna RELAY_L4_REPORT=/tmp/l4-luna-report.json npm run test:verification:l4
 ```
+
+The behavioral suite uses `model-cases.json` with 10 read-only scenarios: Planner apply and stale fencing, Implementation ChatGPT/Z startup, Reviewer negative and evidence failures, Troubleshooter history diagnosis, Vlog stage approval, and QA playback evidence. `run-model-evals.mjs` sends the actual generated Prompt and pinned Agent snapshot to the configured model, then grades structured decisions and explicit behavior markers without performing real Task actions. The report records full responses and failures; never count model dry-run responses as accepted Task events.
+
+Saved L4 model responses can be independently regraded using `node test/verification/l4/run-model-evals.mjs --regrade /tmp/old-report.json --output /tmp/new-report.json`. This explicitly records provenance and is not a new provider execution.
+
+## 1. Generate, audit and compare all real Builder prompts
 
 The optional output directory receives `matrix.json` and all 14 actual
 production-Builder Prompt texts (`<role>-<adapter>.txt`, mode 0600). Four

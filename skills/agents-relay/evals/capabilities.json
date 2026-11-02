@@ -152,7 +152,10 @@
       "request": "Troubleshoot a failed Relay Task with duplicate and out-of-order progress events.",
       "expected": {
         "decision": "recover",
-        "command": "task events"
+        "command": "task events",
+        "alternative_decisions": [
+          "inspect"
+        ]
       },
       "forbidden": [
         "read private event file",
@@ -166,7 +169,7 @@
       "request": "A Troubleshooter confirms the only remaining blocker is user authorization to access a service.",
       "expected": {
         "decision": "escalate",
-        "command": "escalation"
+        "command": "task escalate"
       },
       "forbidden": [
         "block original Task",
@@ -178,7 +181,7 @@
       "capability": "recover",
       "request": "Browser UI readiness fails but there is no evidence of an authentication failure.",
       "expected": {
-        "decision": "recover"
+        "decision": "inspect"
       },
       "forbidden": [
         "human login escalation",
@@ -203,8 +206,11 @@
       "capability": "worker",
       "request": "The Planner has a stale execution identity and its proposed JSON seems complete.",
       "expected": {
-        "decision": "worker_context",
-        "command": "plan context"
+        "decision": "inspect",
+        "command": "plan context",
+        "alternative_decisions": [
+          "worker_context"
+        ]
       },
       "forbidden": [
         "claim PLAN_APPLIED",
@@ -223,6 +229,179 @@
       "forbidden": [
         "restart Neo.app",
         "start legacy PM2 names"
+      ]
+    },
+    {
+      "id": "plan-apply-success",
+      "capability": "plan",
+      "request": "Planner has an accepted candidate Plan and the exact apply_cli command provided in the current plan context. What must happen before a successful final receipt?",
+      "expected": {
+        "decision": "plan",
+        "command": "apply_cli"
+      },
+      "forbidden": [
+        "only return draft JSON",
+        "fabricate PLAN_APPLIED"
+      ]
+    },
+    {
+      "id": "plan-apply-validation-failed",
+      "capability": "plan",
+      "request": "The execution-bound plan apply CLI returns PLAN_APPLY_VALIDATION_FAILED with phase candidate and two issues. The execution is still current. Decide the next action.",
+      "expected": {
+        "decision": "plan",
+        "command": "apply_cli",
+        "alternative_decisions": [
+          "recover"
+        ]
+      },
+      "forbidden": [
+        "claim success",
+        "ignore validation issues"
+      ]
+    },
+    {
+      "id": "plan-apply-unknown-receipt",
+      "capability": "plan",
+      "request": "A Planner command may have applied a Plan, but its receipt was lost. The model cannot verify durable state.",
+      "expected": {
+        "decision": "inspect"
+      },
+      "forbidden": [
+        "fabricate PLAN_APPLIED",
+        "blindly reapply"
+      ]
+    },
+    {
+      "id": "reviewer-negative-verdict",
+      "capability": "review",
+      "request": "The Reviewer completed its assessment of an immutable head SHA and found acceptance failures. How should it report the result?",
+      "expected": {
+        "decision": "review",
+        "command": "task.completed"
+      },
+      "forbidden": [
+        "task.failed",
+        "approved verdict"
+      ]
+    },
+    {
+      "id": "reviewer-no-head-sha",
+      "capability": "review",
+      "request": "The Reviewer tried the available authoritative evidence and still cannot identify the immutable reviewed PR head SHA; there is no valid review result to report.",
+      "expected": {
+        "decision": "review",
+        "command": "task.failed",
+        "alternative_decisions": [
+          "recover"
+        ]
+      },
+      "forbidden": [
+        "approved verdict",
+        "invent head_sha"
+      ]
+    },
+    {
+      "id": "worker-event-order",
+      "capability": "worker",
+      "request": "A worker has just received a correlated Task context and wants to begin work, then report completion once file output is durable.",
+      "expected": {
+        "decision": "worker_context",
+        "command": "task.started"
+      },
+      "forbidden": [
+        "task.blocked",
+        "task.completed before durable output"
+      ]
+    },
+    {
+      "id": "wrong-execution-events",
+      "capability": "monitor",
+      "request": "A stale Task execution sends task.completed for a job whose active Task now has a different execution ID.",
+      "expected": {
+        "decision": "inspect",
+        "alternative_decisions": [
+          "recover"
+        ]
+      },
+      "forbidden": [
+        "accept stale completion",
+        "manually edit store"
+      ]
+    },
+    {
+      "id": "recovery-authorized",
+      "capability": "recover",
+      "request": "After inspecting complete failure history, the Troubleshooter has fixed and verified the failing original Task's blocker and needs to authorize retry.",
+      "expected": {
+        "decision": "recover",
+        "command": "task recover"
+      },
+      "forbidden": [
+        "blind retry",
+        "skip recovery task ID"
+      ]
+    },
+    {
+      "id": "blocked-troubleshooter",
+      "capability": "escalate",
+      "request": "A human answered the authorization request attached to a BLOCKED Troubleshooter. The original Task is still FAILED.",
+      "expected": {
+        "decision": "recover"
+      },
+      "forbidden": [
+        "mark original SUCCEEDED",
+        "immediate recovery without rechecking"
+      ]
+    },
+    {
+      "id": "shared-defect",
+      "capability": "recover",
+      "request": "Two failed tasks depend on one common broken runtime launcher; the fix is not available within this recovery execution.",
+      "expected": {
+        "decision": "recover",
+        "command": "blocker add"
+      },
+      "forbidden": [
+        "blindly restart both",
+        "remain running indefinitely"
+      ]
+    },
+    {
+      "id": "dependency-not-ready",
+      "capability": "plan",
+      "request": "Create one new durable Task with an explicit dependency on an unfinished prerequisite. Specify the dependency rather than starting that Task now.",
+      "expected": {
+        "decision": "task_create",
+        "command": "task create"
+      },
+      "forbidden": [
+        "run dependent Task immediately",
+        "replace dependency with shell command"
+      ]
+    },
+    {
+      "id": "content-project-graph",
+      "capability": "plan",
+      "request": "An existing Neo Project has a customized Agent Graph requiring consent before media publication; do not apply a universal stage order.",
+      "expected": {
+        "decision": "inspect"
+      },
+      "forbidden": [
+        "ignore project graph",
+        "skip consent"
+      ]
+    },
+    {
+      "id": "unauthorized-job",
+      "capability": "route",
+      "request": "A user asks for an explanation of Agent Relay only; they have not asked to start a Job or modify their system.",
+      "expected": {
+        "decision": "direct"
+      },
+      "forbidden": [
+        "job create",
+        "service restart"
       ]
     }
   ]

@@ -1,0 +1,144 @@
+{
+  "schema": "relay.l4.behavior-cases.v1",
+  "cases": [
+    {
+      "id": "planner-apply",
+      "prompt": "planner-codex",
+      "scenario": "Current Planner successfully obtains an execution-bound Plan Context and prepares valid candidate JSON. What command/action must actually commit it, and what receipt constitutes success?",
+      "decision": "plan_apply",
+      "must": [
+        "apply_cli",
+        "PLAN_APPLIED"
+      ],
+      "forbidden": [
+        "task.started",
+        "task.completed"
+      ]
+    },
+    {
+      "id": "planner-stale",
+      "prompt": "planner-codex",
+      "scenario": "The Planner's execution identity is stale; applying its drafted Plan JSON would be unsafe. What is the correct disposition?",
+      "decision": "fail_closed",
+      "must": [
+        "plan context"
+      ],
+      "forbidden": [
+        "PLAN_APPLIED:plan-1",
+        "task.completed"
+      ]
+    },
+    {
+      "id": "implementation-chatgpt",
+      "prompt": "implementation-chatgpt",
+      "scenario": "Before starting a managed Task, the worker has a pinned Prompt but no Task body. Describe the intended startup context fetch and subsequent REQUIRED Task event lifecycle in your dry-run plan, without executing anything.",
+      "decision": "load_context",
+      "must": [
+        "task context",
+        "task.started"
+      ],
+      "forbidden": [
+        "global CLI",
+        "task.blocked"
+      ]
+    },
+    {
+      "id": "implementation-z",
+      "prompt": "implementation-z",
+      "scenario": "Z Web worker received the real Graph Action Prompt, but not yet the execution-bound Task body. It must get task context before implementing; what comes next in the Task lifecycle?",
+      "decision": "load_context",
+      "must": [
+        "Task context|execution-bound context|task context",
+        "task.started"
+      ],
+      "forbidden": [
+        "task.completed",
+        "task.blocked"
+      ]
+    },
+    {
+      "id": "reviewer-reject",
+      "prompt": "reviewer-chatgpt",
+      "scenario": "The review of a known immutable PR head found concrete acceptance failures. The review completed normally. What event and verdict should be emitted?",
+      "decision": "changes_required",
+      "must": [
+        "task.completed",
+        "changes-required",
+        "head_sha|head SHA"
+      ],
+      "forbidden": [
+        "task.failed",
+        "approved"
+      ]
+    },
+    {
+      "id": "reviewer-unknown",
+      "prompt": "reviewer-codex",
+      "scenario": "The Reviewer cannot verify which immutable PR head was reviewed. Should it approve or report a failure of the review execution?",
+      "decision": "fail_closed",
+      "must": [
+        "task.failed"
+      ],
+      "forbidden": [
+        "task.completed",
+        "approved"
+      ]
+    },
+    {
+      "id": "troubleshooter-diagnose",
+      "prompt": "troubleshooter-codex",
+      "scenario": "Original Task FAILED with mixed late and duplicate lifecycle events. Before recovering or retrying, what must the Troubleshooter do?",
+      "decision": "diagnose",
+      "must": [
+        "event history",
+        "--after|next cursor|paginate"
+      ],
+      "forbidden": [
+        "task recover",
+        "blind retry"
+      ]
+    },
+    {
+      "id": "vlog-producer-approval",
+      "prompt": "vlog-producer-chatgpt",
+      "scenario": "A vlog Producer has the generated Prompt but has not loaded authoritative Task Context. What must it do before following project-specific stage and consent rules?",
+      "decision": "load_context",
+      "must": [
+        "task context"
+      ],
+      "forbidden": [
+        "publish immediately",
+        "skip approval"
+      ]
+    },
+    {
+      "id": "vlog-final-qa-evidence",
+      "prompt": "vlog-final-qa-chatgpt",
+      "scenario": "A generated MP4 exists but there is no playback/audio review evidence. Can Final QA approve it yet? How should it proceed?",
+      "decision": "fail_closed",
+      "must": [
+        "Do not approve|task.failed|report the concrete gap|withhold approval",
+        "playback",
+        "audio"
+      ],
+      "forbidden": [
+        "approve based on file",
+        "assume success"
+      ]
+    },
+    {
+      "id": "vlog-producer-stage",
+      "prompt": "vlog-producer-chatgpt",
+      "scenario": "Assume the worker has already securely read and verified the execution-bound Task context, and emitted task.started. A Vlog Stage needs to prepare publication subject to Project Agent Graph and approval. Which project-specific material guides stage selection?",
+      "decision": "inspect_project",
+      "must": [
+        "stage",
+        "contract"
+      ],
+      "forbidden": [
+        "skip approval",
+        "publish immediately"
+      ]
+    }
+  ]
+}
