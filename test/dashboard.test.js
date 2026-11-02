@@ -1402,3 +1402,26 @@ test('Jobs history search filters all SQLite inventory before taking top 20', ()
   assert.equal(searchDashboardJobs(jobs,new URLSearchParams({repo:'owner/two'})).jobs.length,0);
   assert.equal(searchDashboardJobs(jobs,new URLSearchParams({repo:'owner/two',status:'CANCELLED'})).jobs.length,20);
 });
+
+test('Router Rules audit renders execution and legacy decisions without undefined helpers', () => {
+  const start = dashboardHtml.indexOf('function auditWorker(record)');
+  const end = dashboardHtml.indexOf('async function drawAudit()', start);
+  assert.ok(start !== -1 && end > start, 'audit renderer is present');
+  const labels = [];
+  const auditLog = { replaceChildren() {}, append() {} };
+  const element = (tag, _className, content) => {
+    if (tag === 'strong') labels.push(content);
+    return { append() {}, textContent: '' };
+  };
+  const records = [
+    { timestamp: '2026-11-02T12:00:00Z', selected: { worker: { adapter: 'codex' }, model: { model: 'gpt-6-luna' } }, worker: { adapter: 'codex' } },
+    { timestamp: '2026-11-02T12:01:00Z', selected: { model: 'gpt-5.6-terra' }, worker: { adapter: 'codex' } },
+    { timestamp: '2026-11-02T12:02:00Z', selected: {}, worker: { id: 'fallback-worker' } },
+  ];
+  assert.doesNotThrow(() => runInNewContext(`${dashboardHtml.slice(start, end)}renderAudit(records);`, {
+    records, auditLog, element, document: { createElement: () => ({ textContent: '' }) },
+    value: value => value === null || value === undefined || value === '' ? '—' : String(value),
+    text: value => String(value),
+  }));
+  assert.deepEqual(labels, ['codex · gpt-6-luna', 'codex · gpt-5.6-terra', 'fallback-worker · —']);
+});
