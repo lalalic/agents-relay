@@ -53,10 +53,10 @@ test('ChatGPT adapter wraps WebHelm in a leased Browser Pool without modifying W
   const runtime=await readFile(new URL('../src/browser-worker-runtime.ts',import.meta.url),'utf8');
   assert.match(adapter,/browserWorkerRunner/);
   assert.match(adapter,/pooledWebHelmRun/);
-  assert.match(runtime,/\['session','start','--workspace',WORKSPACE\]/);
-  assert.match(runtime,/\['session','stop',sessionId\]/);
-  assert.match(runtime,/activate_tab/);
-  assert.match(runtime,/workspace_resize/);
+  assert.match(runtime,/op:'start',workspace:WORKSPACE/);
+  assert.match(runtime,/op:'stop',session_id:sessionId/);
+  assert.match(runtime,/op:'heartbeat',session_id:sessionId/);
+  assert.match(runtime,/op:'workspace-create',name:WORKSPACE,pool_size:WORKSPACE_CAPACITY/);
   assert.deepEqual(new ChatGptAdapter().capabilities,['model','chatgpt','webhelm']);
 });
 

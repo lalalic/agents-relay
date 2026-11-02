@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import {fakeWebHelmDaemon} from './fake-webhelm-daemon.mjs';
 import { buildCodexArgs, CodexAdapter, ChatGptAdapter, LaunchFailure, parseDriverJson } from '../dist/adapters.js';
 
 const route = { provider: 'openai', model: 'gpt-5' };
@@ -100,9 +101,9 @@ test('ChatGptAdapter default runner uses pooled, terminal-owned WebHelm sessions
   assert.match(source,/pooledWebHelmRun/);
   assert.match(source,/thread_id:delivery\.threadId/);
   assert.match(source,/mode:'sync'/);
-  assert.match(pooled,/\['session','start','--workspace',WORKSPACE\]/);
-  assert.match(pooled,/\['session','stop',sessionId\]/);
-  assert.match(pooled,/workspace_resize/);
+  assert.match(pooled,/op:'start',workspace:WORKSPACE/);
+  assert.match(pooled,/op:'stop',session_id:sessionId/);
+  assert.match(pooled,/op:'workspace-create',name:WORKSPACE,pool_size:WORKSPACE_CAPACITY/);
   assert.doesNotMatch(pooled,/new-turn.*--mode.*async/);
 });
 
@@ -391,45 +392,39 @@ test('CodexAdapter still exposes diagnostic thread id without making it completi
 });
 
 
-test('ChatGPT thread delivery delegates deduplication to Browser Workspace platform', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agents-relay-platform-dedup-'));
-  const command = join(root, 'fake-workspace');
-  const log = join(root, 'calls.log');
-  const script = [
-    '#!/usr/bin/env node',
-    "const fs=require('node:fs');",
-    "const a=process.argv.slice(2);",
-    "fs.appendFileSync(process.env.FAKE_REVIEW_CALLS,a.join(' ')+'\\n');",
-    "if(a[0]==='platform'&&a[1]==='profile') console.log(JSON.stringify({platform:a[2]}));",
-    "else if(a[0]==='session'&&a[1]==='start') console.log(JSON.stringify({session_id:'test-session'}));",
-    "else if(a[0]==='session'&&a[1]==='exec') console.log(JSON.stringify({ok:true}));",
-    "else if(a[0]==='platform'&&a[1]==='run') {",
-    "const config=JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1]));",
-    "if(config.idempotency_key!=='job:review:sha')process.exit(12);",
-    "if(config.message!=='do the work')process.exit(14);",
-    "console.log(JSON.stringify({result:{status:'submitted',mode:'new-turn',thread_id:config.thread_id,verified_by:'platform-dedup',user_message_id:'prior-turn'}}));",
-    "} else if(a[0]==='session'&&a[1]==='stop') console.log(JSON.stringify({stopped:true}));",
-    "else process.exit(13);",
-  ].join('\n');
-  await writeFile(command, script, { mode: 0o700 });
-  const oldCommand=process.env.AGENTS_RELAY_WEBHELM_COMMAND;
-  const oldLog=process.env.FAKE_REVIEW_CALLS;
+test('ChatGPT thread delivery delegates deduplication through Neo daemon Sessions',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'agents-relay-platform-dedup-'));
+  const command=join(root,'fake-webhelm');
+  await writeFile(command,[
+    '#!/bin/sh',
+    'if [ "$1" = "platform" ] && [ "$2" = "profile" ]; then printf \'{"platform":"%s"}\\n\' "$3";',
+    'elif [ "$1" = "ensure" ]; then echo \'{"ok":true}\';',
+    'else exit 12; fi',
+  ].join('\n'),{mode:0o700});
+  const old=process.env.AGENTS_RELAY_WEBHELM_COMMAND;
   process.env.AGENTS_RELAY_WEBHELM_COMMAND=command;
-  process.env.FAKE_REVIEW_CALLS=log;
-  try {
-    for (const threadSource of ['creator','implementation']) {
-      const thread={kind:'new-turn',threadId:'review-thread',threadSource,requestId:'job:review:sha',jobId:'job',prNumber:7,reviewHeadSha:'sha'};
-      const execution=new ChatGptAdapter().launch(task({chatgptThreadDelivery:thread}),new AbortController().signal);
+  const daemon=await fakeWebHelmDaemon(root,{onPlatformRun:req=>{
+    assert.equal(req.config.idempotency_key,'job:review:sha');
+    assert.equal(req.config.message,'do the work');
+    return {status:'submitted',mode:'new-turn',thread_id:req.config.thread_id,
+      thread_url:'https://chatgpt.com/c/review-thread',
+      verified_by:'platform-dedup',user_message_id:'prior-turn'};
+  }});
+  try{
+    for(const threadSource of ['creator','implementation']){
+      const delivery={kind:'new-turn',threadId:'review-thread',threadSource,requestId:'job:review:sha',
+        jobId:'job',prNumber:7,reviewHeadSha:'sha'};
+      const execution=new ChatGptAdapter().launch(task({chatgptThreadDelivery:delivery}),new AbortController().signal);
       assert.equal((await execution.promise).data.verifiedBy,'platform-dedup');
     }
-    const calls=await readFile(log,'utf8');
-    assert.equal((calls.match(/platform run/g)||[]).length,2);
-    assert.equal((calls.match(/new-turn --session-id test-session --config/g)||[]).length,2);
-    assert.equal((calls.match(/session start --workspace Neo/g)||[]).length,2);
-    assert.ok((calls.match(/session exec/g)||[]).length>=2);
-  } finally {
-    if(oldCommand===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;else process.env.AGENTS_RELAY_WEBHELM_COMMAND=oldCommand;
-    if(oldLog===undefined)delete process.env.FAKE_REVIEW_CALLS;else process.env.FAKE_REVIEW_CALLS=oldLog;
+    assert.equal(daemon.requests.filter(r=>r.op==='platform-run'&&r.action==='new-turn').length,2);
+    assert.equal(daemon.requests.filter(r=>r.op==='start'&&r.workspace==='Neo').length,2);
+    assert.equal(daemon.requests.filter(r=>r.op==='stop').length,2);
+    assert.ok(daemon.requests.some(r=>r.op==='workspace-create'&&r.name==='Neo'));
+  }finally{
+    await daemon.close();
+    if(old===undefined)delete process.env.AGENTS_RELAY_WEBHELM_COMMAND;
+    else process.env.AGENTS_RELAY_WEBHELM_COMMAND=old;
     await rm(root,{recursive:true,force:true});
   }
 });

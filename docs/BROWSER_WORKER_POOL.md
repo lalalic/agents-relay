@@ -6,7 +6,9 @@
 
 - **Graph** decides `pool.assign`, `pool.enqueue`, `pool.reject`, `pool.dequeue`, `pool.touch`, `pool.extendTimeout`, `pool.recoverTurn`, `pool.release`, `pool.quarantine`, and `pool.releaseQuarantine` transitions.
 - **BrowserWorkerPoolManager** implements atomic SQLite claims with generation fencing. It owns **resource state only**. Provider circuits and queue entries persist in its isolated resource database.
-- **BrowserWorkerRuntime** owns WebHelm Session I/O, actual browser output fingerprints, bounded recovery attempts, and verified-site completion evidence. `Neo` Group owns six physical tabs; each browser provider has three logical slots by default.
+- **BrowserWorkerRuntime** creates the shared Neo workspace (six-tab maximum) through WebHelm application daemon IPC and leases/stops Sessions using the same daemon API. ChatGPT and Z.ai share the Neo group, with three logical slots per provider. The agent WebHelm CLI is restricted to the WebHelm workspace; it must never be given a custom workspace override.
+
+WebHelm reclaims stale Sessions on demand when a new tab is requested (session start or new_tab), not via a timed sweep. Relay renews active Session last_used_at with daemon heartbeats every 45 seconds by default. Heartbeats do not imply model progress and never extend Task deadlines. Normal terminal release returns the Tab to helm.html?workspace=Neo&role=idle. Cancelled uncertain deliveries stop heartbeats but retain quarantined Relay slots until independently verified stopped. The runtime additionally owns browser output fingerprints, bounded recoveries and verified-site completion evidence.
 - **Agents Relay Task Graph** remains the sole authority for Task `task.started` / `task.progress` / `task.completed` / `task.failed`. Provider submission and browser session release cannot synthesize Task completion.
 
 ## Failure and recovery rules
@@ -40,7 +42,7 @@ RELAY_BROWSER_POOL_LIVE=1 node test/live/browser-worker-pool-recovery.e2e.mjs
 ```
 
 - Normal tests run with isolated SQLite + fake CLI, validate Graph branches, atomic generation leases, FIFO, provider fail-fast/circuit, stop-failure quarantine, restart preservation, bounded same-thread recovery, uncertain recovery, spinner-only rejection and correlated timeout extension.
-- The opt-in browser E2E opens real, **owned** WebHelm Sessions in the existing `Neo` Chrome Group. It submits harmless ChatGPT and Z.ai messages, exercises 3+1 ChatGPT slots, a simultaneous Z lease, FIFO wakeup, controlled pre-submit failure and cooldown, and verifies all test Sessions close. No existing user Session is stopped.
+- The opt-in browser E2E provisions the Neo group through daemon IPC and opens real, **owned** WebHelm Sessions. It submits harmless ChatGPT and Z.ai messages, exercises 3+1 ChatGPT slots, a simultaneous Z lease, FIFO wakeup, controlled pre-submit failure and cooldown, and verifies all test Sessions close. No existing user Session is stopped.
 - The opt-in recovery E2E waits for real Z.ai webpage SSE completion before sending the next Turn on the original Thread. It does not treat a mere submitted receipt as worker progress.
 - Site outages are deliberately **injected**, not induced by disconnecting or modifying a user's Chrome Session. Model completion evidence is separately verified by the browser platform.
 

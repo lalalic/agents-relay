@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
 if (process.env.RELAY_BROWSER_POOL_LIVE !== '1') {
@@ -17,11 +16,10 @@ const root=await mkdtemp(join(tmpdir(),'relay-browser-pool-live-'));
 process.env.AGENTS_RELAY_STORE_DIR=root;
 const {pooledWebHelmRun,browserWorkerPool}=await import('../../dist/browser-worker-runtime.js');
 const {BrowserPoolAdmissionError}=await import('../../dist/browser-worker-pool.js');
-const command=process.env.AGENTS_RELAY_WEBHELM_COMMAND||join(process.env.HOME,'.local/bin/webhelm');
-const initial=spawnSync(command,['capacity','--workspace','Neo'],{encoding:'utf8',timeout:12000});
-assert.equal(initial.status,0,`WebHelm capacity preflight failed: ${initial.stderr}`);
-const capacity=JSON.parse(initial.stdout.trim().split('\n').at(-1));
-assert.ok(capacity.available>=5,`Need 5 free browser tab slots; found ${capacity.available}. Never disrupt other sessions.`);
+const {webHelmDaemonRequest}=await import('../../dist/webhelm-daemon-client.js');
+await webHelmDaemonRequest({op:'workspace-create',name:'Neo',pool_size:6});
+const capacity=await webHelmDaemonRequest({op:'capacity',workspace:'Neo'});
+assert.ok(Number(capacity.available)>=5,`Need 5 free browser tab slots; found ${capacity.available}. Never disrupt other sessions.`);
 const pool=browserWorkerPool();
 const opened=[];const evidence=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -92,6 +90,7 @@ try{
   log('provider-healed',{url:healedReceipt.thread_url,leased:pool.snapshot('z').leased});
   assert.equal(pool.snapshot('z').leased,0);
   assert.equal(pool.snapshot('chatgpt').leased,0);
+  assert.equal(pool.snapshot('chatgpt').quarantined+pool.snapshot('z').quarantined,0,'All verified terminal releases must be clean');
   log('PASS',{outcome:'PASS',realBrowserSites:['chatgpt','z'],submittedThreads:6,queueWakeups:1,preSubmissionFaults:1});
 }finally{
   await Promise.allSettled(opened.map(run=>run.release()));

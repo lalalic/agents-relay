@@ -1,6 +1,7 @@
 import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {createServer} from 'node:net';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pooledWebHelmRun} from '../dist/browser-worker-runtime.js';
@@ -14,28 +15,66 @@ async function fakeWebHelm(mode,run){
   await writeFile(cli,[
     '#!/usr/bin/env node',
     "const fs=require('node:fs'),a=process.argv.slice(2);",
-    "const cfg=a.includes('--config')?JSON.parse(fs.readFileSync(a[a.indexOf('--config')+1],'utf8')):null;",
-    "const stdin=fs.readFileSync(0,'utf8');",
-    "fs.appendFileSync(process.env.POOL_TEST_LOG,JSON.stringify({a,cfg,stdin})+'\\n');",
+    "fs.appendFileSync(process.env.POOL_TEST_LOG,JSON.stringify({a})+'\\n');",
     "if(a[0]==='platform'&&a[1]==='profile'){if(process.env.POOL_TEST_MODE==='profile-outage')process.exit(23);console.log(JSON.stringify({platform:a[2]}));}",
-    "else if(a[0]==='session'&&a[1]==='start')console.log(JSON.stringify({session_id:'owned-pool'}));",
-    "else if(a[0]==='session'&&a[1]==='exec'&&stdin.includes('const url=')){",
-    "if(process.env.POOL_TEST_MODE==='slow-observe')Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,250);",
-    "const p=process.env.POOL_TEST_LOG+'.count';let count=0;try{count=Number(fs.readFileSync(p,'utf8'))}catch{}fs.writeFileSync(p,String(++count));",
-    "console.log(JSON.stringify({session_id:'owned-pool',ok:true,stdout:JSON.stringify({url:'https://chat.z.ai/c/thread-live',state:{text:process.env.POOL_TEST_MODE==='idle'?'':process.env.POOL_TEST_MODE==='spinner'?'unchanged output':count>1?'new assistant output':'',generating:process.env.POOL_TEST_MODE==='spinner',streamLength:0}})}));",
-    "} else if(a[0]==='session'&&a[1]==='exec')console.log(JSON.stringify({ok:true}));",
-    "else if(a[0]==='platform'&&a[1]==='run'){",
-    "if(process.env.POOL_TEST_MODE==='uncertain'||((process.env.POOL_TEST_MODE==='recovery-uncertain'||process.env.POOL_TEST_MODE==='recovery-uncertain-completed')&&a[3]==='new-turn'))process.exit(19);",
-    "console.log(JSON.stringify({result:{ok:true,stdout:JSON.stringify({status:process.env.POOL_TEST_MODE.includes('completed')&&a[3]==='new-thread'?'completed':'submitted',mode:a[3],thread_id:'thread-live',thread_url:'https://chat.z.ai/c/thread-live',verified_by:'matching-user-turn'})}}));",
-    "}else if(a[0]==='session'&&a[1]==='stop'){if(process.env.POOL_TEST_MODE==='stop-fail')process.exit(24);console.log(JSON.stringify({stopped:true}));}",
+    "else if(a[0]==='ensure')console.log(JSON.stringify({ok:true}));",
     "else process.exit(22);",
   ].join('\n'),{mode:0o700});
-  const previous={cmd:process.env.AGENTS_RELAY_WEBHELM_COMMAND,log:process.env.POOL_TEST_LOG,mode:process.env.POOL_TEST_MODE};
-  process.env.AGENTS_RELAY_WEBHELM_COMMAND=cli;process.env.POOL_TEST_LOG=log;process.env.POOL_TEST_MODE=mode;
+  const socketPath=join(root,'webhelm.sock');
+  let sessionSeq=0;
+  const activeSessions=new Set(),stopAttempts=new Map();
+  const server=createServer(conn=>{
+    let input='';
+    conn.setEncoding('utf8');
+    conn.on('data',chunk=>{
+      input+=chunk;
+      if(!input.includes('\n'))return;
+      const request=JSON.parse(input.split('\n')[0]);
+      const op=request.op;
+      const mode=process.env.POOL_TEST_MODE;
+      const a=op==='platform-run' ? ['platform','run',request.platform,request.action] : op==='workspace-create' ? ['workspace','create'] : ['session',op];
+      const stdin=request.code||'';
+      const cfg=request.config||null;
+      const event={a,cfg,stdin,request};
+      const add=()=>import('node:fs').then(({appendFileSync})=>appendFileSync(process.env.POOL_TEST_LOG,JSON.stringify(event)+'\n'));
+      void add().then(async()=>{
+        let result={ok:true};
+        if(op==='workspace-create') {
+          result={name:request.name,initialized:true,poolSize:request.pool_size};
+        }else if(op==='start'){const id='owned-pool-'+(++sessionSeq);activeSessions.add(id);result={session_id:id,workspace:'Neo',workspace_supported:true};}
+        else if(op==='heartbeat')result={session_id:request.session_id,alive:true,last_used_at:Date.now()};
+        else if(op==='list')result={sessions:[...activeSessions].map(session_id=>({session_id,workspace:'Neo'}))};
+        else if(op==='exec'&&stdin.includes('const url=')){
+          if(mode==='slow-observe')await new Promise(resolve=>setTimeout(resolve,250));
+          const counter=process.env.POOL_TEST_LOG+'.count';
+          const fs=requireFakeFs;
+          let count=0;try{count=Number(fs.readFileSync(counter,'utf8'))}catch{}
+          fs.writeFileSync(counter,String(++count));
+          result={ok:true,stdout:JSON.stringify({url:'https://chat.z.ai/c/thread-live',state:{text:mode==='idle'?'':mode==='spinner'?'unchanged output':count>1?'new assistant output':'',generating:mode==='spinner',streamLength:0}})};
+        }else if(op==='platform-run'){
+          if(mode==='uncertain'||((mode==='recovery-uncertain'||mode==='recovery-uncertain-completed')&&request.action==='new-turn')) {
+            conn.end(JSON.stringify({error:'exited 19'})+'\n');return;
+          }
+          result={result:{ok:true,stdout:JSON.stringify({status:mode.includes('completed')&&request.action==='new-thread'?'completed':'submitted',mode:request.action,thread_id:'thread-live',thread_url:request.platform==='chatgpt'?'https://chatgpt.com/c/thread-live':'https://chat.z.ai/c/thread-live',verified_by:'matching-user-turn'})}};
+         }else if(op==='stop'){
+          const tries=(stopAttempts.get(request.session_id)||0)+1;
+          stopAttempts.set(request.session_id,tries);
+          if(mode==='stop-fail'||(mode==='stop-transient'&&tries===1))result={error:'transient stop failure'};
+          else{activeSessions.delete(request.session_id);result={returned_to_idle:true};}
+        }
+        conn.end(JSON.stringify(result)+'\n');
+      });
+    });
+  });
+  const requireFakeFs=await import('node:fs');
+  await new Promise((resolve,reject)=>server.listen(socketPath,resolve).once('error',reject));
+  const previous={cmd:process.env.AGENTS_RELAY_WEBHELM_COMMAND,log:process.env.POOL_TEST_LOG,mode:process.env.POOL_TEST_MODE,socket:process.env.WEBHELM_SOCKET};
+  process.env.AGENTS_RELAY_WEBHELM_COMMAND=cli;process.env.POOL_TEST_LOG=log;process.env.POOL_TEST_MODE=mode;process.env.WEBHELM_SOCKET=socketPath;
   const pool=new BrowserWorkerPoolManager({path:join(root,'pool.sqlite'),queueWaitMs:1000,pollMs:5});
   try {await run(log,pool);}finally{
     pool.close();
-    for(const [name,key] of [['AGENTS_RELAY_WEBHELM_COMMAND','cmd'],['POOL_TEST_LOG','log'],['POOL_TEST_MODE','mode']]){
+    await new Promise(resolve=>server.close(resolve));
+    for(const [name,key] of [['AGENTS_RELAY_WEBHELM_COMMAND','cmd'],['POOL_TEST_LOG','log'],['POOL_TEST_MODE','mode'],['WEBHELM_SOCKET','socket']]){
       if(previous[key]===undefined)delete process.env[name];else process.env[name]=previous[key];
     }
     await rm(root,{recursive:true,force:true});
@@ -57,7 +96,7 @@ test('a live pooled Z worker keeps its slot, observes real output, and releases 
     assert.equal(pool.snapshot('z').leased,1);
     const before=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
     assert.equal(before.filter(row=>row.a[1]==='stop').length,0);
-    assert.ok(before.some(row=>row.a[1]==='exec'&&row.stdin.includes('activate_tab')));
+    assert.ok(before.some(row=>row.a[1]==='heartbeat'),'A leased Session must remain live even without model activity');
     await run.release();
     assert.equal(pool.snapshot('z').leased,0);
     const after=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
@@ -130,6 +169,24 @@ test('ambiguous Z submission is quarantined; no automatic resend or slot reuse',
   });
 });
 
+test('cancelled uncertain lease quarantines but stops its heartbeat and monitoring',async()=>{
+  await fakeWebHelm('idle',async(log,pool)=>{
+    const run=pooledWebHelmRun({pool,provider:'z',executionId:'cancelled-active-lease',
+      timeoutMs:900000,heartbeatIntervalMs:1000,monitorIntervalMs:60,
+      build:async()=>({action:'new-thread',config:{message:'inert cancellation'}}),
+    },new AbortController().signal);
+    await run.submitted;
+    run.cancel();
+    await wait(160);
+    const before=(await readFile(log,'utf8')).trim().split('\n').length;
+    await wait(1200);
+    const after=(await readFile(log,'utf8')).trim().split('\n').length;
+    assert.equal(after,before,'No heartbeat or output probe after cancel');
+    assert.equal(pool.snapshot('z').quarantined,1);
+    assert.equal(pool.snapshot('z').leased,0);
+  });
+});
+
 test('idle thread requests at most two same-thread terminal recovery turns, never marks browser heartbeat as model progress',async()=>{
   await fakeWebHelm('idle',async(log,pool)=>{
     const activities=[];const recoveries=[];
@@ -193,6 +250,21 @@ test('failure to stop actual session quarantines slot until independently verifi
     assert.equal(pool.snapshot('z').leased,0);
   });
 });
+test('transient stop failure is retried and independently verified before lease release',async()=>{
+  await fakeWebHelm('stop-transient',async(log,pool)=>{
+    const run=pooledWebHelmRun({pool,provider:'z',executionId:'verified-stop',
+      timeoutMs:90000,build:async()=>({action:'new-thread',config:{message:'transient stop test'}}),
+    },new AbortController().signal);
+    await run.submitted;
+    await run.release();
+    const entries=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(entries.filter(e=>e.a[1]==='stop').length,2);
+    assert.ok(entries.some(e=>e.a[1]==='list'));
+    assert.equal(pool.snapshot('z').idle,3);
+    assert.equal(pool.snapshot('z').quarantined,0);
+  });
+});
+
 test('spinner-only browser activity never extends deadline or sends a recovery turn',async()=>{
   await fakeWebHelm('spinner',async(log,pool)=>{
     const activities=[];const recoveries=[];
@@ -206,7 +278,7 @@ test('spinner-only browser activity never extends deadline or sends a recovery t
     assert.equal(activities.length,0);
     assert.equal(recoveries.length,0);
     const entries=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
-    assert.ok(entries.some(row=>row.a[1]==='exec'&&row.stdin.includes('activate_tab')));
+    assert.equal(entries.some(row=>row.a[1]==='heartbeat'),false,'Short test need not reach heartbeat deadline');
     await run.release();
   });
 });
@@ -244,5 +316,34 @@ test('uncertain terminal-recovery send quarantines and is never retried',async()
     await run.release();
     const turns=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse).filter(row=>row.a.slice(0,4).join(' ')==='platform run z new-turn');
     assert.equal(turns.length,1);
+  });
+});
+
+test('ChatGPT and Z share the Neo group via daemon IPC; heartbeats update leased sessions only',async()=>{
+  await fakeWebHelm('idle',async(log,pool)=>{
+    const activity=[];
+    const make=(provider,executionId)=>pooledWebHelmRun({
+      pool,provider,executionId,timeoutMs:180000,
+      heartbeatIntervalMs:1000,monitorIntervalMs:50,
+      onActivity:msg=>activity.push(msg),
+      build:async()=>({action:'new-thread',config:{message:'inert shared workspace test'}}),
+    },new AbortController().signal);
+    const chat=make('chatgpt','chat-group'), z=make('z','z-group');
+    await Promise.all([chat.submitted,z.submitted]);
+    await wait(1250);
+    const events=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
+    const starts=events.filter(e=>e.a[1]==='start');
+    assert.equal(starts.length,2);
+    assert.ok(starts.every(e=>e.request.workspace==='Neo'));
+    assert.ok(events.some(e=>e.a.join(' ')==='workspace create'&&e.request.pool_size===6));
+    assert.equal(events.filter(e=>e.a[1]==='heartbeat').length>=2,true);
+    assert.equal(activity.length,0,'Heartbeat must not be counted as model progress');
+    assert.equal(events.some(e=>e.a.includes('--workspace')),false,'No custom CLI workspace override');
+    await Promise.all([chat.release(),z.release()]);
+    const before=(await readFile(log,'utf8')).trim().split('\n').length;
+    await wait(1150);
+    const after=(await readFile(log,'utf8')).trim().split('\n');
+    assert.equal(after.length,before,'No heartbeat after lease release');
+    assert.equal(pool.snapshot('chatgpt').leased+pool.snapshot('z').leased,0);
   });
 });

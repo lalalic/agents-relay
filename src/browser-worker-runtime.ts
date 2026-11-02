@@ -1,10 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnOwnedProcess } from './owned-process.js';
 import { BrowserWorkerPoolManager, BrowserPoolAdmissionError, type BrowserProvider, type BrowserSlot } from './browser-worker-pool.js';
 import { monitorPoolDecision, progressPoolDecision } from './browser-worker-pool-graph.js';
+import { webHelmDaemonRequest } from './webhelm-daemon-client.js';
 
 export type BrowserReceipt = { status: string; thread_id?: string | null; thread_url?: string | null; verified_by?: string | null };
 export type PoolSubmission = {
@@ -23,6 +22,20 @@ export type PoolSubmission = {
 };
 export type PooledRun = { submitted: Promise<string>; promise: Promise<string>; release: () => Promise<void>; cancel: () => void };
 const WORKSPACE = 'Neo';
+const WORKSPACE_CAPACITY = 6;
+let pendingWorkspaceProvision: Promise<void> | undefined;
+async function ensureNeoWorkspace(): Promise<void> {
+  if (!pendingWorkspaceProvision) {
+    pendingWorkspaceProvision = (async () => {
+      // Shared setup must outlive cancellation by one waiting Worker.
+      await cliCommand(['ensure']);
+      await webHelmDaemonRequest({op:'workspace-create',name:WORKSPACE,pool_size:WORKSPACE_CAPACITY});
+    })();
+    void pendingWorkspaceProvision.finally(() => {pendingWorkspaceProvision=undefined;}).catch(() => {});
+  }
+  await pendingWorkspaceProvision;
+}
+
 const OUTPUT_LIMIT = 2_000_000;
 let manager: BrowserWorkerPoolManager | undefined;
 export const browserWorkerPool = (): BrowserWorkerPoolManager => manager ??= new BrowserWorkerPoolManager();
@@ -67,12 +80,35 @@ function parseEnvelope(value: string): Record<string,unknown> {
   throw Error('WebHelm returned no structured result');
 }
 async function configRun(provider: BrowserProvider, action: string, sessionId: string, config: Record<string,unknown>, signal?: AbortSignal): Promise<Record<string,unknown>> {
-  const file=join(process.env.TMPDIR||'/tmp',`relay-browser-pool-${randomUUID()}.json`);
-  try {
-    await writeFile(file,JSON.stringify(config),{mode:0o600,flag:'wx'});
-    return parseEnvelope(await cliCommand(['platform','run',provider,action,'--session-id',sessionId,'--config',file],undefined,signal));
-  } finally { await unlink(file).catch(()=>{}); }
+  return parseEnvelope(JSON.stringify(await webHelmDaemonRequest({
+    op:'platform-run', platform:provider, action, session_id:sessionId, config,
+    auto_session:false, workspace:WORKSPACE,
+  },{signal,timeoutMs:150_000})));
 }
+/** Verify release by exact Session ID; a transient navigation error may
+ * already have returned the Tab to helm.html but left daemon ownership active.
+ * Never free the Relay lease without stop/read-back evidence. */
+async function stopWebHelmSessionVerified(sessionId: string): Promise<void> {
+  let lastError: Error = new Error('WebHelm Session release was not verified');
+  for(let attempt=0;attempt<2;attempt++){
+    try {
+      const result=await webHelmDaemonRequest({op:'stop',session_id:sessionId},{timeoutMs:45_000});
+      if(result.returned_to_idle === true || result.already_closed === true) return;
+      lastError=new Error('WebHelm stop returned no verified idle tab receipt');
+    }catch(error){lastError=error instanceof Error?error:new Error(String(error));}
+    // Idempotent recovery: a lost response is not a failed stop if the
+    // daemon independently confirms this exact Session is no longer owned.
+    try{
+      const state=await webHelmDaemonRequest({op:'list'},{timeoutMs:15_000});
+      const sessions=state.sessions;
+      if(Array.isArray(sessions) && !sessions.some(row=>
+        typeof row==='object' && row!==null && (row as {session_id?:unknown}).session_id===sessionId))return;
+    }catch{ /* no proof: keep the original lease */ }
+    if(attempt===0)await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw lastError;
+}
+
 /** Poll only real assistant output, not page uptime or the browser keepalive. */
 const OBSERVE = `const url=(await page_info()).url;
 const state=await js('(()=>{const nodes=[...document.querySelectorAll(\"[data-message-author-role=assistant], [data-role=assistant], .assistant-message, .markdown\")];const text=(nodes.at(-1)?.innerText||\"\").slice(-16000);const generating=!!document.querySelector(\"button[aria-label*=Stop],button[aria-label*=stop],[data-testid=stop-button]\");const stream=window.__webhelmZStream?.entries?.at(-1);return {text, generating, streamLength: stream?.body?.length||0, streamState: stream?.state||null}})()');
@@ -87,10 +123,12 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
   let released=false;
   let stopped=false;
   let monitor:ReturnType<typeof setInterval>|undefined;
+  let heartbeatTimer:ReturnType<typeof setInterval>|undefined;
+  let pendingHeartbeat:Promise<void>|undefined;
   let completionRecoveryTimer:ReturnType<typeof setTimeout>|undefined;
   let pendingProbe:Promise<void>|undefined, pendingCompletionRecovery:Promise<void>|undefined;
   let stopping:Promise<void>|undefined;
-  let browserKeepAliveAt=0, observedAt=Date.now(), lastFingerprint='', sampled=false;
+  let observedAt=Date.now(), lastFingerprint='', sampled=false;
   let recoveries=0, monitoring=false, threadId:string|undefined;
   let submissionAttempted=false, verifiedSubmitted=false, uncertain=false, recoveryOutcomeUncertain=false;
   let providerPreflightFailed=false;
@@ -98,21 +136,33 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
     if(stopping)return stopping;
     stopped=true;
     if(monitor)clearInterval(monitor);
+    if(heartbeatTimer)clearInterval(heartbeatTimer);
     if(completionRecoveryTimer)clearTimeout(completionRecoveryTimer);
     stopping=(async()=>{
       // Clearing the interval does not cancel an already running WebHelm
       // command. Drain it before closing the session or releasing the slot.
-      await Promise.allSettled([pendingProbe,pendingCompletionRecovery]);
+      await Promise.allSettled([pendingProbe,pendingCompletionRecovery,pendingHeartbeat]);
       if(!lease)return;
       if(uncertain){pool.quarantine(lease);return;}
       if(!sessionId){pool.release(lease);return;}
-      try { await cliCommand(['session','stop',sessionId]);pool.release(lease); }
+      try { await stopWebHelmSessionVerified(sessionId);pool.release(lease); }
       catch { pool.quarantine(lease); }
     })();
     return stopping;
   };
   const release=async():Promise<void>=>{released=true;if(lease)await stop();};
-  const cancel=():void=>{released=true;if(!lease)return;if(verifiedSubmitted || submissionAttempted){uncertain=true;pool.quarantine(lease);}else void stop().catch(()=>{});};
+  const cancel=():void=>{
+    released=true;
+    if(!lease)return;
+    if(verifiedSubmitted || submissionAttempted) {
+      uncertain=true;
+      pool.quarantine(lease);
+    }
+    // Cancel must halt keepalives and probes even when delivery is uncertain.
+    // Leave the quarantined Session open; WebHelm can reclaim it on demand
+    // after its last_used_at expires without falsely freeing the Relay slot.
+    void stop().catch(()=>{});
+  };
   const sendRecovery=async():Promise<void>=>{
     if(stopped||released||uncertain||recoveryOutcomeUncertain||!sessionId||!threadId||!request.recover||recoveries>=2)return;
     recoveries++;
@@ -134,12 +184,9 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
     monitoring=true;
     try {
       const now=Date.now();
-      // Chrome's lastAccessed may only update on tab activation. Never classify this as Worker progress.
-      if(now-browserKeepAliveAt>=(request.heartbeatIntervalMs ?? 120_000)){
-        await cliCommand(['session','exec',sessionId], 'await activate_tab();');
-        browserKeepAliveAt=now;
-      }
-      const observation=parseEnvelope(await cliCommand(['session','exec',sessionId],OBSERVE)) as Observation;
+      const observation=parseEnvelope(JSON.stringify(await webHelmDaemonRequest({
+        op:'exec', session_id:sessionId, code:OBSERVE,
+      },{timeoutMs:45_000}))) as Observation;
       if(observation.url && observation.url.split('?')[0].replace(/\/$/,'')!==lease.threadUrl.replace(/\/$/,'')) return;
       const current=fingerprint(observation);
       if(!sampled){sampled=true;lastFingerprint=current;return;}
@@ -171,13 +218,28 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
       catch(error) {providerPreflightFailed=true;throw error;}
       if(profile.platform!==request.provider)throw Error(`WebHelm platform ${request.provider} missing`);
       let session:Record<string,unknown>;
-      try {session=parseEnvelope(await cliCommand(['session','start','--workspace',WORKSPACE],undefined,signal));}
+      try {
+        await ensureNeoWorkspace();
+        session=await webHelmDaemonRequest({op:'start',workspace:WORKSPACE},{signal,timeoutMs:60_000});
+      }
       catch(error) {providerPreflightFailed=true;throw error;}
       if(typeof session.session_id!=='string')throw Error('No WebHelm session ID');
       sessionId=session.session_id;
       pool.bindSession(lease,sessionId);
-      // Preserve WebHelm's existing extension lifecycle. Pool capacity is six tabs total.
-      await cliCommand(['session','exec',sessionId],`await workspace_resize(${JSON.stringify(WORKSPACE)},6);`);
+      if (session.workspace !== WORKSPACE || session.workspace_supported !== true) {
+        throw Error('WebHelm returned a Session outside the provisioned Neo Workspace');
+      }
+      // Keep session last_used_at fresh without mutating the worker's model progress.
+      const heartbeatPeriod = Math.max(1000,Math.min(request.heartbeatIntervalMs ?? 45_000,60_000));
+      heartbeatTimer=setInterval(()=>{
+        if(stopped || !sessionId || pendingHeartbeat) return;
+        const active=webHelmDaemonRequest({op:'heartbeat',session_id:sessionId},{timeoutMs:15_000})
+          .then(reply=>{if(reply.alive!==true)throw Error('WebHelm rejected Session heartbeat');})
+          .catch(()=>{ /* Transport liveness is never a Relay task.progress event. */ })
+          .finally(()=>{if(pendingHeartbeat===active)pendingHeartbeat=undefined;});
+        pendingHeartbeat=active;
+      },heartbeatPeriod);
+      heartbeatTimer.unref();
       if(released || signal.aborted)throw Error('Browser worker cancelled before submission');
       const cfg=await request.build();
       submissionAttempted=true;
@@ -224,7 +286,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
         pool.reportPreSubmissionOutage(request.provider);
       if(lease && !stopped){
         if(!safe){uncertain=true;pool.quarantine(lease);}
-        else await stop();
+        await stop();
       }
       throw rejection;
     }
