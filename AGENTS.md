@@ -84,6 +84,6 @@ CLI. Its five logical sections are Role (immutable merged Agent), Bootstrap
 relevant project instruction paths), and Task (execution identity only).
 Task intent/state is retrieved through the matching Relay CLI (`task context`
 or `plan context`), not GitHub/PR projections or backend internals.
-L4 verifies each supported role/adapter combination and SHA-pinned references.
+L4 verifies each supported role/adapter combination, readable references, and internally pinned Agent snapshots. Generated prompts do not display SHA256 digests or a Relay Skill file path.
 A browser submission receipt alone cannot finalize a Task.
 See `docs/agent-prompt-builder.md`.

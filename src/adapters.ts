@@ -265,15 +265,16 @@ function declaredPromptReferences(prompt: string): PromptManifestEntry[] {
   const start = trustedPrefix.indexOf(marker);
   if (start < 0) return [];
   const manifest = trustedPrefix.slice(start + marker.length).trim();
-  return [...manifest.matchAll(/^- (instructions|context): (.+) \(sha256:([a-f0-9]{64})\)$/gm)]
-    .map(match => ({ role: match[1], path: match[2], sha256: match[3] }));
+  return [...manifest.matchAll(/^- (instructions|context): (\/[^\n]+?)(?: \(sha256:([a-f0-9]{64})\))?$/gm)]
+    .map(match => ({ role: match[1], path: match[2], sha256: match[3] ?? basename(match[2], '.md') }))
+    .filter(ref => /^[a-f0-9]{64}$/.test(ref.sha256));
 }
 
-async function accessiblePromptReferences(prompt: string): Promise<Array<PromptManifestEntry & { content: string }>> {
+async function accessiblePromptReferences(prompt: string): Promise<Array<PromptManifestEntry & { content: string; declaredPath: string }>> {
   const declared = declaredPromptReferences(prompt);
   const directory = resolve(process.env.AGENTS_RELAY_PROMPT_REFERENCE_DIR ?? DEFAULT_PROMPT_REFERENCE_DIRECTORY);
   const root = await realpath(directory).catch(() => null);
-  const readable: Array<PromptManifestEntry & { content: string }> = [];
+  const readable: Array<PromptManifestEntry & { content: string; declaredPath: string }> = [];
   for (const reference of declared) {
     if (!root || basename(reference.path) !== `${reference.sha256}.md`) continue;
     try {
@@ -283,7 +284,7 @@ async function accessiblePromptReferences(prompt: string): Promise<Array<PromptM
       await access(canonical);
       const content = await readFile(canonical, 'utf8');
       if (createHash('sha256').update(content).digest('hex') === reference.sha256)
-        readable.push({ ...reference, path: canonical, content });
+        readable.push({ ...reference, path: canonical, declaredPath: reference.path, content });
     } catch { /* untrusted or missing references are not authorized */ }
   }
   return readable;
@@ -400,13 +401,13 @@ export class ChatGptAdapter implements WorkerAdapter {
         let prompt = task.chatgptThreadDelivery?.repository && task.chatgptThreadDelivery.executionId && !graphPrompt
           ? taskReferencePrompt(task.chatgptThreadDelivery.repository, task.chatgptThreadDelivery.jobId, task.id, task.chatgptThreadDelivery.executionId, task.input) : task.input;
         const referencePrompt = task.chatgptThreadDelivery && references.length
-          ? `\n\n[Inline immutable local reference snapshots]\nThese complete verified snapshots are included in this message because this thread delivery does not attach local files. Follow their contents according to their declared roles.\n${references.map(reference => `\n--- ${reference.role}: ${reference.path} (sha256:${reference.sha256}) ---\n${reference.content}\n--- end snapshot ---`).join('\n')}`
+          ? `\n\n[Inline immutable local reference snapshots]\nThese complete verified snapshots are included in this message because this thread delivery does not attach local files. Follow their contents according to their declared roles.\n${references.map(reference => `\n--- ${reference.role}: ${reference.path} ---\n${reference.content}\n--- end snapshot ---`).join('\n')}`
           : references.length
-            ? `\n\n[Attached immutable Agent Contract]\nAfter publishing the required task.started event, read the attached immutable contract snapshot and follow it. Relay owns snapshot integrity; do not hash or compare the original .agent.md. If the attached snapshot is unreadable, report a concrete failure.\n${references.map(reference => `- ${reference.path} (sha256:${reference.sha256})`).join('\n')}`
+            ? `\n\n[Attached immutable Agent Contract]\nAfter publishing the required task.started event, read the attached immutable contract snapshot and follow it. Relay owns snapshot integrity; do not hash or compare the original .agent.md. If the attached snapshot is unreadable, report a concrete failure.\n${references.map(reference => `- ${reference.path}`).join('\n')}`
           : '';
         if (task.chatgptThreadDelivery && declaredPromptReferences(task.input).length) {
           const unresolved = declaredPromptReferences(task.input)
-            .map(item => item.path).filter(path => !references.some(reference => reference.path === path));
+            .map(item => item.path).filter(path => !references.some(reference => reference.declaredPath === path));
           if (unresolved.length) throw new Error(`Agent Contract snapshot unavailable or corrupt: ${unresolved.join(', ')}`);
         }
         return (this.runner ?? browserWorkerRunner())(definition, {

@@ -27,8 +27,10 @@ test('production worker prompt assembly separates roles and snapshots each effec
       assert.match(prompt, new RegExp(`Task: task-${role}\\nExecution: execution-${role}`));
       assert.doesNotMatch(prompt, new RegExp(`UNTRUSTED TASK EVIDENCE ${role}`));
       assert.doesNotMatch(prompt, /GitHub is the source of truth|Job URL: null|\[Resolved execution context\]/);
-      const match = prompt.match(/^You are [^\n]+ with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/m);
+      const match = prompt.match(/^You are [^\n]+ with responsibility at (\/\S+\.md)/m);
       assert.ok(match, `${role}/${adapter} must carry the resolved Agent snapshot`);
+      assert.doesNotMatch(prompt, /\(sha256:/);
+      assert.doesNotMatch(prompt, /Use the agents-relay skill at \//);
       assert.match(await readFile(match[1], 'utf8'), new RegExp(role === 'worker' ? 'implementation' : role, 'i'));
       assert.ok(prompt.length < 4500, `${role}/${adapter} must remain compact`);
       assert.ok(prompt.indexOf('## Contracts') < prompt.indexOf('## Contexts'));

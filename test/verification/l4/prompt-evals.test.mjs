@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
-import { join, resolve, dirname } from 'node:path';
+import { basename, join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -33,7 +33,7 @@ const execution = '123e4567-e89b-12d3-a456-426614174000';
 const jobId = 'L4-JOB';
 
 function parsePrompt(prompt) {
-  const role=/^# Role\nYou are ([\w-]+) with responsibility at (\/[^\s]+\.md) \(sha256:([a-f0-9]{64})\)\./m.exec(prompt);
+  const role=/^# Role\nYou are ([\w-]+) with responsibility at (\/[^\s]+\.md)\./m.exec(prompt);
   assert.ok(role, 'Role must identify ONE immutable Agent snapshot');
   const segments = {};
   for(const name of ['Bootstrap','Contracts','Contexts','Task']) {
@@ -41,10 +41,10 @@ function parsePrompt(prompt) {
     assert.ok(match, `Missing ${name}`);
     segments[name]=match[1].trim();
   }
-  return {role:{name:role[1],path:role[2],sha256:role[3]},...segments};
+  return {role:{name:role[1],path:role[2],sha256:basename(role[2],'.md')},...segments};
 }
 function parsedAgentPath(prompt) {
-  const match=/^You are [^\n]+ at (\/[^\s]+\.md) \(sha256:[a-f0-9]{64}\)\./m.exec(prompt);
+  const match=/^You are [^\n]+ at (\/[^\s]+\.md)\./m.exec(prompt);
   assert.ok(match,'Role reference missing');
   return match[1];
 }
@@ -52,9 +52,10 @@ async function validateReferences(prompt) {
   const {role}=parsePrompt(prompt);
   const agent=await readFile(role.path);
   assert.equal(sha(agent),role.sha256,'Agent snapshot content is immutable');
-  const refs=[...prompt.matchAll(/(?:\d+\. (?:\[\w+\] )?|the agents-relay skill at )(\/[^\s]+) \(sha256:([a-f0-9]{64})\)/g)];
-  assert.ok(refs.length>=2,'At least one domain contract and agents-relay skill');
-  for(const [,path,digest] of refs)assert.equal(sha(await readFile(path)),digest,`Reference is readable and pinned: ${path}`);
+  const refs=[...prompt.matchAll(/^\d+\. (?:\[[^\]]+\] )?(\/\S+\.md)$/gm)];
+  assert.ok(refs.length >= (role.name === 'planner' ? 1 : 2),'Planner has its Plan/Task contract; workers also have event contracts');
+  for(const [,path] of refs)await readFile(path);
+  assert.doesNotMatch(prompt,/\(sha256:/);
   return {agent:agent.toString(),refs:refs.map(r=>r[1])};
 }
 
@@ -124,8 +125,8 @@ for(const adapter of adapters)for(const role of roles) {
     assert.match(parsed.Task,new RegExp(`Job: ${jobId}\\nTask: ${role==='planner'?'plan-1':'L4-TASK'}\\nExecution: ${execution}`));
     assert.match(parsed.Task,/agents-relay skill.*Relay CLI/);
     assert.match(parsed.Task,/All Relay state reads and operations use that version-matched CLI/);
-    const skillPath=/Use the agents-relay skill at (\/\S+\/SKILL\.md)/.exec(parsed.Task)?.[1];
-    assert.ok(skillPath,'Work bootstrap must specify an exact installed Skill');
+    const skillPath=resolve(repo,'skills/agents-relay/SKILL.md');
+    assert.doesNotMatch(parsed.Task,/\/SKILL\.md/,'Task should select the installed Skill by name');
     const packageCli=resolve(dirname(skillPath),'../../dist/cli.js');
     await readFile(packageCli);
     assert.match((await readFile(skillPath,'utf8')),/matching-absolute-dist\/cli\.js/,
@@ -196,10 +197,9 @@ for(const adapter of adapters)for(const role of roles) {
       if(role!=='planner'){
         assert.equal(zTaskBrief(prompt),prompt,'Z cannot rewrite Task Prompt');
         const runtime=zBootstrap('L4_NON_SECRET_TEST_TOKEN',prompt);
-        assert.match(runtime,/task.started/);
+        assert.match(runtime,/## Bootstrap\nNeo OAuth access token: L4_NON_SECRET_TEST_TOKEN/);
         assert.equal(zExecutionSource(prompt),`job/${jobId}/task/L4-TASK/execution/${execution}`);
-        assert.match(runtime,/Graph Action Task Prompt/);
-        assert.equal(runtime+'\n'+zTaskBrief(prompt),runtime+'\n'+prompt);
+        assert.equal(runtime.replace('Neo OAuth access token: L4_NON_SECRET_TEST_TOKEN\n',''),prompt);
       }
     }
   });

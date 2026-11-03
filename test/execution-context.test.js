@@ -172,7 +172,7 @@ test('managed worker caches only the resolved Agent, not concatenated Contracts 
     const job={id:'j',title:'job',repository:'lalalic/agents-relay',state:'ACTIVE',tasks:[]};
     const task={id:'review',agentName:'reviewer',dependencies:[],adapter:'codex',input:'PRIVATE HEAD',output:{kind:'task_pr'},state:'QUEUED',executionId:'review-exec'};
     const prompt=await managedWorkerInput(job,task,context);
-    const reference=/with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/.exec(prompt);
+    const reference=/with responsibility at (\/\S+\.md)/.exec(prompt);
     assert.ok(reference);
     const contract=await readFile(reference[1],'utf8');
     assert.match(contract,/CANONICAL REVIEW CONTRACT/);

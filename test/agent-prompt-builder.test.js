@@ -31,6 +31,7 @@ test('reference-first snapshot pins the merged contract bytes for both adapters'
     for (const adapter of ['codex', 'chatgpt']) {
       const prompt = renderAgentPrompt(bundle, adapter);
       assert.match(prompt, /DURABLE INPUT/);
+      assert.doesNotMatch(prompt, /\(sha256:/);
       assert.match(prompt, new RegExp(bundle.references[0].sha256));
       assert.ok(prompt.indexOf('[Agent instructions') < prompt.indexOf('[Task data'));
     }

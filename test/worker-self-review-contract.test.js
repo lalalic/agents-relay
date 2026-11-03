@@ -40,7 +40,7 @@ test('mandatory self-review is delivered to both worker adapters even with no na
         assert.match(prompt,/^# Role\n/);
         if (shouldReview) {
           assert.match(prompt,/worker-self-review\.md/,'worker must receive pinned self-review contract');
-          const link=prompt.match(/(\/[^\s]+\/worker-self-review\.md) \(sha256:/);
+          const link=prompt.match(/(\/[^\s]+\/worker-self-review\.md)/);
           assert.ok(link,'Missing independent self-review reference');
           const instructions=await readFile(link[1],'utf8');
           assert.match(instructions,/latest complete self-review finds \*\*no changes required\*\*/);

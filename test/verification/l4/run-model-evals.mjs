@@ -67,7 +67,7 @@ try{
  for(let i=0;i<cases.length;i++){
   const c=cases[i];
   const prompt=await readFile(join(promptDir,c.prompt+'.txt'),'utf8');
-  const match=prompt.match(/^You are [^\n]+ at (\/[^\s]+\.md) \(sha256:[a-f0-9]{64}\)\./m);
+  const match=prompt.match(/^You are [^\n]+ at (\/[^\s]+\.md)\./m);
   if(!match)throw new Error('Missing immutable agent path: '+c.prompt);
   const agent=await readFile(match[1],'utf8');
   const input={

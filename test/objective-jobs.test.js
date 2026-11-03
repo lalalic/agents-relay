@@ -408,7 +408,7 @@ process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_mes
     const planner = new AgentObjectivePlanner(command);
     assert.equal((await planner.plan({ job: job(), tasks: [], objective: 'finish', previousPlannerTaskId: null, planExecution: { planId: 'plan-1', executionId: 'execution-1' } }, new AbortController().signal)).cliApplied, true);
     const prompt = await readFile(promptFile, 'utf8');
-    const reference=prompt.match(/with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/);
+    const reference=prompt.match(/with responsibility at (\/\S+\.md)/);
     assert.ok(reference);
     const agent=await readFile(reference[1],'utf8');
     assert.match(agent,/Planner Agent|Planner/);

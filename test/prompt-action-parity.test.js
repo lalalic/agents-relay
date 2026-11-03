@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { managedWorkerInput } from '../dist/managed-worker-input.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 import { ChatGptAdapter } from '../dist/adapters.js';
@@ -29,12 +29,15 @@ for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI a
     assert.match(actual,/## Contexts\n/);assert.match(actual,/## Task\n/);
     assert.match(actual,/Job: 537\nTask: 476\nExecution: 123e4567/);
     for(const secret of [task.input,job.objective])assert.ok(!actual.includes(secret));
-    const agentRef=/with responsibility at (\/[^\n ]+\.md) \(sha256:([a-f0-9]{64})\)/.exec(actual);
+    const agentRef=/with responsibility at (\/[^\n ]+\.md)\./.exec(actual);
     assert.ok(agentRef);
-    assert.equal(digest(await readFile(agentRef[1],'utf8')),agentRef[2]);
-    const listed=[...actual.matchAll(/^\d+\. (?:\[[^\]]+\] )?(\/\S+) \(sha256:([a-f0-9]{64})\)$/gm)];
-    assert.ok(listed.length>=3);
-    for(const [,path,hash]of listed)assert.equal(digest(await readFile(path)),hash);
+    assert.equal(digest(await readFile(agentRef[1],'utf8')),basename(agentRef[1],'.md'));
+    const listed=[...actual.matchAll(/^\d+\. (?:\[[^\]]+\] )?(\/\S+\.md)$/gm)];
+    assert.ok(listed.length>=2);
+    for(const [,path]of listed)await readFile(path);
+    assert.doesNotMatch(actual,/\(sha256:/);
+    assert.match(actual,/Use the agents-relay skill to read/);
+    assert.doesNotMatch(actual,/Use the agents-relay skill at \//);
     if(adapter==='chatgpt'){
       const requests=[];
       const browser=new ChatGptAdapter({agentRunner:(_definition,request)=>{
@@ -44,10 +47,13 @@ for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI a
       assert.equal(requests[0].prompt,actual);
     }
     if(adapter==='z'){
-      const bootstrap=zBootstrap('RUNTIME_SECRET_PLACEHOLDER',actual);
-      assert.equal(bootstrap+'\n'+zTaskBrief(actual),bootstrap+'\n'+actual);
-      assert.ok(bootstrap.includes('https://neoy.qili2.com/files/z-chat/bootstrap.md'));
+      const runtime=zBootstrap('RUNTIME_SECRET_PLACEHOLDER',actual);
+      assert.match(runtime,/^# Role\n/);
+      assert.match(runtime,/## Bootstrap\nNeo OAuth access token: RUNTIME_SECRET_PLACEHOLDER/);
+      assert.equal(runtime.replace('Neo OAuth access token: RUNTIME_SECRET_PLACEHOLDER\n',''),actual);
+      assert.doesNotMatch(runtime,/Z\.ai Full-Stack worker|FIRST ACTION:|\(sha256:/);
     }
+
   }finally{await rm(root,{recursive:true,force:true});}
 });
 

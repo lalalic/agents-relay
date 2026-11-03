@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { writeFile, readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { managedWorkerInput } from '../../../dist/managed-worker-input.js';
 import { buildPlannerExecutionPrompt } from '../../../dist/planner.js';
 import { resolveExecutionContext } from '../../../dist/execution-context.js';
@@ -17,10 +17,10 @@ const check=(id,status,evidence)=>result.checks[id]={status,evidence};
 const context=await resolveExecutionContext(project,'planner');
 const prompt=await buildPlannerExecutionPrompt({job:{id:'L4-PREVIEW',repository:'local/l4',title:'Read only',objective:'Read only L4',tasks:[],plans:[]},tasks:[],objective:'Read only L4',previousPlannerTaskId:null,
   planExecution:{planId:'plan-1',executionId:'123e4567-e89b-12d3-a456-426614174000'},executionContext:context},undefined,'z');
-const role=/with responsibility at (\/\S+\.md) \(sha256:([a-f0-9]{64})\)/.exec(prompt);
+const role=/with responsibility at (\/\S+\.md)/.exec(prompt);
 if (!role)throw new Error('L4 cannot find the actual Planner Agent snapshot');
 const snapshot=await readFile(role[1]);
-if(createHash('sha256').update(snapshot).digest('hex')!==role[2])throw new Error('L4 Agent snapshot digest mismatch');
+if(createHash('sha256').update(snapshot).digest('hex')!==basename(role[1],'.md'))throw new Error('L4 Agent snapshot digest mismatch');
 check('role-snapshot','PASS',{file:role[1],bytes:snapshot.length});
 
 try{
@@ -61,7 +61,7 @@ try{
    input:'L4 private task details',output:{kind:'file',path:'runs/l4-evidence.txt'},executionId:'123e4567-e89b-12d3-a456-426614174000',dependencies:[]};
  const work=await managedWorkerInput({id:'L4-JOB',repository:'local/l4',title:'L4',objective:'Read only',tasks:[task],plans:[]},task,workContext);
  const references=[role[1],
-   ...[...work.matchAll(/(?:with responsibility at |\d+\. (?:\[project\] )?|skill at )(\/\S+\.(?:md)) \(sha256:[a-f0-9]{64}\)/g)].map(x=>x[1])];
+   ...[...work.matchAll(/^\d+\. (?:\[[^\]]+\] )?(\/\S+\.md)$/gm)].map(x=>x[1])];
  let readCount=0;
  for(const path of new Set(references)){
    const fetched=await mcp('tools/call',{name:'fs',arguments:{command:'read',args:{path,encoding:'utf8'}}});

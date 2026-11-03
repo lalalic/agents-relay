@@ -25,13 +25,13 @@ You are <agent> with responsibility at <cached merged agent absolute path>.
 <adapter-specific initialization, no duplicated global instructions>
 
 ## Contracts
-<independent, ordered, sha256-pinned contract file references>
+<independent, ordered contract file paths>
 
 ## Contexts
 <only additional project-specific AGENTS.md when the adapter cannot auto-load it>
 
 ## Task
-Use the agents-relay skill at <absolute skill path> to read Job/Task/Plan.
+Use the agents-relay skill to read Job/Task/Plan.
 Job: <job-id>
 Task: <task-or-plan-id>
 Execution: <execution-id>
@@ -131,3 +131,5 @@ the Neo workspace.
   integration tests. Model-only checks do not prove event completion.
 - The no-GitHub local Job path and stale execution rejections are verified
   independently. A browser submit receipt is *not* a Task completion receipt.
+
+References remain validated internally; generated worker-facing prompts never display SHA256 digests. Z.ai receives its short-lived OAuth token inside the existing Bootstrap section, without a second role or lifecycle prompt.

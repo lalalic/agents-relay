@@ -40,7 +40,7 @@ export async function promptFileReference(path: string, role: PromptReference['r
 
 export function renderAgentPrompt(bundle: AgentPromptBundle, adapter: PromptAdapter): string {
   const references = bundle.references.map(ref =>
-    `- ${ref.role}: ${ref.path} (sha256:${ref.sha256})`).join('\n');
+    `- ${ref.role}: ${ref.path}`).join('\n');
   const header = `[Relay agent: ${bundle.role}; adapter: ${adapter}]\n`;
   const manifest = references ? `\n[Versioned local references]\n${references}\n` : '';
   // ChatGPT has a single user-message surface. The labels are logical, not privileged API roles.
@@ -128,7 +128,7 @@ export async function buildRelayWorkPrompt(input: {
   const bootstrap = input.adapter === 'codex'
     ? [
         `Use Codex CLI with project cwd: ${input.projectPath}. Codex -C loads directory AGENTS.md instructions.`,
-        ...(globalReference ? [`Read global Neo rules once if they are not already loaded: ${globalReference.path} (sha256:${globalReference.sha256}).`] : []),
+        ...(globalReference ? [`Read global Neo rules once if they are not already loaded: ${globalReference.path}.`] : []),
         'Use local shell and files for referenced contracts and the Relay CLI. Do not call neo bootstrap.',
       ]
     : input.adapter === 'chatgpt'
@@ -141,10 +141,11 @@ export async function buildRelayWorkPrompt(input: {
           'Use the same Z interactive bootstrap entry: https://neoy.qili2.com/files/z-chat/bootstrap.md.',
           'Run Neo MCP through authenticated HTTPS. The Z cloud filesystem is not Neo Master. Continue the assigned Task after bootstrap; do not wait for another user message.',
         ];
-  const skill = await promptFileReference(input.skillPath, 'context');
+  // Validate that the selected Relay Skill exists, but let the harness resolve its path.
+  await promptFileReference(input.skillPath, 'context');
   const lines = [
     '# Role',
-    `You are ${input.agentName} with responsibility at ${reference.path} (sha256:${reference.sha256}).`,
+    `You are ${input.agentName} with responsibility at ${reference.path}.`,
     '', '## Bootstrap',
     ...bootstrap,
     '', '## Contracts',
@@ -152,7 +153,7 @@ export async function buildRelayWorkPrompt(input: {
       ? ['MANDATORY: Read the listed Plan/Task contract before planning. A Plan does not publish Task events.']
       : ['MANDATORY: Read every listed Task and Events contract before execution.']),
     'Read independently, in order. Later, more specific contracts take precedence over general rules.',
-    ...contracts.map((ref, i) => `${i + 1}. ${ref.path} (sha256:${ref.sha256})`),
+    ...contracts.map((ref, i) => `${i + 1}. ${ref.path}`),
     ...(input.agentName === 'planner' ? [
       'Planner lifecycle: use the execution-bound `plan context` from the matching Relay CLI described by the Skill. Run the returned same-version `apply_cli`, and return the exact PLAN_APPLIED receipt. Do not emit Task events for a Plan.',
     ] : [
@@ -163,9 +164,9 @@ export async function buildRelayWorkPrompt(input: {
       'Every event MUST use the exact source above. Do not publish `task.blocked` or `task.unblocked`; those are Relay-owned states. Relay must accept the correlated event.',
     ]),
     '', '## Contexts',
-    ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path} (sha256:${ref.sha256})`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
+    ...(contexts.length ? ['Read only these additional role-relevant rules. Bootstrap and inherited Agent rules are not duplicated here.', ...contexts.map((ref, i) => `${i + 1}. [${orderedContext[i].source}] ${ref.path}`)] : ['None required at startup. Read files only when selected by the Agent contract or the current Task.']),
     '', '## Task',
-    `Use the agents-relay skill at ${skill.path} (sha256:${skill.sha256}) to read authoritative Job and Task/Plan details via the Relay CLI.`,
+    'Use the agents-relay skill to read authoritative Job and Task/Plan details via the Relay CLI.',
     'All Relay state reads and operations use that version-matched CLI. Publish only required Task events through the separately listed Neo events-bus protocol; never inspect Relay backing storage or HTTP APIs.',
     `Job: ${input.jobId}`,
     `Task: ${input.taskId}`,
