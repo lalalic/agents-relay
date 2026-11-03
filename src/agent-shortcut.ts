@@ -114,6 +114,11 @@ async function discoverShortcut(agent: string, projectPath: string, neoRoot?: st
   return actual;
 }
 function inside(root:string, path:string):boolean { const rel=relative(root,path); return rel==='' || (rel!=='..'&&!rel.startsWith(`..${sep}`)&&!isAbsolute(rel)); }
+// Only Vlog's Visioner evidence follows the source-manifest/index artifact schema.
+// Distribution Visioner has a separate domain contract and cannot reuse it.
+function requiresVlogVisionerEvidence(agent: string | undefined): boolean {
+  return agent === 'visioner' || agent === 'vlog-visioner';
+}
 async function validateVisionerResult(result: Record<string, unknown>, projectRoot: string): Promise<void> {
   const artifacts=result.artifacts, output=result.output as Record<string,unknown>;
   if (!artifacts || Array.isArray(artifacts) || typeof artifacts!=='object' || !['vision-evidence.json','vision-segment-index.json','metadata.json'].every(name=>
@@ -235,7 +240,7 @@ export async function runAgentShortcut(options: {
       artifactHashes[relative(projectReal, actual)] = digestBytes(await readFile(actual));
     }
     const nodeAgent=graph.nodes.find(node=>node.id===nodeId)?.agent;
-    if(nodeAgent?.toLowerCase()==='visioner') await validateVisionerResult(output,projectReal);
+    if(requiresVlogVisionerEvidence(nodeAgent?.toLowerCase())) await validateVisionerResult(output,projectReal);
     state.nodes[nodeId] = structuredClone(output);
     state.artifactHashes[nodeId] = artifactHashes;
     delete state.waits[nodeId];
@@ -306,7 +311,7 @@ export async function runAgentShortcut(options: {
               return (result.output as Record<string, string>)[name];
             });
           const projectReal=await realpath(projectPath);
-          if (node.agent.toLowerCase()==='visioner') await validateVisionerResult(result,projectReal);
+          if (requiresVlogVisionerEvidence(node.agent.toLowerCase())) await validateVisionerResult(result,projectReal);
           const artifactHashes: Record<string,string> = {};
           for (const artifact of artifactPaths) {
             if (!artifact) throw new Error('shortcut artifact path cannot be empty');

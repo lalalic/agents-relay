@@ -437,11 +437,16 @@ test('content-only shortcut completion requires a durable no-review no-merge pol
   finally { store.close(); }
 });
 
-test('Visioner with empty required artifacts fails closed after invoking untrusted shortcut code',async t=>{
-  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:visioner]'});
-  await f.writeShortcut(f.neo,'visioner',`export async function run(){return {status:'COMPLETED',output:{answer:'looks fine'},artifacts:[]};}`);
-  const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
-  assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
-  assert.equal((await f.load()).state,'ACTIVE');
-  assert.equal((await f.load()).tasks[0].state,'FAILED');
+test('legacy and project-local Vlog Visioner shortcuts cannot bypass required evidence/index/metadata',async t=>{
+  for (const agent of ['visioner','vlog-visioner']) {
+    await t.test(agent,async t=>{
+      const f=await fixture(t,{agentGraph:`flowchart TD\nA[agent:${agent}]`});
+      await f.writeShortcut(agent==='visioner'?f.neo:f.project,agent,
+        `export async function run(){return {status:'COMPLETED',output:{answer:'looks fine'},artifacts:[]};}`);
+      const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
+      assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
+      assert.equal((await f.load()).state,'ACTIVE');
+      assert.equal((await f.load()).tasks[0].state,'FAILED');
+    });
+  }
 });
