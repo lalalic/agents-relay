@@ -225,6 +225,23 @@ test('actual shortcut CLI sends absent or malformed shortcuts back to the durabl
   assert.equal((await f.load()).tasks[0].state, 'QUEUED');
 });
 
+test('missing downstream role is preflighted before earlier shortcut side effects',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:has-code] --> B[agent:no-code]'});
+  const marker=join(f.directory,'first-shortcut-ran');
+  await f.writeShortcut(f.project,'has-code',`import {writeFile} from 'node:fs/promises'; export async function run(){ await writeFile(${JSON.stringify(marker)},'unsafe'); return {status:'COMPLETED',output:{foo:1},artifacts:[]}; }`);
+  const result=await f.cli();
+  assert.equal(result.status,0,result.stderr);
+  const answer=JSON.parse(result.stdout);
+  assert.equal(answer.fallbackQueued,true);
+  assert.match(answer.outcome.reason,/Incomplete Agent Graph shortcut coverage/);
+  const {access}=await import('node:fs/promises');
+  await assert.rejects(access(marker),{code:'ENOENT'});
+  const saved=await f.load();
+  assert.equal(saved.tasks[0].state,'QUEUED');
+  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,true);
+  assert.deepEqual(saved.tasks[0].result.data.shortcut.nodes,{});
+});
+
 test('an exception after entering an untrusted shortcut module requires recovery, not Worker replay',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:throws]'});
   await f.writeShortcut(f.neo,'throws',`export async function run(){throw new Error('validation rejected before effects');}`);

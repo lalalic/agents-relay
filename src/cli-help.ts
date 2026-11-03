@@ -58,9 +58,10 @@ Shortcut execution:
     [--store-dir DIR] [--project-path DIR] [--neo-root DIR] [--concurrency 4]
 
 The selected Task must have an Agent Graph. Project shortcuts at
-agents/.shortcut/<agent>.agent.mjs override Neo shared shortcuts. Missing or
-shortcuts that fail before effects are returned to the normal durable Worker
-queue. Nonhuman waits resume only from a matching SQLite Task receipt; EventBus
+agents/.shortcut/<agent>.agent.mjs override Neo shared shortcuts. A Graph
+with any missing shortcut falls back to the normal durable Worker before
+executing any module; mixing shortcut and Worker nodes in one Graph is unsupported.
+Shortcuts that fail before effects also return to the Worker queue. Nonhuman waits resume only from a matching SQLite Task receipt; EventBus
 events are wake signals. Human approval remains hostInvocation-only.
 Shortcut Job completion requires durable contentOnly=true and no PR, merge, or review gates.
 

@@ -264,6 +264,14 @@ export async function runAgentShortcut(options: {
   let shortcutModuleEntered=false;
 
   try {
+  // Shortcut execution is a whole-Graph optimization, not a per-node Worker scheduler.
+  // Check complete coverage BEFORE importing or invoking any shortcut. Otherwise a
+  // missing later role can strand earlier side effects in Troubleshooter recovery.
+  // The existing durable shortcut.failed transition safely routes an untouched Graph
+  // to its original Worker; a previously checkpointed partial run still fails closed.
+  const missing = shortcuts.filter(item => !item.path);
+  if (missing.length) return await fallback(
+    `Incomplete Agent Graph shortcut coverage: ${missing.map(item => item.nodeId).join(', ')}; use the original Worker`);
   const incoming = new Map(graph.nodes.map(node => [node.id, graph.edges.filter(edge => edge.to === node.id).map(edge => edge.from)]));
   const max = Math.max(1, Math.min(8, options.concurrency ?? 4));
   const shortcutByNode = new Map(shortcuts.map(item => [item.nodeId, item.path]));
