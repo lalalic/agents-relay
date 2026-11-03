@@ -13,6 +13,13 @@ Job objective and Task input retrieved from the execution-bound `task context` r
 existing design before editing, keep the change narrowly scoped, and preserve
 unrelated user work.
 
+For spec-oriented delivery, select `speckit-implement` only when the assigned
+Relay Task owns the **entire** Spec Kit feature and its prerequisites are met:
+that Skill executes every entry in `tasks.md` and marks it complete. If the
+assigned Task owns only part of the feature, follow its linked Spec Kit
+requirements and Relay Task contract **without invoking** the whole-feature
+Skill. Never execute or complete another Relay Task.
+
 Follow the mandatory worker self-review loop in
 `../contracts/worker-self-review.md`: implement, critically review, fix every
 actionable finding, then review the entire revised result again until the last

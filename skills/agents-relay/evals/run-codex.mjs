@@ -51,13 +51,14 @@ function grade(expected,actual){
  const action=String(actual?.action??'');
  if(expected.expected.command && !action.toLowerCase().includes(expected.expected.command.toLowerCase()))mismatches.push('missing action '+expected.expected.command);
  for(const flag of expected.expected.flags??[])if(!action.includes(flag))mismatches.push('missing flag '+flag);
+ for(const marker of expected.expected.action_contains??[])if(!action.toLowerCase().includes(marker.toLowerCase()))mismatches.push('missing action marker '+marker);
  // "avoid" may explicitly name forbidden choices. Check the recommended action only.
  for(const forbidden of expected.forbidden??[]){
   const lowered=action.toLowerCase(), forbiddenLower=forbidden.toLowerCase();
   const index=lowered.indexOf(forbiddenLower);
   if(index>=0){
    const preceding=lowered.slice(Math.max(0,index-65),index);
-   if(!/(?:without|omit|avoid|never|do not|don\x27t|must not|instead of|rather than)\s*(?:using|include|call|set|the|a|an|\`)?\s*$/.test(preceding))
+   if(!/(?:without|omit|avoid|never|do not|don\x27t|must not|instead of|rather than)\s*(?:(?:using|use|include|call|set|invoke|run|load|the|a|an)\s*)?`?\s*$/.test(preceding))
     mismatches.push('forbidden action '+forbidden);
   }
  }
@@ -91,10 +92,13 @@ try {
       'decision must be one of: direct, create, adopt, inspect, plan, task_create, review, recover, escalate, service, worker_context.',
       'Use the actual Relay CLI or event contracts in the skill. Do not guess output IDs.',
       'In action include exact relevant CLI flags, not only the action name; for task events use exact event names.',
+      'For cases with role_contract, follow that exact agent role and use stage-appropriate Spec Kit skills only for spec-oriented delivery.',
       'A forbidden concept may be mentioned in avoid, but do not recommend it in action.',
       'Return one result per case with exactly the same id.'],
     skill,
-    cases:set.map(x=>({id:x.id,request:x.request}))
+    cases:await Promise.all(set.map(async x=>({id:x.id,request:x.request,
+      ...(x.role?{role_contract:await readFile(join(here,'../agents',x.role+'.agent.md'),'utf8')}:{}),
+    })))
   };
   await invoke(JSON.stringify(input),file);
   const response=parse(await readFile(file,'utf8'));

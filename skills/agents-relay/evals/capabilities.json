@@ -403,6 +403,108 @@
         "job create",
         "service restart"
       ]
+    },
+    {
+      "id": "spec-planner-select-plan",
+      "capability": "plan",
+      "role": "planner",
+      "request": "You are the Relay Planner for a Spec-oriented deliverable. The feature is already specified; the target checkout has valid .specify/ and spec.md. The current Plan is active. What Spec Kit sub-Skill must guide planning before applying the execution-bound Relay Plan?",
+      "expected": {
+        "decision": "plan",
+        "action_contains": [
+          "speckit-plan"
+        ]
+      },
+      "forbidden": [
+        "task create",
+        "skip plan context"
+      ]
+    },
+    {
+      "id": "spec-implementation-bounded",
+      "capability": "worker",
+      "role": "implementation",
+      "request": "Your assigned Relay implementation Task implements only the treasure clue response. This is a Spec-oriented delivery with valid .specify/plan.md/tasks.md. Other Relay Tasks own reveal and rewards. The speckit-implement workflow is whole-feature only. Which workflow do you follow, and why should you not invoke speckit-implement for this subset?",
+      "expected": {
+        "decision": "worker_context",
+        "action_contains": [
+          "treasure clue response"
+        ],
+        "alternative_decisions": [
+          "direct"
+        ]
+      },
+      "forbidden": [
+        "speckit-implement",
+        "execute all tasks.md"
+      ]
+    },
+    {
+      "id": "spec-reviewer-readonly",
+      "capability": "review",
+      "role": "reviewer",
+      "request": "You are the immutable-head Relay Reviewer of a Spec-oriented deliverable. The assigned review includes requirements consistency across spec.md, plan.md and tasks.md, all present in the checkout. Which read-only Spec Kit sub-Skill should guide consistency analysis, while preserving independent immutable-head review?",
+      "expected": {
+        "decision": "review",
+        "action_contains": [
+          "speckit-analyze"
+        ]
+      },
+      "forbidden": [
+        "speckit-checklist as editor",
+        "edit review target"
+      ]
+    },
+    {
+      "id": "spec-recovery-gap",
+      "capability": "recover",
+      "role": "troubleshooter",
+      "request": "You are recovering a failed Relay Task. Verified evidence proves the implementation omitted one Spec requirement. In the assigned editable checkout, speckit-tasks and speckit-implement have completed and the Task explicitly authorizes adding convergence entries to tasks.md. Which relevant Spec Kit sub-Skill can guide convergence before Relay recovery?",
+      "expected": {
+        "decision": "recover",
+        "action_contains": [
+          "speckit-converge"
+        ]
+      },
+      "forbidden": [
+        "declare relay task complete from tasks.md",
+        "blind retry"
+      ]
+    },
+    {
+      "id": "nonspec-planner-no-speckit",
+      "capability": "plan",
+      "role": "planner",
+      "request": "You are the Relay Planner for an ordinary operational incident without any .specify/ project, spec.md or spec-oriented deliverable. Plan the next durable investigation Task. Select the authoritative workflow and avoid unnecessary Spec Kit stages.",
+      "expected": {
+        "decision": "plan",
+        "action_contains": [
+          "apply_cli"
+        ]
+      },
+      "forbidden": [
+        "speckit-plan",
+        "speckit-tasks"
+      ]
+    },
+    {
+      "id": "spec-implementation-entire-feature",
+      "capability": "worker",
+      "role": "implementation",
+      "request": "A single assigned Relay implementation Task explicitly owns all work in one Spec Kit feature. The feature has complete spec.md, plan.md, tasks.md and valid .specify prerequisites; no sibling Relay Tasks own any part. Which Spec Kit sub-Skill should execute the entire feature?",
+      "expected": {
+        "decision": "worker_context",
+        "action_contains": [
+          "speckit-implement"
+        ],
+        "alternative_decisions": [
+          "direct"
+        ]
+      },
+      "forbidden": [
+        "skip prerequisites",
+        "claim completed before validation"
+      ]
     }
   ]
 }

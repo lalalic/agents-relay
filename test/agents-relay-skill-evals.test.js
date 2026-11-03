@@ -20,6 +20,8 @@ test('Agents Relay capability eval fixtures cover real user decisions and negati
     assert.ok(item.request && item.request.length > 30, 'realistic user intent');
     assert.ok(validDecisions.has(item.expected?.decision), 'observable action selection');
     assert.ok(item.capability, 'source capability for this test');
+    if (item.role) assert.ok(['planner','implementation','reviewer','troubleshooter'].includes(item.role), 'existing role contract');
+    if (item.expected.action_contains) assert.ok(item.expected.action_contains.every(x => typeof x === 'string' && x.length > 0));
     assert.ok((item.expected.alternative_decisions??[]).every(d => validDecisions.has(d)), 'valid alternative decision');
     categories.add(item.capability);
     assert.ok(Array.isArray(item.forbidden) && item.forbidden.length > 0, 'negative or adversarial test condition');

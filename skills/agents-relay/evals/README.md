@@ -4,10 +4,11 @@ Real goal: select and use durable Relay Jobs/Tasks only when needed, plan and ve
 
 ## Capability matrix
 
-The provider-independent `capabilities.json` contains 29 cases across:
+The provider-independent `capabilities.json` contains 35 cases across:
 - direct vs managed routing (including unauthorized job creation);
 - create/create-only/adopt/local-only and durable dependency handoffs;
 - Planner apply, rejected candidate, and unknown/stale execution;
+- role-specific Spec Kit selection, assigned-Task boundaries, read-only review, and non-spec fallbacks;
 - Task event and status authority, correct execution identity;
 - Reviewer completed-negative verdict vs unavailable review evidence;
 - Troubleshooter diagnosis, recovered Task, shared defect/P0 blocker, human escalation and resumption;
@@ -32,3 +33,5 @@ The source-level `test/agents-relay-skill-evals.test.js` verifies fixture comple
 `npm run test:verification:l4` now runs real generated role/adapter Prompt checks **and** model-based dry-run behavioral scenarios against the generated Prompt and immutable referenced Agent snapshot. `npm run test:verification:l4:contracts` is the deterministic contract suite without model calls; `npm run test:verification:l4:live` probes actual browser/MCP bootstrap. See `test/verification/l4/README.md`.
 
 No dry-run eval can prove a terminal Worker event was persisted or a GitHub PR merged. True provider E2E tests must use an isolated Job and independently verify correlated events and durable output. Do not let an eval perform real GitHub/Job actions.
+
+Role-specific cases load the current agent Markdown alongside the Relay Skill, so the model chooses behavior against actual role contracts. Use `--only spec-planner-select-plan,spec-implementation-bounded,spec-implementation-entire-feature,spec-reviewer-readonly,spec-recovery-gap,nonspec-planner-no-speckit` for focused selection checks.
