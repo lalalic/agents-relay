@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 export type AgentMergeMode = 'extend' | 'replace';
 export type EffectiveAgentContent = { content: string; hash: string; sources: string[]; metadata: Record<string, string | undefined> };
@@ -19,7 +19,7 @@ function parseDocument(raw: string) {
     if (field) {
       inSections = field[1] === 'sections';
       if (field[1] === 'name') name = field[2].trim();
-      if (field[1] === 'extends') extendsAgent = field[2].trim();
+      if (field[1] === 'extends') extendsAgent = field[2].trim().replace(/^[\'"]|[\'"]$/g, '');
       if (field[1] === 'mode') { if (!['extend','replace'].includes(field[2].trim())) throw new Error(`Invalid agent mode: ${field[2]}`); mode = field[2].trim() as AgentMergeMode; }
     } else if (inSections) {
       const entry = /^  (replace|extend):\s*(.+)$/.exec(line);
@@ -97,14 +97,14 @@ function mergeSections(base: string, child: ReturnType<typeof parseDocument>): s
 /** Resolve the visible agent through Relay, Neo shared, then project-local layers. */
 export async function resolveAgentMarkdown(name: string, builtinsRoot: string, contextRoot: string, neoRoot?: string | null): Promise<EffectiveAgentContent> {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error(`Invalid agent name ${name}`);
-  const load = async (path: string, root: string) => {
+  const load = async (path: string, root: string, expectedName?: string) => {
     const canonical = await realpath(path);
     const canonicalRoot = await realpath(root);
     if (!(canonical === canonicalRoot || canonical.startsWith(canonicalRoot + '/'))) throw new Error('Agent file escapes context root');
     const raw = await readFile(canonical, 'utf8');
     const source = parseDocument(raw);
     source.body = absoluteAgentLinks(source.body, canonical);
-    if (source.name && source.name !== name) throw new Error(`Agent name mismatch ${source.name} != ${name}`);
+    if (expectedName && source.name && source.name !== expectedName) throw new Error(`Agent name mismatch ${source.name} != ${expectedName}`);
     return { ...source, path: canonical, metadata: Object.fromEntries(raw.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1].split(/\r?\n/).flatMap(line => {
       const field = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
       return field ? [[field[1], field[2].trim().replace(/^['"]|['"]$/g, '')]] : [];
@@ -113,7 +113,7 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
   type Loaded = ReturnType<typeof parseDocument> & { path: string; metadata: Record<string, string | undefined> };
   const loadLayer = async (root: string): Promise<Loaded> => {
     for (const suffix of ['.agent.md', '.md']) {
-      try { return await load(join(root, `${name}${suffix}`), root); }
+      try { return await load(join(root, `${name}${suffix}`), root, name); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     throw Object.assign(new Error('Agent file not found'), { code: 'ENOENT' });
@@ -132,7 +132,7 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
     if (!overlay) continue;
     const hasOperations = overlay.replace.length || overlay.extend.length;
     if (hasOperations && !overlay.extendsAgent) throw new Error('Section operations require extends');
-    if (overlay.extendsAgent && ![`relay/${name}`, `neo/${name}`].includes(overlay.extendsAgent)) throw new Error(`Only extends: relay/${name} or neo/${name} is supported`);
+    if (overlay.extendsAgent && !isAbsolute(overlay.extendsAgent) && ![`relay/${name}`, `neo/${name}`].includes(overlay.extendsAgent)) throw new Error(`Only extends: relay/${name}, neo/${name}, or an absolute Markdown path is supported`);
     if (layer === 'neo' && overlay.extendsAgent === `neo/${name}`) throw new Error(`Missing Neo base for agent ${name}`);
     if (overlay.extendsAgent === `relay/${name}` && !base) throw new Error(`Missing Relay base for agent ${name}`);
     if (overlay.extendsAgent === `neo/${name}` && !shared) throw new Error(`Missing Neo base for agent ${name}`);
@@ -141,10 +141,20 @@ export async function resolveAgentMarkdown(name: string, builtinsRoot: string, c
       metadata = {};
       sources = [overlay.path];
     } else {
-      const parent = overlay.extendsAgent === `relay/${name}` ? base : overlay.extendsAgent === `neo/${name}` ? shared : effective;
+      // An explicit absolute base is supplied by the author of this Agent, not discovered by Relay.
+      // Keep the base's own name; it need not match the project Agent's name.
+      let external: Loaded | undefined;
+      if (isAbsolute(overlay.extendsAgent!)) {
+        const path = overlay.extendsAgent!;
+        if (!path.endsWith('.md')) throw new Error('Absolute Agent base must be a Markdown file');
+        external = await load(path, dirname(path));
+        if (!external.name || !external.body) throw new Error('Absolute Agent base requires name frontmatter and nonempty body');
+        if (external.extendsAgent) throw new Error('Absolute Agent base must be a standalone definition');
+      }
+      const parent = external ?? (overlay.extendsAgent === `relay/${name}` ? base : overlay.extendsAgent === `neo/${name}` ? shared : effective);
       effective = { ...overlay, body: mergeSections(parent!.body, overlay) };
       metadata = { ...parent!.metadata };
-      sources = [...(overlay.extendsAgent === `relay/${name}` ? [base!.path] : overlay.extendsAgent === `neo/${name}` ? sharedSources : sources), overlay.path];
+      sources = [...(external ? [external.path] : overlay.extendsAgent === `relay/${name}` ? [base!.path] : overlay.extendsAgent === `neo/${name}` ? sharedSources : sources), overlay.path];
     }
     Object.assign(metadata, overlay.metadata);
     if (layer === 'neo') { shared = effective; sharedSources = [...sources]; }

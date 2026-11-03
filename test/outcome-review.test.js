@@ -33,3 +33,28 @@ test('review run rejects missing prompt and invalid reviewer', () => {
   assert.throws(() => parseOutcomeReviewArgs([]), /requires exactly one/);
   assert.throws(() => parseOutcomeReviewArgs(['--prompt','x','--agents','../../bad']), /invalid reviewer/);
 });
+
+test('specialist review honors absolute base', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'relay-review-absolute-'));
+  const external = mkdtempSync(join(tmpdir(), 'relay-review-base-'));
+  try {
+    mkdirSync(join(project,'agents'));
+    const base=join(external,'SKILL.md');
+    writeFileSync(base, '---\nname: external-specialist\n---\n# External Review Method\nVerify market evidence');
+    writeFileSync(join(project,'agents','market.agent.md'), `---\nname: market\nextends: ${base}\n---\n# Project Review Scope\nCheck current campaign`);
+    const opts=parseOutcomeReviewArgs(['--prompt','Review campaign','--project-path',project,'--agents','market']);
+    let seen=false;
+    await evaluateOutcome(opts, (_binary,_args,run) => {
+      if (run.input.includes('Reviewer: market')) {
+        assert.match(run.input,/Verify market evidence/);
+        assert.match(run.input,/Check current campaign/);
+        seen=true;
+      }
+      return {status:0,stdout:JSON.stringify({verdict:'PASS',findings:[],evidence:[]})};
+    });
+    assert.equal(seen,true);
+  } finally {
+    rmSync(project,{recursive:true,force:true});
+    rmSync(external,{recursive:true,force:true});
+  }
+});
