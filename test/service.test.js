@@ -278,10 +278,12 @@ test('release version selection honors an explicit newer major baseline then inc
 test('CLI and daemon help are successful and do not require job storage', () => {
   for (const [entry, args, expected] of [
     ['dist/cli.js', ['--help'], 'npx agents-relay <command>'],
-    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|merge|unblock|cancel|pause|resume>'],
+    ['dist/cli.js', ['job', '--help'], 'npx agents-relay job <create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume>'],
     ['dist/cli.js', ['job', 'create', '--help'], 'Create a SQLite-authoritative Job'],
     ['dist/cli.js', ['job', 'update', '--help'], 'Partially update mutable metadata'],
     ['dist/cli.js', ['job', 'show', '--help'], 'Show one durable Job'],
+    ['dist/cli.js', ['job', 'run', '--help'], 'Opt in to direct Agent Graph shortcuts'],
+    ['dist/cli.js', ['job', '--help'], 'Atomically record a validated nonhuman result'],
     ['dist/cli.js', ['job', 'list', '--help'], 'List managed Jobs'],
     ['dist/cli.js', ['job', 'merge', '--help'], 'Request an idempotent external pull-request merge'],
     ['dist/cli.js', ['job', 'unblock', '--help'], 'Authoritatively unblock'],
@@ -316,7 +318,8 @@ test('job create help supports initial planner bootstrap and rejects task execut
   assert.equal(help.status, 0, help.stderr);
   assert.doesNotMatch(help.stdout, /--start/);
   assert.doesNotMatch(help.stdout, /--no-auto-merge/);
-  assert.match(help.stdout, /always enables auto-merge/);
+  assert.match(help.stdout, /Job creation enables auto-merge by default/);
+  assert.match(help.stdout, /--shortcut-execution[^.]*no auto-merge/);
   assert.match(help.stdout, /--initial-plan/);
   assert.match(help.stdout, /By default it is create-only/);
   assert.match(help.stdout, /first real Planner round/);

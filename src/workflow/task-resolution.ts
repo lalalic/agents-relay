@@ -14,6 +14,7 @@ export const taskResolutionV2 = new GraphRuntime(source, {
   guards: {
     recoveryOwnerAvailable: boolGuard('recoveryOwnerAvailable'), plannerOwnerAvailable: boolGuard('plannerOwnerAvailable'),
     exactOriginalRetry: boolGuard('exactOriginalRetry'), sameJobDependency: boolGuard('sameJobDependency'),
+    shortcutInterrupted: boolGuard('shortcutInterrupted'),
     blockerJobDependency: boolGuard('blockerJobDependency'), escalationGate: boolGuard('escalationGate'), genuinelyObsolete: boolGuard('genuinelyObsolete'),
     freshRecoveryExecution: boolGuard('freshRecoveryExecution'),
     classifiableFailure: boolGuard('classifiableFailure'),
@@ -21,7 +22,7 @@ export const taskResolutionV2 = new GraphRuntime(source, {
     supersededEvidenceComplete: boolGuard('supersededEvidenceComplete'),
     invalidEvidenceComplete: boolGuard('invalidEvidenceComplete'),
   },
-  actions: Object.fromEntries(['resolution.activateRecovery','resolution.attachSameJobDependency','resolution.registerBlockerDependency','resolution.createEscalationGate','resolution.cancelSupersede','resolution.classifySuperseded','resolution.classifyInvalid'].map(id => [id, { id }])),
+  actions: Object.fromEntries(['resolution.activateRecovery','resolution.activateShortcutWorkerFallback','resolution.attachSameJobDependency','resolution.registerBlockerDependency','resolution.createEscalationGate','resolution.cancelSupersede','resolution.classifySuperseded','resolution.classifyInvalid'].map(id => [id, { id }])),
   events: { 'resolution.propose': { id: 'resolution.propose' }, 'resolution.classify': { id: 'resolution.classify' } },
 });
 
@@ -62,7 +63,9 @@ export function validateResolutionProposal(job: Job, original: Task, proposal: T
 export function resolutionFacts(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): Readonly<Record<string, unknown>> {
   const freshRecoveryExecution = owner !== 'troubleshooter' || proposal.path !== 'exact_original_retry' || (Boolean(proposal.recoveryExecutionId)
     && proposal.recoveryExecutionId !== task.resolution?.recoveryExecutionId);
-  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry' && task.state === 'FAILED', sameJobDependency: proposal.path === 'same_job_dependency' && owner !== null && proposal.targetTaskId !== task.id, blockerJobDependency: proposal.path === 'blocker_job_dependency' && owner !== null && Boolean(proposal.targetJobId && proposal.mode), escalationGate: proposal.path === 'escalation_gate' && owner === 'troubleshooter' && Boolean(proposal.rootCause && proposal.solution), genuinelyObsolete: proposal.path === 'cancel_supersede' && Boolean(proposal.rootCause), freshRecoveryExecution, unresolved: unresolvedTask(task) };
+  const shortcut=task.result?.data?.shortcut;
+  const shortcutInterrupted=owner==='troubleshooter'&&Boolean(shortcut&&typeof shortcut==='object'&&Object.keys((shortcut as {inFlight?:Record<string,unknown>}).inFlight??{}).length>0);
+  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry' && task.state === 'FAILED', shortcutInterrupted, sameJobDependency: proposal.path === 'same_job_dependency' && owner !== null && proposal.targetTaskId !== task.id, blockerJobDependency: proposal.path === 'blocker_job_dependency' && owner !== null && Boolean(proposal.targetJobId && proposal.mode), escalationGate: proposal.path === 'escalation_gate' && owner === 'troubleshooter' && Boolean(proposal.rootCause && proposal.solution), genuinelyObsolete: proposal.path === 'cancel_supersede' && Boolean(proposal.rootCause), freshRecoveryExecution, unresolved: unresolvedTask(task) };
 }
 export function decideTaskResolution(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): GraphDecision {
   return checkedResolutionDecision(dispatchWorkflowGraphSync(taskResolutionV2, { initialState: 'unresolved', input: { transport: 'event', id: 'resolution.propose', payload: proposal }, durableFacts: resolutionFacts(task, proposal, owner), graphName: 'task-resolution', isTransientState: state => ['check_owner','check_path','check_fresh_execution'].includes(state), maxSteps: 8 }));
@@ -74,6 +77,7 @@ function checkedResolutionDecision(decision: GraphDecision): GraphDecision {
 
 export type TaskResolutionEffects = {
   activateRecovery?: () => void | Promise<void>;
+  activateShortcutWorkerFallback?: () => void | Promise<void>;
   attachSameJobDependency?: () => void | Promise<void>;
   registerBlockerDependency?: () => void | Promise<void>;
   createEscalationGate?: () => void | Promise<void>;
@@ -85,6 +89,7 @@ export function dispatchTaskResolutionSync(
 ): GraphDecision {
   const handlers: Record<string, (() => void) | undefined> = {
     'resolution.activateRecovery': effects.activateRecovery as (() => void) | undefined,
+    'resolution.activateShortcutWorkerFallback': effects.activateShortcutWorkerFallback as (() => void) | undefined,
     'resolution.attachSameJobDependency': effects.attachSameJobDependency as (() => void) | undefined,
     'resolution.registerBlockerDependency': effects.registerBlockerDependency as (() => void) | undefined,
     'resolution.createEscalationGate': effects.createEscalationGate as (() => void) | undefined,
@@ -103,6 +108,7 @@ export async function dispatchTaskResolution(
 ): Promise<GraphDecision> {
   const handlers: Record<string, (() => void | Promise<void>) | undefined> = {
     'resolution.activateRecovery': effects.activateRecovery,
+    'resolution.activateShortcutWorkerFallback': effects.activateShortcutWorkerFallback,
     'resolution.attachSameJobDependency': effects.attachSameJobDependency,
     'resolution.registerBlockerDependency': effects.registerBlockerDependency,
     'resolution.createEscalationGate': effects.createEscalationGate,

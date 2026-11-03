@@ -8,7 +8,7 @@ Usage:
 --no-github: SQLite/Graph-only mode. GitHub auth/API, PR creation, merge and fetch are disabled. Local completion is Graph-owned.
 
 Commands:
-  job create|update|show|list|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
+  job create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
   task create|update|show|list|classify|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
@@ -33,12 +33,14 @@ Use 'node dist/cli.js' only for explicit local development/demo mode.`,
   job: `Manage SQLite-authoritative durable jobs.
 
 Usage:
-  npx agents-relay job <create|update|show|list|merge|unblock|cancel|pause|resume> [options]
+  npx agents-relay job <create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume> [options]
 
 Actions:
   create  Create a durable Job, optionally binding an existing unmanaged PR
   update  Partially update mutable metadata on a healthy existing Job
   show    Show one durable Job
+  run     Opt in to direct Agent Graph shortcuts for one existing Task
+  shortcut-receipt  Atomically record a validated nonhuman result for a persisted wait
   list    List managed Jobs in a repository
   merge   Queue a retryable external PR merge; Graph completes the Job only after confirmation
   unblock Authoritatively invalidate current BLOCKED decisions and trigger replanning/resume
@@ -50,6 +52,25 @@ Common options:
   --repo OWNER/REPO       GitHub repository
   --id JOB_ID             Durable job identifier
   --pr NUMBER             Existing PR number
+
+Shortcut execution:
+  agents-relay job run --mode shortcut --id JOB --repo OWNER/REPO --task-id TASK
+    [--store-dir DIR] [--project-path DIR] [--neo-root DIR] [--concurrency 4]
+
+The selected Task must have an Agent Graph. Project shortcuts at
+agents/.shortcut/<agent>.agent.mjs override Neo shared shortcuts. Missing or
+shortcuts that fail before effects are returned to the normal durable Worker
+queue. Nonhuman waits resume only from a matching SQLite Task receipt; EventBus
+events are wake signals. Human approval remains hostInvocation-only.
+Shortcut Job completion requires durable contentOnly=true and no PR, merge, or review gates.
+
+Record an asynchronous result with:
+  agents-relay job shortcut-receipt --id JOB --repo OWNER/REPO --task-id TASK
+    --node-id NODE --wait-id WAIT --revision REV --execution-id EXECUTION
+    --output-file result.json --content-sha256 SHA256
+
+The file must contain the completed shortcut result object. SHA256 is computed
+over its canonical JSON content and must equal the persisted wait content hash.
 
 Example:
   npx agents-relay job show --repo OWNER/REPO --pr 12 --id 101`,
@@ -91,8 +112,8 @@ Optional: --thread-id THREAD_ID persists a reviewer override; omitted uses Job r
   'job create': `Create a SQLite-authoritative Job (objective-only).
 
 Required: --repo OWNER/REPO and a standalone Job objective. Job ID defaults to an auto-incrementing store-global number; --id may only reference an existing numeric Job. Existing PR adoption is an explicit separate command: job adopt.
-Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
-Job creation always enables auto-merge. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake so Relay can continue without a second orchestrator command. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
+Common: --id JOB_ID (optional), --title TEXT, --objective-file PATH|- (preferred), --objective MARKDOWN (short/simple only), --project-path RELATIVE_PATH, --priority P0|P1|P2|P3, --initial-plan, --no-review, --shortcut-execution, --tag JSON, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID. --objective and --objective-file are mutually exclusive.
+Job creation enables auto-merge by default. By default it is create-only; --initial-plan validates the first real Planner round before atomically creating the durable Job and Plan, then publishes the normal wake. --shortcut-execution creates a create-only content-only Job with durable direct Graph execution policy, no auto-merge, and no review; select it before Tasks are materialized and do not combine it with --initial-plan. Re-running create against an already healthy Job is idempotent and does not mutate its metadata.
 
 Example:
   npx agents-relay job create --repo OWNER/REPO --project-path vlog --title "Episode" --objective-file episode.md --initial-plan`,
@@ -102,7 +123,7 @@ Required: --repo OWNER/REPO and --pr NUMBER. The Job ID is allocated atomically 
   'job update': `Partially update mutable metadata on a healthy existing Job.
 
 Required: --repo OWNER/REPO, --pr NUMBER, and --id JOB_ID.
-Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions.
+Mutable: --title, --objective-file PATH|- (preferred) or --objective MARKDOWN, --project-path RELATIVE_PATH, --priority, --tag JSON, --auto-merge|--no-auto-merge, --review|--no-review, --content-only|--no-content-only, --reviewer-thread-id ID, --creator-thread-id ID, --implementation-thread-id ID, and continuation options. The objective updates local SQLite; PR body changes are independent external actions. Content-only completion requires no PR/merge/review requirements and explicit --no-auto-merge --no-review --content-only.
 Unspecified fields are preserved. Local Job/PR identity mismatch is rejected.
 
 Example:

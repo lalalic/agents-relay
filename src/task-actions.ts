@@ -62,6 +62,12 @@ function clearExecution(task: Task): void {
   task.executionId = null;
 }
 
+function markShortcutWorkerFallback(task: Task): void {
+  const data=task.result?.data??{};
+  const shortcut=data.shortcut&&typeof data.shortcut==='object'?data.shortcut as Record<string,unknown>:{};
+  task.result={summary:task.result?.summary??'Troubleshooter selected original Worker recovery',data:{...data,shortcut:{...shortcut,workerFallback:true}}};
+}
+
 function applyTaskRetrySnapshot(task: Task, policy: TaskRetryPolicy = {}): void {
   if (task.kind === 'planner') throw new Error(`Legacy planner Task ${task.id} is read-only; retry the Plan instead`);
   const decision = tryTransitionTaskEvent(task, 'retry');
@@ -221,7 +227,11 @@ export async function dispatchTaskAction(
         if (!recovery) throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
         if (!recovery.executionId) throw new Error(`Troubleshooter ${recovery.id} has no current execution for a fresh resolution`);
         const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, recoveryExecutionId: recovery.executionId, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
-        const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); recordRecoveryRouting(task, request); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+        const activateRecovery=(workerFallback:boolean):void=>{applyTaskRetrySnapshot(task,{extendBudget:true});if(workerFallback)markShortcutWorkerFallback(task);recordRecoveryRouting(task,request);task.resolution={...materializeResolution(task,proposal,'troubleshooter'),state:'resolved'};};
+        const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', {
+          activateRecovery:()=>activateRecovery(false),
+          activateShortcutWorkerFallback:()=>activateRecovery(true),
+        });
         if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
       }
       else if (request.id === TASK_CANCEL_ACTION) cancelTaskSnapshot(task);
@@ -247,7 +257,11 @@ export async function dispatchTaskAction(
       throw new Error(`task recover requires an active Troubleshooter recovery for ${task.id}`);
     if (!recovery.executionId) throw new Error(`Troubleshooter ${recovery.id} has no current execution for a fresh resolution`);
     const proposal = { path: 'exact_original_retry' as const, targetTaskId: task.id, recoveryExecutionId: recovery.executionId, rootCause: task.failureReason ?? task.error ?? 'durable failure', solution: `Recover exact original Task via ${request.recoveryTaskId}` };
-    const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', { activateRecovery: () => { applyTaskRetrySnapshot(task, { extendBudget: true }); recordRecoveryRouting(task, request); task.resolution = { ...materializeResolution(task, proposal, 'troubleshooter'), state: 'resolved' }; } });
+    const activateRecovery=(workerFallback:boolean):void=>{applyTaskRetrySnapshot(task,{extendBudget:true});if(workerFallback)markShortcutWorkerFallback(task);recordRecoveryRouting(task,request);task.resolution={...materializeResolution(task,proposal,'troubleshooter'),state:'resolved'};};
+    const decision = dispatchTaskResolutionSync(task, proposal, 'troubleshooter', {
+      activateRecovery:()=>activateRecovery(false),
+      activateShortcutWorkerFallback:()=>activateRecovery(true),
+    });
     if (!decision.accepted) throw new Error(`Task resolution graph rejected exact-original recovery for ${task.id}`);
   }
   else if (request.id === TASK_UNBLOCK_RETRY_ACTION) await applyTaskUnblockRetryAction(task);

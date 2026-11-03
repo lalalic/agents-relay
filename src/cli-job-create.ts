@@ -19,6 +19,7 @@ export async function ensureManagedGitHubJob(
     id?: string; idempotencyKey?: string; title?: string; objective?: string; projectPath?: string;
     priority?: Priority;
     tag?: Job['tag']; reviewEnabled?: boolean; continuation?: Job['continuation'];
+    executionMode?: Job['executionMode'];
     prNumber?: number; head?: string; base?: string; body?: string;
     reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string;
     storeDirectory?: string; noGitHub?: boolean; persist?: boolean; localMergeSource?: string; localMergeTarget?: string;
@@ -62,9 +63,10 @@ export async function ensureManagedGitHubJob(
       description: pr.body || undefined,
       priority: options.priority ?? 'P2',
       tag: options.tag,
-      autoMerge: true,
+      autoMerge: options.executionMode === 'shortcut' ? false : true,
       ...(localMergeSource ? { localMerge: { sourceRef: localMergeSource, targetRef: 'refs/heads/main', status: 'pending' as const } } : {}),
-      reviewEnabled: options.reviewEnabled ?? true,
+      reviewEnabled: options.executionMode === 'shortcut' ? false : options.reviewEnabled ?? true,
+      ...(options.executionMode === 'shortcut' ? { executionMode: 'shortcut' as const, contentOnly: true } : {}),
       ...(options.reviewerThreadId
         ? { reviewerThreadId: normalizeThreadId(options.reviewerThreadId, 'reviewer thread ID') }
         : {}),

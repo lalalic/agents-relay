@@ -190,7 +190,7 @@ export class RepositoryWorkerPool {
       const lifecycle = ['task.started', 'task.progress', 'task.completed', 'task.failed', 'task.blocked', 'task.unblocked', 'task.cancelled', 'review.started', 'review.approved', 'review.changes_required', 'review.blocked'].includes(event.type);
       // GitHub transport is observational. It must never wake lifecycle execution.
       if (event.type === 'github.webhook') return;
-      const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed';
+      const wake = event.type === 'job.wake' || event.type === 'review.created' || event.type === 'planner.completed' || event.type === 'shortcut.result';
       if (!lifecycle && !wake) return;
       await this.coordinator.acceptTransport({
         jobId: event.job_id,

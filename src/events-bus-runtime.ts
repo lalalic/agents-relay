@@ -24,6 +24,7 @@ export function resolveEventsBusRuntime(env: NodeJS.ProcessEnv = process.env): E
 
 export type EventsHistoryPage = {
   events: import('./types.js').EventRecord[];
+  rows: Array<{ cursor: number; event: import('./types.js').EventRecord }>;
   nextCursor: number;
 };
 
@@ -70,6 +71,7 @@ export async function eventsBusHistoryPage(
       body.events.length > boundedLimit)
     throw new Error('events-bus history returned an unexpected Job, order, or events payload');
   const events: import('./types.js').EventRecord[] = [];
+  const rows: Array<{cursor:number;event:import('./types.js').EventRecord}> = [];
   let previous = order === 'asc' ? after : Number.POSITIVE_INFINITY;
   for (const row of body.events) {
     const cursor = row?.cursor;
@@ -80,6 +82,7 @@ export async function eventsBusHistoryPage(
       throw new Error('events-bus history returned invalid, out-of-order, or cross-Task event data');
     previous = cursor;
     events.push(event);
+    rows.push({cursor,event});
   }
   const nextCursor = body.next_cursor;
   const expectedCursor = body.events.length
@@ -88,7 +91,7 @@ export async function eventsBusHistoryPage(
   if (typeof nextCursor !== 'number' || !Number.isSafeInteger(nextCursor) || nextCursor !== expectedCursor ||
       (order === 'asc' && events.length > 0 && nextCursor <= after))
     throw new Error('events-bus history returned an invalid or non-advancing cursor');
-  return { events, nextCursor };
+  return { events, rows, nextCursor };
 }
 
 /** Existing newest-first reader for dashboard and runtime summaries. */

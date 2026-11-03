@@ -3,7 +3,7 @@ import type {Job} from './types.js';
 import {normalizeLegacyTaskLifecycle} from './types.js';
 import {normalizeLegacyJobPrNumber} from './job-pr-number-migration.js';
 export function currentJobMetadata<T extends object>(job: T): T {
- const { executionMode: _mode, schedule: _schedule, ...current } = job as T & {executionMode?: unknown; schedule?: unknown};
+ const { schedule: _schedule, ...current } = job as T & {schedule?: unknown};
  return current as T;
 }
 export function normalizeRelayJob(json:string):Job {

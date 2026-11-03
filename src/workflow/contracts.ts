@@ -38,6 +38,12 @@ export const WORKFLOW_EVENT_NAMES = [
   'task.failed',
   'task.progress',
   'task.started',
+  'shortcut.waiting',
+  'shortcut.completed',
+  'shortcut.failed',
+  'shortcut.result',
+  'effect.launchShortcut.failed',
+  'effect.resumeShortcut.failed',
   'task.unblocked',
   'interactive.waiting',
   'watchdog.failed',
@@ -51,6 +57,11 @@ export const WORKFLOW_FACT_NAMES = [
   'dependenciesUnsatisfied',
   'runnable',
   'dispatchable',
+  'shortcutExecution',
+  'shortcutFallback',
+  'shortcutHasGraph',
+  'shortcutEffectsSafe',
+  'shortcutResultCorrelated',
   'notMerged',
   'autoMerge',
   'recoverableExecution',
@@ -75,12 +86,16 @@ export const WORKFLOW_MUTATION_NAMES = [
   'mutation.markStartupOrphanedExhausted',
   'mutation.markUnknownOutcome',
   'mutation.markPlannerUnavailable',
+  'mutation.markShortcutWorkerFallback',
+  'mutation.markShortcutRecoveryRequired',
   'mutation.preparePlatformFallback',
   'mutation.quarantinePlatformFailure',
 ] as const;
 
 export const WORKFLOW_EFFECT_NAMES = [
   'effect.launchTask',
+  'effect.launchShortcut',
+  'effect.resumeShortcut',
   'effect.cancelActiveTasks',
   'effect.mergePullRequest',
   'effect.deliverLocalMerge',
@@ -95,6 +110,8 @@ export type WorkflowEffectName = typeof WORKFLOW_EFFECT_NAMES[number];
 
 export type WorkflowEffectPayloads = {
   'effect.launchTask': { attempt: number };
+  'effect.launchShortcut': { attempt: number };
+  'effect.resumeShortcut': { attempt: number; kind: 'nonhuman_result'; nodeId: string; id: string; revision: string; contentHash: string; executionId: string; payload: Record<string, unknown>; cursor: number };
   'effect.cancelActiveTasks': { reason: string };
   'effect.mergePullRequest': { headSha: string };
   'effect.deliverLocalMerge': { sourceSha: string };
@@ -105,6 +122,18 @@ export const WORKFLOW_EFFECT_POLICIES = {
   'effect.launchTask': {
     idempotency: 'job-task-attempt',
     failureEvent: 'effect.launchTask.failed',
+    retry: 'workflow',
+    observability: 'workflow.effect',
+  },
+  'effect.launchShortcut': {
+    idempotency: 'job-task-attempt',
+    failureEvent: 'effect.launchShortcut.failed',
+    retry: 'workflow',
+    observability: 'workflow.effect',
+  },
+  'effect.resumeShortcut': {
+    idempotency: 'job-task-attempt',
+    failureEvent: 'effect.resumeShortcut.failed',
     retry: 'workflow',
     observability: 'workflow.effect',
   },

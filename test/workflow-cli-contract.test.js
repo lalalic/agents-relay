@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorkflowActionLedger } from '../dist/workflow/action-ledger.js';
 import { workflowCliResult } from '../dist/cli-workflow.js';
+import { buildWorkflowUsageIndex, defaultWorkflowDirectory, executableGraphs } from '../dist/workflow/usage-index.js';
 test('CLI graph discovery, inspect, where, evaluate are read-only', () => {
   assert.ok(workflowCliResult(['discover']).graphs.includes('task-lifecycle.mmd'));
   assert.ok(workflowCliResult(['inspect','--graph','task-lifecycle.mmd']).nodes.length);
@@ -35,10 +36,27 @@ test('CLI trace reads durable SQLite action audit without mutating it',()=>{
 
 test('CLI audits every executable graph action without bypassing guards', () => {
  const catalog=workflowCliResult(['actions']);
- assert.equal(catalog.count,61);
+ const canonicalActions=[...new Set(buildWorkflowUsageIndex(executableGraphs(defaultWorkflowDirectory())).filter(item=>item.kind==='action').map(item=>item.id))].sort();
+ assert.equal(catalog.count,canonicalActions.length);
  assert.equal(catalog.actions.length,catalog.count);
+ assert.deepEqual(catalog.actions.map(action=>action.id),canonicalActions);
  assert.ok(catalog.actions.every(action=>action.graphReferences.length>0 && action.cli.includes('inspect-only')));
+ assert.ok(catalog.actions.every(action=>action.graphReferences.every(reference=>canonicalActions.includes(action.id) && reference.kind==='action')));
+ assert.ok(catalog.actions.some(action=>action.id==='effect.launchShortcut'));
+ assert.ok(catalog.actions.some(action=>action.id==='effect.resumeShortcut'));
  assert.ok(catalog.actions.some(action=>action.id==='effect.launchTask'));
+ const taskGraph=executableGraphs(defaultWorkflowDirectory()).get('task-lifecycle.mmd');
+ assert.ok(taskGraph);
+ const guardedBy=(id,guard)=>{
+  const action=[...taskGraph.nodes.values()].find(node=>node.kind==='action'&&node.semanticId===id);
+  assert.ok(action,`missing graph action ${id}`);
+  return taskGraph.edges.filter(edge=>edge.to===action.id).some(edge=>{
+   const predecessor=taskGraph.nodes.get(edge.from);
+   return predecessor?.kind==='guard'&&predecessor.semanticId===guard;
+  });
+ };
+ assert.ok(guardedBy('effect.launchShortcut','shortcutHasGraph'));
+ assert.ok(guardedBy('effect.resumeShortcut','shortcutResultCorrelated'));
  assert.equal(catalog.taskControls.length,6);
  assert.match(catalog.warning,/No direct CLI bypass/);
 });

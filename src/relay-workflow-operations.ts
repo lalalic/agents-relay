@@ -72,11 +72,18 @@ export class SQLiteWorkflowOperations {
     },emitted);
   }
   async reserveWorkflowLaunch(identity: {jobId:string;taskId:string;executionId:string;attempt:number;leaseOwner:string}): Promise<boolean> {
-    const decision=dispatchWorkflowGraphSync(taskLifecycleV2,{initialState:'QUEUED',input:{transport:'event',id:'dispatch',payload:{}},durableFacts:{dispatchable:true}});
-    if (!decision.accepted || !decision.actions.some(action=>action.id==='effect.launchTask'))
+    const row=this.db.prepare('SELECT json FROM job_snapshot WHERE job_id=?').get(identity.jobId) as {json?:string}|undefined;
+    if (!row?.json) throw new Error('authoritative job snapshot unavailable');
+    const job=JSON.parse(row.json) as Job;
+    const task=job.tasks.find(item=>item.id===identity.taskId);
+    const shortcut=task?.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
+    const decision=dispatchWorkflowGraphSync(taskLifecycleV2,{initialState:'QUEUED',input:{transport:'event',id:'dispatch',payload:{}},durableFacts:{dispatchable:true,shortcutExecution:job.executionMode==='shortcut'&&job.contentOnly===true,shortcutFallback:shortcut?.workerFallback===true,shortcutHasGraph:Boolean(task?.agentGraph)}});
+    if (!decision.accepted) throw new Error('canonical Task Graph did not authorize launch');
+    const actionId=decision.actions.find(action=>action.id==='effect.launchTask'||action.id==='effect.launchShortcut')?.id;
+    if (!actionId)
       throw new Error('canonical Task Graph did not authorize launch');
     return new WorkflowActionLedger(this.db).reserveForClaimedDispatch({
-      ...identity,generation:identity.attempt,graph:'task-lifecycle.mmd',actionId:'effect.launchTask',
+      ...identity,generation:identity.attempt,graph:'task-lifecycle.mmd',actionId,
       attemptKey:`${identity.jobId}/${identity.taskId}/${identity.executionId}/launch`,
     },decision,'worker.started');
   }

@@ -4,13 +4,15 @@ import { homedir } from 'node:os'; import { join } from 'node:path';
 import { GhApiClient } from './github-client.js'; import { configureLocalGitMerge } from './cli-local-merge-config.js'; import { DisabledGitHubClient, noGitHubMode } from './no-github.js'; import { discoverLocalRelayStoreSnapshots, relayStoreDirectory } from './relay-store.js'; import { readFile, writeFile } from 'node:fs/promises'; import { realpathSync } from 'node:fs'; import { once } from 'node:events'; import { fileURLToPath } from 'node:url'; import { randomUUID } from 'node:crypto'; import { dashboardManagedJobs, InMemoryStore, DurableStore, GitHubClient, GitHubStore, PullRequest, resolvePullRequest, listManagedGitHubJobs } from './store.js'; import { githubAuthContext } from './github-auth.js'; import { EventRecord, Job, Plan, Task, AdapterName, RoutingDecision, ChatGptTabClosePolicy, StorySize, storySizeTimeoutMs, taskOverallTimeoutMs } from './types.js'; import { Reconciler } from './reconciler.js'; import { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; export { dashboardJobSetState, dashboardTaskAction, dashboardTaskSetState } from './dashboard-actions.js'; import { CodexAdapter, ChatGptAdapter } from './adapters.js'; import { ZAdapter } from './z-adapter.js'; import { CodexThreadContinuation, CommandContinuation, WebhookContinuation } from './continuation.js'; import { NatsEventBus, eventFor, EventBus } from './events.js'; import { serveDashboard } from './dashboard.js'; import { codexAndZaiUsageRegistry } from './usage.js'; import { decisionMode, executionDecisionEngine } from './decision.js'; import { Server } from 'node:http';
 import { AgentRegistration, Priority } from './types.js'; import { discoverAgents } from './registry.js'; import { AgentObjectivePlanner, CommandObjectivePlanner } from './planner.js';
 import { transitionJobEvent } from './task-transitions.js'; import { applyTaskHoldAction, applyTaskQueueAction, dispatchTaskAction } from './task-actions.js';
-import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { classifyFailedTask } from './task-actions.js'; import { ExecutionRole, resolveExecutionContext } from './execution-context.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
+import { applyJobActivateAction, applyJobCancelAction } from './job-actions.js'; import { classifyFailedTask } from './task-actions.js'; import { startServiceExternalActionFlusher } from './service-external-actions.js'; import { handleServicePublication } from './service-publication.js';
 import { ensureLocalJobSourceBranch, prepareLocalJobExecutionWorktree, resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot, taskRequiresManagedWorktree } from './workspace.js';
 import { runPromptCommand, runPlanContextCommand, runTaskContextCommand, runTaskEventsCommand, runTaskReadCommand } from './cli-prompt.js'; import { runBlockerCommand } from './cli-blocker.js'; import { runEscalationCommand } from './cli-escalation.js'; import { projectionHelp, runProjectionCommand } from './cli-projection.js'; import { helpText, usage } from './cli-help.js'; import { parseAgentGraph } from './agent-graph.js'; import { runJobUnblockCommand, runTaskUnblockCommand } from './cli-unblock.js'; import { createJobEntity, createTaskEntity } from './workflow/entity-creation.js'; import { runCliEntrypoint } from './cli-shutdown.js'; import { shutdownOwnedProcesses } from './owned-process.js'; export { helpText } from './cli-help.js'; import { runReviewCommand } from './cli-review.js'; import { normalizeThreadId, runtimeReviewer } from './reviewer-thread.js'; export { runtimeReviewer } from './reviewer-thread.js'; import { SERVICE_DEFAULTS, ServiceEventBus, arg, hasArg, textOption, integerArg, repository, pullRequest, storeFor, saveLocal, githubStore, eventBus, publishWake, publishDependentUnblocked, priority, storySize, chatGptTabClosePolicy, continuation, rejectRemovedJobOptions, jobTagFromArgs, requestManagedReconciliation, relayControlJob, relayControlCommand, relayJobList, relayJobStateCommand, relayTaskCommand, withEventBus } from './cli-support.js'; export { SERVICE_DEFAULTS, eventBus, chatGptTabClosePolicy } from './cli-support.js';
 import { recoveryDiagnosisFromArgs, workerTaskFromArgs } from './cli-worker-task.js'; import { taskExecutionContext } from './task-context.js'; import { requestTroubleshooterEscalation, resumeTroubleshooter } from './task-recovery.js';
 import { ensureManagedGitHubJob } from './cli-job-create.js';
 import { pauseJob, resumeJob } from './job-pause.js';
 export { ensureManagedGitHubJob } from './cli-job-create.js';
+import { recordShortcutReceiptCommand, runShortcutJobCommand } from './cli-shortcut.js';
+import { runContextCommand } from './cli-context.js';
 async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: string[]): Promise<void> {
   const jobId = arg(args, '--id');
   if (!jobId) throw new Error('--id is required for managed task commands');
@@ -18,6 +20,7 @@ async function runManagedTaskCommand(action: 'create'|'retry'|'cancel', args: st
   if (!id && action !== 'create') throw new Error(`task ${action} requires --task-id`);
   let result: Job;
   if (action === 'create') {
+    if (hasArg(args, '--shortcut-execution') && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution currently requires create-only job creation; materialize Graph Tasks after the durable shortcut policy is stored');
     const job = await relayControlJob(args, jobId);
     if (['COMPLETED','CANCELLED'].includes(job.state)) throw new Error(`Cannot create task on terminal job ${job.id} (${job.state})`);
     const task = await workerTaskFromArgs(job, args, new Date().toISOString());
@@ -174,23 +177,8 @@ async function runTaskCommand(action: string, args: string[]): Promise<void> {
   await saveLocal(localFile, job);
   console.log(JSON.stringify(task, null, 2));
 }
-async function runContextCommand(action: string, args: string[]): Promise<void> {
-  if (action !== 'resolve') throw new Error(usage);
-  const projectPath = arg(args, '--project-path');
-  if (!projectPath) throw new Error('context resolve requires --project-path');
-  const roleValue = arg(args, '--role', 'orchestrator');
-  const roles: ExecutionRole[] = ['orchestrator', 'planner', 'reviewer', 'worker', 'nested-worker'];
-  if (!roles.includes(roleValue as ExecutionRole)) throw new Error('--role must be orchestrator, planner, reviewer, worker, or nested-worker');
-  const context = await resolveExecutionContext(projectPath, roleValue as ExecutionRole, {
-    workspaceRoot: arg(args, '--workspace-root') || undefined,
-    globalRoot: arg(args, '--global-root') || undefined,
-    explicitSkills: arg(args, '--skills').split(',').filter(Boolean),
-    explicitAgents: arg(args, '--agents').split(',').filter(Boolean),
-  });
-  console.log(JSON.stringify(context, null, 2));
-}
 async function runJobCommand(action: string, args: string[]): Promise<void> {
-  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume'].includes(action)) throw new Error(usage);
+  if (!['create', 'adopt', 'update', 'show', 'list', 'merge', 'unblock', 'cancel', 'pause', 'resume', 'run', 'shortcut-receipt'].includes(action)) throw new Error(usage);
   const repo = repository(args);
   let createObjective: string | undefined;
   if (action === 'create') {
@@ -230,15 +218,19 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   const prNumber = prValue ? Number(prValue) : 0;
   if (prValue && (!Number.isInteger(prNumber) || (prNumber ?? 0) <= 0)) throw new Error('--pr must be a positive integer');
   if (action === 'create') {
+    if (hasArg(args, '--shortcut-execution') && hasArg(args, '--initial-plan')) throw new Error('--shortcut-execution requires create-only Job creation; materialize Agent Graph Tasks only after durable shortcut policy is stored');
     rejectRemovedJobOptions(args);
     const objective = createObjective ?? '';
     if (hasArg(args, '--local-merge-source') !== hasArg(args, '--local-merge-target')) throw new Error('Supply both --local-merge-source and --local-merge-target');
     const result = await relayControlCommand(args, { command: 'job.create', repository: repo, initialPlan: hasArg(args, '--initial-plan'), options: {
       id: id || undefined, idempotencyKey: arg(args, '--idempotency-key') || undefined, title: arg(args, '--title') || undefined, objective: objective || undefined, projectPath: arg(args, '--project-path') || undefined,
       priority: priority(args), tag: jobTagFromArgs(args), reviewEnabled: !hasArg(args, '--no-review'), continuation: continuation(args),
+      executionMode: hasArg(args, '--shortcut-execution') ? 'shortcut' : undefined,
       reviewerThreadId: hasArg(args, '--reviewer-thread-id') ? arg(args, '--reviewer-thread-id') : undefined, creatorThreadId: hasArg(args, '--creator-thread-id') ? arg(args, '--creator-thread-id') : undefined, implementationThreadId: hasArg(args, '--implementation-thread-id') ? arg(args, '--implementation-thread-id') : undefined,
     }}); console.log(JSON.stringify(result, null, 2)); return;
   }
+  if (action === 'run') { await runShortcutJobCommand(args, id, repo); return; }
+  if (action === 'shortcut-receipt') { await recordShortcutReceiptCommand(args, id); return; }
   const job = await relayControlJob(args, id);
   if (action === 'unblock') { const reason = arg(args, '--reason'); if (!reason.trim()) throw new Error('job unblock requires --reason'); const updated = await relayControlCommand<Job>(args, { command: 'job.unblock', jobId: id, reason }); console.log(JSON.stringify(updated, null, 2)); return; }
   if (action === 'show') { console.log(JSON.stringify(job, null, 2)); return; }
@@ -267,6 +259,12 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
   if (hasArg(args, '--review') && hasArg(args, '--no-review')) throw new Error('choose only one of --review or --no-review');
   if (hasArg(args, '--review')) job.reviewEnabled = true;
   if (hasArg(args, '--no-review')) job.reviewEnabled = false;
+  if (hasArg(args, '--content-only')) {
+    if (hasArg(args, '--no-content-only')) throw new Error('choose only one of --content-only or --no-content-only');
+    if (job.prNumber !== 0 || job.localMerge || job.autoMerge === true || job.reviewEnabled === true || job.review) throw new Error('--content-only requires a Job with no PR, merge, or review requirements; set --no-auto-merge --no-review first');
+    job.contentOnly = true;
+  }
+  if (hasArg(args, '--no-content-only')) job.contentOnly = false;
   if (hasArg(args, '--reviewer-thread-id')) job.reviewerThreadId = normalizeThreadId(arg(args, '--reviewer-thread-id'), '--reviewer-thread-id');
   if (hasArg(args, '--creator-thread-id')) job.creatorThreadId = normalizeThreadId(arg(args, '--creator-thread-id'), '--creator-thread-id');
   if (hasArg(args, '--implementation-thread-id')) job.implementationThreadId = normalizeThreadId(arg(args, '--implementation-thread-id'), '--implementation-thread-id');
@@ -276,7 +274,7 @@ async function runJobCommand(action: string, args: string[]): Promise<void> {
     job.continuation = next;
   }
   const patch: Record<string, unknown> = {};
-  for (const key of ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
+  for (const key of ['title','objective','projectPath','priority','tag','autoMerge','reviewEnabled','contentOnly','reviewerThreadId','creatorThreadId','implementationThreadId','continuation','localMerge'] as const) patch[key] = (job as unknown as Record<string, unknown>)[key];
   console.log(JSON.stringify(await relayControlCommand<Job>(args, { command: 'job.update', jobId: id, patch }), null, 2));
 }
 export function runtimePlanner(args: readonly string[]): AgentObjectivePlanner | CommandObjectivePlanner { const plannerCommand = arg([...args], '--planner-command'); const modelRuntime = arg([...args], '--codex', 'codex'); return plannerCommand ? new CommandObjectivePlanner(plannerCommand) : new AgentObjectivePlanner(modelRuntime); }

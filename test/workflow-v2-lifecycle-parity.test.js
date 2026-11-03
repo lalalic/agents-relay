@@ -58,6 +58,7 @@ const jobCases = [
   ['ACTIVE','reconcile',{},'ACTIVE'],
   ['ACTIVE','review.approved',{},'ACTIVE'],
   ['ACTIVE','implementation.completed',{},'ACTIVE'],
+  ['ACTIVE','shortcut.completed',{shortcutCompletionAllowed:true},'COMPLETED'],
   ['ACTIVE','cancel',{},'CANCELLED'],
   ['ACTIVE','local.completed',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true},'COMPLETED'],
   ['ACTIVE','local.merge.requested',{jobActive:true,autoMergeEnabled:true,implementationComplete:true,completionGateSatisfied:true,reviewSatisfied:true,localMergePresent:true,reviewHeadCurrent:true,mergeAttemptReady:true},'ACTIVE'],
@@ -76,6 +77,11 @@ const taskRuntime = new GraphRuntime(taskSource, {
     dependenciesUnsatisfied: boolGuard('dependenciesUnsatisfied'),
     runnable: boolGuard('runnable'),
     dispatchable: boolGuard('dispatchable'),
+    shortcutExecution: facts => facts.durableFacts.shortcutExecution === true,
+    shortcutFallback: facts => facts.durableFacts.shortcutFallback === true,
+    shortcutHasGraph: facts => facts.durableFacts.shortcutHasGraph === true,
+    shortcutEffectsSafe: facts => facts.durableFacts.shortcutEffectsSafe === true,
+    shortcutResultCorrelated: facts => facts.durableFacts.shortcutResultCorrelated === true,
     recoverableExecution: boolGuard('recoverableExecution'),
     troubleshooterRecovery: boolGuard('troubleshooterRecovery'),
     troubleshooterTask: boolGuard('troubleshooterTask'),
@@ -83,8 +89,8 @@ const taskRuntime = new GraphRuntime(taskSource, {
     retryAvailable: boolGuard('retryAvailable'),
     platformFallbackSafe: boolGuard('platformFallbackSafe'),
   },
-  events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
-  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask']),
+  events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'shortcut.waiting', 'shortcut.failed', 'shortcut.result', 'effect.launchShortcut.failed', 'effect.resumeShortcut.failed', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
+  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.markShortcutWorkerFallback','mutation.markShortcutRecoveryRequired','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask','effect.launchShortcut','effect.resumeShortcut']),
 });
 
 const jobRuntime = new GraphRuntime(jobSource, {
@@ -106,8 +112,9 @@ const jobRuntime = new GraphRuntime(jobSource, {
       && facts.durableFacts.completionGateSatisfied === true && facts.durableFacts.reviewSatisfied === true
       && facts.durableFacts.localMergePresent === true && facts.durableFacts.reviewHeadCurrent === true
       && facts.durableFacts.mergeAttemptReady === true,
+    shortcutCompletionAllowed: facts => facts.durableFacts.shortcutCompletionAllowed === true,
   },
-  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
+  events: eventRegistry([...jobCases.map(([,event]) => event), 'reconcile', 'local.completed', 'shortcut.completed', 'local.merge.requested', 'effect.deliverLocalMerge.failed']),
   actions: actionRegistry(['effect.cancelActiveTasks','effect.mergePullRequest','effect.deliverLocalMerge','effect.cleanupJobWorktree']),
 });
 
