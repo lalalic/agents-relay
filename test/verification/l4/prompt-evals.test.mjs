@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process';
 import { resolveExecutionContext, resolveAgentContract } from '../../../dist/execution-context.js';
 import { managedWorkerInput } from '../../../dist/managed-worker-input.js';
 import { buildPlannerExecutionPrompt } from '../../../dist/planner.js';
-import { zBootstrap, zTaskBrief, zExecutionSource } from '../../../dist/z-adapter.js';
+import { zDesktopPrompt, zTaskBrief, zExecutionSource } from '../../../dist/z-adapter.js';
 import { SQLiteRelayStore } from '../../../dist/relay-store.js';
 const exec = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -191,15 +191,15 @@ for(const adapter of adapters)for(const role of roles) {
       assert.match(parsed.Bootstrap,/Neo MCP fs\/shell/);
       assert.doesNotMatch(parsed.Bootstrap,/NEO_ACCESS_TOKEN=|Bearer [A-Za-z0-9_-]{20}/i);
     }else{
-      assert.match(parsed.Bootstrap,/neoy\.qili2\.com\/files\/z-chat\/bootstrap\.md/);
-      assert.match(parsed.Bootstrap,/OAuth/);
+      assert.match(parsed.Bootstrap,/ZCode Desktop/);
+      assert.match(parsed.Bootstrap,/Neo MCP/);
       assert.doesNotMatch(parsed.Bootstrap,/NEO_ACCESS_TOKEN=|Bearer [A-Za-z0-9_-]{20}/,'No credentials in printable Action Prompt');
       if(role!=='planner'){
         assert.equal(zTaskBrief(prompt),prompt,'Z cannot rewrite Task Prompt');
-        const runtime=zBootstrap('L4_NON_SECRET_TEST_TOKEN',prompt);
-        assert.match(runtime,/## Bootstrap\nNeo OAuth access token: L4_NON_SECRET_TEST_TOKEN/);
+        const runtime=zDesktopPrompt(prompt);
+        assert.match(runtime,/## Bootstrap\n/);
         assert.equal(zExecutionSource(prompt),`job/${jobId}/task/L4-TASK/execution/${execution}`);
-        assert.equal(runtime.replace('Neo OAuth access token: L4_NON_SECRET_TEST_TOKEN\n',''),prompt);
+        assert.equal(runtime,prompt);
       }
     }
   });

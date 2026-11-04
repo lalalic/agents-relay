@@ -137,9 +137,9 @@ export async function buildRelayWorkPrompt(input: {
           'Use the connected Neo MCP fs/shell tools to read the listed Neo Master files and execute Relay CLI. Do not run neo bootstrap again.',
         ]
       : [
-          'The Z runtime supplies a one-hour Neo OAuth access token (never the operator or refresh token). Do not ask the user to copy a token.',
-          'Use the same Z interactive bootstrap entry: https://neoy.qili2.com/files/z-chat/bootstrap.md.',
-          'Run Neo MCP through authenticated HTTPS. The Z cloud filesystem is not Neo Master. Continue the assigned Task after bootstrap; do not wait for another user message.',
+          'You are running inside the ZCode Desktop app on Neo Master. ZCode already has the local Neo MCP server connected. Never request or print a token.',
+          'Use the connected Neo MCP tools for shell, filesystem and events. Read the listed local contracts and the matching Relay CLI context.',
+          'This ZCode Desktop process uses the Neo Master filesystem. Work in the assigned absolute worktree path. Do not run neo bootstrap again.',
         ];
   // Validate that the selected Relay Skill exists, but let the harness resolve its path.
   await promptFileReference(input.skillPath, 'context');

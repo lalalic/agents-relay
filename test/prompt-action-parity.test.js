@@ -9,7 +9,7 @@ import { basename, join, resolve } from 'node:path';
 import { managedWorkerInput } from '../dist/managed-worker-input.js';
 import { resolveExecutionContext } from '../dist/execution-context.js';
 import { ChatGptAdapter } from '../dist/adapters.js';
-import { zBootstrap,zTaskBrief } from '../dist/z-adapter.js';
+import { zDesktopPrompt } from '../dist/z-adapter.js';
 const exec=promisify(execFile);
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const executionId='123e4567-e89b-12d3-a456-426614174000';
@@ -47,11 +47,10 @@ for(const adapter of ['codex','chatgpt','z'])test(`Graph Action and prompt CLI a
       assert.equal(requests[0].prompt,actual);
     }
     if(adapter==='z'){
-      const runtime=zBootstrap('RUNTIME_SECRET_PLACEHOLDER',actual);
-      assert.match(runtime,/^# Role\n/);
-      assert.match(runtime,/## Bootstrap\nNeo OAuth access token: RUNTIME_SECRET_PLACEHOLDER/);
-      assert.equal(runtime.replace('Neo OAuth access token: RUNTIME_SECRET_PLACEHOLDER\n',''),actual);
-      assert.doesNotMatch(runtime,/Z\.ai Full-Stack worker|FIRST ACTION:|\(sha256:/);
+      assert.equal(zDesktopPrompt(actual),actual);
+      assert.match(actual,/ZCode Desktop/);
+      assert.match(actual,/Neo MCP/);
+      assert.doesNotMatch(actual,/OAuth access token|z-chat\/bootstrap|Z\.ai Full-Stack worker|\(sha256:/);
     }
 
   }finally{await rm(root,{recursive:true,force:true});}

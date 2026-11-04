@@ -67,7 +67,7 @@ terminal state. `prompt` inspection never launches a model or alters state.
 | --- | --- | --- |
 | Codex | Execution cwd is resolved project; Codex's local instructions plus explicit Context files | Exact Action output as CLI initial prompt |
 | ChatGPT Web | Account Default Instructions initialize Neo/XChat harness automatically; no extra per-Task Neo bootstrap | Exact Action output as a regular User turn, readable through Neo MCP |
-| Z Web | Transport issues a short-lived OAuth token and uses the canonical interactive Z bootstrap URL, then Neo MCP. A real `task.started` must be accepted before the Task | Exact Action output appended *unaltered* after runtime bootstrap, via Z WebHelm |
+| ZCode Desktop (persisted adapter z) | ZCode.app uses an authenticated local Neo MCP; no OAuth token is injected into prompt text. Worker reads pinned contracts and publishes a real task.started event. | Exact Action output is delivered unaltered to the native ZCode Desktop composer through local CDP; ZCode Host/V4 owns queue and session |
 
 Each worker uses the **same CLI version as the Skill pinned by its Prompt**:
 resolve `../../dist/cli.js` from `skills/agents-relay/SKILL.md` and invoke

@@ -60,7 +60,9 @@ On mobile Jobs screens, keep Search, Status, Repository, and Refresh in one row 
 
 P0/self-job behavior is defined by `skills/agents-relay/contracts/orchestrator-workflows.md`. Task/job semantics are defined by `skills/agents-relay/contracts/task-job-contract.md`. These are Agents Relay orchestration contracts, not global agent policy.
 
-## Browser Worker Pool safety (ChatGPT / Z.ai)
+## Browser Worker Pool safety (ChatGPT; legacy Z.ai browser tests)
+
+The production Z adapter runs ZCode Desktop, not the historical Z.ai WebHelm pool. The browser-pool Z.ai paths below remain as compatibility and test-only rules; no production Z worker may allocate a browser pool slot.
 
 - Relay Graph/SQLite owns Task transitions. The Browser Worker Pool owns only capacity, FIFO admission, provider health, session leases and recovery effects; it never authors Task success from an HTTP or browser receipt.
 - Treat a platform submission as **uncertain** after the browser send may have happened. Never automatically resend or release the occupied Slot until the original execution is reconciled. A verified pre-submission rejection may route to another eligible worker.

@@ -469,6 +469,23 @@ export class Reconciler extends ReconcilerReviewBase {
   private async recordBrowserThread(jobId:string,taskId:string,executionId:string,execution:Execution):Promise<void> {
     const receipt=execution.deliveryReceipt;
     if(!receipt)return;
+    if(receipt.runtime === 'zcode/desktop' && typeof receipt.thread_id === 'string' &&
+      /^sess_[a-z0-9-]+$/.test(receipt.thread_id)) {
+      await this.store.mutateJob?.(jobId,current=>{
+        const task=current.tasks.find(item=>item.id===taskId);
+        if (!task || task.adapter !== 'z') return current;
+        const fromActive = task.executionId === executionId;
+        const fromTerminal = task.executionId === null &&
+          task.executionHistory?.some(item => item.id === executionId);
+        if (!fromActive && !fromTerminal) return current;
+        // A terminal event may precede the delivery receipt. Preserve that
+        // execution's native V4 session but never overwrite another session.
+        if (task.threadId && task.threadId !== receipt.thread_id) return current;
+        task.threadId=receipt.thread_id as string;
+        return current;
+      });
+      return;
+    }
     const url=receipt.thread_url;
     const id=receipt.thread_id;
     if(typeof url!=='string' || !/^https:\/\/(?:chatgpt\.com|chat\.z\.ai)\/c\/[A-Za-z0-9_-]+\/?$/.test(url))return;

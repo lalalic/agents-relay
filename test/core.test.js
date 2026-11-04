@@ -2893,6 +2893,37 @@ test('failed local merge is scheduled for reconciliation when retry is due', () 
   assert.equal(needsLifecycleReconciliation({...base,localMerge:{...base.localMerge,nextAttemptAt:'2026-10-16T21:01:00Z'}},now),false);
 });
 
+test('native ZCode session ID survives Relay state read and ignores stale execution receipts',async()=>{
+  const t=task('zcode-persist-id','RUNNING');
+  t.adapter='z';
+  t.executionId='current-exec';
+  const store=new InMemoryStore(job([t]));
+  const reconciler=managedReconciler(store,{owner:'test',adapters:[],maxConcurrent:0});
+  try {
+    const delivered={deliveryReceipt:{runtime:'zcode/desktop',status:'submitted',thread_id:'sess_a12-345',mode:'new-thread'}};
+    await reconciler.recordBrowserThread('j',t.id,'current-exec',delivered);
+    let saved=(await store.load('j')).tasks[0];
+    assert.equal(saved.threadId,'sess_a12-345');
+    assert.equal(saved.threadUrl,undefined,'no fabricated browser URL');
+    await reconciler.recordBrowserThread('j',t.id,'stale-exec',{
+      deliveryReceipt:{runtime:'zcode/desktop',status:'submitted',thread_id:'sess_old',mode:'new-thread'}});
+    saved=(await store.load('j')).tasks[0];
+    assert.equal(saved.threadId,'sess_a12-345','late receipt cannot override active ZCode session');
+    await reconciler.recordBrowserThread('j',t.id,'current-exec',{
+      deliveryReceipt:{runtime:'zcode/desktop',status:'submitted',thread_id:'sess_wrong',mode:'new-turn'}});
+    assert.equal((await store.load('j')).tasks[0].threadId,'sess_a12-345','new turn cannot redirect to another session');
+    // Terminal-before-receipt still binds the same V4 session, but never a
+    // different task's or later generation's session.
+    const current=(await store.load('j')).tasks[0];
+    current.threadId=null;
+    current.executionId=null;
+    current.executionHistory=[{id:'current-exec',attempt:0,startedAt:now()}];
+    await store.saveTask(current);
+    await reconciler.recordBrowserThread('j',t.id,'current-exec',delivered);
+    assert.equal((await store.load('j')).tasks[0].threadId,'sess_a12-345');
+  }finally{await reconciler.close();}
+});
+
 test('terminal-before-browser-receipt retains original worker thread in durable history',async()=>{
   const t=task('terminal-before-receipt','SUCCEEDED');
   t.adapter='z';t.executionId=null;t.executionHistory=[{id:'original-execution',attempt:0,startedAt:now()}];
