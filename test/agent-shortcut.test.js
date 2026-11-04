@@ -79,6 +79,8 @@ test('actual shortcut CLI runs parallel branches, joins declared outputs, and ho
   await f.writeShortcut(f.neo, 'join', `export async function run({input}) { const got=Object.keys(input.predecessorOutputs).sort(); if(got.join(',')!=='A,B') throw Error('wrong join inputs'); return {status:'COMPLETED',output:{parents:got,alpha:input.predecessorOutputs.A.node},artifacts:[]}; }`);
   const result = await f.cli('--concurrency', '2');
   assert.equal(result.status, 0, JSON.stringify(result));
+  assert.match(result.stderr,/"nodeId":"A","type":"started"/);
+  assert.match(result.stderr,/"nodeId":"C","type":"completed"/);
   const data = JSON.parse(result.stdout);
   assert.equal(data.outcome.status, 'COMPLETED');
   assert.equal(data.task.state, 'SUCCEEDED');
@@ -101,7 +103,7 @@ test('actual shortcut CLI persists a wait, runs independent branches, and fails 
   await f.writeShortcut(f.neo, 'waiter', `export async function run() { return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'A',id:'event-7',revision:'r3',contentHash:${JSON.stringify(contentHash)}}}; }`);
   await f.writeShortcut(f.neo, 'independent', `import {writeFile} from 'node:fs/promises'; export async function run({input}) { await writeFile(${JSON.stringify(join(f.directory,'independent-ran'))},'yes'); return {status:'COMPLETED',output:{branch:'done'},artifacts:[]}; }`);
   await f.writeShortcut(f.neo, 'sink', `export async function run({input}) { const got=Object.keys(input.predecessorOutputs).sort(); if(got.join(',')!=='A,B') throw Error('join ran before both predecessors'); return {status:'COMPLETED',output:{event:input.predecessorOutputs.A.accepted,branch:input.predecessorOutputs.B.branch},artifacts:[]}; }`);
-  const first = await f.cli(); assert.equal(first.status, 0, JSON.stringify(first));
+  const first = await f.cli(); assert.equal(first.status, 3, JSON.stringify(first));
   assert.equal(JSON.parse(first.stdout).outcome.status, 'WAITING_EVENT', first.stdout);
   assert.equal(await (await import('node:fs/promises')).readFile(join(f.directory,'independent-ran'),'utf8'),'yes');
   const forgery = await f.cli('--event-json', JSON.stringify({ nodeId:'A', id:'event-7', revision:'r3', contentHash, payload, approvalProvenance:{source:'fixture',revision:'r3'} }));
@@ -145,7 +147,7 @@ test('matching forged EventBus output without a SQLite receipt stays waiting; du
   const contentHash=shortcutContentSha256(output);
   await f.writeShortcut(f.neo,'waiter',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'A',id:'wait-9',revision:'rev-4',contentHash:${JSON.stringify(contentHash)}}};}`);
   await f.writeShortcut(f.neo,'sink',`import {appendFile} from 'node:fs/promises'; export async function run({input}) { if(input.predecessorOutputs.A.answer!=='accepted result') throw Error('receipt output missing'); await appendFile(${JSON.stringify(join(f.directory,'sink-runs'))},'ran\\n'); return {status:'COMPLETED',output:{done:true},artifacts:[]}; }`);
-  const first=await f.cli(); assert.equal(first.status,0,first.stderr);
+  const first=await f.cli(); assert.equal(first.status,3,first.stderr);
   const waiting=await f.load(); const executionId=waiting.tasks[0].executionId;
   const {executionEventSource}=await import('../dist/execution-event-identity.js');
   const bus=new MemoryEventBus();
@@ -177,7 +179,7 @@ test('receipt recording rejects stale bindings, is idempotent, and detects confl
   const {shortcutContentSha256}=await import('../dist/agent-shortcut.js');
   const contentHash=shortcutContentSha256(output);
   await f.writeShortcut(f.neo,'waiter',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'A',id:'wait-bind',revision:'revision-1',contentHash:${JSON.stringify(contentHash)}}};}`);
-  const first=await f.cli(); assert.equal(first.status,0,first.stderr);
+  const first=await f.cli(); assert.equal(first.status,3,first.stderr);
   const waiting=await f.load(), executionId=waiting.tasks[0].executionId;
   const file=join(f.directory,'receipt.json'); await writeFile(file,JSON.stringify(output));
   const receipt=(overrides={})=>f.receiptCli('--node-id','A','--wait-id','wait-bind','--revision',overrides.revision??'revision-1','--execution-id',overrides.executionId??executionId,'--output-file',file,'--content-sha256',overrides.contentSha256??contentHash);
@@ -210,7 +212,7 @@ test('receipt endpoint rejects a pre-shortcut legacy Job',async t=>{
   const output={status:'COMPLETED',output:{ok:true},artifacts:[]};
   const {shortcutContentSha256}=await import('../dist/agent-shortcut.js'); const contentHash=shortcutContentSha256(output);
   await f.writeShortcut(f.neo,'waiter',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'A',id:'legacy-wait',revision:'r1',contentHash:${JSON.stringify(contentHash)}}};}`);
-  const first=await f.cli(); assert.equal(first.status,0,first.stderr);
+  const first=await f.cli(); assert.equal(first.status,3,first.stderr);
   const waiting=await f.load(), file=join(f.directory,'legacy-receipt.json'); await writeFile(file,JSON.stringify(output));
   const db=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   await db.mutateJob(f.id,job=>{job.executionMode=undefined;return job;}); db.close();
@@ -218,11 +220,27 @@ test('receipt endpoint rejects a pre-shortcut legacy Job',async t=>{
   assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/active persisted wait and execution/);
 });
 
-test('actual shortcut CLI sends absent or malformed shortcuts back to the durable Worker queue', async t => {
+test('actual shortcut CLI fails closed when a required shortcut is absent', async t => {
   const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:missing]' });
-  const result = await f.cli(); assert.equal(result.status, 0, JSON.stringify(result));
-  assert.equal(JSON.parse(result.stdout).fallbackQueued, true);
-  assert.equal((await f.load()).tasks[0].state, 'QUEUED');
+  const result = await f.cli(); assert.equal(result.status, 1, JSON.stringify(result));
+  assert.equal(JSON.parse(result.stdout).fallbackQueued, false);
+  assert.equal((await f.load()).tasks[0].state, 'FAILED');
+});
+
+test('direct shortcut budget is immutable across runs and timeout returns its own exit code',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:slow]'});
+  const startedAt=new Date(Date.now()-21*60*1000).toISOString();
+  const deadlineAt=new Date(Date.parse(startedAt)+20*60*1000).toISOString();
+  await f.writeShortcut(f.neo,'slow',`export async function run({signal}) { await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})); return {status:'COMPLETED',output:{bad:true},artifacts:[]}; }`);
+  const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await store.mutateJob(f.id,job=>{job.shortcutExecutionStartedAt=startedAt;job.shortcutExecutionDeadlineAt=deadlineAt;return job;}); store.close();
+  const result=await f.cli();
+  assert.equal(result.status,4,JSON.stringify(result));
+  const saved=await f.load();
+  assert.equal(saved.shortcutExecutionStartedAt,startedAt);
+  assert.equal(saved.shortcutExecutionDeadlineAt,deadlineAt);
+  assert.equal(saved.tasks[0].state,'FAILED');
+  assert.equal(saved.tasks[0].result.data.shortcut.terminal.status,'TIMED_OUT');
 });
 
 test('missing downstream role is preflighted before earlier shortcut side effects',async t=>{
@@ -230,22 +248,22 @@ test('missing downstream role is preflighted before earlier shortcut side effect
   const marker=join(f.directory,'first-shortcut-ran');
   await f.writeShortcut(f.project,'has-code',`import {writeFile} from 'node:fs/promises'; export async function run(){ await writeFile(${JSON.stringify(marker)},'unsafe'); return {status:'COMPLETED',output:{foo:1},artifacts:[]}; }`);
   const result=await f.cli();
-  assert.equal(result.status,0,result.stderr);
+  assert.equal(result.status,1,result.stderr);
   const answer=JSON.parse(result.stdout);
-  assert.equal(answer.fallbackQueued,true);
+  assert.equal(answer.fallbackQueued,false);
   assert.match(answer.outcome.reason,/Incomplete Agent Graph shortcut coverage/);
   const {access}=await import('node:fs/promises');
   await assert.rejects(access(marker),{code:'ENOENT'});
   const saved=await f.load();
-  assert.equal(saved.tasks[0].state,'QUEUED');
-  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,true);
+  assert.equal(saved.tasks[0].state,'FAILED');
+  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,undefined);
   assert.deepEqual(saved.tasks[0].result.data.shortcut.nodes,{});
 });
 
 test('an exception after entering an untrusted shortcut module requires recovery, not Worker replay',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:throws]'});
   await f.writeShortcut(f.neo,'throws',`export async function run(){throw new Error('validation rejected before effects');}`);
-  const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
+  const result=await f.cli(); assert.equal(result.status,1,JSON.stringify(result));
   assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
   assert.equal((await f.load()).tasks[0].state,'FAILED');
   assert.equal((await f.load()).tasks[0].failureReason,'shortcut_requires_recovery');
@@ -255,7 +273,7 @@ test('direct filesystem side effects inside a shortcut cannot trigger automatic 
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:direct-effect]'});
   const output=join(f.directory,'direct-effect');
   await f.writeShortcut(f.neo,'direct-effect',`import {writeFile} from 'node:fs/promises'; export async function run(){await writeFile(${JSON.stringify(output)},'already changed');throw Error('failed after direct effect');}`);
-  const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
+  const result=await f.cli(); assert.equal(result.status,1,JSON.stringify(result));
   assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
   assert.equal(await readFile(output,'utf8'),'already changed');
   assert.equal((await f.load()).tasks[0].state,'FAILED');
@@ -275,7 +293,7 @@ test('restart checkpoint with an interrupted module never automatically replays 
   assert.equal((await f.load()).tasks[0].state,'QUEUED');
 });
 
-test('Troubleshooter exact-original recovery routes an interrupted shortcut through the original Worker',async t=>{
+test('Troubleshooter exact-original recovery never changes direct shortcut mode to Worker execution',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:interrupted]'});
   const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
@@ -297,16 +315,16 @@ test('Troubleshooter exact-original recovery routes an interrupted shortcut thro
   const recovered=await dispatchTaskAction(store,{id:'task.recover',jobId:f.id,taskId:'initial',recoveryTaskId:'troubleshoot-initial'});
   const shortcut=recovered.task.result.data.shortcut;
   assert.equal(recovered.task.state,'QUEUED');
-  assert.equal(shortcut.workerFallback,true);
+  assert.equal(shortcut.workerFallback,undefined);
   assert.deepEqual(shortcut.inFlight,{A:'expired-execution'},'recovery preserves evidence and never clears the interrupted checkpoint');
-  const dispatch=tryTransitionTaskEvent(recovered.task,'dispatch',{dispatchable:true,shortcutExecution:true,shortcutFallback:shortcut.workerFallback,shortcutHasGraph:true});
-  assert.ok(dispatch.actions.includes('effect.launchTask'));
+  const dispatch=tryTransitionTaskEvent(recovered.task,'dispatch',{dispatchable:true,shortcutExecution:true,shortcutFallback:shortcut.workerFallback,shortcutHasGraph:true,shortcutDirectInvocation:true});
+  assert.ok(dispatch.actions.includes('effect.launchShortcut'));
   const output=join(f.directory,'unauthorized-shortcut-ran');
   await f.writeShortcut(f.neo,'interrupted',`import {writeFile} from 'node:fs/promises'; export async function run(){await writeFile(${JSON.stringify(output)},'wrong route');return {status:'COMPLETED',output:{bad:true},artifacts:[]};}`);
   const direct=f.cli();
   const rejected=await direct;
   assert.notEqual(rejected.status,0);
-  assert.match(rejected.stderr,/durably routed to the original Worker/);
+  assert.match(rejected.stderr,/checkpoint fingerprint changed/);
   await assert.rejects(readFile(output,'utf8'),{code:'ENOENT'});
   rawStore.close();
 });
@@ -330,7 +348,7 @@ test('shortcut execution renews its exact Task lease while a module is pending',
 test('human approval waits fail closed to the existing Worker authority',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:approval]'});
   await f.writeShortcut(f.neo,'approval',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'human_approval',nodeId:'A',id:'approval-1',revision:'r1',contentHash:${JSON.stringify('d'.repeat(64))}}};}`);
-  const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
+  const result=await f.cli(); assert.equal(result.status,1,JSON.stringify(result));
   assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
   const task=(await f.load()).tasks[0];
   assert.equal(task.state,'FAILED');
@@ -342,14 +360,14 @@ test('actual shortcut CLI never completes or retries the whole graph after malfo
   const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:bad]' });
   const effectCode=`require('node:fs').writeFileSync(${JSON.stringify(join(f.directory,'partial-effect'))},'preserve')`;
   await f.writeShortcut(f.neo, 'bad', `export async function run({runCommand}) { await runCommand([process.execPath,'-e',${JSON.stringify(effectCode)}],process.cwd()); return {status:'COMPLETED',output:{answer:42}}; }`);
-  const result=await f.cli(); assert.equal(result.status,0,result.stderr);
+  const result=await f.cli(); assert.equal(result.status,1,result.stderr);
   assert.equal(JSON.parse(result.stdout).outcome.status,'FAILED');
   assert.equal((await f.load()).tasks[0].state,'FAILED');
   assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
   assert.equal(await (await import('node:fs/promises')).readFile(join(f.directory,'partial-effect'),'utf8'),'preserve');
 });
 
-test('partial-effect shortcut failure wakes reconciliation to create the existing Troubleshooter Task',async t=>{
+test('Reconciler does not execute the direct shortcut graph or create a shortcut Worker task',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:bad]'});
   const effectCode=`require('node:fs').writeFileSync(${JSON.stringify(join(f.directory,'recovery-effect'))},'preserve')`;
   await f.writeShortcut(f.neo,'bad',`export async function run({runCommand}){await runCommand([process.execPath,'-e',${JSON.stringify(effectCode)}],process.cwd());return {status:'COMPLETED',output:{invalid:42}};}`);
@@ -360,17 +378,15 @@ test('partial-effect shortcut failure wakes reconciliation to create the existin
   const stop=await bus.subscribe(f.id,event=>{events.push(event);});
   const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-recovery-wake',maxConcurrent:1,eventBus:bus,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null,adapters:[]});
   try {
-    const failed=await reconciler.reconcile(f.id);
-    assert.equal(failed.tasks[0].state,'FAILED');
-    assert.equal(failed.tasks[0].failureReason,'shortcut_requires_recovery');
-    assert.ok(events.some(event=>event.type==='job.wake'&&event.data?.failureReason==='shortcut_requires_recovery'));
-    reconciler.options.maxConcurrent=0;
-    const recovered=await reconciler.reconcile(f.id);
-    assert.ok(recovered.tasks.some(task=>task.agentName==='troubleshooter'&&task.parentTaskId==='initial'));
+    const held=await reconciler.reconcile(f.id);
+    assert.equal(held.tasks[0].state,'QUEUED');
+    assert.equal(held.tasks[0].executionId,null);
+    assert.equal(held.tasks.some(task=>task.agentName==='troubleshooter'),false);
+    assert.equal(events.some(event=>event.type==='job.wake'),false);
   } finally { await stop(); store.close(); }
 });
 
-test('Reconciler routes a durable shortcut Job through the graph action without launching a Worker', async t => {
+test('Reconciler leaves a durable direct shortcut Job queued for the foreground runner', async t => {
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:only]'});
   await f.writeShortcut(f.neo,'only',`export async function run(){return {status:'COMPLETED',output:{source:'shortcut'},artifacts:[]};}`);
   assert.equal((await f.load()).executionMode,'shortcut');
@@ -382,8 +398,8 @@ test('Reconciler routes a durable shortcut Job through the graph action without 
   try {
     const result=await reconciler.reconcile(f.id);
     assert.equal(workerLaunches,0);
-    assert.equal(result.tasks[0].state,'SUCCEEDED',JSON.stringify(result.tasks[0]));
-    assert.equal(result.state,'COMPLETED');
+    assert.equal(result.tasks[0].state,'QUEUED',JSON.stringify(result.tasks[0]));
+    assert.equal(result.state,'ACTIVE');
     assert.equal(result.plans?.length ?? 0,0);
   } finally { store.close(); }
 });
@@ -407,7 +423,7 @@ test('artifact tampering fails closed when a checkpoint resumes a waiting graph'
   await writeFile(artifact,'approved result');
   await f.writeShortcut(f.neo,'artifact',`export async function run(){return {status:'COMPLETED',output:{file:'result.txt'},artifacts:['result.txt']};}`);
   await f.writeShortcut(f.neo,'waiter',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'B',id:'evt',revision:'r1',contentHash:${JSON.stringify('b'.repeat(64))}}};}`);
-  const first=await f.cli(); assert.equal(first.status,0,first.stderr);
+  const first=await f.cli(); assert.equal(first.status,3,first.stderr);
   assert.equal(JSON.parse(first.stdout).outcome.status,'WAITING_EVENT');
   assert.ok((await f.load()).tasks[0].result.data.shortcut.artifactHashes.A['result.txt']);
   await writeFile(artifact,'tampered');
@@ -419,7 +435,7 @@ test('artifact tampering fails closed when a checkpoint resumes a waiting graph'
 test('Task input mutation invalidates a persisted wait checkpoint',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:waiter]'});
   await f.writeShortcut(f.neo,'waiter',`export async function run(){return {status:'WAITING_EVENT',event:{kind:'nonhuman_result',nodeId:'A',id:'evt',revision:'r1',contentHash:${JSON.stringify('c'.repeat(64))}}};}`);
-  const first=await f.cli(); assert.equal(first.status,0,first.stderr);
+  const first=await f.cli(); assert.equal(first.status,3,first.stderr);
   const store=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
   await store.mutateJob(f.id,job=>{job.tasks[0].input='changed input';return job;}); store.close();
   const retry=await f.cli(); assert.notEqual(retry.status,0);
@@ -443,7 +459,7 @@ test('legacy and project-local Vlog Visioner shortcuts cannot bypass required ev
       const f=await fixture(t,{agentGraph:`flowchart TD\nA[agent:${agent}]`});
       await f.writeShortcut(agent==='visioner'?f.neo:f.project,agent,
         `export async function run(){return {status:'COMPLETED',output:{answer:'looks fine'},artifacts:[]};}`);
-      const result=await f.cli(); assert.equal(result.status,0,JSON.stringify(result));
+      const result=await f.cli(); assert.equal(result.status,1,JSON.stringify(result));
       assert.equal(JSON.parse(result.stdout).fallbackQueued,false);
       assert.equal((await f.load()).state,'ACTIVE');
       assert.equal((await f.load()).tasks[0].state,'FAILED');

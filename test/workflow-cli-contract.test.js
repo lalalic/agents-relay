@@ -55,7 +55,7 @@ test('CLI audits every executable graph action without bypassing guards', () => 
    return predecessor?.kind==='guard'&&predecessor.semanticId===guard;
   });
  };
- assert.ok(guardedBy('effect.launchShortcut','shortcutHasGraph'));
+ assert.ok(guardedBy('effect.launchShortcut','shortcutDirectInvocation'));
  assert.ok(guardedBy('effect.resumeShortcut','shortcutResultCorrelated'));
  assert.equal(catalog.taskControls.length,6);
  assert.match(catalog.warning,/No direct CLI bypass/);

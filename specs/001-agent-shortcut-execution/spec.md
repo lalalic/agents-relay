@@ -158,3 +158,16 @@ behavior, and no real upload or paid call.
   uploads or paid calls.
 - **SC-006**: Build and focused tests pass; any unrun provider/browser/UI gate is
   reported as not run.
+
+## 2026-11-04 Direct Shortcut Runner amendment (supersedes conflicting FRs)
+
+- **DSR-001**: `neo project run` is synchronous and blocks until a proven terminal Job/Task result, emitting actual per-node started/progress/completed/failed/wait events to the terminal in real time; no success from mere job creation or process exit.
+- **DSR-002**: Shortcut mode directly invokes the existing Relay Graph Executor; it MUST NOT publish scheduler wake, enqueue a normal Worker/Planner task, or invoke the Relay reconciler to execute its DAG. Keep durable Job/Task/Event/Receipt ownership in Relay.
+- **DSR-003**: Missing or failed shortcut modules MUST NOT silently switch the Job to ordinary Worker execution. A failed node yields an explicit failed/blocked terminal result with evidence. Only an explicit CLI mode change can authorize switching a Job to ordinary execution. This requirement supersedes legacy Worker fallback clauses.
+- **DSR-004**: For a node that requires an LLM Worker adapter, resolve the existing Relay adapter rule directly: use Codex and its configured default model, without normal Worker queue/router scheduling. Verify the actual existing adapter rule before implementation; do not hardcode a guessed model name. Distinguish an explicitly configured code shortcut from a model-backed node.
+- **DSR-005**: Graph dependencies and bounded concurrency apply; async waits use correlated events/receipts. Terminal exit codes distinguish success, failed, blocked, timed out, and interrupted; interruption does not fabricate success.
+- **DSR-006**: A Job has a strict 20-minute elapsed execution budget measured from the first actual execution start; resuming cannot reset the budget. On timeout, terminate only owned work, persist timeout evidence and a non-success state.
+- **DSR-007**: Existing canonical Vlog Run is the required real E2E acceptance input. Collect provenance for every node, terminal events, outputs, adapter/model selection, elapsed time, and the durable terminal status. No merge until this E2E actually succeeds within 20 minutes and independent review validates evidence.
+- **DSR-008**: Preserve `--dry-run` as no-write/no-dispatch preview. Existing Job binding is resumed safely without creating duplicate Jobs or executing an already successful node twice.
+
+**Release gate**: NO MERGE until all DSR requirements have executable tests and real Vlog E2E evidence. Existing legacy requirements that say `neo project run` MUST NOT invoke `job run`, or that shortcut errors MUST auto-fallback to a normal Worker, are superseded by this amendment.

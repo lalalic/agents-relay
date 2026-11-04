@@ -77,7 +77,7 @@ export class SQLiteWorkflowOperations {
     const job=JSON.parse(row.json) as Job;
     const task=job.tasks.find(item=>item.id===identity.taskId);
     const shortcut=task?.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
-    const decision=dispatchWorkflowGraphSync(taskLifecycleV2,{initialState:'QUEUED',input:{transport:'event',id:'dispatch',payload:{}},durableFacts:{dispatchable:true,shortcutExecution:job.executionMode==='shortcut'&&job.contentOnly===true,shortcutFallback:shortcut?.workerFallback===true,shortcutHasGraph:Boolean(task?.agentGraph)}});
+    const decision=dispatchWorkflowGraphSync(taskLifecycleV2,{initialState:'QUEUED',input:{transport:'event',id:'dispatch',payload:{}},durableFacts:{dispatchable:true,shortcutExecution:job.executionMode==='shortcut'&&job.contentOnly===true,shortcutFallback:shortcut?.workerFallback===true,shortcutHasGraph:Boolean(task?.agentGraph),shortcutDirectInvocation:job.executionMode==='shortcut'&&job.contentOnly===true}});
     if (!decision.accepted) throw new Error('canonical Task Graph did not authorize launch');
     const actionId=decision.actions.find(action=>action.id==='effect.launchTask'||action.id==='effect.launchShortcut')?.id;
     if (!actionId)

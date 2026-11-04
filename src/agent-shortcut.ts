@@ -11,12 +11,13 @@ import type { DurableStore } from './store.js';
 import type { Job, Result, Task } from './types.js';
 import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
-import { dependencyReady } from './task-transitions.js';
+import { dependencyReady, tryTransitionTaskEvent } from './task-transitions.js';
 
 export type ShortcutOutcome =
   | { status: 'COMPLETED'; output: Record<string, unknown>; artifacts: string[] }
   | { status: 'WAITING_EVENT'; event: { nodeId: string; id: string; revision: string; contentHash: string } }
   | { status: 'FAILED'; reason: string };
+export type ShortcutNodeEvent = { nodeId: string; type: 'started' | 'progress' | 'completed' | 'failed' | 'waiting'; timestamp: string; data?: Record<string, unknown> };
 type ShortcutWait = { kind: 'nonhuman_result'; id: string; revision: string; contentHash: string; executionId: string };
 type ShortcutReceipt = { jobId: string; taskId: string; nodeId: string; waitId: string; revision: string; executionId: string; contentSha256: string; output: Record<string, unknown>; recordedAt: string };
 type Checkpoint = { version: 1; graphHash: string; inputHash: string; shortcutHash: string; workerFallback?: true; inFlight?: Record<string,string>; nodes: Record<string, Record<string, unknown>>; waits: Record<string, ShortcutWait>; receipts?: Record<string, ShortcutReceipt>; artifactHashes: Record<string, Record<string, string>> };
@@ -114,6 +115,15 @@ async function discoverShortcut(agent: string, projectPath: string, neoRoot?: st
   return actual;
 }
 function inside(root:string, path:string):boolean { const rel=relative(root,path); return rel==='' || (rel!=='..'&&!rel.startsWith(`..${sep}`)&&!isAbsolute(rel)); }
+function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('Shortcut execution interrupted'));
+  let rejectAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = () => reject(signal.reason ?? new Error('Shortcut execution interrupted'));
+    signal.addEventListener('abort', rejectAbort, { once: true });
+  });
+  return Promise.race([work, aborted]).finally(() => { if (rejectAbort) signal.removeEventListener('abort', rejectAbort); });
+}
 // Only Vlog's Visioner evidence follows the source-manifest/index artifact schema.
 // Distribution Visioner has a separate domain contract and cannot reuse it.
 function requiresVlogVisionerEvidence(agent: string | undefined): boolean {
@@ -146,6 +156,7 @@ async function validateVisionerResult(result: Record<string, unknown>, projectRo
 export async function runAgentShortcut(options: {
   store: DurableStore; job: Job; task: Task; projectPath: string; neoRoot?: string; concurrency?: number;
   leaseMs?: number; heartbeatMs?: number; resumeReceiptSelected?: true;
+  signal?: AbortSignal; onNodeEvent?: (event: ShortcutNodeEvent) => void;
 }): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
   const { store, job, task, projectPath, neoRoot } = options;
   if (!store.mutateJob) throw new Error('Shortcut execution requires atomic Relay SQLite mutation');
@@ -169,6 +180,8 @@ export async function runAgentShortcut(options: {
   if (currentTask.agentGraph !== task.agentGraph || currentTask.input !== task.input)
     throw new Error('Shortcut invocation Task snapshot is stale; reload the durable Task before execution or receipt consumption');
   if(currentJob.executionMode!=='shortcut'||currentJob.contentOnly!==true) throw new Error('Shortcut execution requires durable shortcut and content-only Job policy');
+  if (currentJob.shortcutExecutionDeadlineAt && !Number.isFinite(Date.parse(currentJob.shortcutExecutionDeadlineAt))) throw new Error('Shortcut execution budget metadata is invalid');
+  if (currentJob.shortcutExecutionStartedAt && !Number.isFinite(Date.parse(currentJob.shortcutExecutionStartedAt))) throw new Error('Shortcut execution budget metadata is invalid');
   const existingShortcut=currentTask.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
   if(existingShortcut?.workerFallback===true) throw new Error('Task is durably routed to the original Worker; shortcut execution is not authorized');
   if (currentJob.state!=='ACTIVE' || currentJob.pause) throw new Error(`Job ${job.id} is not runnable (${currentJob.state}${currentJob.pause?' paused':''})`);
@@ -193,12 +206,16 @@ export async function runAgentShortcut(options: {
     if (!state.nodes[nodeId]) throw new Error(`Checkpoint artifact has no completed node: ${nodeId}`);
   }
   if (currentTask.state === 'QUEUED') {
+    const launch=tryTransitionTaskEvent(currentTask,'dispatch',{dispatchable:true,shortcutExecution:true,shortcutFallback:false,shortcutHasGraph:true,shortcutDirectInvocation:true});
+    if(!launch.accepted||!launch.actions.includes('effect.launchShortcut')) throw new Error('Task Lifecycle graph did not select direct shortcut execution');
     await store.mutateJob(job.id, fresh => {
       const t = fresh.tasks.find(item => item.id === task.id);
       if (fresh.state!=='ACTIVE'||fresh.pause||!t||t.state !== 'QUEUED' || t.executionId !== null || t.agentGraph !== task.agentGraph || t.input !== task.input
         || !dependencyReady(t,new Map(fresh.tasks.map(item=>[item.id,item])))) throw new Error('Task is not available for shortcut claim or its input changed');
       t.attempt += 1; t.executionId = randomUUID(); t.leaseOwner = owner;
       t.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
+      if (!fresh.shortcutExecutionStartedAt) fresh.shortcutExecutionStartedAt = new Date().toISOString();
+      if (!fresh.shortcutExecutionDeadlineAt) fresh.shortcutExecutionDeadlineAt = new Date(Date.parse(fresh.shortcutExecutionStartedAt) + 20*60*1000).toISOString();
       t.executionHistory = [...(t.executionHistory ?? []), { id: t.executionId, attempt: t.attempt, startedAt: new Date().toISOString() }].slice(-8);
       return fresh;
     });
@@ -248,7 +265,21 @@ export async function runAgentShortcut(options: {
   }
   if (Object.keys(state.nodes).length > Object.keys(checkpoint(currentTask).nodes).length) await persist(state);
 
+  currentJob=await store.load(job.id);
+  if(!currentJob.shortcutExecutionStartedAt) throw new Error('Direct shortcut Job has no durable first-execution timestamp; refusing to start or reset its budget');
+  const startedAt=Date.parse(currentJob.shortcutExecutionStartedAt);
+  const deadlineAt=currentJob.shortcutExecutionDeadlineAt ? Date.parse(currentJob.shortcutExecutionDeadlineAt) : startedAt+20*60*1000;
+  if(!Number.isFinite(startedAt)||!Number.isFinite(deadlineAt)||deadlineAt!==startedAt+20*60*1000) throw new Error('Shortcut execution budget metadata is invalid');
+  if(!currentJob.shortcutExecutionDeadlineAt) {
+    await store.mutateJob(job.id,fresh=>{
+      if(fresh.shortcutExecutionStartedAt!==currentJob.shortcutExecutionStartedAt) throw new Error('Shortcut execution budget origin changed');
+      fresh.shortcutExecutionDeadlineAt=new Date(deadlineAt).toISOString(); return fresh;
+    });
+  }
   const executionAbort=new AbortController();
+  const abortFromCaller=():void=>executionAbort.abort(options.signal?.reason ?? new Error('Shortcut execution interrupted'));
+  if(options.signal?.aborted) abortFromCaller(); else options.signal?.addEventListener('abort',abortFromCaller,{once:true});
+  const budgetTimer=setTimeout(()=>executionAbort.abort(new Error('Shortcut execution budget exceeded (20 minutes)')),Math.max(0,deadlineAt-Date.now()));
   let leaseHeartbeatError:unknown;
   let heartbeatInFlight=false;
   const heartbeat=setInterval(()=>{
@@ -264,19 +295,18 @@ export async function runAgentShortcut(options: {
     }).catch(error=>{leaseHeartbeatError=error;executionAbort.abort(error);}).finally(()=>{heartbeatInFlight=false;});
   },heartbeatMs);
   heartbeat.unref();
-  const stopHeartbeat=():void=>clearInterval(heartbeat);
-  let effectsStarted=false;
-  let shortcutModuleEntered=false;
+  const stopHeartbeat=():void=>{clearInterval(heartbeat);clearTimeout(budgetTimer);options.signal?.removeEventListener('abort',abortFromCaller);};
+  const emit=(event: Omit<ShortcutNodeEvent,'timestamp'>):void=>options.onNodeEvent?.({...event,timestamp:new Date().toISOString()});
 
   try {
+  if(Date.now()>=deadlineAt) return await fail('Shortcut execution budget exceeded (20 minutes)');
   // Shortcut execution is a whole-Graph optimization, not a per-node Worker scheduler.
   // Check complete coverage BEFORE importing or invoking any shortcut. Otherwise a
   // missing later role can strand earlier side effects in Troubleshooter recovery.
-  // The existing durable shortcut.failed transition safely routes an untouched Graph
-  // to its original Worker; a previously checkpointed partial run still fails closed.
+  // Direct shortcut mode is fail-closed: no missing module may route to a Worker.
   const missing = shortcuts.filter(item => !item.path);
-  if (missing.length) return await fallback(
-    `Incomplete Agent Graph shortcut coverage: ${missing.map(item => item.nodeId).join(', ')}; use the original Worker`);
+  if (missing.length) return await fail(
+    `Incomplete Agent Graph shortcut coverage: ${missing.map(item => item.nodeId).join(', ')}`);
   const incoming = new Map(graph.nodes.map(node => [node.id, graph.edges.filter(edge => edge.to === node.id).map(edge => edge.from)]));
   const max = Math.max(1, Math.min(8, options.concurrency ?? 4));
   const shortcutByNode = new Map(shortcuts.map(item => [item.nodeId, item.path]));
@@ -284,22 +314,21 @@ export async function runAgentShortcut(options: {
     const ready = wave.filter(id => !state.nodes[id] && !state.waits[id] && (incoming.get(id) ?? []).every(parent => Boolean(state.nodes[parent])));
     for (let offset = 0; offset < ready.length; offset += max) {
       const batch = ready.slice(offset, offset + max);
-      for(const id of batch) if(shortcutByNode.get(id)) state.inFlight[id]=currentTask!.executionId!;
+      for(const id of batch) if(shortcutByNode.get(id)) { state.inFlight[id]=currentTask!.executionId!; emit({nodeId:id,type:'started',data:{executionId:currentTask!.executionId!,agent:graph.nodes.find(node=>node.id===id)?.agent}}); }
       if(batch.some(id=>Boolean(shortcutByNode.get(id)))) await persist(state);
       const outcomes = await Promise.all(batch.map(async id => {
         const node = graph.nodes.find(item => item.id === id)!;
         const shortcut = shortcutByNode.get(id) ?? null;
         if (!shortcut) return { id, value: null };
         try {
-          shortcutModuleEntered=true;
           const module = await import(pathToFileURL(shortcut).href) as ShortcutModule;
           const predecessorOutputs = Object.fromEntries((incoming.get(id) ?? []).map(parent => [parent, state.nodes[parent]?.output]));
           const trackedRunCommand = async (args: string[], cwd: string): Promise<{ stdout: string; stderr: string; code: number }> => {
             if(executionAbort.signal.aborted) throw new Error(`Shortcut execution was cancelled: ${String(leaseHeartbeatError??'lease lost')}`);
-            effectsStarted = true;
             return runCommand(args, cwd, executionAbort.signal);
           };
-          const raw = await module.run({ input: { ...taskShortcutInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs }, signal:executionAbort.signal, runCommand: trackedRunCommand });
+          emit({nodeId:id,type:'progress',data:{phase:'shortcut.invoke'}});
+          const raw = await raceAbort(module.run({ input: { ...taskShortcutInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs }, signal:executionAbort.signal, runCommand: trackedRunCommand }),executionAbort.signal);
           if(leaseHeartbeatError)throw new Error(`Shortcut lease renewal failed: ${String(leaseHeartbeatError)}`);
           if (!raw || typeof raw !== 'object') throw new Error('shortcut result must be an object');
           const result = raw as Record<string, unknown>;
@@ -325,15 +354,16 @@ export async function runAgentShortcut(options: {
         } catch (error) { return { id, value: null, error: error instanceof Error ? error.message : String(error) }; }
       }));
       for (const result of outcomes) {
-        if (!result.value) return await fallback(`No valid shortcut for ${result.id}${result.error ? `: ${result.error}` : ''}`);
+        if (!result.value) return await fail(`Shortcut node ${result.id} failed: ${result.error ?? 'no valid result'}`);
         if (result.value.status === 'WAITING_EVENT') {
           const evt = result.value.event as Record<string, unknown>;
-          if (evt.kind !== 'nonhuman_result') return await fallback('Shortcut event wait must be a nonhuman result; human approval must use Relay hostInvocation');
+          if (evt.kind !== 'nonhuman_result') return await fail('Shortcut event wait must be a nonhuman result; human approval must use Relay hostInvocation');
           if (typeof evt.id !== 'string' || typeof evt.revision !== 'string' || typeof evt.contentHash !== 'string'
-            || (evt.nodeId!==undefined&&evt.nodeId!==result.id) || !/^[0-9a-f]{64}$/i.test(evt.contentHash)) return await fallback(`Invalid event wait from ${result.id}`);
+            || (evt.nodeId!==undefined&&evt.nodeId!==result.id) || !/^[0-9a-f]{64}$/i.test(evt.contentHash)) return await fail(`Invalid event wait from ${result.id}`);
           delete state.inFlight[result.id];
           state.waits[result.id] = { kind:'nonhuman_result', id: evt.id, revision: evt.revision, contentHash: evt.contentHash, executionId: currentTask!.executionId! };
-        } else { delete state.inFlight[result.id]; state.nodes[result.id] = result.value; state.artifactHashes[result.id] = result.artifactHashes ?? {}; }
+          emit({nodeId:result.id,type:'waiting',data:{waitId:evt.id,revision:evt.revision,executionId:currentTask!.executionId!}});
+        } else { delete state.inFlight[result.id]; state.nodes[result.id] = result.value; state.artifactHashes[result.id] = result.artifactHashes ?? {}; emit({nodeId:result.id,type:'completed',data:{executionId:currentTask!.executionId!,output:result.value.output}}); }
       }
       await persist(state);
     }
@@ -375,24 +405,23 @@ export async function runAgentShortcut(options: {
     });
   }
   async function findTask(): Promise<Task> { const fresh=await store.load(job.id); const found=fresh.tasks.find(item=>item.id===task.id); if (!found) throw new Error('Task disappeared'); return found; }
-  async function fallback(reason: string): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
-    const safe= !effectsStarted && !shortcutModuleEntered && Object.keys(state.inFlight??{}).length===0 && Object.keys(state.nodes).length===0;
+  async function fail(reason: string): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
+    const timedOut=reason.includes('budget exceeded') || Date.now()>=deadlineAt;
+    const interrupted=options.signal?.aborted===true && !timedOut;
+    const failure=timedOut?`Shortcut execution timed out after 20 minutes: ${reason}`:interrupted?`Shortcut execution interrupted: ${reason}`:reason;
+    for(const nodeId of Object.keys(state.inFlight??{})) emit({nodeId,type:'failed',data:{executionId:currentTask!.executionId!,reason:failure}});
     stopHeartbeat();
     const result=await transitions.apply(job.id,task.id,'shortcut.failed',{
       eligible:(_j,t)=>t.state==='RUNNING'&&t.leaseOwner===owner,
-      facts:()=>({shortcutEffectsSafe:safe}),
-      mutate:(_j,t,decision)=>{
-        const workerFallback=decision.actions.includes('mutation.markShortcutWorkerFallback');
-        const failure=workerFallback?reason:`Shortcut stopped after possible partial effects; Troubleshooter recovery required: ${reason}`;
+      mutate:(_j,t)=>{
         t.error=failure;
+        t.leaseOwner=null; t.leaseExpiresAt=null; t.executionId=null;
         const prior=t.result??{summary:'Shortcut execution failed',data:{}};
-        t.result={...prior,data:{...(prior.data??{}),shortcut:{...state, ...(workerFallback?{workerFallback:true}:{})}}};
+        t.result={...prior,summary:failure,data:{...(prior.data??{}),shortcut:{...state,terminal:{status:timedOut?'TIMED_OUT':interrupted?'INTERRUPTED':'FAILED',reason:failure,at:new Date().toISOString(),executionId:currentTask!.executionId}}}};
       },
     });
-    if (!result?.decision.accepted) throw new Error(`Task lifecycle graph rejected shortcut failure: ${reason}`);
-    const workerFallback=result.decision.actions.includes('mutation.markShortcutWorkerFallback');
-    const failure=result.task.error??reason;
-    return { outcome: { status: 'FAILED', reason:failure }, task: await findTask(), fallback: workerFallback };
+    if (!result?.decision.accepted) throw new Error(`Task lifecycle graph rejected shortcut failure: ${failure}`);
+    return { outcome: { status: 'FAILED', reason:failure }, task: await findTask(), fallback: false };
   }
 }
 

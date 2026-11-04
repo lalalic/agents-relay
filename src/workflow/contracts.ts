@@ -60,6 +60,7 @@ export const WORKFLOW_FACT_NAMES = [
   'shortcutExecution',
   'shortcutFallback',
   'shortcutHasGraph',
+  'shortcutDirectInvocation',
   'shortcutEffectsSafe',
   'shortcutResultCorrelated',
   'notMerged',

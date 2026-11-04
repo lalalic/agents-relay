@@ -96,3 +96,14 @@ move Markdown contracts or add agent-specific directories elsewhere.
 No architecture exception is approved. General event wait/resume must be
 deferred if the current transactional store/graph boundary cannot safely
 implement it in this hotfix.
+
+## 2026-11-04 Direct runner revised implementation plan
+
+1. Reuse Relay SQLite lifecycle, `parseAgentGraph`, direct shortcut graph executor, and event bus. Avoid duplicate scheduler or graph parser.
+2. Neo CLI creates/verifies binding and invokes Relay direct shortcut execution in the foreground with inherited/streamed stdout and stderr, observing real terminal state.
+3. Relay direct path suppresses scheduler wake/Worker fallback, supports direct Codex default-model adapter resolution where needed, and records node-level provenance and terminal events.
+4. Enforce a durable first-start 1200-second deadline across retries/resumes; propagate interrupt/timeout without false PASS.
+5. Test parallel dependency waves, waits/receipts, missing shortcut, model adapter, explicit mode change, resume/idempotence, streaming events, exit codes, and 20-minute timeout.
+6. Run existing Vlog canonical Run end to end with real outputs; independently audit evidence and only then consider merge.
+
+**Supersession**: Earlier plan statements forbidding `job run` and requiring automatic Worker fallback do not apply to direct shortcut mode.

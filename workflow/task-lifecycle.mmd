@@ -24,9 +24,8 @@ depUnsat["guard: dependenciesUnsatisfied"]
 runnable["guard: runnable"]
 dispatchable["guard: dispatchable"]
 shortcutExecution["guard: shortcutExecution"]
-shortcutFallback["guard: shortcutFallback"]
 shortcutHasGraph["guard: shortcutHasGraph"]
-shortcutEffectsSafe["guard: shortcutEffectsSafe"]
+shortcutDirectInvocation["guard: shortcutDirectInvocation"]
 recoverStart["guard: recoverableExecution"]
 recoverComplete["guard: recoverableExecution"]
 recoverBlocked["guard: recoverableExecution"]
@@ -37,7 +36,6 @@ recoveryReopenClearError["action: mutation.clearError"]
 recoveryReopenClearReason["action: mutation.clearFailureReason"]
 recoveryReopenClearLease["action: mutation.clearLease"]
 recoveryReopenClearExecution["action: mutation.clearExecution"]
-shortcutWorkerFallback["action: mutation.markShortcutWorkerFallback"]
 shortcutRecoveryRequired["action: mutation.markShortcutRecoveryRequired"]
 
 plannerRetryAvailable["guard: retryAvailable"]
@@ -113,12 +111,12 @@ runnable -->|true| reconcileQueuedClearError
 reconcileQueuedClearError --> reconcileQueuedClearReason
 reconcileQueuedClearReason --> queued
 queued -->|on: dispatch| shortcutExecution
-shortcutExecution -->|true| shortcutFallback
+shortcutExecution -->|true| shortcutHasGraph
 shortcutExecution -->|false| dispatchable
-shortcutFallback -->|true| dispatchable
-shortcutFallback -->|false| shortcutHasGraph
-shortcutHasGraph -->|true| shortcutLaunch
-shortcutHasGraph -->|false| dispatchable
+shortcutHasGraph -->|true| shortcutDirectInvocation
+shortcutDirectInvocation -->|true| shortcutLaunch
+shortcutDirectInvocation -->|false| queued
+shortcutHasGraph -->|false| queued
 dispatchable -->|true| dispatchLaunch
 dispatchLaunch --> queued
 shortcutLaunch --> queued
@@ -193,10 +191,7 @@ running -->|on: task.completed| completeClearError
 completeClearError --> completeClearReason
 completeClearReason --> succeeded
 running -->|on: task.failed| failed
-running -->|on: shortcut.failed| shortcutEffectsSafe
-shortcutEffectsSafe -->|true| shortcutWorkerFallback
-shortcutWorkerFallback --> failed
-shortcutEffectsSafe -->|false| shortcutRecoveryRequired
+running -->|on: shortcut.failed| shortcutRecoveryRequired
 shortcutRecoveryRequired --> failed
 running -->|on: worker.platform_failure| runningPlatformFailureQuarantine
 runningPlatformFailureQuarantine["action: mutation.quarantinePlatformFailure"]

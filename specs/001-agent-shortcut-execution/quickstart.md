@@ -8,9 +8,9 @@ npx agents-relay job create --repo OWNER/REPO --project-path vlog \
   --objective-file objective.md --shortcut-execution
 ```
 
-Create a Task with its Agent Graph after the Job exists, then run it through the
-normal Reconciler dispatch path. The manual command remains available for an
-explicit run of the same durably opted-in Job:
+Create a Task with its Agent Graph after the Job exists. Direct runs stay in the
+foreground and invoke the Relay shortcut graph runner without publishing a
+scheduler wake or creating Worker/Planner work:
 
 ```sh
 npx agents-relay job run --mode shortcut --repo OWNER/REPO --id JOB_ID \
@@ -21,15 +21,17 @@ npx agents-relay job run --mode shortcut --repo OWNER/REPO --id JOB_ID \
 Project shortcuts at `agents/.shortcut/<agent>.agent.mjs` override the
 corresponding Neo shared shortcut. Independent ready nodes execute concurrently
 within the configured limit, and dependent nodes receive only declared
-predecessor outputs. A missing shortcut falls back to the original Worker
-route. Shortcut modules are arbitrary Node code and may perform direct effects,
-so once a module is imported, an error is treated as ambiguous and goes through
-Troubleshooter recovery rather than Worker replay. Relay checkpoints each
-module as in-flight before import and refuses to replay an interrupted node
-after restart. Host `runCommand` calls track owned subprocess effects and
-receive cancellation when the exact Task lease is fenced. The exact Task lease
-renews while module code is pending. After completed node output, failure stays
-on the Task; Relay does not replay the graph automatically.
+predecessor outputs. A missing or failed shortcut fails the direct Task and
+never silently switches it to Worker execution. Shortcut modules are arbitrary
+Node code and may perform direct effects, so Relay checkpoints each module as
+in-flight before import and refuses to replay an interrupted node after
+restart. Host `runCommand` calls use the owned-process lifecycle and are
+cancelled when the exact Task lease is fenced. The exact Task lease renews
+while module code is pending. A Job's first direct execution stores its
+20-minute start and deadline in SQLite; wait/resume cannot reset that budget.
+The CLI streams node lifecycle records to stderr. Exit codes are 0 for
+completed, 1 for failed, 3 for waiting/blocked, 4 for timed out, and 5 for
+interrupted.
 
 A `WAITING_EVENT` wait must declare `kind: "nonhuman_result"` with a node ID,
 wait ID, revision, and expected content SHA256. The asynchronous producer records
@@ -82,3 +84,27 @@ Verification after implementation and the final local architecture review:
 Provider/browser/UI checks remain `NOT_RUN`; no service was
 started and no production state, real media inference, upload, or publish was
 used.
+
+## 2026-11-04 direct-runner implementation status
+
+Relay direct `job run --mode shortcut` now bypasses Reconciler execution,
+streams per-node lifecycle records to stderr, returns distinct completed,
+failed, waiting, timed-out, and interrupted exit statuses, and stores an
+immutable 20-minute start/deadline on the Job. Missing/failed shortcuts and
+Troubleshooter retries do not switch the Job to Worker execution. A correlated
+SQLite receipt is resumed only after the Task Lifecycle graph selects the
+`effect.resumeShortcut` action.
+
+Local verification:
+
+- `npm run build` — passed.
+- `node --import ./test/test-store-env.mjs --test test/agent-shortcut.test.js` — 26 passed.
+- `node --import ./test/test-store-env.mjs --test test/agent-shortcut.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-lifecycle.test.js test/task-recovery-human.test.js test/verification/l3-task-resolution.test.js test/workflow-cli-contract.test.js` — 49 passed.
+- `neo project run --path /Users/chengli/Workspace/neo/vlog/runs/2026-11-03-history-relay-shortcut-e2e --project vlog --dry-run` — validated the canonical run binding without writes or dispatch.
+
+The required real Vlog E2E is **NOT_RUN**. The installed Neo CLI source is
+outside this Relay worktree, and the canonical Neo shared
+`agents/.shortcut/visioner.agent.mjs` is absent. Direct Codex model-backed node
+execution and the Neo foreground binding remain unimplemented here. Therefore
+the release gate is not satisfied and this change is not ready to report as
+complete or merge.

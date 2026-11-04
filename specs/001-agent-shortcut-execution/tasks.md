@@ -50,3 +50,14 @@ Establish the atomic graph/store path first. If T003 confirms that existing
 transactions cannot safely claim, persist progress, wait and resume, stop short
 of a fake direct-run CLI and deliver only independently useful tested shortcut
 code plus a precise limitation report. Preserve the original Job/Planner path.
+
+## 2026-11-04 Direct shortcut runner acceptance tasks (open)
+
+- [x] DSR-T01 Verify actual Relay Codex adapter/default-model rule and inspect existing Graph/SQLite/Event contracts. Relay reads the Codex top-level default from `CODEX_HOME/config.toml`; this machine resolves to `openai/gpt-6-luna` with `high` reasoning.
+- [ ] DSR-T02 Implement synchronous foreground Neo CLI invocation with live node events, truthful exit codes, safe resume and dry-run.
+- [x] DSR-T03 Implement Relay direct mode without ordinary scheduler wake, Worker fallback or Planner/Router dispatch. The Task graph holds shortcut Jobs for the foreground runner; the runner selects the direct launch action and fails closed.
+- [ ] DSR-T04 Resolve model-backed nodes through the existing direct Codex adapter default model; record adapter/model evidence.
+- [ ] DSR-T05 Enforce persistent 20-minute Job budget, owned-process cleanup, timeout/interrupt evidence.
+- [ ] DSR-T06 Add and run focused tests for dependencies/parallelism, waits/receipts, failures, explicit mode changes, streaming and timeout.
+- [ ] DSR-T07 Run the existing Vlog canonical Run as real E2E and capture all node/output/event/elapsed-time proof.
+- [ ] DSR-T08 Independent review and repair loop; merge only after successful proven E2E.

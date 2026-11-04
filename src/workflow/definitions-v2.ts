@@ -44,6 +44,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   shortcutExecution: facts => facts.durableFacts.shortcutExecution === true,
   shortcutFallback: facts => facts.durableFacts.shortcutFallback === true,
   shortcutHasGraph: facts => facts.durableFacts.shortcutHasGraph === true,
+  shortcutDirectInvocation: facts => facts.durableFacts.shortcutDirectInvocation === true,
   shortcutEffectsSafe: facts => facts.durableFacts.shortcutEffectsSafe === true,
   shortcutResultCorrelated: facts => facts.durableFacts.shortcutResultCorrelated === true,
   recoverableExecution: boolGuard('recoverableExecution'),
