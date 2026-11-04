@@ -1,3 +1,4 @@
+import { terminalRecoveryPrompt } from './terminal-event-recovery.js';
 import { access, readFile, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep, basename } from 'node:path';
 import { homedir } from 'node:os';
@@ -322,7 +323,7 @@ function browserWorkerRunner(): ChatGptAgentRunner {
       }:{message,temporary:false}}),
       recover:async threadId=>({
         thread_id:threadId,mode:'sync',
-        message:`[Relay Browser Worker recovery: ${request.execution?.executionId ?? 'unknown'}]\nInspect this Task's authoritative Neo events and durable outputs. If an original correlated terminal event exists, report it without duplicating. If the output is complete and verified, publish task.completed using the ORIGINAL execution identity. Otherwise continue the remaining work with task.progress, or publish task.failed with a real reason. Do not claim completion without evidence.`,
+        message:terminalRecoveryPrompt(request.execution?.executionId ?? 'unknown'),
       }),
     },signal);
   };

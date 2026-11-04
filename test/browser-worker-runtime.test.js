@@ -187,7 +187,7 @@ test('cancelled uncertain lease quarantines but stops its heartbeat and monitori
   });
 });
 
-test('idle thread requests at most two same-thread terminal recovery turns, never marks browser heartbeat as model progress',async()=>{
+test('idle thread requests at most one same-thread terminal recovery turn, never marks browser heartbeat as model progress',async()=>{
   await fakeWebHelm('idle',async(log,pool)=>{
     const activities=[];const recoveries=[];
     const run=pooledWebHelmRun({pool,provider:'z',executionId:'runtime-idle-recovery',timeoutMs:100,
@@ -200,11 +200,11 @@ test('idle thread requests at most two same-thread terminal recovery turns, neve
     await run.submitted;await wait(800);
     const entries=(await readFile(log,'utf8')).trim().split('\n').map(JSON.parse);
     const turns=entries.filter(row=>row.a.slice(0,4).join(' ')==='platform run z new-turn');
-    assert.equal(turns.length,2,'auto recovery is bounded');
+    assert.equal(turns.length,1,'auto recovery is bounded to one reminder');
     assert.ok(turns.every(row=>row.cfg.thread_id==='thread-live'));
     assert.ok(activities.every(s=>s.includes('recovery')));
     assert.equal(activities.length,0,'recovery submission must not extend inactivity timeout');
-    assert.equal(recoveries.length,2);
+    assert.equal(recoveries.length,1);
     assert.ok(recoveries.every(x=>x.thread==='thread-live'&&x.verifiedBy));
     await run.release();
   });

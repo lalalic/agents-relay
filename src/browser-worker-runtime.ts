@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { terminalRecoveryEligible } from './terminal-event-recovery.js';
 import { spawnOwnedProcess } from './owned-process.js';
 import { BrowserWorkerPoolManager, BrowserPoolAdmissionError, type BrowserProvider, type BrowserSlot } from './browser-worker-pool.js';
 import { monitorPoolDecision, progressPoolDecision } from './browser-worker-pool-graph.js';
@@ -163,8 +164,12 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
     // after its last_used_at expires without falsely freeing the Relay slot.
     void stop().catch(()=>{});
   };
+  const canRecoverTerminal=():boolean=>terminalRecoveryEligible({
+    hasSession:!!sessionId, hasThread:!!threadId, terminalObserved:false, recoveryAttempts:recoveries,
+    outcomeUncertain:recoveryOutcomeUncertain, cancelled:stopped||released||uncertain,
+  });
   const sendRecovery=async():Promise<void>=>{
-    if(stopped||released||uncertain||recoveryOutcomeUncertain||!sessionId||!threadId||!request.recover||recoveries>=2)return;
+    if(!request.recover||!canRecoverTerminal())return;
     recoveries++;
     const cfg=await request.recover(threadId);
     try{
@@ -197,7 +202,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
         await request.onActivity?.('Browser Worker produced new assistant output');
       }
       const due=now-observedAt>=Math.max(request.recoveryMinMs ?? 60_000,Math.round(request.timeoutMs*.6)) &&
-        !observation.state?.generating && !recoveryOutcomeUncertain && recoveries<2 && !!request.recover && !!threadId;
+        !observation.state?.generating && canRecoverTerminal() && !!request.recover;
       if(monitorPoolDecision(due)==='recoverTurn' && request.recover && threadId){
         // Count before the send. An ambiguous response must never cause automatic retransmission.
         observedAt=now;
