@@ -16,6 +16,8 @@ This is a strict **release gate**. A non-zero exit means at least one spec requi
 | D04 | `{waiter,independent} → join` | FR-005/008/011 | `WAITING_EVENT`, independent completion, exact SQLite receipt, restart, one join, no independent replay |
 | D05 | `source → invalid → finish` | FR-007/012 | Invalid result fails; no successor effects; no silent Worker fallback |
 
+D01–D05 also run automatically in standard `npm run test:fast` and `npm run test:full` to prevent silent regression; F01–F10 run in the full suite through `test/agent-shortcut.test.js`.
+
 `cases.json` maps each case to source FRs and real Mermaid Graphs. The command includes `test/agent-shortcut.test.js` to test the **same D02/D03 graphs** with an in-process fake Relay Adapter and durable correlated Task lifecycle. Test-generated stores/logs are disposed after each run; code execution, Worker selection, Worker completion, and downstream outputs are individually asserted. The tests do not use real providers.
 
 ## Fault injection and release gates
