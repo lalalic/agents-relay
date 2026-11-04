@@ -126,7 +126,12 @@ export class ZCodeDesktopCDP {
   async click(selector: string): Promise<void> {
     const expression = '(()=>{const e=document.querySelector(' + JSON.stringify(selector) +
       ');if(!e||e.hasAttribute("disabled")||e.getAttribute("aria-disabled")==="true")return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.left+r.width/2,y:r.top+r.height/2}:null})()';
-    const point = await this.evaluate<{x:number;y:number}|null>(expression);
+    let point: {x:number;y:number}|null = null;
+    for (let tries = 0; tries < 24; tries++) {
+      point = await this.evaluate<{x:number;y:number}|null>(expression);
+      if (point && point.x >= 0 && point.y >= 0) break;
+      await sleep(125);
+    }
     if (!point || point.x < 0 || point.y < 0) throw new Error('ZCode UI element not available: ' + selector);
     await this.call('Input.dispatchMouseEvent', {type:'mouseMoved',x:point.x,y:point.y});
     await this.call('Input.dispatchMouseEvent', {type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1});
@@ -164,8 +169,10 @@ export class ZCodeDesktopCDPTransport implements ZCodeDesktopTransport {
     return withZCodeUILease(async () => {
       const c = await ZCodeDesktopCDP.connect(options.signal);
       try {
-        const first = await c.snapshot();
-        if (!first.hasEditor || !first.hasSend) throw new Error('ZCode Desktop composer unavailable');
+        const first = await c.until(v => v.hasEditor, 8000, options.signal);
+        // While a session runs, ZCode hides Send until the user types;
+        // Lexical then renders a native 'Queue message' send control.
+        if (!first.hasEditor) throw new Error('ZCode Desktop composer unavailable');
         if(options.sessionId) {
           if(first.sessionId !== options.sessionId) {
             await c.click('[data-testid=' + JSON.stringify('task-item-'+options.sessionId) + ']');
@@ -199,12 +206,17 @@ export class ZCodeDesktopCDPTransport implements ZCodeDesktopTransport {
         await c.until(v => v.draft.includes(prefix), 2000, options.signal)
           .catch(() => { throw new Error('Text entry not verified, no send attempted'); });
         checkAbort(options.signal);
+        const ready = await c.until(v => v.hasSend, 3000, options.signal);
+        if (options.sessionId && ready.sessionId !== options.sessionId)
+          throw new Error('ZCode session changed before sending; draft preserved');
         await c.click('[data-testid=v4-composer-send]');
         // This boundary is UNCERTAIN after clicking Send. Never automatically resubmit.
         const after = await c.until(v=>v.draft.trim()==='' && !!v.sessionId && v.sessionId!=='draft', 10000, options.signal)
           .catch(()=>{throw new Error('ZCode submission uncertain: inspect the original session before retrying');});
         if(options.sessionId && after.sessionId !== options.sessionId) throw new Error('ZCode submission went to an unexpected session');
-        const queued = after.queue.find(q=>q.text.includes(prompt.slice(0,Math.min(60,prompt.length))));
+        const priorQueueItemIds = new Set(before.queue.map(item => item.id));
+        const queued = after.queue.find(q => !priorQueueItemIds.has(q.id) &&
+          q.text.includes(prompt.slice(0,Math.min(60,prompt.length))));
         if (!queued && !after.text.includes(prefix)) {
           throw new Error('ZCode submission uncertain: input not in conversation or queue');
         }

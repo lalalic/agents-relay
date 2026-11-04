@@ -18,6 +18,8 @@ SECURITY: CDP is unauthenticated. Never expose the debugging port on another int
 
 New thread creates a real ZCode New Task, sends the input using the native composer, and records the rendered session ID. New turn selects the exact existing session ID and verifies it before submitting. Concurrent Relay processes use a short cross-process UI lease to prevent composing into the wrong thread.
 
+During a running turn, the native Send button is hidden until the follow-up is typed; then ZCode exposes Queue message. The adapter waits for that control before dispatch. Physical V4 queued receipt with queue ID was observed on Neo Master.
+
 ZCode's native follow-up mode defaults to queue. When the current V4 session is busy, a normal follow-up is sent to its authoritative V4 queue; the adapter reads queued item IDs from the ZCode UI projection and records queue receipt information. An admitted queued item is not the same as a completed Relay task.
 
 A 'zcode-thread' Relay continuation sends to that same session, even if it is busy. A known queued input can be withdrawn by its exact queue item ID. A failed or uncertain Send is never blindly retried. Relay SQLite and terminal task events remain the sole sources of Relay task state.
@@ -33,4 +35,6 @@ ZCode Neo MCP is configured at ~/.zcode/cli/config.json with protocolVersion 'le
     npm run build
     node --import ./test/test-store-env.mjs --test test/z-bootstrap.test.js
 
-A complete live E2E requires a real model answer and correlated Relay terminal event. The first physical adapter test successfully created and continued a session but GLM-5.3 / GLM-5.3-Flash returned provider error 1210; this remains a release gate, not a completed worker run.
+A complete Relay E2E requires an actual model answer, a real Neo MCP tool call and correlated Relay terminal event. Native Desktop create/continue and V4 queued-then-drained follow-up have passed using a temporary one-tool diagnostic MCP fixture. The resulting queued item had a real ZCode queue ID, and its reply arrived after the prior turn.
+
+**Production release blockers:** The original Neo MCP tool catalog (23 Neo tools; 78 overall model-request tools) caused Z.ai provider error 1210; five raw Neo tools (61 overall) and even the same five without Schema examples also failed. A minimal one-tool diagnostic fixture and a two-tool (status + events) fixture allowed the model to answer, isolating a Neo tool Schema compatibility issue but not yet proving a production-safe workaround. Further tests reached the Z.ai Coding Plan five-hour usage limit (the UI displayed reset at 2026-11-04 12:06:53, timezone unspecified). The original authenticated 23-tool Neo MCP config was restored; all temporary diagnostic fixtures were removed. Keep this feature branch unmerged and out of live Relay until full provider, real Neo tool call, cancellation, and task-terminal E2E pass.
