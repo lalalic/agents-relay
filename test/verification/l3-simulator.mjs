@@ -136,7 +136,11 @@ export async function runFullPath(scenario) {
     // Settle until durable SQLite reaches a stable post-ingress state; never trust the
     // adapter promise or the event bus receipt as proof of a terminal transition.
     // Full-suite load can delay the second SHA-bound review's terminal event.
-    for (let settle = 0; settle < 300; settle += 1) {
+    // Use a bounded wall-clock settlement window, not a fixed count of
+    // 10-ms ticks: full-suite CPU contention can delay terminal ingress
+    // after a SHA-bound review has legitimately launched.
+    const settleDeadline = Date.now() + 15_000;
+    while (Date.now() < settleDeadline) {
       const before = await snapshot();
       await tick();
       const after = await snapshot();

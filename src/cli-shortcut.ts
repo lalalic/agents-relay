@@ -1,9 +1,14 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { recordShortcutReceipt, runAgentShortcut, shortcutResumeEvent } from './agent-shortcut.js';
+import { missingShortcutNodes, recordShortcutReceipt, runAgentShortcut, shortcutResumeEvent } from './agent-shortcut.js';
 import { parseAgentGraph } from './agent-graph.js';
+import { tryTransitionTaskEvent } from './task-transitions.js';
+import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
+import type { DurableStore } from './store.js';
+import type { EventBus } from './events.js';
+import type { Reconciler } from './reconciler.js';
+import { runShortcutModelNode } from './shortcut-node-worker.js';
 import { noGitHubMode } from './no-github.js';
-import { dispatchTaskAction } from './task-actions.js';
 import { resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot } from './workspace.js';
 import { arg, hasArg, integerArg, publishWake, saveLocal, storeFor, textOption, withEventBus } from './cli-support.js';
 
@@ -12,7 +17,25 @@ function assertSqliteShortcutArgs(args: string[]): void {
     throw new Error('Shortcut commands require the authoritative SQLite Relay store; --file is unsupported');
 }
 
-export async function runShortcutJobCommand(args: string[], id: string, repo: string): Promise<void> {
+/** Apply the canonical Job Graph activate edge before the first direct run.
+ * The Job is created DRAFT so creation alone cannot launch any work. */
+export async function activateShortcutJobForDirectRun(store: DurableStore, jobId: string): Promise<void> {
+  if (!store.mutateJob) throw new Error('Shortcut activation requires atomic SQLite Job mutation');
+  await store.mutateJob(jobId, current => {
+    if (current.executionMode !== 'shortcut' || current.contentOnly !== true)
+      throw new Error('Only a content-only Shortcut Job may be activated by direct run');
+    if (current.state === 'DRAFT') {
+      const decision = dispatchJobLifecycleSync(current, 'activate');
+      if (!decision.accepted || decision.target !== 'ACTIVE')
+        throw new Error('Job Lifecycle graph rejected shortcut activation');
+    } else if (current.state !== 'ACTIVE') {
+      throw new Error(`Shortcut Job ${jobId} is not runnable (${current.state})`);
+    }
+    return current;
+  });
+}
+
+export async function runShortcutJobCommand(args: string[], id: string, repo: string, makeRunner?: (store: DurableStore, bus: EventBus | undefined) => Reconciler): Promise<void> {
   assertSqliteShortcutArgs(args);
   if (arg(args, '--mode') !== 'shortcut') throw new Error('job run requires --mode shortcut');
   const loaded = await storeFor(args);
@@ -24,10 +47,17 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
   if (!taskId) throw new Error('job run requires --task-id');
   let task = job.tasks.find(item => item.id === taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
-  if (task.result?.data?.shortcut && typeof task.result.data.shortcut === 'object'
-    && (task.result.data.shortcut as { workerFallback?: boolean }).workerFallback === true)
-    throw new Error('Task is durably routed to the original Worker; let the Reconciler dispatch it instead of running shortcut mode');
+  if (hasArg(args, '--event-json')) shortcutResumeEvent(arg(args, '--event-json'));
   if (!task.agentGraph && !hasArg(args, '--agent-graph-file')) throw new Error(`Task ${taskId} has no Agent Graph; set it on the Task or pass --agent-graph-file`);
+  let resumeReceiptSelected=false;
+  if(task.state==='RUNNING'&&task.leaseOwner===null&&task.executionId!==null) {
+    const checkpoint=task.result?.data?.shortcut as {receipts?:Record<string,unknown>}|undefined;
+    if(Object.keys(checkpoint?.receipts??{}).length>0) {
+      const decision=tryTransitionTaskEvent(task,'shortcut.result',{shortcutResultCorrelated:true});
+      if(!decision.accepted||!decision.actions.includes('effect.resumeShortcut')) throw new Error('Task Lifecycle graph did not select direct receipt resumption');
+      resumeReceiptSelected=true;
+    }
+  }
   const graphOverride = hasArg(args, '--agent-graph-file') ? await textOption(args, '--agent-graph', '--agent-graph-file') : undefined;
   if (graphOverride) {
     parseAgentGraph(graphOverride);
@@ -44,22 +74,45 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
     task = loaded.job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} disappeared`);
   }
+  await activateShortcutJobForDirectRun(loaded.store, id);
+  loaded.job = await loaded.store.load(id);
   const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined);
   const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : repo, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);
-  if (hasArg(args, '--event-json')) shortcutResumeEvent(arg(args, '--event-json'));
-  const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
-    neoRoot: arg(args, '--neo-root') || join(workspaceRoot, 'neo'), concurrency: integerArg(args, '--concurrency', 4) });
-  let outputTask = result.task;
-  if (result.fallback) {
-    await dispatchTaskAction(loaded.store, { id: 'task.retry', jobId: id, taskId });
-    const queued = await loaded.store.load(id);
-    outputTask = queued.tasks.find(item => item.id === taskId) ?? outputTask;
-    await withEventBus(args, bus => publishWake(bus, queued, taskId, 'Shortcut unavailable or invalid; handed to normal Worker execution'));
-  } else if (result.outcome.status === 'FAILED') {
-    await withEventBus(args, bus => publishWake(bus, loaded.job, taskId, 'Shortcut stopped after possible effects; reconcile its durable Troubleshooter recovery'));
-  }
-  console.log(JSON.stringify({ outcome: result.outcome, fallbackQueued: result.fallback, task: outputTask }, null, 2));
+  const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--neo-root') || join(workspaceRoot, 'neo'));
+  const previous = task.result?.data?.shortcut as { workerFallback?:boolean } | undefined;
+  if (previous?.workerFallback === true)
+    throw new Error('Legacy whole-Graph Worker fallback is not compatible with per-node Shortcut execution; retain its original recovery ownership');
+  const controller=new AbortController();
+  const onInterrupt=():void=>controller.abort(new Error('Interrupted by operator'));
+  process.once('SIGINT',onInterrupt);process.once('SIGTERM',onInterrupt);
+  const execute = async (bus: EventBus | undefined): Promise<void> => {
+    const workerReconciler = missing.length && bus && makeRunner ? makeRunner(loaded.store,bus) : undefined;
+    const unwatch=workerReconciler ? await workerReconciler.watch(id) : undefined;
+    try {
+      const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
+        neoRoot: arg(args, '--neo-root') || join(workspaceRoot, 'neo'),
+        concurrency: integerArg(args, '--concurrency', 4), signal:controller.signal,
+        ...(resumeReceiptSelected?{resumeReceiptSelected:true as const}:{}),
+        ...(missing.length ? { runModelNode: node => {
+          if (!workerReconciler) throw new Error('Model-backed node requires a reachable EventBus and existing Relay Worker Adapter');
+          return runShortcutModelNode({store:loaded.store,reconciler:workerReconciler,jobId:id,parentTaskId:task!.id,node});
+        } } : {}),
+        onNodeEvent:event=>process.stderr.write(`shortcut.node ${JSON.stringify(event)}\n`) });
+      console.log(JSON.stringify({ outcome: result.outcome, fallbackQueued: false, task: result.task }, null, 2));
+      if(result.outcome.status==='FAILED') {
+        const checkpoint=result.task.result?.data?.shortcut as {terminal?:{status?:string}}|undefined;
+        process.exitCode=checkpoint?.terminal?.status==='TIMED_OUT'?4:checkpoint?.terminal?.status==='INTERRUPTED'?5:1;
+      } else if(result.outcome.status==='WAITING_EVENT') process.exitCode=3;
+    } finally {
+      await unwatch?.();
+      await workerReconciler?.close();
+    }
+  };
+  try {
+    if(missing.length) await withEventBus(args,execute);
+    else await execute(undefined);
+  } finally {process.removeListener('SIGINT',onInterrupt);process.removeListener('SIGTERM',onInterrupt);}
 }
 
 export async function recordShortcutReceiptCommand(args: string[], id: string): Promise<void> {

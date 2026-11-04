@@ -103,6 +103,18 @@ async function readConfig(path: string): Promise<CodexConfig | null> {
   try { return topLevelCodexConfig(await readFile(path, 'utf8')); } catch { return null; }
 }
 
+/** Only a real top-level Codex config model counts as a configured default. */
+export async function configuredCodexDefault(
+  codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex'),
+): Promise<{ provider: string; model: string; reasoning?: string } | null> {
+  const config = await readConfig(join(codexHome, 'config.toml'));
+  return config?.model
+    ? { provider: config.provider ?? 'openai', model: config.model,
+      ...(config.reasoning ? { reasoning: config.reasoning } : {}) }
+    : null;
+}
+
+
 function withResource(candidate: ModelCandidate, usage?: AccountUsageOverview): ModelCandidate {
   const resource = usageForProvider(usage, candidate.provider);
   return { ...candidate, resourceHealthy: resource.healthy, resourceUsedPercent: resource.usedPercent, resourceRemainingPercent: resource.remainingPercent, resourceResetAt: resource.resetAt, resourceResetInMinutes: resource.resetInMinutes, resourceWindows: resource.windows };

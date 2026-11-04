@@ -2,159 +2,163 @@
 
 ## User Scenarios & Testing
 
-### User Story 1 — Run an Agent Graph with available shortcuts (Priority: P1)
+### User Story 1 — Execute a project Agent Graph directly (P1)
 
-As a project owner, I can opt an existing Relay Job into shortcut execution so
-its declared Neo Project Agent Graph runs without a Planner round or a queued
-browser/model worker per graph node.
+As a project owner, I invoke `neo project run` against a bound project Run and see
+real-time node status until the Relay Job has a proven terminal outcome. Relay
+uses its existing Agent Graph, lifecycle, SQLite authority and receipts.
+Code-shortcut nodes execute directly; uncovered model-backed nodes run using
+the existing Relay Worker fallback, rather than a new direct Codex executor.
 
-**Why this priority**: This is the core hotfix outcome and must reuse the
-existing Job and Agent Graph rather than create a parallel workflow runtime.
+**Independent test**: A fork/join DAG proves bounded concurrency, dependency
+ordering, predecessor-only outputs, live started/progress/terminal events, and
+one durable terminal result rather than treating process exit as success.
 
-**Independent Test**: Run a fixed DAG with two independent nodes and one join;
-verify both independent shortcuts run concurrently, the join receives only its
-declared predecessors' structured outputs, and the existing durable Job reaches
-one valid terminal outcome.
+### User Story 2 — Use code shortcuts and model-backed nodes (P1)
 
-**Acceptance Scenarios**:
+Nodes with an explicit, verified `.shortcut/<agent>.agent.mjs` execute that
+module. Nodes requiring a model but lacking a code shortcut use the existing
+Relay Worker fallback, including its normal Adapter/model routing and durable
+Task lifecycle. No separate direct Codex executor is required.
 
-1. **Given** an existing active Job, a project graph and explicitly selected
-   shortcut mode, **When** the owner starts the Job, **Then** Relay executes the
-   parsed DAG waves through discovered shortcuts and persists progress in the
-   existing SQLite authority.
-2. **Given** independent ready nodes, **When** their shortcuts are asynchronous,
-   **Then** Relay awaits them concurrently up to a configured bound and does not
-   start a dependent node before all declared predecessors succeed.
-3. **Given** no shortcut or a shortcut failure, **When** the node is eligible,
-   **Then** Relay delegates to the existing Agent Worker/Troubleshooter lifecycle
-   and model router asynchronously.
+**Independent test**: Exercise one code-shortcut node and one model-backed
+Worker fallback node; assert graph dependencies, canonical Task ownership,
+contract-valid outputs, correct routing and no duplicate execution.
 
-### User Story 2 — Resume safely after external events and restarts (Priority: P1)
+### User Story 3 — Resume correlated events safely (P1)
 
-As an operator, I can leave one graph node waiting for a correlated human or
-external event while independent branches proceed, and Relay resumes only the
-matching node once, including after restart.
+A non-human `WAITING_EVENT` retains execution identity, node, revision,
+content hash and receipt across restarts. Independent branches may advance.
+Duplicates or stale receipts never advance the graph. Human approvals remain
+under authenticated host-invocation authority.
 
-**Independent Test**: Exercise a fixed DAG with a waiting branch, matching,
-duplicate, stale and restart-replayed events; verify exactly-once state change
-and no false Job completion.
+### User Story 4 — Recover ChatGPT/Z failure without a start event (P1)
 
-**Acceptance Scenarios**:
+In **normal Worker mode**, if ChatGPT or Z fails and Relay has **not accepted
+the correlated `task.started` event** for that exact execution, automatically
+retry the same Task **once** with an eligible Codex worker running its actual
+configured default model, **without Troubleshooter**. Preserve the failed
+attempt and original execution identity. Apply routing hard gates and never
+reroute a Task already started or a Direct Shortcut Job.
 
-1. **Given** one ready node returns `WAITING_EVENT`, **When** another independent
-   node is ready, **Then** the second branch proceeds while the wait identity,
-   revision and content hash are durable.
-2. **Given** a matching event, **When** it arrives once or is replayed after
-   restart, **Then** only the matching durable wait resumes and duplicates or
-   stale revisions have no effect.
-3. **Given** an event-waiting human approval, **When** its signature or bound
-   revision is invalid, **Then** it cannot approve the stage or complete the Job.
+**Independent test**: A failed launch, start-ack timeout, explicit failed
+worker event, and failed runtime exit without `task.started` each select a
+Codex default retry when eligible. A started Task, wrong/stale execution,
+missing Codex default, unmet capability/runtime requirement, exhausted
+attempts, or a second fallback failure does not. Only one retry is allowed.
 
-### User Story 3 — Use the Vlog Visioner shortcut safely (Priority: P1)
+**Operational risk**: A missing `task.started` event does not prove the
+platform did not execute a request. The retry must retain evidence and be
+fenced to an exact failed generation; the operator accepts this residual
+duplicate-execution risk for normal Worker mode.
 
-As a Vlog operator, I can use a code-first Visioner shortcut that follows the
-shared Visioner Agent and Vlog stage contract, reuses approved metadata, invokes
-existing Markcut CLI tooling and returns inspectable evidence without inventing
-observations or approval.
+### User Story 5 — Vlog Visioner shortcut (P1)
 
-**Independent Test**: Use fixture media, an approved manifest, and mocked CLI
-dependencies; verify evidence and index artifacts, provenance, fail-closed
-behavior, and no real upload or paid call.
-
-**Acceptance Scenarios**:
-
-1. **Given** approved canonical Vlog inputs, **When** the Visioner shortcut runs,
-   **Then** it reuses valid metadata, invokes Markcut Vision and the existing
-   Vlog index script as required, and returns `vision-evidence.json` plus
-   companion artifacts.
-2. **Given** missing authorization, stale hashes, unsupported CLI options,
-   missing evidence, or ambiguous output, **When** Visioner runs, **Then** it
-   fails closed and preserves existing approved evidence.
-3. **Given** any successful Visioner result, **When** Relay records the result,
-   **Then** it does not imply human approval, publication authorization, merge,
-   or successful downstream stages.
+The Vlog Visioner code shortcut consumes authorized canonical metadata,
+uses existing Markcut Vision CLI and `vlog/scripts/index-markcut-vision.mjs`,
+and returns `vision-evidence.json` plus companion artifacts without
+fabricating observations, approval, uploads or publication authority.
 
 ## Requirements
 
-### Functional Requirements
+- **FR-001**: Preserve existing normal `job create`, Planner and Worker
+  behavior; Direct Shortcut execution is explicitly opt-in and bound to one
+  existing Relay Job/Run, without duplicate Job or lifecycle authority.
+- **FR-002**: Reuse `parseAgentGraph()`, existing DAG dependencies, bounded
+  concurrency and structured predecessor outputs. No second graph parser.
+- **FR-003**: Resolve code shortcuts from project agents before Neo shared
+  agents, without changing `.agent.md`, project contracts or eval requirements.
+- **FR-004**: A model-backed node without an available code shortcut MUST use
+  the existing Relay Worker fallback and its configured Worker/Adapter routing.
+  Do not create a new direct Codex model executor.
+- **FR-005**: Direct Shortcut CLI runs synchronously, emits actual per-node
+  started/progress/completed/failed/wait events in real time, and distinguishes
+  completed, failed, blocked, timed out and interrupted exit statuses.
+- **FR-006**: The Shortcut Graph Executor owns DAG readiness, code-shortcut
+  execution and predecessor outputs. Model-backed fallback nodes use the
+  existing Relay Worker dispatch without creating another scheduler or
+  duplicate Job/Task authority. Preserve Relay SQLite lifecycle, leases and receipts.
+- **FR-007**: Missing *code shortcuts* for model-backed nodes MAY select the
+  existing Worker fallback according to the Graph contract. Invalid code
+  shortcut results, unauthorized effects and failed execution MUST NOT be
+  silently treated as successful; recovery follows canonical Relay policy.
+- **FR-008**: Non-human `WAITING_EVENT` receipts are node-, execution-,
+  revision- and content-hash-bound, duplicate-safe, restart-safe and
+  idempotently consumed; human approvals require the existing authenticated
+  host-invocation gate, not EventBus publication.
+- **FR-009**: Direct mode has one durable 20-minute elapsed budget measured
+  from the **first execution**, which resumption cannot reset. Timeout
+  cancels only owned work and persists non-success evidence.
+- **FR-010**: A real canonical Vlog Run must prove every required node,
+  provenance, outputs, adapter/model, elapsed time and terminal result within
+  20 minutes before Direct Runner release. Partial Visioner proof or process
+  exit is not full-DAG success.
+- **FR-011**: A `--dry-run` does not write or dispatch; a repeated invocation
+  validates and reuses its bound Job without repeating completed nodes.
+- **FR-012**: Shortcut and ordinary Worker outputs follow the same
+  stage-specific contracts and evals. No terminal result implies approval,
+  publication authorization, automatic merge or paid third-party transfer.
+- **FR-013**: Vlog Visioner reuses approved metadata, invokes existing Markcut
+  Vision and index tooling, and fails closed on stale hashes, unauthorized
+  input, missing evidence or ambiguous observations.
+- **FR-014**: For ChatGPT and Z **normal Worker** executions, a
+  confirmed failure with **no accepted `task.started` for the exact current
+  execution** MUST trigger at most one automatic Codex configured-default
+  retry without creating a Troubleshooter, provided remaining attempts,
+  compatible hard Worker requirements, provider policy and actual configured
+  default model. Never infer success from a process exit.
+- **FR-015**: The retry is graph-authorized, generation-fenced, persisted
+  atomically with the original route, failure reason and retry marker. The
+  previous execution must be cancelled/cleared before dispatch; delayed
+  events from its generation cannot finish or start the new execution.
+  A second failed generation MUST NOT automatically fall back again.
+- **FR-016**: A Task with accepted `task.started`, no confirmed failure,
+  a mismatched execution identity, incompatible Codex requirements,
+  or an unavailable default model MUST use existing failure/recovery.
+  The existing explicit pre-submission safe-rejection route remains
+  supported; shortcut-mode model nodes may use the existing Worker fallback
+  while retaining Graph/SQLite authority.
 
-- **FR-001**: The system MUST preserve existing `job create` behavior and add an
-  explicitly opt-in shortcut execution mode.
-- **FR-002**: The system MUST reuse `parseAgentGraph()` and its dependency/wave
-  semantics and MUST NOT add a second Agent Graph parser.
-- **FR-003**: The system MUST resolve `.shortcut/<agent>.agent.mjs` with project
-  agents taking precedence over Neo shared agents, while leaving `.agent.md`,
-  project directories, contracts and evals intact.
-- **FR-004**: The system MUST execute ready independent shortcuts concurrently
-  within a bound and await asynchronous results before advancing dependents.
-- **FR-005**: The system MUST persist run and node state in the existing Relay
-  SQLite Job/Task authority and use canonical graph transitions for state
-  changes; it MUST NOT create another Job store or mutate serialized state
-  outside lifecycle operations.
-- **FR-006**: Node outcomes MUST be `COMPLETED`, `WAITING_EVENT`, or `FAILED`;
-  non-human result-event resumption MUST be identity-, current-execution-,
-  revision-, and content-hash-bound, duplicate-safe, restart-safe and
-  idempotently consumed through durable history. Human approval MUST use the
-  existing authenticated host-invocation authority and MUST NOT be inferred
-  from EventBus publication.
-- **FR-007**: The system MUST keep existing leases/claims and terminal semantics;
-  subprocess exit alone MUST NOT count as success without valid structured
-  output and required contract proof.
-- **FR-008**: If a shortcut is absent or fails, Relay MUST fall back
-  asynchronously through the existing Agent Worker/Troubleshooter lifecycle
-  and model router.
-- **FR-009**: Shortcut and Worker execution MUST use the same stage inputs,
-  outputs and eval requirements; human approval or publishing MUST never be
-  inferred.
-- **FR-010**: The Vlog Visioner shortcut MUST invoke existing Markcut Vision CLI
-  and `vlog/scripts/index-markcut-vision.mjs`, reuse approved metadata and
-  preservation rules, return `vision-evidence.json` and companion artifacts,
-  and fail closed when provenance or authorization is invalid.
-- **FR-011**: Content-only execution MUST NOT trigger automatic Git merge.
-- **FR-012**: The system MUST provide a documented, on-demand shortcut generation
-  workflow grounded in the existing `.agent.md` contract and CLI templates;
-  other agents MUST continue to use Worker fallback until their shortcuts are
-  tested.
-- **FR-013**: The CLI MUST provide a smallest-possible opt-in entrypoint that
-  runs a fixed Agent Graph end to end and remains backward compatible.
+- **FR-017**: No code from this feature may auto-merge, push or publish
+  content. All release gates require independent review and real evidence.
 
-### Key Entities
+## Key Entities
 
-- **Shortcut Run**: Existing Job/Task execution identity, project graph source
-  and hash, selected mode, concurrency bound and durable node outcomes.
-- **Shortcut Node**: Graph node identity, resolved agent/shortcut reference,
-  predecessor outputs, attempt/execution identity, result and optional wait key.
-- **Wait Record**: Durable event correlation, node identity, revision/content
-  hash, consumed state and approval provenance where applicable.
-- **Node Result**: One of `COMPLETED`, `WAITING_EVENT`, or `FAILED`, with
-  structured output and evidence required by the corresponding stage contract.
-
-## Assumptions
-
-- Shortcut execution is opt-in and runs against an existing Relay Job; no Relay
-  Job is created for this hotfix work itself.
-- Only Visioner receives a concrete shortcut in this change. Other agents use
-  existing Worker fallback.
-- All hotfix verification uses isolated stores and fixture inputs. No real Vlog
-  run, paid inference, external upload, service operation, merge, or publish is
-  authorized by this request.
-- If current lifecycle primitives cannot support atomic direct execution and
-  safe event waits, the implementation may deliver a coherent limited MVP and
-  must document any deferred behavior honestly.
+- **Direct Shortcut Run**: Existing Job identity, immutable Run binding,
+  DAG/hash, elapsed budget, nodes and durable receipt history.
+- **Node Outcome**: `COMPLETED`, `WAITING_EVENT` or `FAILED`, with
+  contract-validated evidence and immutable execution provenance.
+- **Normal Worker No-Start Fallback**: Exact failed execution, original route,
+  no accepted start event, durable once-only Codex-default recovery marker,
+  failure evidence and route exclusions.
+- **Wait Receipt**: Exact node, execution, revision and content hash.
 
 ## Success Criteria
 
-- **SC-001**: A fixed-DAG test proves independent nodes overlap, dependencies
-  wait for predecessor completion, and a join receives only declared outputs.
-- **SC-002**: Success, missing-shortcut fallback, shortcut failure fallback,
-  wait/resume, duplicate/stale event, restart resume, invalid approval and
-  invalid output cases produce deterministic durable outcomes.
-- **SC-003**: A matching existing Job is resumed without creating a second Job,
-  Planner round, per-node Worker queue, or duplicate lifecycle authority.
-- **SC-004**: Existing default `job create` and Planner behavior remains
-  unchanged in compatibility tests.
-- **SC-005**: Fixture-based Visioner tests validate provenance, required
-  artifacts and preservation behavior without real external inference,
-  uploads or paid calls.
-- **SC-006**: Build and focused tests pass; any unrun provider/browser/UI gate is
-  reported as not run.
+- **SC-001**: Fork/join scheduling, code-shortcut execution and ordinary
+  Worker fallback node tests verify live events, real structured outputs,
+  dependency order and durable transitions.
+- **SC-002**: Restart, replay, stale receipts, human-approval denial, timeout,
+  interruption and idempotent run binding tests pass.
+- **SC-003**: ChatGPT/Z failed executions without `task.started` retry
+  once on the actual Codex default model without Troubleshooter; accepted
+  starts, stale/mismatched events, incompatible routes, second failures and
+  exhausted attempts never auto-retry. Exercise restart and late-event cases.
+- **SC-004**: Default Worker and Planner modes retain prior behavior.
+- **SC-005**: Visioner fixture tests validate evidence preservation and
+  provenance without upload, external inference or authorization bypass.
+- **SC-006**: Direct Runner release requires a real Vlog full-DAG E2E,
+  project evals, independent review and an observed terminal outcome.
+  Anything not actually exercised is reported `NOT_RUN`, not PASS.
+
+## Scope & Safety
+
+This spec defines one Shortcut Graph execution path with two supported node
+mechanisms: direct code shortcut and existing Relay Worker fallback for
+model-backed nodes. Normal ChatGPT/Z Workers retain their once-only no-start
+recovery to the configured Codex default. All paths share Relay Graph and
+SQLite authority; no new direct Codex executor or second scheduler is required.
+
+No real third-party upload, purchase, publication, human approval or
+automatic Git merge is authorized by implementing this contract. Prior
+incomplete Direct Runner changes remain unmerged until SC-006 is satisfied.

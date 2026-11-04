@@ -9,7 +9,6 @@ checkOwner["state: check_owner"]
 checkPath["state: check_path"]
 checkFreshExecution["state: check_fresh_execution"]
 activeRecovery["action: resolution.activateRecovery"]
-shortcutWorkerFallback["action: resolution.activateShortcutWorkerFallback"]
 sameJob["action: resolution.attachSameJobDependency"]
 blockerJob["action: resolution.registerBlockerDependency"]
 escalate["action: resolution.createEscalationGate"]
@@ -19,7 +18,6 @@ rejected["state: rejected"]
 recoveryOwner["guard: recoveryOwnerAvailable"]
 plannerOwner["guard: plannerOwnerAvailable"]
 exact["guard: exactOriginalRetry"]
-shortcutInterrupted["guard: shortcutInterrupted"]
 same["guard: sameJobDependency"]
 fresh["guard: freshRecoveryExecution"]
 blocker["guard: blockerJobDependency"]
@@ -42,9 +40,7 @@ checkPath -->|on: resolution.propose| fresh
 fresh -->|true| checkFreshExecution
 fresh -->|false| rejected
 checkFreshExecution -->|on: resolution.propose| exact
-exact -->|true| shortcutInterrupted
-shortcutInterrupted -->|true| shortcutWorkerFallback
-shortcutInterrupted -->|false| activeRecovery
+exact -->|true| activeRecovery
 exact -->|false| same
 same -->|true| sameJob
 same -->|false| blocker
@@ -55,7 +51,6 @@ gate -->|false| obsoleteGuard
 obsoleteGuard -->|true| obsolete
 obsoleteGuard -->|false| rejected
 activeRecovery -->|to: resolved| resolved
-shortcutWorkerFallback -->|to: resolved| resolved
 sameJob -->|to: resolved| resolved
 blockerJob -->|to: resolved| resolved
 escalate -->|to: resolved| resolved

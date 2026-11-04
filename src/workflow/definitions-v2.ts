@@ -44,6 +44,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   shortcutExecution: facts => facts.durableFacts.shortcutExecution === true,
   shortcutFallback: facts => facts.durableFacts.shortcutFallback === true,
   shortcutHasGraph: facts => facts.durableFacts.shortcutHasGraph === true,
+  shortcutDirectInvocation: facts => facts.durableFacts.shortcutDirectInvocation === true,
   shortcutEffectsSafe: facts => facts.durableFacts.shortcutEffectsSafe === true,
   shortcutResultCorrelated: facts => facts.durableFacts.shortcutResultCorrelated === true,
   recoverableExecution: boolGuard('recoverableExecution'),
@@ -52,6 +53,7 @@ export const taskLifecycleV2 = load('task-lifecycle', TASK_STATES, {
   awaitingInteractiveDecision: facts => facts.durableFacts.awaitingInteractiveDecision === true,
   retryAvailable: boolGuard('retryAvailable'),
   platformFallbackSafe: facts => facts.durableFacts.platformFallbackSafe === true,
+  noStartFallbackAllowed: facts => facts.durableFacts.noStartFallbackAllowed === true,
 });
 
 export const jobLifecycleV2 = load('job-lifecycle', JOB_STATES, {

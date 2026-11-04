@@ -50,6 +50,32 @@ export function applyTaskMutation(task: Task, mutation: WorkflowMutationName): v
   if (mutation === 'mutation.markShortcutRecoveryRequired') {
     task.failureReason='shortcut_requires_recovery';
   }
+  if (mutation === 'mutation.prepareNoStartFallback') {
+    const route = task.routing;
+    if (task.adapter !== 'chatgpt' && task.adapter !== 'z')
+      throw new Error('No-start fallback is only legal for ChatGPT/Z Workers');
+    const originalAdapter = task.adapter;
+    const workerId = task.workerSelection?.workerId ?? originalAdapter;
+    const failedAt = new Date().toISOString();
+    task.noStartFallback = {
+      failedExecutionId: task.executionId ?? 'missing',
+      failedAttempt: task.attempt,
+      previous: { adapter: originalAdapter, workerId,
+        provider: route?.provider ?? 'unknown', model: route?.model ?? 'unknown',
+        ...(route?.profile ? { profile: route.profile } : {}) },
+      reason: task.error ?? 'Worker failed without an accepted task.started event',
+      at: failedAt,
+    };
+    task.routingExclusions = [...(task.routingExclusions ?? []), {
+      adapter: originalAdapter, workerId, provider: route?.provider ?? 'unknown',
+      model: route?.model ?? 'unknown',
+      ...(route?.profile ? { profile: route.profile } : {}),
+      reason: 'no_started_event', at: failedAt,
+    }];
+    task.error = null; task.failureReason = undefined;
+    task.routing = undefined; task.workerSelection = undefined;
+    task.leaseOwner = null; task.leaseExpiresAt = null; task.executionId = null;
+  }
   if (mutation === 'mutation.preparePlatformFallback') {
     task.error = null;
     task.failureReason = undefined;

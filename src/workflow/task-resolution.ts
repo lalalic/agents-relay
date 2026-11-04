@@ -14,7 +14,6 @@ export const taskResolutionV2 = new GraphRuntime(source, {
   guards: {
     recoveryOwnerAvailable: boolGuard('recoveryOwnerAvailable'), plannerOwnerAvailable: boolGuard('plannerOwnerAvailable'),
     exactOriginalRetry: boolGuard('exactOriginalRetry'), sameJobDependency: boolGuard('sameJobDependency'),
-    shortcutInterrupted: boolGuard('shortcutInterrupted'),
     blockerJobDependency: boolGuard('blockerJobDependency'), escalationGate: boolGuard('escalationGate'), genuinelyObsolete: boolGuard('genuinelyObsolete'),
     freshRecoveryExecution: boolGuard('freshRecoveryExecution'),
     classifiableFailure: boolGuard('classifiableFailure'),
@@ -63,9 +62,7 @@ export function validateResolutionProposal(job: Job, original: Task, proposal: T
 export function resolutionFacts(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): Readonly<Record<string, unknown>> {
   const freshRecoveryExecution = owner !== 'troubleshooter' || proposal.path !== 'exact_original_retry' || (Boolean(proposal.recoveryExecutionId)
     && proposal.recoveryExecutionId !== task.resolution?.recoveryExecutionId);
-  const shortcut=task.result?.data?.shortcut;
-  const shortcutInterrupted=owner==='troubleshooter'&&Boolean(shortcut&&typeof shortcut==='object'&&Object.keys((shortcut as {inFlight?:Record<string,unknown>}).inFlight??{}).length>0);
-  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry' && task.state === 'FAILED', shortcutInterrupted, sameJobDependency: proposal.path === 'same_job_dependency' && owner !== null && proposal.targetTaskId !== task.id, blockerJobDependency: proposal.path === 'blocker_job_dependency' && owner !== null && Boolean(proposal.targetJobId && proposal.mode), escalationGate: proposal.path === 'escalation_gate' && owner === 'troubleshooter' && Boolean(proposal.rootCause && proposal.solution), genuinelyObsolete: proposal.path === 'cancel_supersede' && Boolean(proposal.rootCause), freshRecoveryExecution, unresolved: unresolvedTask(task) };
+  return { recoveryOwnerAvailable: owner === 'troubleshooter', plannerOwnerAvailable: owner !== null && owner !== 'troubleshooter', exactOriginalRetry: proposal.path === 'exact_original_retry' && task.state === 'FAILED', sameJobDependency: proposal.path === 'same_job_dependency' && owner !== null && proposal.targetTaskId !== task.id, blockerJobDependency: proposal.path === 'blocker_job_dependency' && owner !== null && Boolean(proposal.targetJobId && proposal.mode), escalationGate: proposal.path === 'escalation_gate' && owner === 'troubleshooter' && Boolean(proposal.rootCause && proposal.solution), genuinelyObsolete: proposal.path === 'cancel_supersede' && Boolean(proposal.rootCause), freshRecoveryExecution, unresolved: unresolvedTask(task) };
 }
 export function decideTaskResolution(task: Task, proposal: TaskResolutionProposal, owner: TaskResolution['owner']): GraphDecision {
   return checkedResolutionDecision(dispatchWorkflowGraphSync(taskResolutionV2, { initialState: 'unresolved', input: { transport: 'event', id: 'resolution.propose', payload: proposal }, durableFacts: resolutionFacts(task, proposal, owner), graphName: 'task-resolution', isTransientState: state => ['check_owner','check_path','check_fresh_execution'].includes(state), maxSteps: 8 }));

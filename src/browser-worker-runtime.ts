@@ -169,7 +169,7 @@ export function pooledWebHelmRun(request: PoolSubmission, signal: AbortSignal): 
     outcomeUncertain:recoveryOutcomeUncertain, cancelled:stopped||released||uncertain,
   });
   const sendRecovery=async():Promise<void>=>{
-    if(!request.recover||!canRecoverTerminal())return;
+    if(!request.recover||!sessionId||!threadId||!canRecoverTerminal())return;
     recoveries++;
     const cfg=await request.recover(threadId);
     try{

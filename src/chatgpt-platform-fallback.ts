@@ -2,7 +2,8 @@ import type { Task, WorkerAdapterName, WorkerRequirements } from './types.js';
 import { eligibleWorkerCandidates, workerCandidates } from './worker-routing.js';
 import type { AgentRegistration } from './types.js';
 import type { ChatGptPlatformFailureClassification } from './worker-rejection.js';
-import { routeExecution } from './execution-routing.js';
+import { routeExecution, type ExecutionRoutingDecision } from './execution-routing.js';
+import { configuredCodexDefault } from './model-routing.js';
 import type { AccountUsageOverview } from './usage.js';
 import type { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import type { EventRecord } from './types.js';
@@ -83,5 +84,36 @@ export function persistChatGptPlatformFailure(
       reason: classification,
       at,
     }];
+  }
+}
+
+
+/** One deterministic, verified configured-default Codex route for an
+ * unstarted failed ChatGPT/Z Worker generation. Never use catalog defaults. */
+export async function codexNoStartFallbackRoute(
+  task: Task,
+  adapters: readonly WorkerAdapter[],
+  registered: readonly AgentRegistration[],
+  usage?: AccountUsageOverview,
+): Promise<ExecutionRoutingDecision | null> {
+  if ((!['chatgpt', 'z'].includes(task.adapter) && !task.noStartFallback) || task.chatgptThreadDelivery) return null;
+  const configured = await configuredCodexDefault();
+  if (!configured) return null;
+  const requirements: WorkerRequirements = task.workerRequirements ?? { capabilities: [] };
+  const { candidates, excludedRoutes } = codexFallbackRouting(task, adapters, registered, usage);
+  if (!candidates.length) return null;
+  try {
+    const decision = await routeExecution(candidates, requirements, {
+      registered, usage, excludedRoutes, decisionMode: 'off',
+      routingConstraints: { provider: configured.provider, model: configured.model },
+      taskFacts: { task: { id: task.id, fallback: 'no-start' } },
+    });
+    if (decision.candidate.adapter !== 'codex'
+      || decision.candidate.routing.provider !== configured.provider
+      || decision.candidate.routing.model !== configured.model
+      || decision.model.profile !== undefined) return null;
+    return decision;
+  } catch {
+    return null;
   }
 }

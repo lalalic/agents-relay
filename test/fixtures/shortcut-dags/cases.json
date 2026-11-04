@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "suite": "shortcut-runner-offline-acceptance",
+  "strict": true,
+  "providerCalls": "forbidden",
+  "realMedia": "forbidden",
+  "authoritativeStore": "one temporary Relay SQLite per test; no global daemon",
+  "cases": [
+    {
+      "id": "D01",
+      "graph": "D01-code-fork-join.mmd",
+      "goal": "parallel code waves, predecessor-only outputs, durable exactly-once join",
+      "requirements": [
+        "FR-002",
+        "FR-005",
+        "FR-006",
+        "FR-011"
+      ],
+      "expected": "COMPLETED"
+    },
+    {
+      "id": "D02",
+      "graph": "D02-code-model-code.mmd",
+      "goal": "only missing middle node uses existing Worker; both code nodes still run",
+      "requirements": [
+        "FR-002",
+        "FR-004",
+        "FR-006",
+        "FR-007"
+      ],
+      "expected": "code source -> existing Relay Worker -> code finish, with correlated durable Worker output; fault injection F01–F10",
+      "gate": "T004"
+    },
+    {
+      "id": "D03",
+      "graph": "D03-parallel-code-model.mmd",
+      "goal": "independent code branch advances while another branch needs Worker",
+      "requirements": [
+        "FR-002",
+        "FR-004",
+        "FR-006"
+      ],
+      "expected": "concurrent code and Worker branches; join waits for both exact predecessor outputs",
+      "gate": "T004"
+    },
+    {
+      "id": "D04",
+      "graph": "D04-wait-and-resume.mmd",
+      "goal": "non-human wait, parallel advancement, durable receipt, restart, no replay",
+      "requirements": [
+        "FR-005",
+        "FR-008",
+        "FR-011"
+      ],
+      "expected": "WAITING_EVENT then COMPLETED"
+    },
+    {
+      "id": "D05",
+      "graph": "D05-invalid-output.mmd",
+      "goal": "invalid code output fails closed, never invokes successor or model fallback",
+      "requirements": [
+        "FR-007",
+        "FR-012"
+      ],
+      "expected": "FAILED"
+    }
+  ]
+}

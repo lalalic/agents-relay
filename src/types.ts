@@ -150,6 +150,13 @@ export type Task = {
   recoveryPlanId?: string;
   recoveryContext?: { failureKind: string; reason: string; evidence?: string; recoveryTaskId: string; at: string; reroute: boolean };
   routingExclusions?: Array<{ provider: string; model: string; profile?: string; workerId?: string; adapter?: WorkerAdapterName; reason: string; at: string }>;
+  noStartFallback?: {
+    failedExecutionId: string;
+    failedAttempt: number;
+    previous: { adapter: WorkerAdapterName; workerId: string; provider: string; model: string; profile?: string };
+    reason: string;
+    at: string;
+  };
   platformFailure?: {
     classification: 'adapter_failure' | 'transport_failure' | 'launch_failure' | 'start_ack_timeout' | 'browser_workspace_unavailable' | 'mcp_login_required' | 'project_setup_unavailable' | 'model_unavailable' | 'pool_capacity_full' | 'provider_unavailable' | 'outcome_unknown';
     executionId: string;
@@ -190,7 +197,7 @@ export function normalizeLegacyTaskLifecycle(task: Task): Task {
 export type RecoveryFailureRecord = { taskId: string; recoveryTaskId: string; reason: string; at: string };
 export type JobPause = { generation: number; requestedAt: string };
 export type ProjectionRecovery = { key: string; remoteSha: string; status: 'repairing' | 'retry' | 'projected' | 'escalated'; taskId: string; attempts: number; maxAttempts: number; error?: string; updatedAt: string };
-export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
+export type Job = { githubProjection?: { status: 'pr_bound' | 'merged_without_pr' | 'no_diff'; sourceSha: string; observedAt: string }; projectionRecovery?: ProjectionRecovery; localMerge?: import('./local-git-merge.js').LocalMergeReceipt; recoveryFailures?: RecoveryFailureRecord[]; id: string; title: string; objective?: string; projectPath?: string; priority?: Priority; description?: string; tag?: JobTag; autoMerge?: boolean; reviewEnabled?: boolean; /** Enables direct Agent Graph shortcut dispatch before Task materialization. */ executionMode?: 'shortcut'; /** Explicitly permits content-only shortcut terminal completion; all PR/review/merge gates remain forbidden. */ contentOnly?: boolean; /** Immutable elapsed-time budget origin for direct shortcut execution. */ shortcutExecutionStartedAt?: string; /** Immutable elapsed-time deadline for direct shortcut execution. */ shortcutExecutionDeadlineAt?: string; prNumber: number; repository: string; state: JobLifecycleState; continuation: Continuation | null; review?: ReviewState; headSha?: string; reviewerThreadId?: string; creatorThreadId?: string; implementationThreadId?: string; initialPlanning?: { status: 'pending' | 'complete'; decisionId: string }; blockerResolutionMode?: BlockerResolutionMode; blockerResolvedAt?: string; unblocks?: BlockerDependent[]; changeCycle?: JobChangeCycle; plans?: Plan[]; pause?: JobPause; createdAt: string; updatedAt: string; tasks: Task[] };
 export type Continuation = { kind: 'codex-thread' | 'command' | 'webhook'; target: string; input?: string };
 export type EventRecord = { version: 1; event_id: string; job_id: string; task_id: string; parent_task_id: string | null; type: string; status: string; timestamp: string; visibility: string; level: string; message: string; source?: Record<string, unknown>; data?: Record<string, unknown> };
 
