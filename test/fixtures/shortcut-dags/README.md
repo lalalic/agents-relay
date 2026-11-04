@@ -25,6 +25,8 @@ The permanent suite retains **five DAGs (D01–D05), no D06**. D02/D03 have a st
 - **F01:** the Worker publishes `task.completed` but writes an invalid JSON output. The Graph must fail closed; no downstream action is permitted.
 - **F02:** the Worker publishes `task.failed`; a foreground-owned Troubleshooter launches, and no automatic Worker replay occurs without an authorized recovery transition.
 - **F03:** the first Worker attempt fails; an active Troubleshooter uses the canonical `task.recover` Graph action, the **same** Worker Task retries, and the code successor executes exactly once only after valid output.
+- **F04:** the Worker returns exact `{type:"file",path}` artifact records. The adapter converts only those records, and the Graph validates real files and hashes before releasing the successor.
+- **F05:** unsupported artifact record types are rejected even when the Worker emits `task.completed`.
 
 Keep all failure injections green. `npm run test:shortcut:dags` runs the complete fixture/CLI/Worker regression suite. Earlier 2026-11-04 3/5 status is historical; pass claims must always be based on the actual latest command exit code.
 

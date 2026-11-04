@@ -75,12 +75,29 @@ export async function runShortcutModelNode(options: {
     if(task.state==='SUCCEEDED'){
       const buffer=await readFile(outputPath);
       const value:unknown=JSON.parse(buffer.toString('utf8'));
-      if(!value || typeof value!=='object'||Array.isArray(value)||
-        (value as {status?:string}).status!=='COMPLETED'||
-        !((value as {output?:unknown}).output && typeof (value as {output?:unknown}).output==='object') ||
-        !Array.isArray((value as {artifacts?:unknown}).artifacts))
+      if(!value || typeof value!=='object'||Array.isArray(value))
         throw new Error('Worker Task reported success without contract-valid node output');
-      return value;
+      const record=value as Record<string,unknown>;
+      if(record.status!=='COMPLETED'||!record.output||typeof record.output!=='object'||Array.isArray(record.output))
+        throw new Error('Worker Task reported success without contract-valid node output');
+      // Some existing Worker roles report artifact records as {path,type}.
+      // Convert ONLY exact file records to the Shortcut contract's path list;
+      // the Graph executor still verifies realpath containment and SHA-256.
+      if(Array.isArray(record.artifacts)) {
+        const files=record.artifacts.map((item:unknown)=>{
+          if(typeof item==='string'&&item.trim()) return item;
+          if(item && typeof item==='object' && !Array.isArray(item)) {
+            const ref=item as Record<string,unknown>;
+            if(ref.type==='file' && typeof ref.path==='string' && ref.path.trim()
+              && Object.keys(ref).every(key=>key==='type'||key==='path')) return ref.path;
+          }
+          throw new Error('Worker node returned unsupported artifact entry; expected a file path or {type:"file",path}');
+        });
+        return {...record,artifacts:files};
+      }
+      if(!record.artifacts || typeof record.artifacts!=='object')
+        throw new Error('Worker Task reported success without contract-valid artifact output');
+      return record;
     }
     if(task.state==='CANCELLED') throw new Error('Worker node cancelled');
     if(task.state==='BLOCKED') throw new Error(`Worker node requires escalation: ${task.failureReason??task.error??task.id}`);
