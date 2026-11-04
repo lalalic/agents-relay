@@ -926,6 +926,7 @@ test('D02 fault F06: retry failed parent retains completed Worker and Code nodes
     const second=await f.execute(reconciler);
     assert.equal(second.result.outcome.status,'COMPLETED',JSON.stringify(second.result.outcome));
     assert.equal(second.job.state,'COMPLETED');
+    assert.equal(second.job.tasks[0].result.data.shortcut.terminal,undefined,'retry terminal must not retain the previous failed verdict');
     assert.equal(second.job.shortcutExecutionDeadlineAt,firstDeadline);
     assert.equal(second.job.tasks.filter(x=>x.id==='shortcut-initial-M').length,1);
     assert.equal(workerLaunches,1,'existing Worker node must not be reexecuted on parent retry');
@@ -933,4 +934,34 @@ test('D02 fault F06: retry failed parent retains completed Worker and Code nodes
     assert.equal(await readFile(finishRuns,'utf8'),'ff','only failed code successor should retry');
     assert.equal(second.job.tasks[0].result.data.shortcut.nodes.C.output.done,true);
   }finally{await stop();}
+});
+
+test('D02 fault F08: Worker {kind:file,path} records normalize and validate hashes before code successor',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');
+  const artifact=join(f.project,'editor-decision.json');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{source:true},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run({input}){
+    if(input.predecessorOutputs.M.good!==true)throw Error('Model output missing at code successor');
+    return {status:'COMPLETED',output:{end:true},artifacts:[]};}`);
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','fixture start','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(artifact,'verified file bytes');
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{good:true},artifacts:[{path:artifact,kind:'file'}]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','fixture terminal','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'mock-record-output',launched:Promise.resolve(),promise:Promise.resolve({summary:'mock ended'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try {
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify(result.outcome));
+    assert.equal(job.state,'COMPLETED');
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.M.artifacts[0],artifact);
+    assert.ok(job.tasks[0].result.data.shortcut.artifactHashes.M['editor-decision.json']);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.end,true);
+  } finally {await stop();}
 });

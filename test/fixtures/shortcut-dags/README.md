@@ -28,6 +28,8 @@ The permanent suite retains **five DAGs (D01–D05), no D06**. D02/D03 have a st
 - **F04:** the Worker returns exact `{type:"file",path}` artifact records. The adapter converts only those records, and the Graph validates real files and hashes before releasing the successor.
 - **F05:** unsupported artifact record types are rejected even when the Worker emits `task.completed`.
 - **F06:** the model Worker and initial Code node completed, but a downstream Code node failed. Canonical `task.retry` resumes the **same Job/Task** without replaying either completed node and without resetting the original deadline.
+- **F07:** a Graph-authorized parent retry must clear the previous attempt’s terminal failure from the new checkpoint while retaining completed nodes, execution history, and immutable deadline.
+- **F08:** legacy Worker file records `{kind:"file",path}` are normalized only with exact keys; realpath containment and SHA-256 remain mandatory before a downstream node can run.
 
 Keep all failure injections green. `npm run test:shortcut:dags` runs the complete fixture/CLI/Worker regression suite. Earlier 2026-11-04 3/5 status is historical; pass claims must always be based on the actual latest command exit code.
 

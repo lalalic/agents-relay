@@ -88,10 +88,12 @@ export async function runShortcutModelNode(options: {
           if(typeof item==='string'&&item.trim()) return item;
           if(item && typeof item==='object' && !Array.isArray(item)) {
             const ref=item as Record<string,unknown>;
-            if(ref.type==='file' && typeof ref.path==='string' && ref.path.trim()
-              && Object.keys(ref).every(key=>key==='type'||key==='path')) return ref.path;
+            const fields=Object.keys(ref);
+            if(fields.length===2 && fields.includes('path')
+              && ((fields.includes('type') && ref.type==='file') || (fields.includes('kind') && ref.kind==='file'))
+              && typeof ref.path==='string' && ref.path.trim()) return ref.path;
           }
-          throw new Error('Worker node returned unsupported artifact entry; expected a file path or {type:"file",path}');
+          throw new Error('Worker node returned unsupported artifact entry; expected a file path, {type:"file",path} or {kind:"file",path}');
         });
         return {...record,artifacts:files};
       }

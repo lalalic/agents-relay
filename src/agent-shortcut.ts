@@ -196,6 +196,12 @@ export async function runAgentShortcut(options: {
   if (currentJob.state!=='ACTIVE' || currentJob.pause) throw new Error(`Job ${job.id} is not runnable (${currentJob.state}${currentJob.pause?' paused':''})`);
   if (currentTask.state==='QUEUED' && !dependencyReady(currentTask,new Map(currentJob.tasks.map(item=>[item.id,item])))) throw new Error(`Task ${task.id} dependencies are not satisfied`);
   let state = checkpoint(currentTask);
+  // A Task Lifecycle-authorized retry retains verified completed nodes and
+  // execution history, but its previous attempt's terminal verdict must not
+  // contaminate the new run's eventual success receipt.
+  if (currentTask.state==='QUEUED' && currentTask.attempt>0 &&
+      currentTask.executionId===null && currentTask.leaseOwner===null &&
+      'terminal' in state) delete (state as Checkpoint & {terminal?:unknown}).terminal;
   if (state.graphHash && (state.version !== 1 || state.graphHash !== graphHash || state.inputHash !== inputHash || state.shortcutHash !== shortcutHash)) throw new Error('Shortcut checkpoint fingerprint changed; refusing to reuse prior node output');
   state.version = 1; state.graphHash = graphHash; state.inputHash = inputHash; state.shortcutHash = shortcutHash;
   for (const [nodeId, receipt] of Object.entries(state.receipts ?? {})) {
