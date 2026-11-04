@@ -809,3 +809,29 @@ test('D02 fault F03: model failure recovered by foreground Troubleshooter retrie
     assert.equal(await readFile(marker,'utf8'),'x','downstream module must run exactly once');
   } finally {await stop();}
 });
+
+test('D02 live-regression: foreground Graph parent never receives ordinary Worker inactivity watchdog (timeoutMs=0)',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:source] --> M[agent:model]'});
+  const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id,job=>{
+    const task=job.tasks[0];
+    task.state='RUNNING';task.timeoutMs=0;task.attempt=1;
+    task.executionId='direct-parent-execution';task.leaseOwner='shortcut-foreground-owner';
+    task.leaseExpiresAt=new Date(Date.now()+60_000).toISOString();
+    task.executionHistory=[{id:'direct-parent-execution',attempt:1,startedAt:new Date().toISOString()}];
+    task.result={summary:'Graph checkpoint',data:{shortcut:{version:1,graphHash:'synthetic',inputHash:'synthetic',shortcutHash:'synthetic',nodes:{A:{status:'COMPLETED',output:{ok:true},artifacts:[]}},waits:{},workerNodes:{M:'shortcut-initial-M'},inFlight:{M:'direct-parent-execution'},artifactHashes:{}}}};
+    return job;
+  });
+  const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  const bus=new MemoryEventBus();
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'watchdog-regression',eventBus:bus,
+    adapters:[],maxConcurrent:1,headShaProvider:()=>null,projectPathForJob:()=>f.project});
+  const unwatch=await reconciler.watch(f.id);
+  try {
+    await reconciler.reconcile(f.id);
+    await new Promise(resolve=>setTimeout(resolve,90));
+    const actual=await store.load(f.id);
+    assert.equal(actual.tasks[0].state,'RUNNING',JSON.stringify(actual.tasks.map(x=>({id:x.id,state:x.state,error:x.error}))));
+    assert.equal(actual.tasks.some(x=>x.agentName==='troubleshooter'),false);
+  } finally {await unwatch();rawStore.close();}
+});

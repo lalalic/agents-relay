@@ -169,7 +169,17 @@ export class Reconciler extends ReconcilerReviewBase {
       const beforeSchedule = await this.store.load(jobId);
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       let scheduled = refreshTaskDependencies(beforeSchedule);
-      for (const task of scheduled.tasks) if (task.executionId && ['QUEUED', 'RUNNING'].includes(task.state)) this.armInactivityWatchdog(task, task.executionId);
+      // The direct Graph parent is owned by the foreground 20-minute budget,
+      // not a Worker process. Its Task timeout may legitimately be zero.
+      // Arm standard inactivity timers only for real Worker child Tasks (or
+      // legacy explicit whole-Graph Worker fallback), never the leased parent.
+      for (const task of scheduled.tasks) {
+        if (!task.executionId || !['QUEUED', 'RUNNING'].includes(task.state)) continue;
+        const shortcut=task.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
+        if (scheduled.executionMode==='shortcut' && scheduled.contentOnly===true
+          && task.agentGraph && shortcut?.workerFallback!==true) continue;
+        this.armInactivityWatchdog(task, task.executionId);
+      }
       for (const task of scheduled.tasks) {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
