@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { resolve, relative, isAbsolute, sep } from 'node:path';
+import { resolve, relative, isAbsolute, sep, dirname } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { spawnOwnedProcess } from './owned-process.js';
+import { validateShortcutStageGate } from './shortcut-stage-contract.js';
 import { parseAgentGraph } from './agent-graph.js';
 import type { DurableStore } from './store.js';
 import type { Job, Result, Task } from './types.js';
@@ -156,9 +157,9 @@ async function validateVisionerResult(result: Record<string, unknown>, projectRo
     artifactFiles.set(name,{bytes,parsed:parsed as Record<string,unknown>});
   }
   const evidenceFile=artifactFiles.get('vision-evidence.json')!, indexFile=artifactFiles.get('vision-segment-index.json')!, metadataFile=artifactFiles.get('metadata.json')!;
-  if(evidence.vision_segment_index_sha256!==digestBytes(indexFile.bytes)||evidence.manifest_hash!==index.manifest_hash
-    ||evidence.markcut_metadata_sha256!==index.markcut_metadata_sha256||index.markcut_metadata_sha256!==digestBytes(metadataFile.bytes)
-    ||evidenceFile.parsed.status!=='EVIDENCE_READY_UNREVIEWED') throw new Error('Visioner evidence hashes or artifact contents do not match');
+  // Stage authority is the source-linked structure and original media IDs, not repeated checksum validation.
+  if(evidenceFile.parsed.status!=='EVIDENCE_READY_UNREVIEWED'||indexFile.parsed.status!=='SOURCE_LINKED_UNREVIEWED'
+    ||!metadataFile.parsed)throw new Error('Visioner structured evidence does not satisfy the Stage contract');
 }
 
 export async function runAgentShortcut(options: {
@@ -273,6 +274,7 @@ export async function runAgentShortcut(options: {
     }
     const nodeAgent=graph.nodes.find(node=>node.id===nodeId)?.agent;
     if(requiresVlogVisionerEvidence(nodeAgent?.toLowerCase())) await validateVisionerResult(output,projectReal);
+    if(nodeAgent&&task.output?.kind==='file')await validateShortcutStageGate({projectPath:projectReal,agent:nodeAgent,runPath:dirname(task.output.path),execute:(args,cwd)=>runCommand(args,cwd,new AbortController().signal)});
     state.nodes[nodeId] = structuredClone(output);
     state.artifactHashes[nodeId] = artifactHashes;
     delete state.waits[nodeId];
@@ -356,6 +358,7 @@ export async function runAgentShortcut(options: {
             });
           const projectReal=await realpath(projectPath);
           if (requiresVlogVisionerEvidence(node.agent.toLowerCase())) await validateVisionerResult(result,projectReal);
+          if(task.output?.kind==='file')await validateShortcutStageGate({projectPath:projectReal,agent:node.agent,runPath:dirname(task.output.path),execute:trackedRunCommand});
           const artifactHashes: Record<string,string> = {};
           for (const artifact of artifactPaths) {
             if (!artifact) throw new Error('shortcut artifact path cannot be empty');
