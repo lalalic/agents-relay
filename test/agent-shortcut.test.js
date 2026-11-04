@@ -965,3 +965,61 @@ test('D02 fault F08: Worker {kind:file,path} records normalize and validate hash
     assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.end,true);
   } finally {await stop();}
 });
+
+test('D02 fault F09: Worker may read checked canonical Run evidence without violating predecessor-only DAG outputs',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');
+  const manifest=join(f.directory,'source-manifest.json'),story=join(f.directory,'story.md'),ref=join(f.directory,'source-reference.json');
+  await writeFile(manifest,JSON.stringify({source_use:{approved:true,scope:'private fixture'},media:[{id:'fixture',sha256:'synthetic'}]}));
+  await writeFile(story,'# Provenance-tagged director stage evidence\n');
+  await writeFile(ref,JSON.stringify({sourceRunPath:f.directory}));
+  await f.rawStore.mutateJob(f.id,job=>{job.tasks[0].input=`Process canonical Run.\n- Canonical run: ${f.directory}\n- Private input evidence: ${ref}\n`;return job;});
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{fromSource:'A'},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run({input}){if(input.predecessorOutputs.M.readRunEvidence!==true)throw Error('missing stage evidence receipt');return {status:'COMPLETED',output:{okay:true},artifacts:[]};}`);
+  let observed;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      const durable=await f.store.load(f.id),data=JSON.parse(durable.tasks.find(x=>x.id===task.id).input);
+      const md=JSON.parse(await readFile(join(data.canonicalRunPath,'source-manifest.json'),'utf8'));
+      const prior=await readFile(join(data.canonicalRunPath,'story.md'),'utf8');
+      observed={run:data.canonicalRunPath,reference:data.sourceEvidencePath,predecessors:Object.keys(data.predecessorOutputs),instruction:data.instruction};
+      if(!md.source_use.approved||!prior.startsWith('# Provenance'))throw Error('Canonical Run input evidence unavailable');
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','observed evidence','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{readRunEvidence:true},artifacts:[]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','fixture succeeded','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'mock-read-run',launched:Promise.resolve(),promise:Promise.resolve({summary:'mock exited'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify(result.outcome));
+    assert.equal(job.state,'COMPLETED');
+    assert.equal(observed.run,f.directory);
+    assert.equal(observed.reference,ref);
+    assert.deepEqual(observed.predecessors,['A']);
+    assert.match(observed.instruction,/prior stage artifact files/);
+    assert.match(observed.instruction,/never infer an undeclared sibling dependency/);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.okay,true);
+  }finally{await stop();}
+});
+
+test('D02 fault F10: canonical Run path mismatch fails before model Worker creation or dispatch',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  await f.rawStore.mutateJob(f.id,job=>{job.tasks[0].input=`Process canonical Run.\n- Canonical run: ${f.directory}/not-the-bound-run\n`;return job;});
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{fromSource:'A'},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run(){throw Error('should not execute');}`);
+  let launched=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(){launched++;throw Error('Worker launch must be impossible');}};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'FAILED');
+    assert.match(result.outcome.reason,/canonical run does not match/);
+    assert.equal(launched,0);
+    assert.equal(job.tasks.length,1,'no wrong-run Worker Task may be created');
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C,undefined);
+  }finally{await stop();}
+});

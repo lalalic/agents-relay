@@ -30,6 +30,8 @@ The permanent suite retains **five DAGs (D01–D05), no D06**. D02/D03 have a st
 - **F06:** the model Worker and initial Code node completed, but a downstream Code node failed. Canonical `task.retry` resumes the **same Job/Task** without replaying either completed node and without resetting the original deadline.
 - **F07:** a Graph-authorized parent retry must clear the previous attempt’s terminal failure from the new checkpoint while retaining completed nodes, execution history, and immutable deadline.
 - **F08:** legacy Worker file records `{kind:"file",path}` are normalized only with exact keys; realpath containment and SHA-256 remain mandatory before a downstream node can run.
+- **F09:** the Worker sees the canonical Run path and may verify approved source manifests and earlier stage files without treating unrelated nodes as declared DAG predecessor outputs.
+- **F10:** an untrusted declared canonical Run path that differs from the bound parent Task output directory is refused before a Worker Task is created.
 
 Keep all failure injections green. `npm run test:shortcut:dags` runs the complete fixture/CLI/Worker regression suite. Earlier 2026-11-04 3/5 status is historical; pass claims must always be based on the actual latest command exit code.
 

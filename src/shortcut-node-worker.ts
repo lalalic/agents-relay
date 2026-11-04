@@ -21,7 +21,14 @@ export async function runShortcutModelNode(options: {
   if(!parent || parent.state!=='RUNNING' || parent.executionId!==node.executionId || !parent.leaseOwner)
     throw new Error('Model node parent execution is not leased by Shortcut Runner');
   if(parent.output?.kind!=='file' || !isAbsolute(parent.output.path)) throw new Error('Model nodes require a canonical absolute Task output directory');
-  const outputPath=join(dirname(parent.output.path),'.shortcut-node-results',`${taskId}.json`);
+  const runRoot=dirname(parent.output.path);
+  const declaredRun=parent.input.match(/^- Canonical run:\s*(\/[^\r\n]+)$/m)?.[1]?.trim();
+  if(declaredRun && resolve(declaredRun)!==resolve(runRoot))
+    throw new Error('Shortcut Worker declared canonical run does not match the bound parent Task output directory');
+  const sourceRef=parent.input.match(/^- Private input evidence:\s*(\/[^\r\n]+)$/m)?.[1]?.trim();
+  if(sourceRef && (!declaredRun || dirname(resolve(sourceRef))!==resolve(runRoot)))
+    throw new Error('Shortcut Worker source evidence is not confined to the declared canonical run');
+  const outputPath=join(runRoot,'.shortcut-node-results',`${taskId}.json`);
   const started=initial.shortcutExecutionStartedAt && Date.parse(initial.shortcutExecutionStartedAt);
   if(!started||!Number.isFinite(started)) throw new Error('Model node has no immutable Shortcut deadline origin');
   const deadline=started+20*60_000;
@@ -51,9 +58,11 @@ export async function runShortcutModelNode(options: {
         source:'shortcut-graph-node',jobId,parentTaskId,nodeId:node.id,agent:node.agent,
         predecessorOutputs:node.predecessorOutputs,
         originalInput:active.input,
+        ...(declaredRun ? {canonicalRunPath:declaredRun} : {}),
+        ...(sourceRef ? {sourceEvidencePath:sourceRef} : {}),
         requiredResult:{status:'COMPLETED',output:{},artifacts:[]},
         outputPath,
-        instruction:'Execute only this Agent role for this DAG node. Use only originalInput and the declared predecessorOutputs as source context. Write a JSON object matching {status:"COMPLETED",output:{...},artifacts:[]} to outputPath, then publish the correlated task.completed event. Do not publish, approve or invent outside permissions.'
+        instruction:'Execute only this Agent role for this DAG node. The ONLY structured DAG predecessor values are predecessorOutputs; never infer an undeclared sibling dependency. If canonicalRunPath is declared, read the authorized original source manifest and prior stage artifact files there as required by the project Agent/Stage contract; inspect and validate their real contents, source provenance, hashes and use rights. These files are allowed canonical run evidence, not an alternative DAG predecessor result and not proof of human approval. Do not claim they are absent merely because they are not repeated in predecessorOutputs. Write {status:"COMPLETED",output:{...},artifacts:[]} to outputPath only after meeting stage acceptance and send a correlated task.completed event. If a real prerequisite is unavailable, report the specific verified blocker and task.failed; do not fabricate, publish, approve or infer new permissions.'
       });
       current.tasks.push(createTaskEntity(current,{
         jobId,id:taskId,title:`Shortcut model node ${node.id}`,kind:'work',parentTaskId,
