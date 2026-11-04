@@ -15,12 +15,12 @@ This is a strict **release gate**. A non-zero exit means at least one spec requi
 | D03 | `{code,model(Worker)} → join` | FR-002/004/006 | Independent code branch progresses when model route is waiting, join remains gated |
 | D04 | `{waiter,independent} → join` | FR-005/008/011 | `WAITING_EVENT`, independent completion, exact SQLite receipt, restart, one join, no independent replay |
 | D05 | `source → invalid → finish` | FR-007/012 | Invalid result fails; no successor effects; no silent Worker fallback |
-| D06 | `slow → finish` | FR-009 | Expired *original* deadline prevents node start and yields timeout, no deadline reset |
 
 `cases.json` maps each case to the source FRs and a small real Mermaid Graph. Source files are committed; test-generated stores/logs are disposed after each run. Current tests distinguish **code execution**, **Worker selection**, and **model completion** rather than claiming the same thing from a process exit. Existing `agent-shortcut.test.js` and `no-start-fallback.test.js` cover low-level fake Adapter and recovery generation fencing.
 
 ## Known gaps and remaining gates
 
-On 2026-11-04, the first strict suite yielded **4/6 PASS** in about 1.5 seconds. D02/D03 failed because a single missing module caused *whole-DAG Worker fallback* before any available code modules executed. These remain **T004 RED**. Fix the node boundary using existing Relay Worker routing, per-node checkpoint/receipt and one Graph/SQLite authority, **without a second scheduler**. Once these pass, add a fake Worker **completion + recovery** end-to-end test ensuring a real model-node output feeds `finish`, including a failure-triggered Troubleshooter owned by the same foreground runner.
+On 2026-11-04, the first strict suite yielded **3/5 PASS** in about 1.4 seconds. D02/D03 failed because a single missing module caused *whole-DAG Worker fallback* before any available code modules executed. These remain **T004 RED**. Fix the node boundary using existing Relay Worker routing, per-node checkpoint/receipt and one Graph/SQLite authority, **without a second scheduler**. Once these pass, add a fake Worker **completion + recovery** end-to-end test ensuring a real model-node output feeds `finish`, including a failure-triggered Troubleshooter owned by the same foreground runner.
 
-D06 currently proves a pre-existing deadline prevents launch; T014 additionally requires mid-execution expiry, owned process cancellation and restart tests. A real Vlog full-DAG run remains separate T015 and is **NOT_RUN** by this suite.
+
+The elapsed deadline requirement FR-009 / T014 remains in the separate core Shortcut tests, not this DAG matrix.

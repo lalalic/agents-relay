@@ -63,16 +63,6 @@
         "FR-012"
       ],
       "expected": "FAILED"
-    },
-    {
-      "id": "D06",
-      "graph": "D06-deadline-fence.mmd",
-      "goal": "original elapsed deadline cannot reset on retry and prevents new side effects",
-      "requirements": [
-        "FR-009"
-      ],
-      "expected": "TIMED_OUT",
-      "gate": "T014"
     }
   ]
 }

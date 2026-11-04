@@ -144,18 +144,3 @@ test('D05: invalid shortcut output fails closed without running successor or Wor
   assert.equal(task.state,'FAILED');assert.equal(task.result?.data?.shortcut?.workerFallback,undefined);
   assert.equal(existsSync(marker),false);
 });
-
-test('D06: an expired first-execution deadline never resets or starts node side effects',async t=>{
-  const f=await fixture(t,'D06');
-  const marker=join(f.directory,'slow-started');
-  await f.module('slow',`import {writeFile} from 'node:fs/promises';export async function run(){await writeFile(${JSON.stringify(marker)},'bad');return {status:'COMPLETED',output:{bad:true},artifacts:[]};}`);
-  await f.module('finish',completed({done:true}));
-  const first=new Date(Date.now()-21*60_000).toISOString();
-  const deadline=new Date(Date.parse(first)+20*60_000).toISOString();
-  await f.mutate(job=>{job.shortcutExecutionStartedAt=first;job.shortcutExecutionDeadlineAt=deadline;return job;});
-  const run=f.run();assert.equal(run.status,4,run.stderr);
-  const job=await f.load();
-  assert.equal(job.shortcutExecutionStartedAt,first);assert.equal(job.shortcutExecutionDeadlineAt,deadline);
-  assert.equal(existsSync(marker),false);
-  assert.equal(job.tasks[0].result?.data?.shortcut?.terminal?.status,'TIMED_OUT');
-});
