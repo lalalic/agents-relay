@@ -14,7 +14,7 @@ and intended reuse; implementation must not introduce parallel authorities.
 | Lifecycle transitions and effects | `workflow/task-lifecycle.mmd`, `workflow/job-lifecycle.mmd`, `src/workflow/lifecycle.ts`, dispatcher facade | Add graph-owned transitions if new lifecycle decisions are needed; do not mutate snapshot JSON around the graph. |
 | Task construction | `src/workflow/entity-creation.ts` `createTaskEntity()` | Use canonical Task construction and dependency checks. Existing CLI task producers use `storySize`, not raw timeout. |
 | Existing Job creation and Planner behavior | `job create` in `src/cli.ts`, `src/relayd-control.ts`; `--initial-plan` creates the normal Planner round | Preserve current behavior and defaults. Shortcut is opt-in. |
-| Normal worker routing/fallback | Reconciler, execution context and model/worker routing | Missing/failed shortcut must re-enter this lifecycle asynchronously; no synchronous model call. |
+| Normal worker routing/fallback | Reconciler, execution context and model/worker routing | Normal Worker safe pre-submission rerouting is separate from Direct Shortcut mode. Missing/failed Direct Shortcut nodes must fail closed; they may not automatically enqueue an ordinary Worker. A normal ChatGPT/Z failure with no accepted start may retry once on a configured Codex default. |
 | Prompt and agent context | shared execution-context resolver and `buildRelayWorkPrompt` | Resolve project-specific agents ahead of shared Neo agents at execution time; do not persist resolved absolute paths in Task records. |
 
 ## Neo Project and Vlog
@@ -47,8 +47,9 @@ and intended reuse; implementation must not introduce parallel authorities.
 
 ## Architecture Lens
 
-The new workflow decision is whether an opted-in Job executes its declared
-Agent Graph through available code shortcuts and when it resumes or falls back.
+The workflow decisions are whether Direct Shortcut mode executes its declared
+Graph through code/model-backed nodes and whether an unstarted normal
+ChatGPT/Z failure qualifies for one Codex-default retry.
 The owning policy belongs in a stable workflow graph. Concrete shortcut
 discovery, execution, artifact validation and persistence are actions/mechanics.
 SQLite remains the sole durable authority; no second Job store, event bus,

@@ -34,12 +34,14 @@ trusted. Identical duplicate receipts are idempotent, while stale or conflicting
 receipts are rejected.
 Human approvals are not shortcut result events; they use the existing
 host-invocation decision authority, and a shortcut that requests human approval
-falls back to the Worker lifecycle or fails for Troubleshooter recovery.
+cannot automatically select Worker fallback; human decisions require authenticated host invocation.
 
 ## Lifecycle
 
-The canonical Task lifecycle graph selects `effect.launchShortcut` only for an
-opted-in Job with a Graph Task that has not been marked for Worker fallback.
+The canonical Task lifecycle graph selects `effect.launchShortcut` for an
+opted-in Direct Shortcut Job with a Graph Task. This is distinct from normal
+Worker no-start fallback, which records `Task.noStartFallback` and requeues
+only a failed, unstarted ChatGPT/Z normal Worker generation.
 `shortcut.waiting` releases its lease while preserving the current execution
 identity. Such a wait does not occupy the Job execution slot, so independent
 branches can proceed. SQLite remains the sole lifecycle and checkpoint

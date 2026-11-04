@@ -42,6 +42,8 @@ shortcutRecoveryRequired["action: mutation.markShortcutRecoveryRequired"]
 
 plannerRetryAvailable["guard: retryAvailable"]
 platformFallbackSafe["guard: platformFallbackSafe"]
+noStartFallbackAllowed["guard: noStartFallbackAllowed"]
+prepareNoStartFallback["action: mutation.prepareNoStartFallback"]
 preparePlatformFallback["action: mutation.preparePlatformFallback"]
 plannerUnavailableMark["action: mutation.markPlannerUnavailable"]
 orphanFailMark["action: mutation.markUnknownOutcome"]
@@ -146,6 +148,10 @@ queued -->|on: effect.launchShortcut.failed| failed
 queued -->|on: watchdog.failed| failed
 queued -->|on: worker.delivery_failed| failed
 queued -->|on: worker.start_ack_failed| failed
+queued -->|on: worker.no_start_failed| noStartFallbackAllowed
+noStartFallbackAllowed -->|true| prepareNoStartFallback
+prepareNoStartFallback --> queued
+noStartFallbackAllowed -->|false| failed
 queued -->|on: worker.platform_failure| platformFallbackSafe
 platformFallbackSafe -->|true| preparePlatformFallback
 preparePlatformFallback --> queued
