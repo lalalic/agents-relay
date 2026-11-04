@@ -892,3 +892,45 @@ test('D02 fault F05: non-file artifact records are rejected despite terminal suc
     assert.equal(existsSync(marker),false);
   } finally {await stop();}
 });
+
+test('D02 fault F06: retry failed parent retains completed Worker and Code nodes without duplicate effects',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');
+  const {dispatchTaskAction}=await import('../dist/task-actions.js');
+  const sourceRuns=join(f.directory,'source-runs'),finishRuns=join(f.directory,'finish-runs');
+  await f.writeShortcut(f.project,'source',`import {appendFile} from 'node:fs/promises';export async function run(){await appendFile(${JSON.stringify(sourceRuns)},'s');return {status:'COMPLETED',output:{source:'one'},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`import {appendFile,readFile} from 'node:fs/promises';export async function run({input}){await appendFile(${JSON.stringify(finishRuns)},'f');const times=(await readFile(${JSON.stringify(finishRuns)},'utf8')).length;if(times===1)throw Error('injected final code fault');if(input.predecessorOutputs.M.model!=='one')throw Error('lost Worker predecessor');return {status:'COMPLETED',output:{done:true},artifacts:[]};}`);
+  let workerLaunches=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    workerLaunches++;
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','started','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{model:'one'},artifacts:[]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','completed','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'fake-worker',launched:Promise.resolve(),promise:Promise.resolve({summary:'exit'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const first=await f.execute(reconciler);
+    assert.equal(first.result.outcome.status,'FAILED');
+    assert.match(first.result.outcome.reason,/injected final code fault/);
+    assert.equal(first.job.tasks[0].state,'FAILED');
+    assert.deepEqual(Object.keys(first.job.tasks[0].result.data.shortcut.nodes),['A','M']);
+    assert.equal(first.job.tasks.find(x=>x.id==='shortcut-initial-M').state,'SUCCEEDED');
+    assert.equal(workerLaunches,1);
+    const firstDeadline=first.job.shortcutExecutionDeadlineAt;
+    await dispatchTaskAction(f.store,{id:'task.retry',jobId:f.id,taskId:'initial'});
+    const second=await f.execute(reconciler);
+    assert.equal(second.result.outcome.status,'COMPLETED',JSON.stringify(second.result.outcome));
+    assert.equal(second.job.state,'COMPLETED');
+    assert.equal(second.job.shortcutExecutionDeadlineAt,firstDeadline);
+    assert.equal(second.job.tasks.filter(x=>x.id==='shortcut-initial-M').length,1);
+    assert.equal(workerLaunches,1,'existing Worker node must not be reexecuted on parent retry');
+    assert.equal(await readFile(sourceRuns,'utf8'),'s','completed Code node must not replay');
+    assert.equal(await readFile(finishRuns,'utf8'),'ff','only failed code successor should retry');
+    assert.equal(second.job.tasks[0].result.data.shortcut.nodes.C.output.done,true);
+  }finally{await stop();}
+});

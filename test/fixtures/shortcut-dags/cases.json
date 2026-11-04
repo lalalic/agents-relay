@@ -28,7 +28,7 @@
         "FR-006",
         "FR-007"
       ],
-      "expected": "code source -> existing Relay Worker -> code finish, with correlated durable Worker output; fault injection F01–F05",
+      "expected": "code source -> existing Relay Worker -> code finish, with correlated durable Worker output; fault injection F01–F06",
       "gate": "T004"
     },
     {

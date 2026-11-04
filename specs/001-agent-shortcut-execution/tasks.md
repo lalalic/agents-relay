@@ -9,7 +9,7 @@ Check marks indicate **verified implementation scope**, not a full feature relea
 - [x] T002 Implement code-shortcut DAG fixture runner, checkpointed waits and validated receipts for the existing opt-in Job.
 - [x] T003 Implement Vlog Visioner module fixtures and basic CLI compatibility tests.
 - [ ] T004 Prove that the full Shortcut Graph runs code shortcuts directly and model-backed nodes via existing Worker fallback, without a duplicate DAG scheduler or Job authority.
-  - Offline acceptance matrix: `npm run test:shortcut:dags` (five Mermaid fixtures + in-process fake-Adapter D02/D03). Original whole-DAG fallback defect reproduced and fixed; verify F01 invalid output, F02 recovery ownership, F03 authorized exact-original retry and F04/F05 artifact record strictness, with no actual API usage. Keep T004 open until integrated tests, review and full regression confirm the implementation.
+  - Offline acceptance matrix: `npm run test:shortcut:dags` (five Mermaid fixtures + in-process fake-Adapter D02/D03). Original whole-DAG fallback defect reproduced and fixed; verify F01 invalid output, F02 recovery ownership, F03 authorized exact-original retry and F04/F05 artifact record strictness and F06 no-replay checkpoint retry, with no actual API usage. Keep T004 open until integrated tests, review and full regression confirm the implementation.
 
 ## No-Start Worker Fallback (integrated on this branch)
 
