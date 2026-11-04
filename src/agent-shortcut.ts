@@ -114,6 +114,14 @@ async function discoverShortcut(agent: string, projectPath: string, neoRoot?: st
   if (!inside(sharedRoot,actual)) throw new Error('Shared shortcut symlink escapes shortcut root');
   return actual;
 }
+export async function missingShortcutNodes(agentGraph: string, projectPath: string, neoRoot?: string): Promise<string[]> {
+  const graph = parseAgentGraph(agentGraph);
+  const result = await Promise.all(graph.nodes.map(async node => ({
+    id: node.id, available: Boolean(await discoverShortcut(node.agent, projectPath, neoRoot)),
+  })));
+  return result.filter(item => !item.available).map(item => item.id);
+}
+
 function inside(root:string, path:string):boolean { const rel=relative(root,path); return rel==='' || (rel!=='..'&&!rel.startsWith(`..${sep}`)&&!isAbsolute(rel)); }
 function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason ?? new Error('Shortcut execution interrupted'));

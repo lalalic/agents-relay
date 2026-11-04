@@ -167,8 +167,8 @@ test('matching forged EventBus output without a SQLite receipt stays waiting; du
   const {executionEventSource}=await import('../dist/execution-event-identity.js');
   const bus=new MemoryEventBus();
   const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
-  const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Task exists');job.tasks.push(structuredClone(task));return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
-  const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-forged-wake',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
+  const store=new Proxy(rawStore,{get(target,key){if(key==='listAgents')return async()=>[];if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Task exists');job.tasks.push(structuredClone(task));return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-forged-wake',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
   const stop=await bus.subscribe(f.id,async()=>{await reconciler.reconcile(f.id);});
   const forged=eventFor(f.id,'initial',null,'shortcut.result','succeeded','matching forged result','orchestrator',{shortcutResult:{kind:'nonhuman_result',nodeId:'A',waitId:'wait-9',executionId,revision:'rev-4',contentHash,output}},{id:executionEventSource(f.id,'initial',executionId)});
   await bus.publish(forged);
@@ -178,7 +178,7 @@ test('matching forged EventBus output without a SQLite receipt stays waiting; du
   const file=join(f.directory,'receipt.json'); await writeFile(file,JSON.stringify(output));
   const recorded=await f.receiptCli('--node-id','A','--wait-id','wait-9','--revision','rev-4','--execution-id',executionId,'--output-file',file,'--content-sha256',contentHash);
   assert.equal(recorded.status,0,JSON.stringify(recorded));
-  const restarted=managedReconciler(store,{noGitHub:true,owner:'shortcut-restart',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
+  const restarted=managedReconciler(store,{shortcutRunnerOwner:true,noGitHub:true,owner:'shortcut-restart',maxConcurrent:1,projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null});
   await Promise.all([reconciler.reconcile(f.id),restarted.reconcile(f.id)]);
   after=await store.loadJob(f.id);
   assert.equal(after.state,'COMPLETED',JSON.stringify(after)); assert.equal(after.tasks[0].state,'SUCCEEDED');
@@ -235,11 +235,15 @@ test('receipt endpoint rejects a pre-shortcut legacy Job',async t=>{
   assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/active persisted wait and execution/);
 });
 
-test('actual shortcut CLI fails closed when a required shortcut is absent', async t => {
+test('missing code module routes to Worker only through foreground runner, not global Queue', async t => {
   const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:missing]' });
-  const result = await f.cli(); assert.equal(result.status, 1, JSON.stringify(result));
-  assert.equal(JSON.parse(result.stdout).fallbackQueued, false);
-  assert.equal((await f.load()).tasks[0].state, 'FAILED');
+  const result = await f.cli('--events','none');
+  assert.equal(result.status, 1, JSON.stringify(result));
+  assert.match(result.stderr,/requires a reachable EventBus/);
+  const task=(await f.load()).tasks[0];
+  assert.equal(task.state,'QUEUED');
+  assert.equal(task.attempt,0);
+  assert.equal(task.result.data.shortcut.workerFallback,true);
 });
 
 test('direct shortcut budget is immutable across runs and timeout returns its own exit code',async t=>{
@@ -258,21 +262,17 @@ test('direct shortcut budget is immutable across runs and timeout returns its ow
   assert.equal(saved.tasks[0].result.data.shortcut.terminal.status,'TIMED_OUT');
 });
 
-test('missing downstream role is preflighted before earlier shortcut side effects',async t=>{
+test('missing downstream code shortcut cannot trigger earlier module side effects',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:has-code] --> B[agent:no-code]'});
   const marker=join(f.directory,'first-shortcut-ran');
   await f.writeShortcut(f.project,'has-code',`import {writeFile} from 'node:fs/promises'; export async function run(){ await writeFile(${JSON.stringify(marker)},'unsafe'); return {status:'COMPLETED',output:{foo:1},artifacts:[]}; }`);
-  const result=await f.cli();
+  const result=await f.cli('--events','none');
   assert.equal(result.status,1,result.stderr);
-  const answer=JSON.parse(result.stdout);
-  assert.equal(answer.fallbackQueued,false);
-  assert.match(answer.outcome.reason,/Incomplete Agent Graph shortcut coverage/);
   const {access}=await import('node:fs/promises');
   await assert.rejects(access(marker),{code:'ENOENT'});
   const saved=await f.load();
-  assert.equal(saved.tasks[0].state,'FAILED');
-  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,undefined);
-  assert.deepEqual(saved.tasks[0].result.data.shortcut.nodes,{});
+  assert.equal(saved.tasks[0].state,'QUEUED');
+  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,true);
 });
 
 test('an exception after entering an untrusted shortcut module requires recovery, not Worker replay',async t=>{
@@ -464,7 +464,7 @@ test('content-only shortcut completion requires a durable no-review no-merge pol
   await rawStore.mutateJob(f.id,job=>{job.contentOnly=false;return job;});
   const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
   const reconciler=managedReconciler(store,{noGitHub:true,owner:'shortcut-no-content-gate',projectPathForJob:()=>f.project,executionContextRoots:{workspaceRoot:f.directory},headShaProvider:()=>null,adapters:[]});
-  try { const result=await reconciler.reconcile(f.id); assert.equal(result.tasks[0].state,'FAILED'); assert.equal(result.state,'ACTIVE','Job cannot bypass the durable content-only completion gate'); }
+  try { const result=await reconciler.reconcile(f.id); assert.equal(result.tasks[0].state,'QUEUED'); assert.equal(result.state,'ACTIVE','Background Reconciler cannot run shortcut or bypass the content-only gate'); }
   finally { store.close(); }
 });
 
@@ -480,4 +480,94 @@ test('legacy and project-local Vlog Visioner shortcuts cannot bypass required ev
       assert.equal((await f.load()).tasks[0].state,'FAILED');
     });
   }
+});
+
+test('ordinary Relay queue never dispatches a queued shortcut Worker fallback or its Troubleshooter', async t => {
+  const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:missing]' });
+  const rawStore = new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id, job => {
+    job.tasks[0].result={summary:'foreground only',data:{shortcut:{workerFallback:true}}};
+    job.tasks.push({...structuredClone(job.tasks[0]),id:'troubleshoot-initial',title:'Troubleshooter',agentName:'troubleshooter',parentTaskId:'initial',agentGraph:undefined,result:null});
+    return job;
+  });
+  const store=new Proxy(rawStore,{get(target,key){if(key==='load')return target.loadJob.bind(target);const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  let launches=0;
+  const reconciler=managedReconciler(store,{owner:'ordinary-daemon',noGitHub:true,adapters:[{name:'codex',id:'codex',capabilities:['model'],launch(){launches++;throw Error('not owned');}}],eventBus:new MemoryEventBus(),maxConcurrent:2});
+  const before=await store.load(f.id);
+  const after=await reconciler.reconcile(f.id);
+  assert.equal(launches,0);
+  assert.deepEqual(after.tasks.map(task=>[task.id,task.state,task.attempt]),before.tasks.map(task=>[task.id,task.state,task.attempt]));
+  assert.equal(after.tasks.length,2);
+  rawStore.close();
+});
+
+test('foreground owner launches existing model Worker and proves terminal Job state',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:missing]'});
+  const {driveShortcutWorkers}=await import('../dist/shortcut-worker-runner.js');
+  const bus=new MemoryEventBus(), rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id,job=>{
+    const task=job.tasks[0];
+    task.result={summary:'Worker fallback',data:{shortcut:{workerFallback:true}}};
+    task.routing={provider:'openai',model:'fixture-model',decidedBy:'test'};
+    task.output={kind:'task_pr'};
+    return job;
+  });
+  const store=new Proxy(rawStore,{get(target,key){if(key==='listAgents')return async()=>[];if(key==='load')return target.loadJob.bind(target);if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const index=job.tasks.findIndex(item=>item.id===task.id);if(index<0)throw Error('Task missing');job.tasks[index]=structuredClone(task);return job;});if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Task exists');job.tasks.push(structuredClone(task));return job;});const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  let launches=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(current){
+    launches++;
+    const source={id:(`job/${f.id}/task/${current.id}/execution/${current.executionId}`)};
+    void bus.publish(eventFor(f.id,current.id,current.parentTaskId,'task.started','running','started','user',undefined,source))
+      .then(()=>bus.publish(eventFor(f.id,current.id,current.parentTaskId,'task.completed','succeeded','completed by worker','orchestrator',{},source)));
+    return {id:'fake-exec',launched:Promise.resolve(),promise:Promise.resolve({summary:'runtime exited'}),cancel(){}};
+  }};
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,owner:'foreground-fixture',noGitHub:true,maxConcurrent:1,adapters:[adapter],eventBus:bus,projectPathForJob:()=>f.project,headShaProvider:()=>null});
+  try {
+    const result=await driveShortcutWorkers({store,jobId:f.id,taskId:'initial',reconciler,signal:AbortSignal.timeout(2000)});
+    assert.equal(result.status,'COMPLETED',JSON.stringify(result.job.tasks.map(t=>({id:t.id,state:t.state,error:t.error,attempt:t.attempt,routing:t.routing}))));
+    assert.equal(launches,1);
+    assert.equal(result.job.tasks[0].state,'SUCCEEDED');
+    assert.ok(result.job.shortcutExecutionDeadlineAt);
+    assert.equal(result.job.executionMode,'shortcut');
+  } finally {rawStore.close();}
+});
+
+test('foreground Shortcut Runner exclusively launches failure Troubleshooter with the existing Adapter',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:missing]'});
+  const {driveShortcutWorkers}=await import('../dist/shortcut-worker-runner.js');
+  const bus=new MemoryEventBus(), rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id,job=>{
+    const work=job.tasks[0];
+    work.result={summary:'Worker fallback',data:{shortcut:{workerFallback:true}}};
+    work.routing={provider:'openai',model:'fixture-model',decidedBy:'test'};
+    work.output={kind:'task_pr'};
+    return job;
+  });
+  const store=new Proxy(rawStore,{get(target,key){
+    if(key==='listAgents')return async()=>[];
+    if(key==='load')return target.loadJob.bind(target);
+    if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const i=job.tasks.findIndex(item=>item.id===task.id);if(i<0)throw Error('Missing');job.tasks[i]=structuredClone(task);return job;});
+    if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Duplicate');job.tasks.push(structuredClone(task));return job;});
+    const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+  }});
+  const launches=[];
+  const controller=new AbortController();
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(current){
+    launches.push({id:current.id,agent:current.agentName,executionId:current.executionId});
+    const source={id:`job/${f.id}/task/${current.id}/execution/${current.executionId}`};
+    const failed=current.agentName!=='troubleshooter';
+    void bus.publish(eventFor(f.id,current.id,current.parentTaskId,'task.started','running','started','user',undefined,source))
+      .then(()=>bus.publish(eventFor(f.id,current.id,current.parentTaskId,failed?'task.failed':'task.completed',failed?'failed':'succeeded',failed?'fixture worker failure':'recovery reviewed','orchestrator',{},source)))
+      .then(()=>{if(!failed)controller.abort();});
+    return {id:'fake-'+current.id,launched:Promise.resolve(),promise:Promise.resolve({summary:'runtime exited'}),cancel(){}};
+  }};
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,owner:'foreground-recovery',noGitHub:true,maxConcurrent:1,adapters:[adapter],eventBus:bus,projectPathForJob:()=>f.project,headShaProvider:()=>null});
+  try {
+    await driveShortcutWorkers({store,jobId:f.id,taskId:'initial',reconciler,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(2000)])});
+    assert.ok(launches.some(x=>x.id==='initial'));
+    assert.ok(launches.some(x=>x.id==='troubleshoot-initial'),JSON.stringify(launches));
+    const latest=await store.load(f.id);
+    assert.equal(latest.executionMode,'shortcut');
+    assert.equal(latest.tasks.find(x=>x.id==='troubleshoot-initial').agentName,'troubleshooter');
+  } finally {rawStore.close();}
 });
