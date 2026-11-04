@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { recordShortcutReceipt, runAgentShortcut, shortcutResumeEvent } from './agent-shortcut.js';
 import { parseAgentGraph } from './agent-graph.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
+import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
+import type { DurableStore } from './store.js';
 import { noGitHubMode } from './no-github.js';
 import { resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot } from './workspace.js';
 import { arg, hasArg, integerArg, publishWake, saveLocal, storeFor, textOption, withEventBus } from './cli-support.js';
@@ -10,6 +12,24 @@ import { arg, hasArg, integerArg, publishWake, saveLocal, storeFor, textOption, 
 function assertSqliteShortcutArgs(args: string[]): void {
   if (args.some(value => value === '--file' || value.startsWith('--file=')))
     throw new Error('Shortcut commands require the authoritative SQLite Relay store; --file is unsupported');
+}
+
+/** Apply the canonical Job Graph activate edge before the first direct run.
+ * The Job is created DRAFT so creation alone cannot launch any work. */
+export async function activateShortcutJobForDirectRun(store: DurableStore, jobId: string): Promise<void> {
+  if (!store.mutateJob) throw new Error('Shortcut activation requires atomic SQLite Job mutation');
+  await store.mutateJob(jobId, current => {
+    if (current.executionMode !== 'shortcut' || current.contentOnly !== true)
+      throw new Error('Only a content-only Shortcut Job may be activated by direct run');
+    if (current.state === 'DRAFT') {
+      const decision = dispatchJobLifecycleSync(current, 'activate');
+      if (!decision.accepted || decision.target !== 'ACTIVE')
+        throw new Error('Job Lifecycle graph rejected shortcut activation');
+    } else if (current.state !== 'ACTIVE') {
+      throw new Error(`Shortcut Job ${jobId} is not runnable (${current.state})`);
+    }
+    return current;
+  });
 }
 
 export async function runShortcutJobCommand(args: string[], id: string, repo: string): Promise<void> {
@@ -54,6 +74,8 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
     task = loaded.job.tasks.find(item => item.id === taskId);
     if (!task) throw new Error(`Task ${taskId} disappeared`);
   }
+  await activateShortcutJobForDirectRun(loaded.store, id);
+  loaded.job = await loaded.store.load(id);
   const workspaceRoot = await resolveWorkspaceRoot(arg(args, '--workspace-root') || undefined);
   const projectRoot = await resolveManagedProjectPath(noGitHubMode(args) ? undefined : repo, arg(args, '--project-path') || loaded.job.projectPath || '', workspaceRoot);
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);

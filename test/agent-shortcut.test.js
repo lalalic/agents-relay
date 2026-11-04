@@ -17,7 +17,7 @@ import { tryTransitionTaskEvent } from '../dist/task-transitions.js';
 const graph = `flowchart TD\nA[agent:alpha] --> C[agent:join]\nB[agent:beta] --> C`;
 const root = resolve(new URL('..', import.meta.url).pathname);
 
-async function fixture(t, { agentGraph = graph, projectOverride = true } = {}) {
+async function fixture(t, { agentGraph = graph, projectOverride = true, initialDraft = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'relay-shortcut-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const storeDir = join(directory, 'stores');
@@ -30,7 +30,7 @@ async function fixture(t, { agentGraph = graph, projectOverride = true } = {}) {
   const job = createJobEntity({ id, title: 'Shortcut CLI', objective: 'Run a fixture graph', projectPath: undefined,
     prNumber: 0, repository: 'local/shortcut-test', continuation: null, autoMerge: false, reviewEnabled: false, contentOnly: true, executionMode: 'shortcut',
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), tasks: [] });
-  await applyJobActivateAction(job);
+  if (!initialDraft) await applyJobActivateAction(job);
   const task = createTaskEntity(job, { jobId: id, id: 'initial', title: 'Graph', kind: 'work', agentGraph,
     parentTaskId: null, dependencies: [], capabilities: [], adapter: 'codex', input: 'fixture input',
     attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null,
@@ -54,6 +54,21 @@ async function fixture(t, { agentGraph = graph, projectOverride = true } = {}) {
   };
   return { directory, project, neo, id, job, task, storeDir, writeShortcut, cli, receiptCli, load, projectOverride };
 }
+
+test('foreground shortcut job run activates a newly-created DRAFT Job via Job Graph', async t => {
+  const f = await fixture(t, { initialDraft: true });
+  assert.equal((await f.load()).state, 'DRAFT');
+  for (const agent of ['alpha', 'beta', 'join'])
+    await f.writeShortcut(f.project, agent,
+      `export async function run({input}) { return { status:'COMPLETED', output: {agent:input.agent}, artifacts:[] }; }`);
+  const result = await f.cli();
+  assert.equal(result.status, 0, result.stderr);
+  const durable = await f.load();
+  assert.equal(durable.state, 'COMPLETED');
+  assert.equal(durable.tasks[0].state, 'SUCCEEDED');
+  assert.ok(durable.tasks[0].executionHistory.length > 0);
+  assert.match(result.stderr, /shortcut.node/);
+});
 
 test('shortcut commands reject file-backed Jobs before mutation', async t => {
   const f = await fixture(t);

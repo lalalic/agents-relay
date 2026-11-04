@@ -22,7 +22,7 @@ Check marks indicate **verified implementation scope**, not a full feature relea
 
 ## Shortcut Runner Remaining Scope (same branch)
 
-- [ ] T012 Synchronous `neo project run` integration with live per-node output and truthful exit codes.
+- [x] T012 Synchronous `neo project run` integration with live per-node output, private per-Run log, verified durable terminal outcome, truthful exit codes, safe replay and no-write dry-run. Verified in Neo tests; real Vlog E2E is T015.
 - [ ] T014 Durable 20-minute first-execution deadline, bounded concurrency and owned-process cleanup with restart tests.
 - [ ] T015 Full real Vlog Agent Graph E2E with immutable evidence, project evals and independent review.
 - [ ] T016 Once T004, T010, T012, T014 and T015 pass, merge the complete Shortcut Runner to main, activate, verify live and clean the worktree.

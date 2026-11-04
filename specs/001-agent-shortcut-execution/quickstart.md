@@ -46,14 +46,15 @@ and the absence of a Troubleshooter on successful recovery.
 
 ## Direct Shortcut Runner Release Status
 
-The earlier content-only shortcut path can be invoked with the existing
-`agents-relay job run --mode shortcut` interface, but the full
-synchronous Neo CLI and mixed code-shortcut/Worker-fallback DAG remain unverified.
+The CLI handoff is implemented: `neo project run` now executes the bound
+Relay `job run --mode shortcut` in the foreground, forwards live node events,
+appends a private Run log, propagates non-success exit codes, and checks
+durable Job/Task completion before returning 0. The mixed
+code-shortcut/Worker-fallback DAG remains unverified.
 
-The intended Shortcut Runner must run `neo project run` synchronously, stream
-node lifecycle, use the existing Relay Worker fallback for uncovered
-model-backed nodes, and preserve the 20-minute elapsed budget and canonical
-result validation. A separate direct Codex executor is not required.
+Next, the Shortcut Runner must use existing Relay Worker fallback for uncovered
+model-backed nodes and prove the 20-minute elapsed budget and canonical
+result validation with a full Run. A separate direct Codex executor is not required.
 The real Vlog full-DAG E2E and independent review remain **NOT_RUN**
 and block the single unified release.
 
@@ -68,3 +69,23 @@ The original shortcut development branch includes a foreground Relay direct
 history is retained in merge parent `c0dbc62` for review and continuation.
 Those changes are **not** equivalent to full `neo project run` integration,
 existing Worker fallback integration, or a proven real Vlog end-to-end run.
+
+## Watching the same Run (T012)
+
+From a terminal on Neo Master, use the single Shortcut Runner worktree's
+Relay build until main is released:
+
+```sh
+NEO_RELAY_CLI=/Users/chengli/Workspace/.worktrees/orchestrator/relay-shortcut-direct-20261104/dist/cli.js \
+  neo project run --project vlog --path /Users/chengli/Workspace/neo/vlog/runs/DATE-RUN
+```
+
+From another terminal (or through Neo MCP), follow the same canonical Run:
+
+```sh
+tail -f /Users/chengli/Workspace/neo/vlog/runs/DATE-RUN/neo-project-run.log
+```
+
+Do not start a real Vlog Run until the owner and assistant are observing
+the same terminal/log. CLI foreground streaming and failure-exit tests pass;
+Vlog execution and its mixed Worker fallback remain T004/T015 acceptance gates.
