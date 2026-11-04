@@ -50,6 +50,7 @@ export const WORKFLOW_EVENT_NAMES = [
   'worker.delivery_failed',
   'worker.start_ack_failed',
   'worker.platform_failure',
+  'worker.no_start_failed',
 ] as const;
 
 export const WORKFLOW_FACT_NAMES = [
@@ -76,6 +77,7 @@ export const WORKFLOW_FACT_NAMES = [
   'headAvailable',
   'mergeCapable',
   'platformFallbackSafe',
+  'noStartFallbackAllowed',
 ] as const;
 
 export const WORKFLOW_MUTATION_NAMES = [
@@ -90,6 +92,7 @@ export const WORKFLOW_MUTATION_NAMES = [
   'mutation.markShortcutWorkerFallback',
   'mutation.markShortcutRecoveryRequired',
   'mutation.preparePlatformFallback',
+  'mutation.prepareNoStartFallback',
   'mutation.quarantinePlatformFailure',
 ] as const;
 

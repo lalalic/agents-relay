@@ -14,7 +14,7 @@ import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
-import { codexFallbackRouting, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
+import { codexFallbackRouting, codexNoStartFallbackRoute, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
 
 
 export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
@@ -305,7 +305,9 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       : [];
     const taskExcludedRoutes = (task.routingExclusions ?? []).map(item => ({ provider: item.provider, model: item.model, profile: item.profile }));
     const excludedRoutes = [...taskExcludedRoutes, ...parentExcludedRoutes];
-    const routed = await routeExecution(candidates, requirements, {
+    const routed = task.noStartFallback
+      ? await codexNoStartFallbackRoute(task, this.options.adapters, registered, usage)
+      : await routeExecution(candidates, requirements, {
       decisionEngine: this.options.decisionEngine,
       decisionMode: this.options.decisionMode,
       taskFacts: { ...taskFacts, recovery: task.recoveryContext ?? null, recovery_parent_failed_route: excludedRoutes[0] ?? null },
@@ -317,6 +319,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       auditStore: this.options.decisionAuditStore,
       auditTask: task,
     });
+    if (!routed) throw new Error('Codex configured default unavailable for no-start recovery');
     task.workerSelection = routed.selection;
     task.adapter = routed.candidate.adapter;
     task.routing = routed.candidate.routing;
@@ -330,6 +333,24 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   protected async routeTaskForExecutionFailClosed(job: Job, task: Task): Promise<{ task: Task; routed: boolean } | undefined> {
     try { return await this.routeTaskForExecution(job, task); }
     catch (error) {
+      if (task.noStartFallback) {
+        const message = error instanceof Error ? error.message : String(error);
+        const transition = await this.taskTransitions.apply(job.id, task.id, 'fail', {
+          eligible: (_job, current) => current.state === 'QUEUED'
+            && current.executionId === null
+            && current.noStartFallback?.failedExecutionId === task.noStartFallback?.failedExecutionId,
+          mutate: (_job, current) => {
+            current.error = 'Codex default fallback route unavailable: ' + message;
+            current.failureReason = 'codex_default_fallback_unavailable';
+          },
+        });
+        if (transition?.decision.accepted) await this.emit(eventFor(
+          job.id, task.id, task.parentTaskId, 'task.failed', 'failed',
+          transition.task.error ?? message, 'user', { reason: 'codex_default_fallback_unavailable' },
+          { agent: 'relay', component: 'agents-relay' },
+        ));
+        return undefined;
+      }
       if (!['chatgpt','z'].includes(task.adapter) || !task.platformFailure?.safeToReroute) throw error;
       await quarantineUnavailableCodexFallback(this.taskTransitions, event => this.emit(event), job.id, task.id, error);
       return undefined;

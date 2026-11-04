@@ -1167,7 +1167,7 @@ test('stale old-generation failure cannot cancel or mutate the current execution
   await reconciler.close();
 });
 
-test('confirmed ChatGPT pre-submission rejection requeues safely when a second Worker exists', async () => {
+test('confirmed ChatGPT pre-submission rejection uses no-start Codex recovery when eligible', async () => {
   const t=task('chat-platform-reroute');
   t.adapter='chatgpt'; t.state='QUEUED'; t.attempt=1; t.maxAttempts=3;
   t.executionId='chat-platform-exec'; t.leaseOwner='relay'; t.leaseExpiresAt=new Date(Date.now()+60000).toISOString();
@@ -1191,10 +1191,10 @@ test('confirmed ChatGPT pre-submission rejection requeues safely when a second W
   assert.equal(saved.workerSelection,undefined);
   assert.equal(saved.executionHistory?.length,1);
   assert.equal(saved.executionHistory?.[0]?.id,'chat-platform-exec');
-  assert.equal(saved.platformFailure?.classification,'model_unavailable');
-  assert.equal(saved.platformFailure?.executionId,'chat-platform-exec');
+  assert.equal(saved.noStartFallback?.failedExecutionId,'chat-platform-exec');
+  assert.equal(saved.noStartFallback?.failedAttempt,1);
   assert.equal(saved.routingExclusions?.[0]?.workerId,'fake-chatgpt');
-  assert.ok(events.some(event=>event.type==='worker.pre_submission_rejected'));
+  assert.ok(events.some(event=>event.type==='worker.no_start_fallback'));
   assert.equal((await store.load('j')).tasks.some(item=>item.agentName==='troubleshooter'),false);
   await reconciler.close(); await stopEvents();
 });

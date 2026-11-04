@@ -28,6 +28,8 @@ const taskCases = [
   ['QUEUED','watchdog.failed',{},'FAILED'],
   ['QUEUED','worker.delivery_failed',{},'FAILED'],
   ['QUEUED','worker.start_ack_failed',{},'FAILED'],
+  ['QUEUED','worker.no_start_failed',{},'FAILED'],
+  ['QUEUED','worker.no_start_failed',{noStartFallbackAllowed:true},'QUEUED'],
   ['QUEUED','worker.platform_failure',{},'FAILED'],
   ['QUEUED','worker.platform_failure',{platformFallbackSafe:true},'QUEUED'],
   ['RUNNING','worker.platform_failure',{},'FAILED'],
@@ -89,9 +91,10 @@ const taskRuntime = new GraphRuntime(taskSource, {
     awaitingInteractiveDecision: boolGuard('awaitingInteractiveDecision'),
     retryAvailable: boolGuard('retryAvailable'),
     platformFallbackSafe: boolGuard('platformFallbackSafe'),
+    noStartFallbackAllowed: boolGuard('noStartFallbackAllowed'),
   },
   events: eventRegistry([...taskCases.map(([,event]) => event), 'interactive.waiting', 'shortcut.waiting', 'shortcut.failed', 'shortcut.result', 'effect.launchShortcut.failed', 'effect.resumeShortcut.failed', 'task.progress', 'lease.expired', 'planner.failed', 'planner.unavailable', 'execution.orphaned', 'queue', 'recovery.reopen', 'pause']),
-  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.markShortcutWorkerFallback','mutation.markShortcutRecoveryRequired','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','effect.launchTask','effect.launchShortcut','effect.resumeShortcut']),
+  actions: actionRegistry(['mutation.clearError','mutation.clearFailureReason','mutation.clearLease','mutation.clearExecution','mutation.markLeaseExpired','mutation.markStartupOrphanedExhausted','mutation.markUnknownOutcome','mutation.markPlannerUnavailable','mutation.markShortcutWorkerFallback','mutation.markShortcutRecoveryRequired','mutation.preparePlatformFallback','mutation.quarantinePlatformFailure','mutation.prepareNoStartFallback','effect.launchTask','effect.launchShortcut','effect.resumeShortcut']),
 });
 
 const jobRuntime = new GraphRuntime(jobSource, {

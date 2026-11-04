@@ -1,63 +1,36 @@
 # Tasks: Neo Project Agent Shortcut Execution
 
-**Input**: Design documents from `specs/001-agent-shortcut-execution/`
-**Prerequisites**: plan.md, spec.md, research.md
+**Source**: [spec.md](spec.md) and [plan.md](plan.md).
+Check marks indicate **verified implementation scope**, not a full feature release.
 
-## Phase 1: Setup
+## Existing foundation (2026-11-03; limited, local fixture scope)
 
-- [x] T001 Record authoritative reuse inventory in `specs/001-agent-shortcut-execution/research.md`
-- [x] T002 Create requirements spec and quality checklist in `specs/001-agent-shortcut-execution/`
+- [x] T001 Inventory Relay parser, Graph/SQLite, CLI and Vlog contracts.
+- [x] T002 Implement code-shortcut DAG fixture runner, checkpointed waits and validated receipts for the existing opt-in Job.
+- [x] T003 Implement Vlog Visioner module fixtures and basic CLI compatibility tests.
+- [ ] T004 Prove that the *full* Direct Shortcut Graph executes without ordinary Worker scheduling; old code can still fall back.
 
-## Phase 2: Foundational
+## No-Start Worker Fallback (current hotfix)
 
-- [x] T003 Confirm production graph/store operations available for direct execution in `src/relay-control.ts` and `src/relayd-control.ts`
-- [x] T004 Define durable shortcut run and wait data model in `specs/001-agent-shortcut-execution/data-model.md`
+- [x] T005 Reconcile the Spec with the newer Direct Runner contract and explicitly distinguish normal-Worker fallback.
+- [x] T006 Add graph-owned `worker.no_start_failed` and once-only durable recovery action.
+- [x] T007 Resolve only an eligible Codex configured default through existing routing constraints; no hard-coded default.
+- [x] T008 Wire ChatGPT/Z pre-start launch, start-ack, process, terminal and timeout failures to the same exact-generation recovery path.
+- [x] T009 Add fake Adapter, Graph, adverse-case, route and SQLite restart/late-event tests.
+- [ ] T010 Complete full repository regression suite and independent review for this hotfix.
+- [ ] T011 Merge and activate the reviewed hotfix only after T010 and documented release safety checks.
 
-## Phase 3: User Story 1 — Run an Agent Graph with shortcuts
+## Direct Runner Remaining Scope (separate release gate)
 
-- [x] T005 [US1] Implement bounded shortcut DAG runner reusing `parseAgentGraph()` in `src/agent-shortcut.ts`
-- [x] T006 [US1] Add opt-in durable Job execution entrypoint in `src/cli.ts` and the owning control/action path
-- [x] T007 [US1] Add tests for parser reuse, concurrent branches, async result, successful output and worker fallback in `test/agent-shortcut.test.js`
-
-## Phase 4: User Story 2 — Resume safely after events and restarts
-
-- [x] T008 [US2] Define graph-owned wait/resume transitions and durable correlation in `workflow/task-lifecycle.mmd` and lifecycle bindings. Resume consumes a validated SQLite Task receipt; EventBus output is wake-only. Human approval remains host-invocation-only.
-- [x] T009 [US2] Add matching, duplicate, stale, restart, content-hash, and approval-boundary tests in `test/agent-shortcut.test.js`; no manual JSON can impersonate a decision.
-
-## Phase 5: User Story 3 — Vlog Visioner shortcut
-
-- [x] T010 [US3] Implement contract-driven Visioner code shortcut in `agents/.shortcut/visioner.agent.mjs`
-- [x] T011 [US3] Add mocked CLI fixture tests for provenance, output verification and preservation in `agents/.shortcut/visioner.agent.test.mjs`
-- [x] T012 [US3] Document on-demand agent shortcut authoring from `.agent.md` and supported CLI templates in `vlog/docs/agent-shortcut-generation.md`
-
-## Phase 6: Polish
-
-- [x] T013 Update user/CLI documentation and compatibility tests without changing default Job creation in `docs/objective-driven-jobs.md`, `src/cli-help.ts`, and `test/service.test.js`
-- [x] T014 Run Relay build, focused tests, Neo tests, and final architecture self-review; record results in `specs/001-agent-shortcut-execution/quickstart.md`
+- [ ] T012 Synchronous `neo project run` integration with live per-node output and truthful exit codes.
+- [ ] T013 Relay direct Codex default-model executor for nodes without code shortcuts; no scheduler, Planner or normal Worker dispatch.
+- [ ] T014 Durable 20-minute first-execution deadline, bounded concurrency and owned-process cleanup with restart tests.
+- [ ] T015 Full real Vlog Agent Graph E2E with immutable evidence, project evals and independent review.
+- [ ] T016 Merge Direct Runner only after its independent T012–T015 release gates pass.
 
 ## Dependencies
 
-- T003 and T004 are gates before implementing Relay direct execution.
-- T005–T007 deliver the basic shortcut path.
-- T008–T009 depend on the basic run identity and persistence design.
-- T010–T012 can be developed against the Vlog contracts, but their runner
-  integration depends on T005.
-- T014 depends on implementation scope selected after T003.
-
-## Implementation Strategy
-
-Establish the atomic graph/store path first. If T003 confirms that existing
-transactions cannot safely claim, persist progress, wait and resume, stop short
-of a fake direct-run CLI and deliver only independently useful tested shortcut
-code plus a precise limitation report. Preserve the original Job/Planner path.
-
-## 2026-11-04 Direct shortcut runner acceptance tasks (open)
-
-- [x] DSR-T01 Verify actual Relay Codex adapter/default-model rule and inspect existing Graph/SQLite/Event contracts. Relay reads the Codex top-level default from `CODEX_HOME/config.toml`; this machine resolves to `openai/gpt-6-luna` with `high` reasoning.
-- [ ] DSR-T02 Implement synchronous foreground Neo CLI invocation with live node events, truthful exit codes, safe resume and dry-run.
-- [x] DSR-T03 Implement Relay direct mode without ordinary scheduler wake, Worker fallback or Planner/Router dispatch. The Task graph holds shortcut Jobs for the foreground runner; the runner selects the direct launch action and fails closed.
-- [ ] DSR-T04 Resolve model-backed nodes through the existing direct Codex adapter default model; record adapter/model evidence.
-- [ ] DSR-T05 Enforce persistent 20-minute Job budget, owned-process cleanup, timeout/interrupt evidence.
-- [ ] DSR-T06 Add and run focused tests for dependencies/parallelism, waits/receipts, failures, explicit mode changes, streaming and timeout.
-- [ ] DSR-T07 Run the existing Vlog canonical Run as real E2E and capture all node/output/event/elapsed-time proof.
-- [ ] DSR-T08 Independent review and repair loop; merge only after successful proven E2E.
+T005–T009 form the independent normal-Worker fallback hotfix. T010 and T011
+are the remaining delivery gates for that hotfix. T012–T016 are independent
+Direct Runner acceptance requirements: passing normal Worker fallback tests
+does not imply the Direct Runner or full Vlog E2E has passed.

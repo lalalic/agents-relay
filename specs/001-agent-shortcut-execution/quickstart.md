@@ -1,110 +1,69 @@
-# Shortcut execution quickstart
+# Shortcut Execution / Normal Worker Fallback
 
-Select shortcut execution when creating a content-only Job, before creating its
-Tasks. Do not use `--initial-plan`; shortcut Jobs do not create Planner rounds.
+## Current Normal Worker No-Start Rule
 
-```sh
-npx agents-relay job create --repo OWNER/REPO --project-path vlog \
-  --objective-file objective.md --shortcut-execution
-```
+When a ChatGPT or Z normal Worker fails without an accepted, correlated
+`task.started` event, Relay uses the Task Lifecycle Graph to try **one**
+automatic retry on a compatible Codex worker's **configured default model**.
+It neither creates a replacement Job/Task nor starts a Troubleshooter on this
+successful retry path.
 
-Create a Task with its Agent Graph after the Job exists. Direct runs stay in the
-foreground and invoke the Relay shortcut graph runner without publishing a
-scheduler wake or creating Worker/Planner work:
+The Codex default is read from `$CODEX_HOME/config.toml` (or
+`~/.codex/config.toml`). A missing config model, incompatible capability,
+hard runtime restriction, disabled provider, exhausted attempts or previous
+no-start fallback prevents that retry. An accepted `task.started` prevents it.
 
-```sh
-npx agents-relay job run --mode shortcut --repo OWNER/REPO --id JOB_ID \
-  --task-id TASK_ID --project-path /path/to/project \
-  [--neo-root /path/to/neo] [--concurrency 4]
-```
+The durable Task records the old execution ID, attempt, worker/model identity,
+reason and timestamp in `noStartFallback`. The Graph clears the old Task
+execution/lease/route and the Reconciler cancels owned work before rerouting.
+Rerouting uses the existing Router and provider hard gates.
 
-Project shortcuts at `agents/.shortcut/<agent>.agent.mjs` override the
-corresponding Neo shared shortcut. Independent ready nodes execute concurrently
-within the configured limit, and dependent nodes receive only declared
-predecessor outputs. A missing or failed shortcut fails the direct Task and
-never silently switches it to Worker execution. Shortcut modules are arbitrary
-Node code and may perform direct effects, so Relay checkpoints each module as
-in-flight before import and refuses to replay an interrupted node after
-restart. Host `runCommand` calls use the owned-process lifecycle and are
-cancelled when the exact Task lease is fenced. The exact Task lease renews
-while module code is pending. A Job's first direct execution stores its
-20-minute start and deadline in SQLite; wait/resume cannot reset that budget.
-The CLI streams node lifecycle records to stderr. Exit codes are 0 for
-completed, 1 for failed, 3 for waiting/blocked, 4 for timed out, and 5 for
-interrupted.
+**Risk:** No `task.started` observation does not prove the remote provider
+did nothing. This operator-selected policy can retry work that was submitted
+but whose start event was lost. Do not rely on it for non-idempotent external
+operations without their own idempotency keys. Human approvals and publication
+gates are never inferred.
 
-A `WAITING_EVENT` wait must declare `kind: "nonhuman_result"` with a node ID,
-wait ID, revision, and expected content SHA256. The asynchronous producer records
-the completed shortcut result through the local CLI, which validates the result
-contract and atomically stores a receipt in the existing SQLite Task checkpoint:
+The older platform-confirmed pre-submission reroute continues to function
+independently. It may select another eligible Worker.
+
+## Local Verification
+
+Run from the isolated Agents Relay worktree:
 
 ```sh
-npx agents-relay job shortcut-receipt --repo OWNER/REPO --id JOB_ID \
-  --task-id TASK_ID --node-id NODE_ID --wait-id WAIT_ID \
-  --revision REVISION --execution-id EXECUTION_ID \
-  --output-file result.json --content-sha256 SHA256
+npm run build
+node --import ./test/test-store-env.mjs --test \
+  test/no-start-fallback.test.js \
+  test/chatgpt-platform-fallback.test.js \
+  test/workflow-v2-lifecycle-parity.test.js \
+  test/core.test.js
 ```
 
-The JSON file must contain `{ "status": "COMPLETED", "output": {},
-"artifacts": [] }` (or the structured artifact-map form). SHA256 is over the
-canonical JSON result object and must equal the expected hash in the persisted
-wait. Recording a receipt does not complete the node. Reconciliation consumes
-the matching receipt through the Task Lifecycle graph, rechecks the Task input,
-Agent Graph, shortcut source, wait and active execution, and checkpoints the
-validated output before advancing dependents. The receipt and consumption are
-idempotent; an already recorded identical receipt is accepted, while conflicting
-or stale identities are rejected. A restart can consume a durable receipt
-without event delivery.
+The new tests cover both source Adapters, four failure surfaces, expiration,
+Codex default identity, failure gates, SQLite restart, late generation events
+and the absence of a Troubleshooter on successful recovery.
 
-`shortcut.result` EventBus messages are wake/identity signals only. Their output
-payload is ignored, including when source ID and every identity field match.
-Receipt discovery reads the current SQLite wait directly. Human approval remains
-on Relay's authenticated `task.interactive_decision` host-invocation authority;
-manual `--event-json` injection remains disabled.
-The checkpoint pins Task input, Agent Graph, and resolved shortcut source
-hashes. Resumed artifact paths must resolve inside the project and retain their
-recorded hashes. A mismatch or missing artifact fails closed. Job completion
-still requires the durable shortcut content-only gate: no PR, merge, review,
-Planner plan, or outstanding event wait.
+## Direct Shortcut Runner Release Status
 
-Visioner requires structured evidence, index, and metadata artifacts. The
-shortcut and existing Vlog index script check approved source hashes, metadata
-hashes when pinned by the manifest, path containment, and unreviewed evidence
-status. Fixtures mock Markcut and do not perform media inference or uploads.
+The earlier content-only shortcut path can be invoked with the existing
+`agents-relay job run --mode shortcut` interface, but **this hotfix does not
+deliver a complete synchronous Neo CLI or a full direct Codex-backed DAG**.
 
-## Verification
+The intended Direct Runner must run `neo project run` synchronously, stream
+node lifecycle, invoke Codex directly for uncovered model-backed nodes,
+preserve the 20-minute elapsed budget, and fail closed instead of falling
+back to ordinary Worker mode. Its Vlog full-DAG E2E and independent review
+remain **NOT_RUN** and block that separate release.
 
-Verification after implementation and the final local architecture review:
+No live browser/provider test, publishing, external transfer or real Markcut
+review approval is implied by these local regression results.
 
-- `npm run build` — passed.
-- `node --import ./test/test-store-env.mjs --test test/agent-shortcut.test.js test/workflow-v2-lifecycle-parity.test.js test/local-sqlite-jobid.test.js test/task-recovery-human.test.js test/workflow-lifecycle.test.js test/task-resolution.test.js` — 51 passed.
-- `node --test agents/.shortcut/visioner.agent.test.mjs` in the Neo worktree — 8 passed.
-- `git diff --check` — passed.
+## Original Shortcut Branch Implementation Evidence (unmerged-into-main)
 
-Provider/browser/UI checks remain `NOT_RUN`; no service was
-started and no production state, real media inference, upload, or publish was
-used.
-
-## 2026-11-04 direct-runner implementation status
-
-Relay direct `job run --mode shortcut` now bypasses Reconciler execution,
-streams per-node lifecycle records to stderr, returns distinct completed,
-failed, waiting, timed-out, and interrupted exit statuses, and stores an
-immutable 20-minute start/deadline on the Job. Missing/failed shortcuts and
-Troubleshooter retries do not switch the Job to Worker execution. A correlated
-SQLite receipt is resumed only after the Task Lifecycle graph selects the
-`effect.resumeShortcut` action.
-
-Local verification:
-
-- `npm run build` — passed.
-- `node --import ./test/test-store-env.mjs --test test/agent-shortcut.test.js` — 26 passed.
-- `node --import ./test/test-store-env.mjs --test test/agent-shortcut.test.js test/workflow-v2-lifecycle-parity.test.js test/workflow-lifecycle.test.js test/task-recovery-human.test.js test/verification/l3-task-resolution.test.js test/workflow-cli-contract.test.js` — 49 passed.
-- `neo project run --path /Users/chengli/Workspace/neo/vlog/runs/2026-11-03-history-relay-shortcut-e2e --project vlog --dry-run` — validated the canonical run binding without writes or dispatch.
-
-The required real Vlog E2E is **NOT_RUN**. The installed Neo CLI source is
-outside this Relay worktree, and the canonical Neo shared
-`agents/.shortcut/visioner.agent.mjs` is absent. Direct Codex model-backed node
-execution and the Neo foreground binding remain unimplemented here. Therefore
-the release gate is not satisfied and this change is not ready to report as
-complete or merge.
+The original shortcut development branch includes a foreground Relay direct
+`job run --mode shortcut` implementation, changes to `agent-shortcut.ts`,
+`cli-shortcut.ts`, Graph dispatch and local `task-actions.ts`. This branch
+history is retained in merge parent `c0dbc62` for review and continuation.
+Those changes are **not** equivalent to full `neo project run` integration,
+Codex-backed node execution, or a proven real Vlog end-to-end run.

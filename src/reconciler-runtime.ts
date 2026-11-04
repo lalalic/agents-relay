@@ -1,8 +1,8 @@
-import { hasSafeAlternativeWorker } from './browser-worker-routing.js';
+import { handleWorkerLaunchFailure } from './worker-failure-recovery.js';
 import { normalizeReviewerTerminalEvent } from './review-terminal-normalization.js';
 import { executionEventSource, eventSourceId, executionIdFromSource, claimTerminalExecution, terminalExecutionClaimed } from './execution-event-identity.js';
 export { executionEventSource } from './execution-event-identity.js'; import { applyJobEffectOutcomes, applyTaskEffectOutcomes } from './workflow-effect-failures.js';
-import { classifyChatGptPlatformFailure, classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
+import { classifyWorkerRejection, reroutableWorkerRejections } from './worker-rejection.js';
 import { applyTaskRetryAction } from './task-actions.js';
 import { DurableStore } from './store.js'; import { Job, Task, EventRecord, ChatGptTabClosePolicy, type WorkerRequirements } from './types.js';
 import { transitionJobEvent, transitionTaskEvent } from './task-transitions.js';
@@ -10,7 +10,7 @@ import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
 import type { ExecutionContextRoots } from './execution-context.js'; import type { AccountUsageOverview } from './usage.js';
 import type { LocalMergeReceipt } from './local-git-merge.js'; import type { DecisionEngine, DecisionMode } from './decision.js';
-import { recordTerminalRouteOutcome, recordLaunchRouteOutcome, recordWatchdogRouteOutcome, type DecisionAuditStore } from './route-outcome-recording.js';
+import { recordTerminalRouteOutcome, recordWatchdogRouteOutcome, type DecisionAuditStore } from './route-outcome-recording.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import type { LocalMergeEffect } from './local-merge-delivery.js';
 import type { EscalationNotifier } from './escalation-notifier.js'; import { workflowEffectFailureEvent } from './workflow/contracts.js';
@@ -19,7 +19,6 @@ import { acceptedReportedTag, eventDataWithoutTag } from './task-tag.js';
 import { createWorkerStartAck } from './worker-start-ack.js';
 import type { EventsHistoryPage } from './events-bus-runtime.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
-import { persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
 import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure } from './task-inactivity-watchdog.js';
 export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job, task?: Task) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; shortcutEventHistoryPage?: (jobId: string, after: number, limit: number) => Promise<EventsHistoryPage>; localMergeEffect?: LocalMergeEffect; localMergeDelivery?: (projectPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string }; headShaProvider?: (job: Job) => string | null | Promise<string | null>; escalationNotifier?: EscalationNotifier };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
@@ -219,76 +218,29 @@ export abstract class ReconcilerRuntimeBase {
     }
     return true;
   }
-  protected async failLaunch(jobId: string, taskId: string, executionId: string | null, failure: unknown, phase: 'launch' | 'delivery' | 'start-ack' = 'launch'): Promise<void> {
-    const message = failure instanceof Error ? failure.message : String(failure);
-    const currentJob = await this.store.load(jobId);
-    const currentTask = currentJob.tasks.find(task => task.id === taskId);
-    const alternative = hasSafeAlternativeWorker(currentTask,this.options.adapters,await this.store.listAgents(),
-      this.options.usageSnapshotProvider ? await this.options.usageSnapshotProvider() : undefined);
-    const activeExecution = this.live.get(taskId);
-    const platformFailure = (currentTask?.adapter === 'chatgpt' || currentTask?.adapter === 'z') ? classifyChatGptPlatformFailure(failure, phase) : undefined;
-    const unknownOutcome = phase === 'start-ack' || ['outcome_unknown', 'start_ack_timeout'].includes(platformFailure?.classification ?? '')
-      || (phase === 'delivery' && activeExecution?.executionId === executionId && activeExecution.workerStarted);
-    const failureReason = phase === 'start-ack' ? 'worker_start_timeout'
-      : /WEBHELM_UNAVAILABLE|webhelm runtime dependency unavailable|webhelm session start returned no session_id|no close frame received or sent/i.test(message)
-        ? 'browser_workspace_unavailable'
-        : undefined;
-    const claim = executionId ?? `${jobId}:${taskId}`;
-    if (this.launchFailureClaims.has(claim)) return;
-    this.launchFailureClaims.add(claim);
-    const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000); cleanup.unref();
-    const workflowEvent = platformFailure ? 'worker.platform_failure' : phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
-    const transition = await this.taskTransitions.apply(jobId, taskId, platformFailure ? 'worker.platform_failure' : workflowEvent, {
-      eligible: (_job, task) => task.executionId === executionId,
-      facts: () => ({ platformFallbackSafe: platformFailure?.safeToReroute === true && alternative }),
-      mutate: (_job, task, decision) => {
-        if (platformFailure) persistChatGptPlatformFailure(task, currentTask, executionId, platformFailure.classification, platformFailure.evidence, platformFailure.safeToReroute);
-        task.error = decision.target === 'QUEUED' ? null : `Worker ${phase} failed: ${message}`;
-        task.failureReason = decision.target === 'QUEUED' ? undefined : unknownOutcome
-          ? 'worker_outcome_unknown' : platformFailure ? 'worker_platform_failure' : failureReason;
-        task.leaseOwner = null;
-        task.leaseExpiresAt = null;
-        task.executionId = null;
+  protected async failLaunch(jobId: string, taskId: string, executionId: string | null,
+    failure: unknown, phase: 'launch' | 'delivery' | 'start-ack' | 'process' | 'terminal' = 'launch'): Promise<void> {
+    await handleWorkerLaunchFailure({
+      store: this.store,
+      adapters: this.options.adapters,
+      usageSnapshotProvider: this.options.usageSnapshotProvider,
+      decisionAuditStore: this.options.decisionAuditStore,
+      taskTransitions: this.taskTransitions,
+      live: id => this.live.get(id),
+      launchFailureClaims: this.launchFailureClaims,
+      clearExecution: (id, execution) => this.clearExecution(id, execution),
+      clearTerminalWaiter: (id, execution) => {
+        const waiter = this.terminalWaiters.get(id);
+        if (waiter?.executionId === execution) {
+          waiter.resolve();
+          this.terminalWaiters.delete(id);
+        }
       },
-    });
-    if (!transition) return;
-    if (!transition.decision.accepted) {
-      await this.emit(eventFor(
-        jobId,
-        taskId,
-        transition.task.parentTaskId,
-        'task.process.delivery_failed',
-        'failed',
-        `Worker ${phase} reported after lifecycle moved to ${transition.from}: ${message}`,
-        'orchestrator',
-        { phase, authoritative: false, executionId, workflowEvent },
-        { agent: 'relay', component: 'agents-relay' },
-      ));
-      return;
-    }
-    await recordLaunchRouteOutcome(this.options.decisionAuditStore, transition.task, message, phase, executionId, unknownOutcome);
-    if (executionId) {
-      const live = this.live.get(taskId);
-      if (live?.executionId === executionId) {
-        live.controller.abort();
-        live.execution.cancel();
-        this.clearExecution(taskId, executionId);
-      }
-    }
-    const event = eventFor(
-      jobId,
-      taskId,
-      transition.task.parentTaskId,
-      transition.task.state === 'QUEUED' ? 'worker.pre_submission_rejected' : 'task.failed',
-      transition.task.state === 'QUEUED' ? 'queued' : 'failed',
-      transition.task.error ?? `Worker ${phase} failed: ${message}`,
-      'user',
-      { phase, reason: transition.task.failureReason ?? failureReason, workflowEvent, ...(transition.task.platformFailure ? { platformFailure: transition.task.platformFailure } : {}) },
-      { agent: 'relay', component: 'agents-relay', watchdog: true },
-    );
-    this.detach(this.emit(event), jobId, taskId, 'worker failure event');
-
-    this.detach(this.eventCoordinator.accept({ jobId, reason: `worker-${phase}-failure` }), jobId, taskId, 'worker failure reconcile wake');
+      emit: event => this.emit(event),
+      detach: (promise, job, task, context) => this.detach(promise, job, task, context),
+      wake: (job, task, reason) =>
+        this.detach(this.eventCoordinator.accept({ jobId: job, reason }), job, task, 'worker failure reconcile wake'),
+    }, jobId, taskId, executionId, failure, phase);
   }
   protected async runtimeSettled(jobId: string, taskId: string, executionId: string, result: Task['result'], error: string | null): Promise<void> {
     const live = this.live.get(taskId);
@@ -296,6 +248,12 @@ export abstract class ReconcilerRuntimeBase {
     const job = await this.store.load(jobId);
     const task = job.tasks.find(item => item.id === taskId);
     if (!task) return;
+    if (error && ['chatgpt', 'z'].includes(task.adapter)
+      && task.executionId === executionId && task.state === 'QUEUED'
+      && !live?.workerStarted) {
+      await this.failLaunch(jobId, taskId, executionId, error, 'process');
+      return;
+    }
     if (task.adapter !== 'chatgpt' && task.adapter !== 'z') {
       const exited = await this.taskTransitions.updateFact(jobId, taskId,
         current => current.executionId === executionId && ['RUNNING', 'QUEUED'].includes(current.state),
@@ -321,6 +279,12 @@ export abstract class ReconcilerRuntimeBase {
     const deadline = inactivityDeadline(current, executionId, this.options.postExitTerminalGraceMs ?? 15_000);
     if (deadline > Date.now()) { this.armInactivityWatchdog(current, executionId); return; }
     const live = this.live.get(taskId);
+    if ((current.adapter === 'chatgpt' || current.adapter === 'z')
+      && current.state === 'QUEUED' && !live?.workerStarted) {
+      await this.failLaunch(jobId, taskId, executionId,
+        new Error('Worker failed to publish task.started before the inactivity deadline'), 'start-ack');
+      return;
+    }
     // Do not cancel before the serialized watchdog transition rechecks the
     // deadline: a concurrent accepted progress event may have extended it.
     const exit = live?.executionId === executionId && live.processSettled ? live.execution.processExit : undefined;
@@ -390,6 +354,17 @@ export abstract class ReconcilerRuntimeBase {
     }
   }
   protected async applyTerminalEvent(event: EventRecord, trustedInternal = false): Promise<EventHandlingResult> {
+    if (event.type === 'task.failed') {
+      const job = await this.store.load(event.job_id);
+      const original = job.tasks.find(task => task.id === event.task_id);
+      if (original && ['chatgpt', 'z'].includes(original.adapter)
+        && original.state === 'QUEUED' && original.executionId
+        && isCorrelatedWorkerEvent(original, event)) {
+        await this.failLaunch(event.job_id, event.task_id, original.executionId,
+          new Error(event.message || 'Worker reported failure before task.started'), 'terminal');
+        return { applied: true, reconcile: false, reason: 'task.failed.no-start-fallback' };
+      }
+    }
     const liveAtTerminal = this.live.get(event.task_id); const terminalEventExecutionId = executionIdFromSource(eventSourceId(event), event.job_id, event.task_id);
     const lifecycleEvent = event.type === 'task.blocked'
       ? (await this.store.load(event.job_id)).tasks.find(task => task.id === event.task_id)?.interactiveInvocation?.status === 'awaiting_decision'

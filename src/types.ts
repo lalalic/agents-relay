@@ -150,6 +150,13 @@ export type Task = {
   recoveryPlanId?: string;
   recoveryContext?: { failureKind: string; reason: string; evidence?: string; recoveryTaskId: string; at: string; reroute: boolean };
   routingExclusions?: Array<{ provider: string; model: string; profile?: string; workerId?: string; adapter?: WorkerAdapterName; reason: string; at: string }>;
+  noStartFallback?: {
+    failedExecutionId: string;
+    failedAttempt: number;
+    previous: { adapter: WorkerAdapterName; workerId: string; provider: string; model: string; profile?: string };
+    reason: string;
+    at: string;
+  };
   platformFailure?: {
     classification: 'adapter_failure' | 'transport_failure' | 'launch_failure' | 'start_ack_timeout' | 'browser_workspace_unavailable' | 'mcp_login_required' | 'project_setup_unavailable' | 'model_unavailable' | 'pool_capacity_full' | 'provider_unavailable' | 'outcome_unknown';
     executionId: string;
