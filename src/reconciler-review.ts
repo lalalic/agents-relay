@@ -6,6 +6,7 @@ import { eventFor } from './events.js';
 import { RoutingDecision, WorkerSelection } from './types.js';
 import { workerCandidates, type WorkerCandidate } from './worker-routing.js';
 import { routeExecution } from './execution-routing.js';
+import { recordRouteOutcome } from './route-outcome-recording.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
@@ -251,6 +252,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       registered,
       chatgptRunning: runtimeSummary?.chatgptRunning ?? 0,
       routingConstraints: configured?.routing,
+      auditStore: this.options.decisionAuditStore,
     });
     return {
       candidate: routed.candidate,
@@ -445,6 +447,11 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     if (event.type==='review.started' && this.store.verifyWorkflowLaunch) {
       const outcome=await this.store.verifyWorkflowLaunch(job.id,task.id,task.executionId!);
       if (outcome==='Failed')throw Error('reviewer start postcondition violated');
+    }
+    // A changes-requested verdict is a successfully delivered review, not a failed model route.
+    if (event.type === 'review.approved' || event.type === 'review.changes_required') {
+      const committedReviewer = job.tasks.find(item => item.id === task.id) ?? task;
+      await recordRouteOutcome(this.options.decisionAuditStore, committedReviewer, 'success', 'review.' + outcome, { event_type: event.type });
     }
     // Review approval records evidence only. The subsequent Graph reconcile
     // drives durable local Git merge delivery and terminalization.

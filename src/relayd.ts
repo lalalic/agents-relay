@@ -436,7 +436,7 @@ export async function runDaemon(argv: readonly string[]): Promise<void> {
         storySize: task.storySize ?? 'M',
       },
       usage,
-      chatgptRunning: runtime.workers.chatgpt,
+      chatgptRunning: runtime.workers.chatgpt, historyStore: decisionAuditStore,
     });
     return {
       selected: {

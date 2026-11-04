@@ -1,5 +1,5 @@
 import { DecisionEngine, DecisionMode, JsonValue } from './decision.js';
-import { DecisionAuditRecord, DecisionAuditStore, makeExecutionDecisionAudit } from './decision-audit.js';
+import { DecisionAuditRecord, DecisionAuditStore, makeExecutionDecisionAudit, recentExecutionRouteResults } from './decision-audit.js';
 import { discoverModelCandidates, ModelCandidate } from './model-routing.js';
 import { loadExecutionRouterRules, loadRoutingPolicy, policyAllows } from './routing-policy.js';
 import { AccountUsageOverview } from './usage.js';
@@ -93,6 +93,7 @@ export type ExecutionRoutingOptions = {
   routingConstraints?: Partial<Pick<RoutingDecision, 'provider' | 'model' | 'profile' | 'reasoning'>>;
   excludedRoutes?: Array<Partial<Pick<RoutingDecision, 'provider' | 'model' | 'profile'>>>;
   auditStore?: DecisionAuditStore;
+  historyStore?: Pick<DecisionAuditStore, 'read'>; // Read-only Router previews must not append decisions.
   auditTask?: Task;
 };
 
@@ -355,6 +356,10 @@ export async function routeExecution(
 
   const taskFacts = options.taskFacts ?? {};
   const taskShape = executionTaskShape(taskFacts);
+  const historyStore = options.historyStore ?? options.auditStore;
+  const recentRouteResults = historyStore
+    ? await recentExecutionRouteResults(historyStore).catch(() => []) // Advisory history cannot block execution.
+    : [];
 
   const discoveredDefaults = new Map<string, readonly ModelCandidate[]>();
   for (const worker of workers) {
@@ -402,11 +407,12 @@ export async function routeExecution(
       chatgpt_running: chatgptRunning,
       preferred_chatgpt_concurrency: preferredChatgptConcurrency,
     },
+    recent_route_results: recentRouteResults,
   })) as Record<string, unknown>;
 
   const question = appendRoutingInstruction(
     'User routing instructions have highest priority over default preferences, task size, runtime and resource signals. Candidate order is arbitrary and conveys no priority, ranking or preference. Do not favor earlier choices. Select an offered route that obeys the user instructions.\nUser routing instructions:\n' + routingInstruction,
-    'For vision, image generation, visual review, and final review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
+    'Use recent_route_results (up to the last 10 confirmed execution outcomes) to weigh route reliability, including success, failure and the recorded reason. Distinguish provider/runtime faults from task-specific failures and cancellations; historical failures are evidence, not automatic hard exclusions. For vision, image generation, visual review, and final review tasks, prefer ChatGPT Worker when available and within capacity; for coding, CLI and filesystem tasks, prefer Codex. These are soft preferences subordinate to user rules. Choose exactly one listed route; do not invent routes.',
   );
 
   let selected = fallback;
@@ -469,6 +475,7 @@ export async function routeExecution(
       candidateRoutes: routes.map(route => ({ id: route.id, workerId: route.worker.workerId, adapter: route.worker.adapter })),
       effectiveChoices,
       routingInstruction,
+      recentRouteResults,
     },
     policy,
     routing,

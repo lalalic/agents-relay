@@ -10,7 +10,7 @@ import { DurableTaskTransitionRuntime } from './workflow/durable-transition.js';
 import { EventBus, eventFor } from './events.js'; import { ObjectivePlanner } from './planner.js';
 import type { ExecutionContextRoots } from './execution-context.js'; import type { AccountUsageOverview } from './usage.js';
 import type { LocalMergeReceipt } from './local-git-merge.js'; import type { DecisionEngine, DecisionMode } from './decision.js';
-import type { DecisionAuditStore } from './decision-audit.js';
+import { recordTerminalRouteOutcome, recordLaunchRouteOutcome, recordWatchdogRouteOutcome, type DecisionAuditStore } from './route-outcome-recording.js';
 import { WorkflowEffectExecutor, type WorkflowEffectOutcome } from './workflow/effects.js';
 import type { LocalMergeEffect } from './local-merge-delivery.js';
 import type { EscalationNotifier } from './escalation-notifier.js'; import { workflowEffectFailureEvent } from './workflow/contracts.js';
@@ -21,7 +21,6 @@ import type { EventsHistoryPage } from './events-bus-runtime.js';
 import { monitorExecutionProcess } from './execution-process-tracker.js'; import { HostInteractiveInvocationCoordinator, hostInvocationPorts } from './interactive-invocation.js'; import { resumeInteractiveTask } from './interactive-resume.js';
 import { persistChatGptPlatformFailure } from './chatgpt-platform-fallback.js';
 import { acceptTaskProgress, armInactivityWatchdog, inactivityDeadline, isCorrelatedWorkerEvent, isRecoverableWatchdogFailure } from './task-inactivity-watchdog.js';
-
 export type ReconcileOptions = { owner: string; noGitHub?: boolean; now?: Date; leaseMs?: number; maxConcurrent?: number; plannerTimeoutMs?: number; startAckTimeoutMs?: number; postExitTerminalGraceMs?: number; adapters: WorkerAdapter[]; planner?: ObjectivePlanner; continuations?: ContinuationAdapter[]; eventBus?: EventBus; emit?: (event: EventRecord) => void | Promise<void>; usageSnapshotProvider?: () => Promise<AccountUsageOverview>; runtimeSummaryProvider?: () => { chatgptRunning: number }; decisionEngine?: DecisionEngine; decisionMode?: DecisionMode; decisionAuditStore?: DecisionAuditStore; reviewer?: { adapter?: 'codex' | 'chatgpt'; workerId?: string; threadId?: string; requirements?: WorkerRequirements; routing?: Task['routing']; maxAttempts?: number; timeoutMs?: number }; chatgptTabClosePolicy?: ChatGptTabClosePolicy; projectPathForJob?: (job: Job, task?: Task) => string | Promise<string>; executionContextRoots?: ExecutionContextRoots; shortcutEventHistoryPage?: (jobId: string, after: number, limit: number) => Promise<EventsHistoryPage>; localMergeEffect?: LocalMergeEffect; localMergeDelivery?: (projectPath: string, receipt: LocalMergeReceipt) => { sourceSha: string; mergedCommitSha: string }; headShaProvider?: (job: Job) => string | null | Promise<string | null>; escalationNotifier?: EscalationNotifier };
 export type EventHandlingResult = { applied: boolean; reconcile: boolean; reason: string; reconcileMode?: 'await' | 'detached' };
 type LiveExecution = { jobId: string; taskId: string; executionId: string; execution: Execution; controller: AbortController; launchBarrier: number; workerStarted: boolean; processSettled: boolean; processError?: string | null };
@@ -237,8 +236,7 @@ export abstract class ReconcilerRuntimeBase {
     const claim = executionId ?? `${jobId}:${taskId}`;
     if (this.launchFailureClaims.has(claim)) return;
     this.launchFailureClaims.add(claim);
-    const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000);
-    cleanup.unref();
+    const cleanup = setTimeout(() => this.launchFailureClaims.delete(claim), 60000); cleanup.unref();
     const workflowEvent = platformFailure ? 'worker.platform_failure' : phase === 'start-ack' ? 'worker.start_ack_failed' : 'worker.delivery_failed';
     const transition = await this.taskTransitions.apply(jobId, taskId, platformFailure ? 'worker.platform_failure' : workflowEvent, {
       eligible: (_job, task) => task.executionId === executionId,
@@ -268,6 +266,7 @@ export abstract class ReconcilerRuntimeBase {
       ));
       return;
     }
+    await recordLaunchRouteOutcome(this.options.decisionAuditStore, transition.task, message, phase, executionId, unknownOutcome);
     if (executionId) {
       const live = this.live.get(taskId);
       if (live?.executionId === executionId) {
@@ -344,6 +343,7 @@ export abstract class ReconcilerRuntimeBase {
       if (latest?.executionId === executionId && ['QUEUED', 'RUNNING'].includes(latest.state)) this.armInactivityWatchdog(latest, executionId);
       return;
     }
+    await recordWatchdogRouteOutcome(this.options.decisionAuditStore, transition.task, { executionId, failedExit, rawError, failureReason, failureMessage, exitCode: exit?.exitCode ?? null });
     if (live?.executionId === executionId) {
       live.controller.abort();
       live.execution.cancel();
@@ -458,6 +458,7 @@ export abstract class ReconcilerRuntimeBase {
       },
     }));
     if (!transition?.decision.accepted) return { applied: false, reconcile: false, reason: `${event.type}.ignored` };
+    if (lifecycleEvent !== 'interactive.waiting') await recordTerminalRouteOutcome(this.options.decisionAuditStore, transition.task, event, terminalEventExecutionId ?? null);
     if (transition.task.adapter === 'codex' && liveAtTerminal && !liveAtTerminal.processSettled && liveAtTerminal.jobId === event.job_id && (!terminalEventExecutionId || liveAtTerminal.executionId === terminalEventExecutionId)) { liveAtTerminal.controller.abort(); liveAtTerminal.execution.cancel(); }
     if (event.type === 'task.completed') await this.deliverContinuation(transition.job, transition.task);
     const reviewWorker = transition.task.agentName === 'reviewer';
