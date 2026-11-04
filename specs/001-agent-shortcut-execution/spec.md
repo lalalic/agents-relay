@@ -6,8 +6,9 @@
 
 As a project owner, I invoke `neo project run` against a bound project Run and see
 real-time node status until the Relay Job has a proven terminal outcome. Relay
-uses its existing Agent Graph, lifecycle, SQLite authority and receipts without
-ordinary Planner/Worker scheduler dispatch.
+uses its existing Agent Graph, lifecycle, SQLite authority and receipts.
+Code-shortcut nodes execute directly; uncovered model-backed nodes run using
+the existing Relay Worker fallback, rather than a new direct Codex executor.
 
 **Independent test**: A fork/join DAG proves bounded concurrency, dependency
 ordering, predecessor-only outputs, live started/progress/terminal events, and
@@ -16,13 +17,13 @@ one durable terminal result rather than treating process exit as success.
 ### User Story 2 — Use code shortcuts and model-backed nodes (P1)
 
 Nodes with an explicit, verified `.shortcut/<agent>.agent.mjs` execute that
-module. Model-backed nodes use the existing Codex Adapter with its configured
-default model, called directly by the Graph Executor. Neither case creates a
-normal queued Worker or invokes the Reconciler to schedule the DAG.
+module. Nodes requiring a model but lacking a code shortcut use the existing
+Relay Worker fallback, including its normal Adapter/model routing and durable
+Task lifecycle. No separate direct Codex executor is required.
 
-**Independent test**: Exercise one shortcut node and one Codex node; assert
-actual adapter identity and configured model, contract-valid outputs, and
-no Planner/Worker queue or fallback on failure.
+**Independent test**: Exercise one code-shortcut node and one model-backed
+Worker fallback node; assert graph dependencies, canonical Task ownership,
+contract-valid outputs, correct routing and no duplicate execution.
 
 ### User Story 3 — Resume correlated events safely (P1)
 
@@ -67,18 +68,20 @@ fabricating observations, approval, uploads or publication authority.
   concurrency and structured predecessor outputs. No second graph parser.
 - **FR-003**: Resolve code shortcuts from project agents before Neo shared
   agents, without changing `.agent.md`, project contracts or eval requirements.
-- **FR-004**: A node without a code shortcut but requiring a model executes
-  directly via the existing Codex Adapter and its **configured default model**.
-  No guessed model, ordinary Worker queue or fallback model router.
+- **FR-004**: A model-backed node without an available code shortcut MUST use
+  the existing Relay Worker fallback and its configured Worker/Adapter routing.
+  Do not create a new direct Codex model executor.
 - **FR-005**: Direct Shortcut CLI runs synchronously, emits actual per-node
   started/progress/completed/failed/wait events in real time, and distinguishes
   completed, failed, blocked, timed out and interrupted exit statuses.
-- **FR-006**: Direct mode bypasses Scheduler wake, Planner, normal Worker
-  dispatch and Reconciler DAG scheduling, but preserves Relay SQLite Job/Task
-  authority, graph-owned transitions, leases and receipts.
-- **FR-007**: In **Direct Shortcut mode**, a missing, failed or invalid node
-  MUST fail or block with evidence; it MUST NOT silently switch to ordinary
-  Worker execution. Only an explicit CLI mode change authorizes such a switch.
+- **FR-006**: The Shortcut Graph Executor owns DAG readiness, code-shortcut
+  execution and predecessor outputs. Model-backed fallback nodes use the
+  existing Relay Worker dispatch without creating another scheduler or
+  duplicate Job/Task authority. Preserve Relay SQLite lifecycle, leases and receipts.
+- **FR-007**: Missing *code shortcuts* for model-backed nodes MAY select the
+  existing Worker fallback according to the Graph contract. Invalid code
+  shortcut results, unauthorized effects and failed execution MUST NOT be
+  silently treated as successful; recovery follows canonical Relay policy.
 - **FR-008**: Non-human `WAITING_EVENT` receipts are node-, execution-,
   revision- and content-hash-bound, duplicate-safe, restart-safe and
   idempotently consumed; human approvals require the existing authenticated
@@ -113,7 +116,8 @@ fabricating observations, approval, uploads or publication authority.
   a mismatched execution identity, incompatible Codex requirements,
   or an unavailable default model MUST use existing failure/recovery.
   The existing explicit pre-submission safe-rejection route remains
-  supported; Direct Shortcut mode never falls back to normal Worker mode.
+  supported; shortcut-mode model nodes may use the existing Worker fallback
+  while retaining Graph/SQLite authority.
 
 - **FR-017**: No code from this feature may auto-merge, push or publish
   content. All release gates require independent review and real evidence.
@@ -131,8 +135,9 @@ fabricating observations, approval, uploads or publication authority.
 
 ## Success Criteria
 
-- **SC-001**: Fork/join scheduling, code shortcut and direct Codex node tests
-  verify live events, real structured outputs and durable transitions.
+- **SC-001**: Fork/join scheduling, code-shortcut execution and ordinary
+  Worker fallback node tests verify live events, real structured outputs,
+  dependency order and durable transitions.
 - **SC-002**: Restart, replay, stale receipts, human-approval denial, timeout,
   interruption and idempotent run binding tests pass.
 - **SC-003**: ChatGPT/Z failed executions without `task.started` retry
@@ -148,11 +153,11 @@ fabricating observations, approval, uploads or publication authority.
 
 ## Scope & Safety
 
-This spec defines two different execution modes: **Direct Shortcut mode**
-never falls back to normal Worker execution; **normal Worker mode** preserves its
-existing safe pre-submission rerouting and adds a once-only no-start
-failed-execution recovery selecting an eligible configured Codex default. Both retain
-Relay's authoritative Graph and SQLite lifecycle.
+This spec defines one Shortcut Graph execution path with two supported node
+mechanisms: direct code shortcut and existing Relay Worker fallback for
+model-backed nodes. Normal ChatGPT/Z Workers retain their once-only no-start
+recovery to the configured Codex default. All paths share Relay Graph and
+SQLite authority; no new direct Codex executor or second scheduler is required.
 
 No real third-party upload, purchase, publication, human approval or
 automatic Git merge is authorized by implementing this contract. Prior

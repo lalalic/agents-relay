@@ -47,23 +47,24 @@ and the absence of a Troubleshooter on successful recovery.
 ## Direct Shortcut Runner Release Status
 
 The earlier content-only shortcut path can be invoked with the existing
-`agents-relay job run --mode shortcut` interface, but **this hotfix does not
-deliver a complete synchronous Neo CLI or a full direct Codex-backed DAG**.
+`agents-relay job run --mode shortcut` interface, but the full
+synchronous Neo CLI and mixed code-shortcut/Worker-fallback DAG remain unverified.
 
-The intended Direct Runner must run `neo project run` synchronously, stream
-node lifecycle, invoke Codex directly for uncovered model-backed nodes,
-preserve the 20-minute elapsed budget, and fail closed instead of falling
-back to ordinary Worker mode. Its Vlog full-DAG E2E and independent review
-remain **NOT_RUN** and block that separate release.
+The intended Shortcut Runner must run `neo project run` synchronously, stream
+node lifecycle, use the existing Relay Worker fallback for uncovered
+model-backed nodes, and preserve the 20-minute elapsed budget and canonical
+result validation. A separate direct Codex executor is not required.
+The real Vlog full-DAG E2E and independent review remain **NOT_RUN**
+and block the single unified release.
 
 No live browser/provider test, publishing, external transfer or real Markcut
 review approval is implied by these local regression results.
 
-## Original Shortcut Branch Implementation Evidence (unmerged-into-main)
+## Original Shortcut Branch Implementation Evidence (not yet merged to main)
 
 The original shortcut development branch includes a foreground Relay direct
 `job run --mode shortcut` implementation, changes to `agent-shortcut.ts`,
 `cli-shortcut.ts`, Graph dispatch and local `task-actions.ts`. This branch
 history is retained in merge parent `c0dbc62` for review and continuation.
 Those changes are **not** equivalent to full `neo project run` integration,
-Codex-backed node execution, or a proven real Vlog end-to-end run.
+existing Worker fallback integration, or a proven real Vlog end-to-end run.
