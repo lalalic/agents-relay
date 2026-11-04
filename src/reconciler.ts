@@ -2,7 +2,7 @@ import {deliverPendingEscalations} from './escalation-notifier.js'; import {crea
 import { executeForceRestate } from './force-restate.js'; import { recordThreadDelivery, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery, resolveReviewerThreadDestination } from './reviewer-thread.js'; import { executeManualPlan } from './manual-plan.js'; import { executionEventSource, type ReconcileOptions, withExecutionBoundary } from './reconciler-runtime.js'; export { executionEventSource } from './reconciler-runtime.js'; export type { ReconcileOptions } from './reconciler-runtime.js';
 import { CallbackWorkflowEffectHandler } from './workflow/effects.js'; import { exhaustedTroubleshooterRecoveries, pendingTroubleshooterTasks, pendingTroubleshooterReopens, pendingTroubleshooterRetries, refreshTroubleshooterInput } from './troubleshooter.js';
 import { fallbackFailedTroubleshooters, escalateExhaustedTroubleshooters } from './troubleshooter-fallback.js';import { assertCleanWorktreeAtHead, prepareManagedExecutionWorktree } from './workspace.js';
-import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution } from './job-execution-slot.js';
+import { cleanupMergedJobWorktree } from './job-worktree-cleanup.js'; import { jobHasActiveExecution } from './job-execution-slot.js'; import { requiresWorkerInactivityWatchdog } from './task-inactivity-watchdog.js';
 import { managedWorkerInput } from './managed-worker-input.js';
 import { attachResolutionOwnership } from './workflow/task-resolution.js';
 import { launchShortcutEffect, resumeShortcutEffect, resumeShortcutEventWaits } from './reconciler-shortcut.js';
@@ -169,17 +169,8 @@ export class Reconciler extends ReconcilerReviewBase {
       const beforeSchedule = await this.store.load(jobId);
       const taskStatesBeforeSchedule = new Map(beforeSchedule.tasks.map(task => [task.id, task.state]));
       let scheduled = refreshTaskDependencies(beforeSchedule);
-      // The direct Graph parent is owned by the foreground 20-minute budget,
-      // not a Worker process. Its Task timeout may legitimately be zero.
-      // Arm standard inactivity timers only for real Worker child Tasks (or
-      // legacy explicit whole-Graph Worker fallback), never the leased parent.
-      for (const task of scheduled.tasks) {
-        if (!task.executionId || !['QUEUED', 'RUNNING'].includes(task.state)) continue;
-        const shortcut=task.result?.data?.shortcut as {workerFallback?:boolean}|undefined;
-        if (scheduled.executionMode==='shortcut' && scheduled.contentOnly===true
-          && task.agentGraph && shortcut?.workerFallback!==true) continue;
-        this.armInactivityWatchdog(task, task.executionId);
-      }
+      for (const task of scheduled.tasks) if (task.executionId && ['QUEUED', 'RUNNING'].includes(task.state)
+        && requiresWorkerInactivityWatchdog(scheduled,task)) this.armInactivityWatchdog(task,task.executionId);
       for (const task of scheduled.tasks) {
         if (taskStatesBeforeSchedule.get(task.id) !== task.state) await this.store.saveTask(task);
       }
