@@ -46,19 +46,25 @@ and the absence of a Troubleshooter on successful recovery.
 
 ## Direct Shortcut Runner Release Status
 
-The CLI handoff is implemented: `neo project run` now executes the bound
-Relay `job run --mode shortcut` in the foreground, forwards live node events,
-appends a private Run log, propagates non-success exit codes, and checks
-durable Job/Task completion before returning 0. Mixed code-shortcut/Worker nodes have a new offline fixture matrix and fake-Adapter integration. Re-run the strict matrix and full regression before marking the T004 gate.
+`neo project run` executes the bound Relay Job in the foreground, emits real
+node events, persists a private Run log, and verifies durable exit status.
+The canonical Graph executor now dispatches code shortcuts and only missing
+model nodes through existing Relay Worker Adapters as owned durable child Tasks,
+including Troubleshooter recovery. No separate Codex executor or global
+Relay Queue is used. The **five permanent DAGs D01–D05** (D06 removed) plus
+F01–F10 cases run with `npm run test:shortcut:dags`; D01–D05 are also part of
+`test:fast` and `test:full`.
 
-Next, the Shortcut Runner must use existing Relay Worker fallback for uncovered
-model-backed nodes and prove the 20-minute elapsed budget and canonical
-result validation with a full Run. A separate direct Codex executor is not required.
-The real Vlog full-DAG E2E and independent review remain **NOT_RUN**
-and block the single unified release.
-
-No live browser/provider test, publishing, external transfer or real Markcut
-review approval is implied by these local regression results.
+2026-11-04 evidence: shortcut DAG 47/47, fast 134/134, full 1106/1106,
+L3 70 PASS / 1 SKIP / 0 FAIL. A real **private** Vlog Run
+`neo/vlog/runs/2026-11-04-shortcut-mixed-dag-vlog-e2e-v2/` passed Visioner,
+Director and Editor, then Producer failed from overly restrictive canonical
+Run input interpretation. The input contract was corrected and verified by
+F09/F10, but the **real Producer after the fix, the final render, human
+preview approval and Final QA remain NOT_RUN**. The 20-minute deadline and
+owned-process restart gate T014 and independent review remain open. Do not
+release, merge, deploy, publish, voice-clone or assume owner approval from
+synthetic checks or a partial Run.
 
 ## Original Shortcut Branch Implementation Evidence (not yet merged to main)
 
@@ -85,6 +91,6 @@ From another terminal (or through Neo MCP), follow the same canonical Run:
 tail -f /Users/chengli/Workspace/neo/vlog/runs/DATE-RUN/neo-project-run.log
 ```
 
-Do not start a real Vlog Run until the owner and assistant are observing
-the same terminal/log. CLI foreground streaming and failure-exit tests pass;
-Vlog execution and its mixed Worker fallback remain T004/T015 acceptance gates.
+Only run private Vlog media with the owner-authorized canonical Run and the same
+observable terminal/log. Do not substitute a completed process or a partial
+Visioner/Worker result for full T015 video, owner review, or Final QA.
