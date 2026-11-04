@@ -28,7 +28,7 @@
         "FR-006",
         "FR-007"
       ],
-      "expected": "code node A persisted before model dispatch; downstream node C must wait for correlated Worker outcome (full mock Worker E2E not yet implemented)",
+      "expected": "code source -> existing Relay Worker -> code finish, with correlated durable Worker output; fault injection F01/F02/F03",
       "gate": "T004"
     },
     {
@@ -40,7 +40,7 @@
         "FR-004",
         "FR-006"
       ],
-      "expected": "partial progress with model node pending",
+      "expected": "concurrent code and Worker branches; join waits for both exact predecessor outputs",
       "gate": "T004"
     },
     {

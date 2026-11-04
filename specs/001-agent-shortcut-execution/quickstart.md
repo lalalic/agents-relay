@@ -49,8 +49,7 @@ and the absence of a Troubleshooter on successful recovery.
 The CLI handoff is implemented: `neo project run` now executes the bound
 Relay `job run --mode shortcut` in the foreground, forwards live node events,
 appends a private Run log, propagates non-success exit codes, and checks
-durable Job/Task completion before returning 0. The mixed
-code-shortcut/Worker-fallback DAG remains unverified.
+durable Job/Task completion before returning 0. Mixed code-shortcut/Worker nodes have a new offline fixture matrix and fake-Adapter integration. Re-run the strict matrix and full regression before marking the T004 gate.
 
 Next, the Shortcut Runner must use existing Relay Worker fallback for uncovered
 model-backed nodes and prove the 20-minute elapsed budget and canonical

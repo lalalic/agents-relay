@@ -2,6 +2,7 @@ import test from './test-runtime.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -235,15 +236,18 @@ test('receipt endpoint rejects a pre-shortcut legacy Job',async t=>{
   assert.notEqual(rejected.status,0); assert.match(rejected.stderr,/active persisted wait and execution/);
 });
 
-test('missing code module routes to Worker only through foreground runner, not global Queue', async t => {
+test('missing standalone model node cannot use a global Queue or execute without EventBus', async t => {
   const f = await fixture(t, { agentGraph: 'flowchart TD\nA[agent:missing]' });
   const result = await f.cli('--events','none');
   assert.equal(result.status, 1, JSON.stringify(result));
-  assert.match(result.stderr,/requires a reachable EventBus/);
+  const output=JSON.parse(result.stdout);
+  assert.match(output.outcome.reason,/reachable EventBus and existing Relay Worker Adapter/);
   const task=(await f.load()).tasks[0];
-  assert.equal(task.state,'QUEUED');
-  assert.equal(task.attempt,0);
-  assert.equal(task.result.data.shortcut.workerFallback,true);
+  assert.equal(task.state,'FAILED');
+  assert.equal(task.attempt,1);
+  assert.equal(task.result.data.shortcut.workerFallback,undefined);
+  assert.equal(task.result.data.shortcut.nodes.A,undefined);
+  assert.equal((await f.load()).tasks.length,1,'no model Task dispatched without EventBus');
 });
 
 test('direct shortcut budget is immutable across runs and timeout returns its own exit code',async t=>{
@@ -262,17 +266,18 @@ test('direct shortcut budget is immutable across runs and timeout returns its ow
   assert.equal(saved.tasks[0].result.data.shortcut.terminal.status,'TIMED_OUT');
 });
 
-test('missing downstream code shortcut cannot trigger earlier module side effects',async t=>{
+test('missing downstream model node preserves the completed predecessor checkpoint without global Worker fallback',async t=>{
   const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:has-code] --> B[agent:no-code]'});
   const marker=join(f.directory,'first-shortcut-ran');
-  await f.writeShortcut(f.project,'has-code',`import {writeFile} from 'node:fs/promises'; export async function run(){ await writeFile(${JSON.stringify(marker)},'unsafe'); return {status:'COMPLETED',output:{foo:1},artifacts:[]}; }`);
+  await f.writeShortcut(f.project,'has-code',`import {writeFile} from 'node:fs/promises'; export async function run(){ await writeFile(${JSON.stringify(marker)},'done'); return {status:'COMPLETED',output:{foo:1},artifacts:[]}; }`);
   const result=await f.cli('--events','none');
   assert.equal(result.status,1,result.stderr);
-  const {access}=await import('node:fs/promises');
-  await assert.rejects(access(marker),{code:'ENOENT'});
+  assert.equal(await readFile(marker,'utf8'),'done');
   const saved=await f.load();
-  assert.equal(saved.tasks[0].state,'QUEUED');
-  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,true);
+  assert.equal(saved.tasks[0].state,'FAILED');
+  assert.equal(saved.tasks[0].result.data.shortcut.workerFallback,undefined);
+  assert.equal(saved.tasks[0].result.data.shortcut.nodes.A.output.foo,1);
+  assert.equal(saved.tasks[0].result.data.shortcut.nodes.B,undefined);
 });
 
 test('an exception after entering an untrusted shortcut module requires recovery, not Worker replay',async t=>{
@@ -570,4 +575,237 @@ test('foreground Shortcut Runner exclusively launches failure Troubleshooter wit
     assert.equal(latest.executionMode,'shortcut');
     assert.equal(latest.tasks.find(x=>x.id==='troubleshoot-initial').agentName,'troubleshooter');
   } finally {rawStore.close();}
+});
+
+test('D02 integration: graph executes code, existing Worker child, then code from correlated Worker output',async t=>{
+  const f=await fixture(t,{agentGraph:'flowchart TD\nA[agent:source] --> M[agent:model]\nM --> C[agent:finish]'});
+  const {runAgentShortcut}=await import('../dist/agent-shortcut.js');
+  const {runShortcutModelNode}=await import('../dist/shortcut-node-worker.js');
+  const {mkdir}=await import('node:fs/promises');
+  const {dirname}=await import('node:path');
+  const bus=new MemoryEventBus(),rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id,job=>{job.tasks[0].output={kind:'file',path:join(f.directory,'final.json')};return job;});
+  const store=new Proxy(rawStore,{get(target,key){
+    if(key==='listAgents')return async()=>[];
+    if(key==='load')return target.loadJob.bind(target);
+    if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const i=job.tasks.findIndex(x=>x.id===task.id);if(i<0)throw Error('Missing Task');job.tasks[i]=structuredClone(task);return job;});
+    if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(x=>x.id===task.id))throw Error('Duplicate Task');job.tasks.push(structuredClone(task));return job;});
+    const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+  }});
+  await writeFile(join(f.project,'agents','model.agent.md'),'---\nname: model\ndescription: Synthetic model role\ntype: worker\n---\nProduce a checked JSON node result.\n');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{token:'from-code'},artifacts:[]};}`);
+  await f.writeShortcut(f.project,'finish',`export async function run({input}){if(input.predecessorOutputs.M.token!=='from-worker')throw Error('Worker output missing');return {status:'COMPLETED',output:{last:true},artifacts:[]};}`);
+  const launches=[];
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    launches.push({id:task.id,agent:task.agentName,input:task.input});
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','started','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{token:'from-worker'},artifacts:[]}));
+      await bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','model completed','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'fake-'+task.id,launched:Promise.resolve(),promise:Promise.resolve({summary:'fake adapter exited'}),cancel(){}};
+  }};
+  const reconciler=managedReconciler(store,{shortcutRunnerOwner:true,owner:'mixed-dag-fixture',noGitHub:true,maxConcurrent:1,
+    adapters:[adapter],eventBus:bus,projectPathForJob:()=>f.project,headShaProvider:()=>null});
+  const unwatch=await reconciler.watch(f.id);
+  try{
+    const before=await store.load(f.id);
+    const controller=AbortSignal.timeout(2500);
+    const events=[];
+    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,neoRoot:f.neo,
+      signal:controller,onNodeEvent:event=>events.push(event),
+      runModelNode:node=>runShortcutModelNode({store,reconciler,jobId:f.id,parentTaskId:'initial',node})});
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify({outcome:result.outcome,tasks:(await store.load(f.id)).tasks.map(x=>({id:x.id,state:x.state,attempt:x.attempt,executionId:x.executionId,leaseOwner:x.leaseOwner,error:x.error,workerSelection:x.workerSelection})),launches,events}));
+    const after=await store.load(f.id);
+    assert.equal(after.state,'COMPLETED');assert.equal(after.tasks[0].state,'SUCCEEDED');
+    assert.equal(after.tasks[1].id,'shortcut-initial-M');assert.equal(after.tasks[1].state,'SUCCEEDED');
+    assert.equal(after.tasks[1].agentName,'model');
+    assert.deepEqual(launches.map(l=>l.id),['shortcut-initial-M']);
+    assert.equal(JSON.parse(after.tasks[1].input).predecessorOutputs.A.token,'from-code');
+    assert.deepEqual(events.filter(e=>e.type==='completed').map(e=>e.nodeId),['A','M','C']);
+    assert.equal(after.tasks[0].result.data.shortcut.nodes.C.output.last,true);
+  } finally {await unwatch();rawStore.close();}
+});
+
+async function mixedFixture(t,graphFile){
+  const agentGraph=await readFile(join(root,'test','fixtures','shortcut-dags',graphFile),'utf8');
+  const f=await fixture(t,{agentGraph});
+  const rawStore=new SQLiteRelayStore(join(f.directory,'relay.sqlite'),f.id);
+  await rawStore.mutateJob(f.id,job=>{job.tasks[0].output={kind:'file',path:join(f.directory,'final.json')};return job;});
+  const store=new Proxy(rawStore,{get(target,key){
+    if(key==='listAgents')return async()=>[];
+    if(key==='load')return target.loadJob.bind(target);
+    if(key==='saveTask')return task=>target.mutateJob(f.id,job=>{const i=job.tasks.findIndex(item=>item.id===task.id);if(i<0)throw Error('Task missing');job.tasks[i]=structuredClone(task);return job;});
+    if(key==='appendTask')return task=>target.mutateJob(f.id,job=>{if(job.tasks.some(item=>item.id===task.id))throw Error('Duplicate Task');job.tasks.push(structuredClone(task));return job;});
+    const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+  }});
+  await writeFile(join(f.project,'agents','model.agent.md'),'---\nname: model\ndescription: Synthetic model role\ntype: worker\n---\nProduce only the required synthetic output.\n');
+  await writeFile(join(f.project,'agents','troubleshooter.agent.md'),'---\nname: troubleshooter\ndescription: Synthetic recovery role\ntype: worker\n---\nDiagnose synthetic failure.\n');
+  const bus=new MemoryEventBus();
+  const {runAgentShortcut}=await import('../dist/agent-shortcut.js');
+  const {runShortcutModelNode}=await import('../dist/shortcut-node-worker.js');
+  const execute=async(reconciler,signal=AbortSignal.timeout(3000))=>{
+    const before=await store.load(f.id);
+    const events=[];
+    const result=await runAgentShortcut({store,job:before,task:before.tasks[0],projectPath:f.project,neoRoot:f.neo,signal,
+      onNodeEvent:event=>events.push(event),
+      runModelNode:node=>runShortcutModelNode({store,reconciler,jobId:f.id,parentTaskId:'initial',node})});
+    return {result,events,job:await store.load(f.id)};
+  };
+  const makeReconciler=adapter=>managedReconciler(store,{shortcutRunnerOwner:true,owner:'mixed-test',noGitHub:true,
+    maxConcurrent:1,adapters:[adapter],eventBus:bus,projectPathForJob:()=>f.project,headShaProvider:()=>null});
+  t.after(()=>rawStore.close());
+  return {...f,store,rawStore,bus,execute,makeReconciler};
+}
+
+test('D03 integration: code and Worker branches run concurrently, join waits for both outputs',async t=>{
+  const f=await mixedFixture(t,'D03-parallel-code-model.mmd');
+  const {mkdir}=await import('node:fs/promises');
+  const {dirname}=await import('node:path');
+  const codeReady=join(f.directory,'code-ready'),workerReady=join(f.directory,'worker-ready');
+  await f.writeShortcut(f.project,'code',`import {writeFile,access} from 'node:fs/promises';
+    export async function run(){
+      let launched=false; for(let i=0;i<120;i++){try{await access(${JSON.stringify(workerReady)});launched=true;break;}catch{} await new Promise(r=>setTimeout(r,5));}
+      if(!launched)throw Error('model branch did not launch while code was running');
+      await writeFile(${JSON.stringify(codeReady)},'yes');
+      return {status:'COMPLETED',output:{code:true},artifacts:[]};
+    }`);
+  await f.writeShortcut(f.project,'join',`export async function run({input}){
+    if(!input.predecessorOutputs.A.code||!input.predecessorOutputs.M.model)throw Error('join before both inputs');
+    return {status:'COMPLETED',output:{done:true},artifacts:[]};
+  }`);
+  const launches=[];
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    launches.push(task.id);
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','mock started','user',undefined,source));
+      await writeFile(workerReady,'yes');
+      let codeFinished=false;
+      for(let i=0;i<120;i++){try{await readFile(codeReady);codeFinished=true;break;}catch{}await new Promise(r=>setTimeout(r,5));}
+      if(!codeFinished)throw Error('code branch did not run while model in flight');
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{model:true},artifacts:[]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','mock succeeded','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'fake-model',launched:Promise.resolve(),promise:Promise.resolve({summary:'mock exit'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job,events}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify({result:result.outcome,states:job.tasks.map(x=>[x.id,x.state])}));
+    assert.equal(job.state,'COMPLETED');
+    assert.deepEqual(launches,['shortcut-initial-M']);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.J.output.done,true);
+    assert.equal(events.find(e=>e.nodeId==='J'&&e.type==='completed')!==undefined,true);
+    assert.equal(await readFile(codeReady,'utf8'),'yes');
+  } finally {await stop();}
+});
+
+test('D02 fault F01: Worker terminal success without valid node output cannot run downstream',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises');const {dirname}=await import('node:path');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{ready:true},artifacts:[]};}`);
+  const marker=join(f.directory,'unsafe-finish');
+  await f.writeShortcut(f.project,'finish',`import {writeFile} from 'node:fs/promises';export async function run(){await writeFile(${JSON.stringify(marker)},'bad');return {status:'COMPLETED',output:{bad:true},artifacts:[]};}`);
+  let launched=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    launched++;
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','mock started','user',undefined,source));
+      await mkdir(dirname(task.output.path),{recursive:true});
+      await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:null,artifacts:[]}));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','mock succeeded','orchestrator',{},source));
+    })().catch(error=>{throw error;});
+    return {id:'mock-success-invalid-payload',launched:Promise.resolve(),promise:Promise.resolve({summary:'mock exited'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler);
+    assert.equal(result.outcome.status,'FAILED');
+    assert.match(result.outcome.reason,/contract-valid node output/);
+    assert.equal(job.tasks.find(x=>x.id==='shortcut-initial-M').state,'SUCCEEDED','terminal event really succeeded');
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.A.output.ready,true);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C,undefined);
+    assert.equal(existsSync(marker),false);
+    assert.equal(launched,1);
+  } finally{await stop();}
+});
+
+test('D02 fault F02: failed Worker spawns foreground-owned Troubleshooter but never replays model without recovery',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{ready:true},artifacts:[]};}`);
+  const marker=join(f.directory,'unsafe-finish');
+  await f.writeShortcut(f.project,'finish',`import {writeFile} from 'node:fs/promises';export async function run(){await writeFile(${JSON.stringify(marker)},'bad');return {status:'COMPLETED',output:{bad:true},artifacts:[]};}`);
+  const controller=new AbortController(),launched=[];
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    launched.push({id:task.id,agent:task.agentName});
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','mock started','user',undefined,source));
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,task.agentName==='troubleshooter'?'task.completed':'task.failed',task.agentName==='troubleshooter'?'succeeded':'failed','fault injected','orchestrator',{},source));
+      if(task.agentName==='troubleshooter')controller.abort(new Error('Stop after recovery evidence is durable'));
+    })().catch(error=>{throw error;});
+    return {id:'mock-'+task.id,launched:Promise.resolve(),promise:Promise.resolve({summary:'mock exit'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler,AbortSignal.any([controller.signal,AbortSignal.timeout(3000)]));
+    assert.equal(result.outcome.status,'FAILED');
+    assert.equal(job.tasks.find(x=>x.id==='shortcut-initial-M').state,'FAILED');
+    assert.equal(job.tasks.find(x=>x.id==='troubleshoot-shortcut-initial-M').state,'SUCCEEDED');
+    assert.deepEqual(launched.map(x=>x.id),['shortcut-initial-M','troubleshoot-shortcut-initial-M']);
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C,undefined);
+    assert.equal(existsSync(marker),false);
+  } finally{await stop();}
+});
+
+test('D02 fault F03: model failure recovered by foreground Troubleshooter retries same Worker node and completes DAG',async t=>{
+  const f=await mixedFixture(t,'D02-code-model-code.mmd');
+  const {mkdir}=await import('node:fs/promises'),{dirname}=await import('node:path');
+  const {dispatchTaskAction}=await import('../dist/task-actions.js');
+  await f.writeShortcut(f.project,'source',`export async function run(){return {status:'COMPLETED',output:{source:true},artifacts:[]};}`);
+  const marker=join(f.directory,'finish-times');
+  await f.writeShortcut(f.project,'finish',`import {appendFile} from 'node:fs/promises';export async function run({input}){
+    if(!input.predecessorOutputs.M.recovered)throw Error('missing recovered Worker result');
+    await appendFile(${JSON.stringify(marker)},'x');return {status:'COMPLETED',output:{done:true},artifacts:[]};}`);
+  let modelAttempts=0,troubleshootAttempts=0;
+  const adapter={name:'codex',id:'codex',capabilities:['model','codex'],launch(task){
+    const source={id:`job/${f.id}/task/${task.id}/execution/${task.executionId}`};
+    void (async()=>{
+      await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.started','running','mock started','user',undefined,source));
+      if(task.agentName==='troubleshooter'){
+        troubleshootAttempts++;
+        await dispatchTaskAction(f.store,{id:'task.recover',jobId:f.id,taskId:'shortcut-initial-M',
+          recoveryTaskId:task.id,recoveryDiagnosis:{failureKind:'model_failure',reason:'injected model failure',evidence:'synthetic event transcript',reroute:false,excludeCurrentRoute:false}});
+        await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','recovery accepted','orchestrator',{},source));
+        return;
+      }
+      modelAttempts++;
+      if(modelAttempts===1){
+        await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.failed','failed','injected failure','orchestrator',{reason:'model_failure'},source));
+      }else{
+        await mkdir(dirname(task.output.path),{recursive:true});
+        await writeFile(task.output.path,JSON.stringify({status:'COMPLETED',output:{recovered:true},artifacts:[]}));
+        await f.bus.publish(eventFor(f.id,task.id,task.parentTaskId,'task.completed','succeeded','model recovered','orchestrator',{},source));
+      }
+    })().catch(error=>{throw error;});
+    return {id:`mock-${task.id}`,launched:Promise.resolve(),promise:Promise.resolve({summary:'mock exited'}),cancel(){}};
+  }};
+  const reconciler=f.makeReconciler(adapter),stop=await reconciler.watch(f.id);
+  try{
+    const {result,job}=await f.execute(reconciler,AbortSignal.timeout(4000));
+    assert.equal(result.outcome.status,'COMPLETED',JSON.stringify({outcome:result.outcome,tasks:job.tasks.map(x=>[x.id,x.state,x.attempt,x.error])}));
+    assert.equal(job.state,'COMPLETED');
+    assert.equal(modelAttempts,2);
+    assert.equal(troubleshootAttempts,1);
+    assert.equal(job.tasks.filter(x=>x.id==='shortcut-initial-M').length,1);
+    assert.equal(job.tasks.find(x=>x.id==='shortcut-initial-M').state,'SUCCEEDED');
+    assert.equal(job.tasks.find(x=>x.id==='troubleshoot-shortcut-initial-M').state,'SUCCEEDED');
+    assert.equal(job.tasks[0].result.data.shortcut.nodes.C.output.done,true);
+    assert.equal(await readFile(marker,'utf8'),'x','downstream module must run exactly once');
+  } finally {await stop();}
 });

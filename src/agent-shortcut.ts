@@ -165,6 +165,7 @@ export async function runAgentShortcut(options: {
   store: DurableStore; job: Job; task: Task; projectPath: string; neoRoot?: string; concurrency?: number;
   leaseMs?: number; heartbeatMs?: number; resumeReceiptSelected?: true;
   signal?: AbortSignal; onNodeEvent?: (event: ShortcutNodeEvent) => void;
+  runModelNode?: (node: { id: string; agent: string; predecessorOutputs: Record<string, unknown>; executionId: string; signal: AbortSignal }) => Promise<unknown>;
 }): Promise<{ outcome: ShortcutOutcome; task: Task; fallback: boolean }> {
   const { store, job, task, projectPath, neoRoot } = options;
   if (!store.mutateJob) throw new Error('Shortcut execution requires atomic Relay SQLite mutation');
@@ -308,12 +309,11 @@ export async function runAgentShortcut(options: {
 
   try {
   if(Date.now()>=deadlineAt) return await fail('Shortcut execution budget exceeded (20 minutes)');
-  // Shortcut execution is a whole-Graph optimization, not a per-node Worker scheduler.
-  // Check complete coverage BEFORE importing or invoking any shortcut. Otherwise a
-  // missing later role can strand earlier side effects in Troubleshooter recovery.
-  // Direct shortcut mode is fail-closed: no missing module may route to a Worker.
+  // The existing Graph executor owns node readiness for both code and model
+  // nodes. Model nodes execute using Relay's existing durable Worker adapter,
+  // never by routing the entire Agent Graph to one Worker.
   const missing = shortcuts.filter(item => !item.path);
-  if (missing.length) return await fail(
+  if (missing.length && !options.runModelNode) return await fail(
     `Incomplete Agent Graph shortcut coverage: ${missing.map(item => item.nodeId).join(', ')}`);
   const incoming = new Map(graph.nodes.map(node => [node.id, graph.edges.filter(edge => edge.to === node.id).map(edge => edge.from)]));
   const max = Math.max(1, Math.min(8, options.concurrency ?? 4));
@@ -322,21 +322,22 @@ export async function runAgentShortcut(options: {
     const ready = wave.filter(id => !state.nodes[id] && !state.waits[id] && (incoming.get(id) ?? []).every(parent => Boolean(state.nodes[parent])));
     for (let offset = 0; offset < ready.length; offset += max) {
       const batch = ready.slice(offset, offset + max);
-      for(const id of batch) if(shortcutByNode.get(id)) { state.inFlight[id]=currentTask!.executionId!; emit({nodeId:id,type:'started',data:{executionId:currentTask!.executionId!,agent:graph.nodes.find(node=>node.id===id)?.agent}}); }
-      if(batch.some(id=>Boolean(shortcutByNode.get(id)))) await persist(state);
+      for(const id of batch) { state.inFlight[id]=currentTask!.executionId!; emit({nodeId:id,type:'started',data:{executionId:currentTask!.executionId!,agent:graph.nodes.find(node=>node.id===id)?.agent}}); }
+      if(batch.length) await persist(state);
       const outcomes = await Promise.all(batch.map(async id => {
         const node = graph.nodes.find(item => item.id === id)!;
         const shortcut = shortcutByNode.get(id) ?? null;
-        if (!shortcut) return { id, value: null };
         try {
-          const module = await import(pathToFileURL(shortcut).href) as ShortcutModule;
           const predecessorOutputs = Object.fromEntries((incoming.get(id) ?? []).map(parent => [parent, state.nodes[parent]?.output]));
           const trackedRunCommand = async (args: string[], cwd: string): Promise<{ stdout: string; stderr: string; code: number }> => {
             if(executionAbort.signal.aborted) throw new Error(`Shortcut execution was cancelled: ${String(leaseHeartbeatError??'lease lost')}`);
             return runCommand(args, cwd, executionAbort.signal);
           };
-          emit({nodeId:id,type:'progress',data:{phase:'shortcut.invoke'}});
-          const raw = await raceAbort(module.run({ input: { ...taskShortcutInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs }, signal:executionAbort.signal, runCommand: trackedRunCommand }),executionAbort.signal);
+          emit({nodeId:id,type:'progress',data:{phase:shortcut?'shortcut.invoke':'worker.invoke'}});
+          const raw = await raceAbort(shortcut
+            ? (async () => { const module = await import(pathToFileURL(shortcut).href) as ShortcutModule;
+                return module.run({ input: { ...taskShortcutInput(task.input), projectPath, jobId: job.id, taskId: task.id, nodeId: id, agent: node.agent, predecessorOutputs }, signal:executionAbort.signal, runCommand: trackedRunCommand }); })()
+            : options.runModelNode!({id,agent:node.agent,predecessorOutputs,executionId:currentTask!.executionId!,signal:executionAbort.signal}),executionAbort.signal);
           if(leaseHeartbeatError)throw new Error(`Shortcut lease renewal failed: ${String(leaseHeartbeatError)}`);
           if (!raw || typeof raw !== 'object') throw new Error('shortcut result must be an object');
           const result = raw as Record<string, unknown>;
@@ -361,8 +362,9 @@ export async function runAgentShortcut(options: {
           return { id, value: result, artifactHashes };
         } catch (error) { return { id, value: null, error: error instanceof Error ? error.message : String(error) }; }
       }));
+      const failed=outcomes.find(result=>!result.value);
       for (const result of outcomes) {
-        if (!result.value) return await fail(`Shortcut node ${result.id} failed: ${result.error ?? 'no valid result'}`);
+        if (!result.value) { delete state.inFlight[result.id]; continue; }
         if (result.value.status === 'WAITING_EVENT') {
           const evt = result.value.event as Record<string, unknown>;
           if (evt.kind !== 'nonhuman_result') return await fail('Shortcut event wait must be a nonhuman result; human approval must use Relay hostInvocation');
@@ -374,6 +376,7 @@ export async function runAgentShortcut(options: {
         } else { delete state.inFlight[result.id]; state.nodes[result.id] = result.value; state.artifactHashes[result.id] = result.artifactHashes ?? {}; emit({nodeId:result.id,type:'completed',data:{executionId:currentTask!.executionId!,output:result.value.output}}); }
       }
       await persist(state);
+      if (failed) return await fail(`Shortcut node ${failed.id} failed: ${failed.error ?? 'no valid result'}`);
     }
   }
   if (Object.keys(state.waits).length) {

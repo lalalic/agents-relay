@@ -7,7 +7,7 @@ import { dispatchJobLifecycleSync } from './workflow/lifecycle.js';
 import type { DurableStore } from './store.js';
 import type { EventBus } from './events.js';
 import type { Reconciler } from './reconciler.js';
-import { driveShortcutWorkers } from './shortcut-worker-runner.js';
+import { runShortcutModelNode } from './shortcut-node-worker.js';
 import { noGitHubMode } from './no-github.js';
 import { resolveManagedProjectPath, resolveRepositoryProjectPath, resolveWorkspaceRoot } from './workspace.js';
 import { arg, hasArg, integerArg, publishWake, saveLocal, storeFor, textOption, withEventBus } from './cli-support.js';
@@ -81,45 +81,38 @@ export async function runShortcutJobCommand(args: string[], id: string, repo: st
   const projectPath = resolveRepositoryProjectPath(projectRoot, loaded.job.projectPath);
   const missing = await missingShortcutNodes(task.agentGraph!, projectPath, arg(args, '--neo-root') || join(workspaceRoot, 'neo'));
   const previous = task.result?.data?.shortcut as { workerFallback?:boolean } | undefined;
-  if (missing.length || previous?.workerFallback === true) {
-    if (!makeRunner) throw new Error('Foreground Worker fallback requires a Shortcut Runner factory');
-    if (task.state !== 'QUEUED' || task.executionId !== null || task.leaseOwner !== null)
-      throw new Error(`Shortcut Worker fallback has an active/failed/foreign execution (${task.state}); refusing duplicate execution`);
-    if (missing.length && previous?.workerFallback !== true) {
-      await loaded.store.mutateJob(id, current => {
-        const t = current.tasks.find(row => row.id === taskId);
-        if (!t || t.state !== 'QUEUED' || t.executionId !== null || t.attempt !== 0 || t.result?.data?.shortcut)
-          throw new Error('Shortcut Worker fallback must be selected before execution or prior effects');
-        t.result = { summary: 'Foreground Shortcut Runner selected existing Worker adapter for uncovered Agent Graph',
-          data: { shortcut: { workerFallback: true, missingNodes: missing, selectedBy: 'shortcut-foreground', at: new Date().toISOString() } } };
-        return current;
-      });
-    }
-    await withEventBus(args, async bus => {
-      if (!bus) throw new Error('Foreground model Worker requires a reachable EventBus for authoritative task events');
-      const reconciler=makeRunner(loaded.store,bus);
-      const result=await driveShortcutWorkers({ store: loaded.store, jobId: id, taskId, reconciler,
-        onTask: t => process.stderr.write(`shortcut.node ${JSON.stringify({nodeId:t.id,type:t.state.toLowerCase(),timestamp:new Date().toISOString(),data:{attempt:t.attempt,error:t.error,executionId:t.executionId}})}\n`) });
-      const latest=result.job.tasks.find(row=>row.id===taskId);
-      console.log(JSON.stringify({outcome:{status:result.status},fallbackQueued:false,task:latest},null,2));
-      if(result.status!=='COMPLETED')process.exitCode=result.status==='TIMED_OUT'?4:result.status==='INTERRUPTED'?5:result.status==='WAITING_EVENT'?3:1;
-    });
-    return;
-  }
+  if (previous?.workerFallback === true)
+    throw new Error('Legacy whole-Graph Worker fallback is not compatible with per-node Shortcut execution; retain its original recovery ownership');
   const controller=new AbortController();
   const onInterrupt=():void=>controller.abort(new Error('Interrupted by operator'));
-  process.once('SIGINT',onInterrupt); process.once('SIGTERM',onInterrupt);
+  process.once('SIGINT',onInterrupt);process.once('SIGTERM',onInterrupt);
+  const execute = async (bus: EventBus | undefined): Promise<void> => {
+    const workerReconciler = missing.length && bus && makeRunner ? makeRunner(loaded.store,bus) : undefined;
+    const unwatch=workerReconciler ? await workerReconciler.watch(id) : undefined;
+    try {
+      const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
+        neoRoot: arg(args, '--neo-root') || join(workspaceRoot, 'neo'),
+        concurrency: integerArg(args, '--concurrency', 4), signal:controller.signal,
+        ...(resumeReceiptSelected?{resumeReceiptSelected:true as const}:{}),
+        ...(missing.length ? { runModelNode: node => {
+          if (!workerReconciler) throw new Error('Model-backed node requires a reachable EventBus and existing Relay Worker Adapter');
+          return runShortcutModelNode({store:loaded.store,reconciler:workerReconciler,jobId:id,parentTaskId:task!.id,node});
+        } } : {}),
+        onNodeEvent:event=>process.stderr.write(`shortcut.node ${JSON.stringify(event)}\n`) });
+      console.log(JSON.stringify({ outcome: result.outcome, fallbackQueued: false, task: result.task }, null, 2));
+      if(result.outcome.status==='FAILED') {
+        const checkpoint=result.task.result?.data?.shortcut as {terminal?:{status?:string}}|undefined;
+        process.exitCode=checkpoint?.terminal?.status==='TIMED_OUT'?4:checkpoint?.terminal?.status==='INTERRUPTED'?5:1;
+      } else if(result.outcome.status==='WAITING_EVENT') process.exitCode=3;
+    } finally {
+      await unwatch?.();
+      await workerReconciler?.close();
+    }
+  };
   try {
-    const result = await runAgentShortcut({ store: loaded.store, job: loaded.job, task, projectPath,
-      neoRoot: arg(args, '--neo-root') || join(workspaceRoot, 'neo'), concurrency: integerArg(args, '--concurrency', 4), signal:controller.signal,
-      ...(resumeReceiptSelected?{resumeReceiptSelected:true as const}:{}),
-      onNodeEvent:event=>process.stderr.write(`shortcut.node ${JSON.stringify(event)}\n`) });
-    console.log(JSON.stringify({ outcome: result.outcome, fallbackQueued: false, task: result.task }, null, 2));
-    if(result.outcome.status==='FAILED') {
-      const checkpoint=result.task.result?.data?.shortcut as {terminal?:{status?:string}}|undefined;
-      process.exitCode=checkpoint?.terminal?.status==='TIMED_OUT'?4:checkpoint?.terminal?.status==='INTERRUPTED'?5:1;
-    } else if(result.outcome.status==='WAITING_EVENT') process.exitCode=3;
-  } finally { process.removeListener('SIGINT',onInterrupt); process.removeListener('SIGTERM',onInterrupt); }
+    if(missing.length) await withEventBus(args,execute);
+    else await execute(undefined);
+  } finally {process.removeListener('SIGINT',onInterrupt);process.removeListener('SIGTERM',onInterrupt);}
 }
 
 export async function recordShortcutReceiptCommand(args: string[], id: string): Promise<void> {
