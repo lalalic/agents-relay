@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Job, Task } from './types.js';
 
-export type TaskCommentKind = 'human' | 'resolution.changed' | 'escalation.requested' | 'escalation.responded';
+export type TaskCommentKind = 'human' | 'resolution.changed' | 'escalation.requested' | 'escalation.responded' | 'review.feedback';
 export type TaskComment = {
   id: string; text: string; author: string; createdAt: string; kind?: TaskCommentKind;
   jobId?: string; taskId?: string; executionId?: string; transition?: string; idempotencyKey?: string;

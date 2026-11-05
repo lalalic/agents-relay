@@ -137,9 +137,12 @@ test('L3 satisfied Plan Apply accepts resolved cancellations and reconciliation 
     assert.equal(reconciled.review?.outcome, 'pending');
     assert.equal(reconciled.review?.headSha, headSha);
     const reviewTask = reconciled.tasks.find(item => item.id === reconciled.review?.taskId);
-    assert.equal(reviewTask?.agentName, 'reviewer');
+    assert.equal(reviewTask?.agentName, 'job-acceptance-reviewer');
     assert.equal(reviewTask?.reviewHeadSha, headSha);
     assert.deepEqual(reviewTask?.dependencies, ['verified'], 'resolved cancelled history is not part of the acceptance review gate');
+    await reconciler.reconcile(f.job.id);
+    const again = await f.sqlite.loadJob(f.job.id);
+    assert.equal(again.tasks.filter(item => item.reviewHeadSha === headSha && ['reviewer', 'job-acceptance-reviewer'].includes(item.agentName)).length, 1, 'reconciliation must not duplicate the final review');
   } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
 });
 

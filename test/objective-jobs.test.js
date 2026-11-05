@@ -77,7 +77,7 @@ test('manual plan runs on a zero-task DRAFT job and persists routed-later child 
   assert.equal(child.routing, undefined);
 });
 
-test('planner binds reviewer children to the actual immutable PR head', async () => {
+test('planner rejects new legacy Reviewer roles while preserving immutable head context', async () => {
   const contextRoot = await mkdtemp(join(tmpdir(), 'agents-relay-planner-reviewer-context-'));
   await mkdir(join(contextRoot, 'agents'));
   await writeFile(join(contextRoot, 'agents', 'reviewer.agent.md'), '---\nname: reviewer\n---\nReview the managed task.\n');
@@ -91,13 +91,11 @@ test('planner binds reviewer children to the actual immutable PR head', async ()
       id: 'immutable-review', input: `Review exactly ${headSha}.`, agentName: 'reviewer', output,
     }] }; } },
   });
-  const result = await reconciler.planJob('auto');
-  const reviewer = result.job.tasks.find(item => item.id === result.round.generatedTaskIds[0]);
-  assert.ok(reviewer);
+  await assert.rejects(() => reconciler.planJob('auto'), /must not plan job-acceptance-reviewer/);
   assert.equal(observedTriggerHeadSha, headSha);
-  assert.equal(result.round.headSha, headSha);
-  assert.equal(reviewer.reviewHeadSha, headSha);
-  assert.match(reviewer.input, new RegExp(headSha));
+  const persisted = await store.load('auto');
+  assert.equal(persisted.tasks.filter(item => item.agentName === 'reviewer').length, 0,
+    'Relay alone owns new immutable-head Final Review Tasks');
   await rm(contextRoot, { recursive: true, force: true });
 });
 
@@ -113,8 +111,8 @@ test('planner can create business parent-child hierarchy without plan-N parents'
   const root = { ...job([]), state: 'DRAFT' };
   const store = new InMemoryStore(root);
   const planner = { plan: async () => ({ objective_status: 'in_progress', assessment: 'hierarchy', next_tasks: [
-    {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S' },
-    {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S' }
+    {title: 'Implement and verify durable task outputs',  id: 'day-2026-09-28', input: 'Group the day.', output, storySize: 'S', agentName: 'implementation' },
+    {title: 'Implement and verify durable task outputs',  id: 'hour-17', parentTaskId: 'day-2026-09-28', input: 'Run the hour.', output, storySize: 'S', agentName: 'review-chair' }
   ] }) };
   const reconciler = managedReconciler(store, { owner: 'test', adapters: [{ name: 'codex', id: 'planner-worker', capabilities: [] }], planner, maxConcurrent: 0 });
   const result = await reconciler.planJob('auto');
@@ -323,6 +321,13 @@ test('planner rejects command-like shell tasks and requires output', () => {
 
 test('planner reports malformed nested output precisely', () => {
   assert.throws(() => parsePlannerResult({ objective_status:'in_progress', assessment:'x', next_tasks:[{title: 'Implement and verify durable task outputs', id:'x',input:'work',output:'file'}] }), /output must be an object/);
+});
+
+test('planner preserves explicit dependency validity and rejects undeclared or invalid policies', () => {
+  const taskSpec = { title: 'Implement and verify durable task outputs', id: 'check', input: 'verify output', output, dependencies: ['owner'], dependencyValidity: { owner: 'rerun' } };
+  assert.deepEqual(parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [taskSpec] }).next_tasks[0].dependencyValidity, { owner: 'rerun' });
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [{ ...taskSpec, dependencyValidity: { other: 'rerun' } }] }), /must identify a declared dependency/);
+  assert.throws(() => parsePlannerResult({ objective_status: 'in_progress', assessment: 'verify', next_tasks: [{ ...taskSpec, dependencyValidity: { owner: 'repeat' } }] }), /must be order-only, revalidate, or rerun/);
 });
 
 test('planner preserves worker requirements for worker-router selection', () => {

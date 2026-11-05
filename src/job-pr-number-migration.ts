@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Job } from './types.js';
 import { deriveTaskTitle } from './task-title.js';
@@ -9,7 +10,7 @@ export function normalizeLegacyJobPrNumber(input: Job): Job {
   if ((!Number.isInteger(input.prNumber) || input.prNumber <= 0) && Number.isInteger(legacy) && Number(legacy) > 0) input.prNumber = Number(legacy);
   delete record[legacyKey];
   for (const task of input.tasks ?? []) {
-    if (task.id.startsWith('final-review-') && task.agentName === 'reviewer' && /^Job ID:\s*\d+$/i.test(task.title?.trim() ?? '')) {
+    if (task.id.startsWith('final-review-') && isFinalReviewAgent(task.agentName) && /^Job ID:\s*\d+$/i.test(task.title?.trim() ?? '')) {
       task.title = `Final review: ${input.title}`;
     }
     if (!task.title?.trim()) task.title = deriveTaskTitle(task.input, task.agentName ? `${task.agentName} task` : 'Task');

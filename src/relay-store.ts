@@ -6,7 +6,7 @@ import { WorkflowActionLedger } from './workflow/action-ledger.js';
 import { ConditionRegistry, booleanCondition } from './workflow/conditions.js';
 import { DurableWorkflowPublication } from './workflow/durable-publication.js';
 import type { EventRecord } from './types.js';
-import { preserveTaskComments } from './task-comments.js'; import { DatabaseSync } from 'node:sqlite';
+import { preserveTaskComments } from './task-comments.js'; import { preserveReviewRevisionHistory } from './review-revision-merge.js'; import { DatabaseSync } from 'node:sqlite';
 import { migrateLegacyBlockedTasks } from './legacy-blocked-task-migration.js';
 import { dirname } from 'node:path'; import { mkdirSync } from 'node:fs'; import { normalizeLegacyTaskLifecycle, type AgentRegistration, type Job, type Plan, type Task } from './types.js';
 import type { PullRequestState } from './store.js';
@@ -104,7 +104,7 @@ function mergeRecords<T extends { id: string; updatedAt: string }>(local: readon
 }
 export function mergeInboundJobSnapshot(local: Job, remote: Job): Job {
   const base = remote.updatedAt > local.updatedAt ? structuredClone(remote) : structuredClone(local);
-  base.tasks = preserveTaskComments(local.tasks, mergeRecords<Task>(local.tasks, remote.tasks));
+  base.tasks = preserveTaskComments(local.tasks, mergeRecords<Task>(local.tasks, remote.tasks)); preserveReviewRevisionHistory(local, base);
   const localPlans = local.plans ?? [];
   const remotePlans = remote.plans ?? [];
   if (localPlans.length > 0 || remotePlans.length > 0) {

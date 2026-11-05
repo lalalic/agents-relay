@@ -1,3 +1,4 @@
+import { isFinalReviewAgent } from './final-review-role.js';
 import type { Job } from './types.js';
 
 /** Resolve the execution-scoped contract from the authoritative Job snapshot. */
@@ -9,7 +10,7 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
     throw new Error(`Stale Task execution ${taskId}/${executionId}; current state ${task.state}`);
   const relevant = task.agentName === 'troubleshooter'
     ? job.tasks.filter(item => item.id === task.parentTaskId)
-    : task.agentName === 'reviewer' ? task.dependencies.map(id => job.tasks.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item)) : [];
+    : isFinalReviewAgent(task.agentName) ? task.dependencies.map(id => job.tasks.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item)) : [];
   return { job: { id: job.id, repository: job.repository, title: job.title, objective: job.objective,
     projectPath: job.projectPath, state: job.state }, task, currentState: task.state, resolution: task.resolution ?? null, escalation: task.escalation ?? null,
     comments: task.comments ?? [], relevantTasks: relevant.map(item => ({ id: item.id, title: item.title, state: item.state, attempt: item.attempt, executionId: item.executionId, resolution: item.resolution ?? null, escalation: item.escalation ?? null, comments: item.comments ?? [], result: item.result, error: item.error, failureReason: item.failureReason })),
@@ -19,7 +20,7 @@ export function taskExecutionContext(job: Job, taskId: string, executionId: stri
 
 /** Runtime-only task history; durable task.input remains the stable objective. */
 export function taskAgentHistoryContext(job: Job, task: import('./types.js').Task): string {
-  if (task.agentName !== 'troubleshooter' && task.agentName !== 'reviewer') return '';
+  if (task.agentName !== 'troubleshooter' && !isFinalReviewAgent(task.agentName)) return '';
   const related = task.agentName === 'troubleshooter'
     ? job.tasks.filter(item => item.id === task.parentTaskId)
     : task.dependencies.map(id => job.tasks.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));

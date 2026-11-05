@@ -20,7 +20,7 @@ export async function createSingleJobTaskControl(jobId: string, store: DurableSt
     unblockTask: unblock.unblockTask,
     publishTaskUnblocked, dispatchTaskAction,
   });
-  const allowed = new Set(['task.unblock','task.recover','task.escalate','task.resume-troubleshooter','task.classify']);
+  const allowed = new Set(['task.unblock','task.recover','task.escalate','task.resume-troubleshooter','task.classify','task.revise']);
   return async (body: Record<string, unknown>): Promise<unknown> => {
     if (!allowed.has(String(body.command ?? ''))) throw new Error('Single-Job control command not supported');
     if (body.jobId !== jobId) throw new Error('Control request outside bound Job');

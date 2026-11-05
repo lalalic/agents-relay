@@ -17,10 +17,12 @@ test('Review v2 graph owns creation, stale, revision, and merge decisions', () =
   assert.deepEqual(stale.actions.map(action=>action.id),['review.cancelStale']);
   const changes=decideReviewLifecycle('started','review.changes_required');
   assert.equal(changes.target,'CHANGES_REQUIRED');
-  assert.deepEqual(changes.actions.map(action=>action.id),['review.createFix']);
+  assert.deepEqual(changes.actions.map(action=>action.id),['review.requireOwnerResolution']);
   const repeatedChanges=decideReviewLifecycle('changes_required','review.changes_required');
   assert.equal(repeatedChanges.target,'CHANGES_REQUIRED');
-  assert.deepEqual(repeatedChanges.actions.map(action=>action.id),['review.createFix']);
+  assert.deepEqual(repeatedChanges.actions.map(action=>action.id),['review.requireOwnerResolution']);
+  const targeted=decideReviewLifecycle('started','review.changes_required',{targetedRevisionRequestsReady:true});
+  assert.deepEqual(targeted.actions.map(action=>action.id),['review.awaitTargetedRevisions']);
   const approved=decideReviewLifecycle('started','review.approved',{autoMerge:true});
   assert.equal(approved.target,'APPROVED');
   assert.deepEqual(approved.actions.map(action=>action.id),['review.requestMerge']);

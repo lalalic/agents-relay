@@ -288,7 +288,7 @@ test('CLI and daemon help are successful and do not require job storage', () => 
     ['dist/cli.js', ['job', 'merge', '--help'], 'Request an idempotent external pull-request merge'],
     ['dist/cli.js', ['job', 'unblock', '--help'], 'Authoritatively unblock'],
     ['dist/cli.js', ['job', 'cancel', '--help'], 'Cancel the durable Job'],
-    ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|events|list|retry|unblock|cancel>'],
+    ['dist/cli.js', ['task', '--help'], 'npx agents-relay task <create|update|show|events|list|revise|retry|unblock|cancel>'],
     ['dist/cli.js', ['task', 'update', '--help'], 'Update mutable durable Task fields'],
     ['dist/cli.js', ['projection', '--help'], 'projection conflicts --repo OWNER/REPO --id JOB_ID'],
     ['dist/cli.js', ['context', '--help'], 'npx agents-relay context resolve'],

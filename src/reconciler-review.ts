@@ -1,3 +1,6 @@
+import { settleReviewRevisionRound } from './review-revision-settlement.js';
+import { isFinalReviewAgent, FINAL_REVIEW_AGENT, nextFinalReviewTaskId } from './final-review-role.js';
+import { normalizeReviewEvidence } from './review-evidence.js';
 import { browserWorkerPool } from './browser-worker-runtime.js';
 import { ChatGptThreadDelivery, Job, Task, EventRecord, ReviewOutcome, storySizeTimeoutMs, taskOverallTimeoutMs, WorkerRequirements } from './types.js';
 import { completionGateSatisfied, refreshTaskDependencies, transitionTaskEvent, transitionJobEvent, tryTransitionTaskEvent } from './task-transitions.js';
@@ -9,11 +12,13 @@ import { routeExecution } from './execution-routing.js';
 import { recordRouteOutcome } from './route-outcome-recording.js';
 import { ReconcilerRuntimeBase, type EventHandlingResult } from './reconciler-runtime.js';
 import { dispatchReviewLifecycle, reviewOutcome } from './workflow/review-v2.js';
+import { staleReviewRevisions } from './review-revision-stale.js';
 import { dispatchTaskLifecycleSync } from './workflow/lifecycle.js';
 import { createTaskEntity } from './workflow/entity-creation.js';
 import { localSourceHead, localWorkingHead } from './local-git-merge.js';
 import { chatgptThreadRequirements, resolveReviewerThreadDestination, resolveImplementationTaskThreadDestination, prepareReviewerThreadDelivery } from './reviewer-thread.js';
 import { reviewGenerationMatches } from './review-generation-fence.js';
+import { targetedRequestsForReview, targetedRequestsCoverReview } from './review-revision-model.js';
 import { codexFallbackRouting, codexNoStartFallbackRoute, quarantineUnavailableCodexFallback } from './chatgpt-platform-fallback.js';
 
 
@@ -35,7 +40,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
   }
   private reviewFacts(job: Job, headSha: string | null): Readonly<Record<string, unknown>> {
-    const reviewTasks = job.tasks.filter(task => task.agentName === 'reviewer' && task.reviewHeadSha === headSha);
+    const reviewTasks = job.tasks.filter(task => isFinalReviewAgent(task.agentName) && task.reviewHeadSha === headSha);
     const currentReviewTask = job.review?.taskId ? job.tasks.find(task => task.id === job.review?.taskId) : undefined;
     return {
       reviewEnabled: job.reviewEnabled !== false,
@@ -47,45 +52,6 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       currentReviewCancelled: currentReviewTask?.reviewHeadSha === headSha && currentReviewTask.state === 'CANCELLED',
       noApprovedCurrentReview: !reviewTasks.some(task => task.state === 'SUCCEEDED' && job.review?.headSha === headSha && job.review.outcome === 'approved'),
     };
-  }
-
-  private static reviewRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  }
-
-  private static reviewHeadSha(event: EventRecord): string | undefined {
-    const data = ReconcilerReviewBase.reviewRecord(event.data);
-    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
-    const review = ReconcilerReviewBase.reviewRecord(data.review);
-    return [outcome.head_sha, outcome.headSha, review.head_sha, review.headSha, data.head_sha, data.headSha]
-      .find((value): value is string => typeof value === 'string' && value.length > 0);
-  }
-
-  private static reviewIssues(event: EventRecord): string[] {
-    const data = ReconcilerReviewBase.reviewRecord(event.data);
-    const outcome = ReconcilerReviewBase.reviewRecord(data.outcome);
-    const review = ReconcilerReviewBase.reviewRecord(data.review);
-    const rawIssues = outcome.blocking_findings !== undefined ? outcome.blocking_findings
-      : outcome.blockingFindings !== undefined ? outcome.blockingFindings
-      : review.issues !== undefined ? review.issues
-      : data.issues;
-    if (!Array.isArray(rawIssues)) return [];
-    return rawIssues.map(item => {
-      if (typeof item === 'string') return item.trim();
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
-      const value = item as Record<string, unknown>;
-      return (typeof value.summary === 'string' ? value.summary
-        : typeof value.message === 'string' ? value.message
-        : typeof value.finding === 'string' ? value.finding
-        : typeof value.title === 'string' ? value.title : '').trim();
-    }).filter(Boolean);
-  }
-
-  private static normalizeReviewEvidence(event: EventRecord, task: Task): { headSha: string; issues: string[] } | null {
-    const explicitHeadSha = ReconcilerReviewBase.reviewHeadSha(event);
-    const headSha = explicitHeadSha ?? (event.type === 'review.approved' ? task.reviewHeadSha : undefined);
-    if (!headSha) return null;
-    return { headSha, issues: ReconcilerReviewBase.reviewIssues(event) };
   }
 
   private async cancelStaleReviewTask(job: Job): Promise<void> {
@@ -100,36 +66,39 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
 
   protected async invalidateStaleReview(job: Job, headSha: string | null): Promise<void> {
-    if (!headSha || !job.review || job.review.headSha === headSha) return;
-    const decision = await dispatchReviewLifecycle(job.review.outcome, 'head.changed', {}, async actionId => {
-      if (actionId === 'review.cancelStale') { await this.cancelStaleReviewTask(job); return {}; }
+    const staleReview = job.review;
+    if (!headSha || !staleReview || staleReview.headSha === headSha) return;
+    const decision = await dispatchReviewLifecycle(staleReview.outcome, 'head.changed', {}, async actionId => {
+      if (actionId === 'review.cancelStale') {
+        await this.cancelStaleReviewTask(job);
+        if (staleReview.taskId) await staleReviewRevisions(this.store, job, staleReview.taskId, staleReview.headSha,
+          (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId));
+        return {};
+      }
       throw new Error('Unsupported stale review action ' + actionId);
     });
     if (!decision.accepted) return;
     const outcome = reviewOutcome(decision.target);
     if (!outcome) throw new Error('Review graph produced invalid stale target ' + decision.target);
-    job.review = { ...job.review, outcome, updatedAt: new Date().toISOString() };
-    await this.store.saveJob(job);
-  }
-
-  private nextFinalReviewTaskId(job: Job, headSha: string): string {
-    const base = 'final-review-' + headSha.slice(0, 12);
-    const ids = new Set(job.tasks.filter(task => task.reviewHeadSha === headSha && task.agentName === 'reviewer').map(task => task.id));
-    if (!ids.has(base)) return base;
-    for (let round = 2; round < 1000; round += 1) {
-      const candidate = base + '-r' + round;
-      if (!ids.has(candidate)) return candidate;
+    const updatedAt = new Date().toISOString();
+    if (this.store.mutateJob) {
+      const persisted = await this.store.mutateJob(job.id, current => {
+        const currentReview = current.review;
+        if (!currentReview || currentReview.taskId !== staleReview.taskId || currentReview.headSha !== staleReview.headSha) return current;
+        current.review = { ...currentReview, outcome, updatedAt };
+        current.updatedAt = updatedAt;
+        return current;
+      });
+      Object.assign(job, persisted);
+    } else {
+      job.review = { ...staleReview, outcome, updatedAt };
+      await this.store.saveJob(job);
     }
-    throw new Error('Too many final review rounds for ' + headSha);
-  }
-
-  private externalReviewPrNumber(job: Job): number {
-    return job.prNumber;
   }
 
   private async createFinalReviewTask(job: Job, headSha: string): Promise<string> {
-    const id = this.nextFinalReviewTaskId(job, headSha);
-    const reviewPrNumber = this.externalReviewPrNumber(job);
+    const id = nextFinalReviewTaskId(job, headSha);
+    const reviewPrNumber = job.prNumber;
     const now = new Date().toISOString();
     const reviewGateTasks = implementationTasks(job);
     const reviewThread = resolveReviewerThreadDestination(job, this.options.reviewer?.threadId);
@@ -138,7 +107,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       reviewThread ? chatgptThreadRequirements(this.options.reviewer?.requirements) : undefined,
     );
     const chatgptThreadDelivery = prepareReviewerThreadDelivery(job, {
-      id, agentName: 'reviewer', reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
+      id, agentName: FINAL_REVIEW_AGENT, reviewHeadSha: headSha, routing: reviewerRouting.candidate.routing,
     }, this.options.reviewer?.threadId);
     const input = [
       `Job ID: ${job.id}`,
@@ -152,7 +121,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       'Do not treat historical failed attempts as current artifact defects; distinguish preserved baseline files from implementation.',
     ].join('\n\n');
     const task = createTaskEntity(job, {
-      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'reviewer',
+      jobId: job.id, id, title: 'Review', kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: FINAL_REVIEW_AGENT,
       parentTaskId: null, dependencies: reviewGateTasks.map(item => item.id), capabilities: ['review'],
       workerSelection: reviewerRouting.selection, adapter: reviewerRouting.candidate.adapter,
       input,
@@ -163,7 +132,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       error: null, timeoutMs: this.options.reviewer?.timeoutMs ?? storySizeTimeoutMs('M'), createdAt: now, updatedAt: now
     });
     await this.store.appendTask(task);
-    await this.emit(eventFor(job.id, id, task.parentTaskId, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: 'reviewer', reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
+    await this.emit(eventFor(job.id, id, task.parentTaskId, 'review.created', 'queued', 'Final review task ' + id + ' created for ' + headSha + ' using ' + reviewerRouting.reason, 'orchestrator', { headSha, agentName: FINAL_REVIEW_AGENT, reviewerRouting: { workerId: reviewerRouting.selection.workerId, reason: reviewerRouting.reason, selectedBy: reviewerRouting.selection.selectedBy } }));
     return id;
   }
 
@@ -182,11 +151,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
 
   protected async ensureFinalReview(job: Job, headSha: string | null): Promise<void> {
     if (headSha && !(await this.projectedReviewHeadReady(job, headSha))) return;
+    job = await settleReviewRevisionRound(this.store, job);
     // Restore the review gate only after an authoritative unblock of the original reviewer.
     const priorReviewTask = job.tasks.find(task => task.id === job.review?.taskId);
     if (job.review?.outcome === 'blocked' && job.review.headSha === headSha
-      && priorReviewTask?.agentName === 'reviewer' && priorReviewTask.unblock?.event === 'task.unblocked'
-      && ['QUEUED', 'RUNNING', 'FAILED'].includes(priorReviewTask.state)) {
+      && isFinalReviewAgent(priorReviewTask?.agentName) && priorReviewTask?.unblock?.event === 'task.unblocked'
+      && ['QUEUED', 'RUNNING', 'FAILED'].includes(priorReviewTask?.state ?? '')) {
       const recovered = await dispatchReviewLifecycle('blocked', 'review.retry', { reviewUnblocked: true });
       if (recovered.accepted && recovered.target === 'PENDING') {
         job.review = { ...job.review, outcome: 'pending', updatedAt: new Date().toISOString() };
@@ -262,7 +232,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async routeTaskForExecution(job: Job, task: Task): Promise<{ task: Task; routed: boolean }> {
     const implementationThread = resolveImplementationTaskThreadDestination(job, task);
-    const reviewerThread = task.agentName === 'reviewer' ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
+    const reviewerThread = isFinalReviewAgent(task.agentName) ? resolveReviewerThreadDestination(job, this.options.reviewer?.threadId) : null;
     if (task.routing && !((implementationThread || reviewerThread) && task.adapter !== 'chatgpt')) return { task, routed: false };
     if (!task.output || task.adapter === 'orchestrator') return { task, routed: false };
 
@@ -283,7 +253,7 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         id: job.id, title: job.title, objective: job.objective ?? null,
         description: job.description ?? null, priority: job.priority ?? null,
         repository: job.repository,
-        prNumber: this.externalReviewPrNumber(job), state: job.state,
+        prNumber: job.prNumber, state: job.state,
       },
       task: {
         id: task.id, kind: task.kind ?? 'work', storySize: task.storySize ?? 'M',
@@ -358,14 +328,24 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
   }
   protected async applyReviewEvent(event: EventRecord): Promise<EventHandlingResult> {
     const job = await this.store.load(event.job_id);
-    const task = job.tasks.find(item => item.id === event.task_id && item.agentName === 'reviewer');
+    const task = job.tasks.find(item => item.id === event.task_id && isFinalReviewAgent(item.agentName));
     if (!task) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
-    const normalizedEvidence = ReconcilerReviewBase.normalizeReviewEvidence(event, task);
+    const normalizedEvidence = normalizeReviewEvidence(event, task);
     if (!normalizedEvidence) return { applied: false, reconcile: false, reason: event.type + '.ignored' };
     const headSha = normalizedEvidence.headSha;
     if (task.reviewHeadSha !== headSha) return { applied: false, reconcile: false, reason: event.type + '.stale' };
     const currentHeadSha = await this.currentHeadSha(job);
     if (currentHeadSha ? currentHeadSha !== headSha : Boolean(job.headSha && job.headSha !== headSha)) return { applied: false, reconcile: false, reason: event.type + '.stale' };
+    // Reviewer attempts may restart at the same SHA. Graph-stale requests
+    // from prior execution generations before accepting this generation's
+    // verdict; otherwise their DRAFT children can block approval forever.
+    if (task.executionId && job.reviewRevisionRequests?.some(request =>
+      request.reviewTaskId === task.id && request.reviewHeadSha === headSha
+      && request.reviewExecutionId !== task.executionId && request.status !== 'stale')) {
+      await staleReviewRevisions(this.store, job, task.id, headSha,
+        (taskId, executionId) => this.cancelExecutionGeneration(job.id, taskId, executionId),
+        task.executionId);
+    }
     // Planner-created reviewer tasks predate the final-review Job gate. Bind
     // their first trustworthy review event to PENDING before dispatching it.
     const freshAfterStale = job.review?.outcome === 'stale'
@@ -387,20 +367,19 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
     }
 
     let needsReconcile = false;
-    let pendingFixTask: Task | null = null;
-    const reviewDecision = await dispatchReviewLifecycle(initialReviewOutcome, event.type, { autoMerge: job.autoMerge !== false }, async actionId => {
-      if (actionId === 'review.createFix') {
+    let revisionDisposition: 'targeted' | 'needs-ownership' | undefined;
+    const reviewDecision = await dispatchReviewLifecycle(initialReviewOutcome, event.type, { autoMerge: job.autoMerge !== false, targetedRevisionRequestsReady: targetedRequestsCoverReview(job, task, headSha, normalizedEvidence.issues) }, async actionId => {
+      if (actionId === 'review.awaitTargetedRevisions') {
+        revisionDisposition = 'targeted';
+        // Subsequent revision child scheduling is owned by the revision Graph;
+        // the review verdict never creates an unowned generic fix.
         needsReconcile = true;
-        const issues = normalizedEvidence.issues;
-        if (issues.length === 0) issues.push(event.message || 'Address the reviewer-requested changes');
-        const now = event.timestamp || new Date().toISOString(); const id = 'review-fix-' + headSha.slice(0, 8);
-        if (!job.tasks.some(item => item.id === id)) {
-          const fixPrNumber = this.externalReviewPrNumber(job);
-          const fixTarget = fixPrNumber > 0 ? `PR #${fixPrNumber}` : `Job ${job.id} artifact`;
-          const input = 'Address all reviewer findings for ' + fixTarget + ' at ' + headSha + ':\n\n' + issues.map((issue, index) => (index + 1) + '. ' + issue).join('\n');
-          const fixTask = createTaskEntity(job, { jobId: job.id, id, title: `Fix review ${headSha.slice(0, 8)}`, kind: 'work', priority: job.priority, storySize: 'M', projectName: job.title, agentName: 'implementation', parentTaskId: task.id, dependencies: [task.id], capabilities: ['implementation'], workerRequirements: { capabilities: [] }, adapter: 'codex', input, output: { kind: 'task_pr' }, continuation: null, continuationDeliveredAt: null, attempt: 0, maxAttempts: 3, leaseOwner: null, leaseExpiresAt: null, executionId: null, threadId: null, result: null, plannerResult: null, error: null, timeoutMs: 0, createdAt: now, updatedAt: now });
-          pendingFixTask = fixTask;
-        }
+        return {};
+      }
+      if (actionId === 'review.requireOwnerResolution') {
+        revisionDisposition = 'needs-ownership';
+        // An explicitly authorized Planner re-plan may resolve ownership,
+        // but there is no implicit generic fix or automatic escalation.
         return {};
       }
       if (actionId === 'review.requestMerge') {
@@ -425,6 +404,12 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         const freshTask = current.tasks.find(item => item.id === task.id);
         if (!freshTask || !reviewGenerationMatches(current, job, task, headSha)) return current;
         const candidate = structuredClone(freshTask);
+        // The graph verdict was decided on the outer snapshot. Never commit a
+        // different disposition if concurrent intake changed the requests.
+        if (event.type === 'review.changes_required'
+          && targetedRequestsCoverReview(current, freshTask, headSha, normalizedEvidence.issues)
+            !== (revisionDisposition === 'targeted')) return current;
+        const requestIds = targetedRequestsForReview(current, freshTask, headSha).map(item => item.requestId);
         const freshDecision = tryTransitionTaskEvent(candidate, event.type);
         if (!freshDecision.accepted || !freshDecision.target) return current;
         if (freshDecision.target !== 'RUNNING') {
@@ -442,8 +427,17 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
         if (currentHeadSha === headSha) current.headSha = headSha;
         freshTask.error = null;
         if (freshDecision.target !== 'RUNNING') freshTask.result = { summary: event.message || `Review ${event.type}`, data: event.data ?? {} };
-        if (pendingFixTask && !current.tasks.some(item => item.id === pendingFixTask!.id)) current.tasks.push(structuredClone(pendingFixTask));
-        current.review = { outcome, headSha, taskId: freshTask.id, evidence, updatedAt: reviewUpdatedAt };
+        current.review = { outcome, headSha, taskId: freshTask.id, evidence, updatedAt: reviewUpdatedAt,
+          ...(revisionDisposition ? { revisionDisposition } : {}) };
+        if ((event.type === 'review.changes_required' || event.type === 'review.approved') && terminalExecutionId
+          && !current.reviewRevisionRounds?.some(round => round.reviewTaskId === freshTask.id && round.reviewExecutionId === terminalExecutionId)) {
+          current.reviewRevisionRounds = [...(current.reviewRevisionRounds ?? []), {
+            reviewTaskId: freshTask.id, reviewExecutionId: terminalExecutionId, headSha,
+            requestIds,
+            status: outcome === 'approved' ? 'approved' : 'changes_required',
+            recordedAt: reviewUpdatedAt,
+          }];
+        }
         current.updatedAt = reviewUpdatedAt;
         committed = true;
         return current;
@@ -454,15 +448,8 @@ export abstract class ReconcilerReviewBase extends ReconcilerRuntimeBase {
       if (terminalExecutionId) {
         this.finalizeReviewExecution(job.id, { ...task, executionId: terminalExecutionId }, event);
       }
-      const committedFixTask = pendingFixTask as Task | null;
-      if (committedFixTask) await this.emit(eventFor(job.id, committedFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + committedFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
     } else {
-      const legacyFixTask = pendingFixTask as Task | null;
-      if (legacyFixTask) {
-        await this.store.appendTask(legacyFixTask);
-        await this.emit(eventFor(job.id, legacyFixTask.id, task.id, 'review.fix_task_created', 'queued', 'Created one fix task ' + legacyFixTask.id + ' for reviewer findings', 'orchestrator', { headSha }, { agent: 'relay', component: 'agents-relay' }));
-      }
-      job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt };
+      job.review = { outcome, headSha, taskId: task.id, evidence, updatedAt: reviewUpdatedAt, ...(revisionDisposition ? { revisionDisposition } : {}) };
       job.updatedAt = reviewUpdatedAt; await this.store.saveTask(task); await this.store.saveJob(job);
     }
     if (event.type==='review.started' && this.store.verifyWorkflowLaunch) {

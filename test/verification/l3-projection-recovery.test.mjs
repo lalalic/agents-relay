@@ -30,7 +30,7 @@ function fakeAdapter(bus, repo) {
         await bus.publish(eventFor(task.jobId, task.id, task.parentTaskId, 'task.started', 'running', 'L3 deterministic worker started', 'orchestrator', {}, source));
         for (let n = 0; n < 100 && !started.has(source.id); n += 1) await new Promise(resolve => setTimeout(resolve, 2));
         if (signal.aborted) return { summary: 'cancelled' };
-        if (task.agentName === 'reviewer') {
+        if (['reviewer','job-acceptance-reviewer'].includes(task.agentName)) {
           await bus.publish(eventFor(task.jobId, task.id, task.parentTaskId, 'review.approved', 'succeeded', 'review approved', 'orchestrator', { verdict: 'approved', head_sha: task.reviewHeadSha, findings: [] }, source));
         } else {
           git(repo, 'merge', '--no-edit', 'refs/remotes/origin/main');
@@ -93,7 +93,7 @@ test('projection recovery runs through SQLite, Reconciler review, restart, dupli
     await daemonRuntime?.close();
     const subscribeStarted = await bus.subscribeAll(async event => { if (event.type === 'task.started') adapterState.started.add(event.source?.id); });
     stop = await runtime.watch('l3-projection-recovery');
-    const settle = async () => { let current; for (let i = 0; i < 80; i += 1) { await runtime.idle(); await runtime.reconcile('l3-projection-recovery'); current = await db.loadJob('l3-projection-recovery'); if (current.tasks.some(item => item.agentName === 'reviewer' && item.state === 'SUCCEEDED')) return current; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error(`Recovery/review did not settle: ${JSON.stringify({ state: current?.state, review: current?.review, recovery: current?.projectionRecovery, tasks: current?.tasks.map(({id,agentName,state,error,executionId}) => ({id,agentName,state,error,executionId})), observed })}`); };
+    const settle = async () => { let current; for (let i = 0; i < 80; i += 1) { await runtime.idle(); await runtime.reconcile('l3-projection-recovery'); current = await db.loadJob('l3-projection-recovery'); if (current.tasks.some(item => ['reviewer','job-acceptance-reviewer'].includes(item.agentName) && item.state === 'SUCCEEDED')) return current; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error(`Recovery/review did not settle: ${JSON.stringify({ state: current?.state, review: current?.review, recovery: current?.projectionRecovery, tasks: current?.tasks.map(({id,agentName,state,error,executionId}) => ({id,agentName,state,error,executionId})), observed })}`); };
     let current = await settle();
     assert.equal(current.state, 'COMPLETED');
     assert.equal(current.projectionRecovery.status, 'repairing');

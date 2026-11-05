@@ -9,7 +9,7 @@ Usage:
 
 Commands:
   job create|update|show|list|run|shortcut-receipt|merge|unblock|cancel|pause|resume  Manage SQLite-authoritative jobs with optional GitHub PRs
-  task create|update|show|list|classify|complete|retry|unblock|cancel  Manage durable tasks
+  task create|update|show|list|revise|classify|complete|retry|unblock|cancel  Manage durable tasks
   review request           Request graph-owned review (optional thread override)
   artifact validate        Check a JSON artifact against a project-owned JSON Schema
   plan                     Invoke the Planner for an existing managed Job
@@ -164,13 +164,14 @@ Returns the same summary used by the dashboard header plus a running array with 
   task: `Manage durable tasks.
 
 Usage:
-  npx agents-relay task <create|update|show|events|list|retry|unblock|cancel> [options]
+  npx agents-relay task <create|update|show|events|list|revise|retry|unblock|cancel> [options]
 
 Actions:
   create  Create one durable Task under an existing Job
   update  Update mutable Task fields
   show    Show one Task
   list    List Tasks for a Job
+  revise  Submit an immutable-head targeted reviewer fix request
   retry   Retry a FAILED Task
   unblock Authoritatively invalidate a BLOCKED decision
   complete Complete an orchestrator-owned Task
@@ -178,7 +179,7 @@ Actions:
   'task create': `Create one durable Task under an existing Job.
 
 Required: normal Job storage options plus --input-file PATH|- (preferred) or --input MARKDOWN, and --output task-pr|file. --input and --input-file are mutually exclusive.
-Common: --task-id ID (optional; Relay auto-assigns a global increasing integer Task ID), --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --parent ID, --draft. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
+Common: --task-id ID (optional; Relay auto-assigns a global increasing integer Task ID), --title TITLE (optional; otherwise derived from the first non-empty input line), --idempotency-key KEY, --priority P0|P1|P2|P3, --story-size S|M|L, --agent NAME, --agent-graph-file PATH|-, --deps a,b, --dependency-validity JSON, --parent ID, --draft. The JSON maps declared dependency Task IDs to order-only, revalidate, or rerun. Normal model-backed Tasks omit adapter/provider/model so Relay runs one Execution Router decision over complete worker+model routes. New Tasks are worker-routed; legacy adapter=orchestrator records are recovery-only and cannot be created or manually executed.\nTasks with dependencies start DRAFT; tasks without dependencies start QUEUED unless --draft is given.
 Directly-created Tasks are not wrapped in a synthetic Plan. Planner-generated Tasks are created internally by Relay from planner output.
 
 Example:
@@ -186,12 +187,17 @@ Example:
   'task update': `Update mutable durable Task fields in place.
 
 Required: --id JOB_ID --task-id ID. Optional --repo OWNER/REPO fences the Job identity.
-Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
+Mutable while not RUNNING/SUCCEEDED/CANCELLED: --title, --adapter, --priority, --story-size, --input-file PATH|- or --input MARKDOWN, --project, --agent, --agent-graph-file PATH|-, --parent, --deps, --dependency-validity JSON, --capabilities, --timeout (inactivity window), --max-attempts, --provider, --model, --profile, --reasoning, --cwd, --chatgpt-project, --chatgpt-tab-close-policy, --draft, --queue.
 Accepted task.started and newer current-execution task.progress events reset --timeout.
 Use --clear-routing to remove routing metadata.
 
 Example:
   npx agents-relay task update --repo OWNER/REPO --pr 12 --id 101 --task-id build --adapter chatgpt --provider chatgpt --model gpt-5.6-sol --reasoning high`,
+  'task revise': `Authenticated immutable-head targeted revision request from the active Final Reviewer.
+
+Required: --repo OWNER/REPO --id JOB --task-id ORIGINAL --review-task-id FINAL_REVIEW --execution-id CURRENT_REVIEW_EXECUTION --head-sha EXACT_SHA --request-id STABLE_ID --findings-file PATH. The findings file contains a nonempty JSON array [{"id":"F-1","summary":"...","evidence":"..."}].
+
+The Relay service verifies the current Reviewer generation and local Git head, atomically records immutable owner feedback and a semantic child revision. Repeating an identical request ID is idempotent; it does not finish a Reviewer or revision Task. Reviewer must subsequently report its canonical changes-required verdict.`,
   'task comment': `Append an immutable Task comment. Does not retry or change Task state.
 
 Required: --repo OWNER/REPO --id JOB_ID --task-id TASK_ID and --message TEXT or --message-file FILE.`,
