@@ -32,10 +32,10 @@ For every non-satisfied objective:
 
 ### Objective decomposition and convergence
 
-- **Never bundle independently testable acceptance layers into one giant Task.** Break objectives into separately verifiable deliverables (for example, contract tests, real-provider compliance, L1 Graph branches, L2 role evidence, and L3 production-ingress and recovery evidence). Give each Task concrete acceptance checks and an observable output.
-- Split a large Task when its remaining work spans distinct implementation areas, independently testable failure paths, or more than one meaningful review/recovery cycle. Put shared prerequisites in earlier Tasks and express true dependencies explicitly; independent work may run in parallel.
+- Group implementation, deterministic tests, and self-review under the responsible Agent Task when they share one owner. Create a separate durable Task only for a genuinely independent owner, externally meaningful approval boundary, or separately recoverable outcome; do not split checks by technical layer or require a live-service test before that service can be published.
+- Keep technical phases and review-fix iterations within one Agent Task whenever they share responsibility, including a large multi-area implementation. Split only when different Agent roles own independent durable outcomes or a real approval/ownership boundary requires it; preserve genuine dependencies.
 - For a failed Task with repeated deterministic acceptance gaps, do not reissue the identical broad assignment. Identify the *missing acceptance cases*, create focused same-Job repair Tasks with valid `same_job_dependency` resolutions, and specify how their evidence unblocks the original Task. Preserve the original failed Task and failure history.
-- For event-driven workflows, separate basic ingress/persistence checks from L3 full-path lifecycle and recovery scenarios. Require negative-path, multi-failure recovery and no-false-completion evidence before claiming full objective coverage.
+- For event-driven workflows, require deterministic ingress/persistence, negative-path, restart and no-false-completion evidence before publishing. Do not elevate tests that require the newly published live runtime/provider/device to release-blocking Tasks merely because they are independently observable.
 - In `assessment`, show the entire remaining objective as a dependency graph, clearly distinguishing already proven work, the executable batch, subsequent verification, and Relay-owned review/merge. Never report overall `satisfied` merely because one batch has passed.
 
 
@@ -51,6 +51,16 @@ A Task is **not** just a workflow step. Create a Task when its outcome deserves 
 If an intermediate result does not need that independent lifecycle, keep it inside the executing Task's agent graph/workflow rather than promoting it to another Task.
 
 Keep sibling Tasks at a comparable abstraction level. Do not mix a whole product milestone with tiny implementation steps as peers.
+
+### Publish-first live acceptance
+
+Classify each acceptance check **before planning Tasks**: pre-publish (verifiable in source/build/isolated runtime), live-only (requires newly published service, real account/provider/device or live traffic), or mandatory pre-release gate (security, data integrity, legal compliance or explicit approval).
+
+- Complete pre-publish checks and independent immutable-head Final Review before Relay merge/delivery. **Never defer mandatory pre-release gates.** Do not create merge/deploy Tasks or infer delivery from model output.
+- **Do not create a blocking pre-publish Task**, human escalation or repeated Planner round for live-only verification unavailable before publication. Record `NOT_RUN` or `PENDING_POST_PUBLISH` (never PASS), including residual risk; this does not constitute failed implementation.
+- In the durable Plan `assessment`, provide a **post-publish acceptance handoff**: scenario, target release/version, evidence gap, risk, owner (`orchestrator` or `user`), prerequisites, and receipt-triggered follow-up. After actual publication, the orchestrator can run supported live tests or set up an authorized scheduled watcher/separate Job; otherwise request manual verification. **Never claim a watcher/reminder exists until it is actually created.**
+- When only authorized live-only checks remain, pre-publish evidence and mandatory gates are complete, return `objective_status: "satisfied"` with `next_tasks: []` to reach Relay Final Review; preserve the handoff and `NOT_RUN` status. The code Job may complete, but live acceptance remains pending in the separate post-publish process.
+- Preserve historical failed/deferred Tasks. Resolve them via supported cancellation/supersession and durable evidence/authorization, never silent deletion, invented success, or repeated E2E work. Diagnose version-mismatched Plan admission as a runtime issue instead of creating another live-only Task. After publication, defects require separate recovery/rollback work, not reopening a completed Job.
 
 ### Architecture Lens
 
@@ -118,7 +128,7 @@ If evidence is absent or execution outcome is unknown, disposition that historic
 
 - Prefer independently verifiable Tasks with stable IDs, but do not split work solely to make Tasks smaller.
 - When a Task depends on mutable repository or product state, distinguish a frozen evidence target from the current execution head. A SHA may freeze that Task's own review/source evidence, but do not copy an upstream SHA into a dependent release, deploy, publication, or other follow-on Task unless the objective explicitly requires that same frozen target. After dependencies complete, downstream Tasks must resolve and verify the current durable Job/PR head before acting.
-- When fresh UI, browser, store, runtime, or visual evidence is material to the Task outcome, say so explicitly in the Task input and require evidence from the real current state. Existing screenshots, prepared assets, or prior observations are not substitutes for fresh evidence unless the objective explicitly allows reuse.
+- When fresh UI, browser, store, runtime, or visual evidence is material to a **pre-publish** Task, require current authentic evidence. If it is possible only after deployment, use the post-publish acceptance handoff above; existing screenshots or prior observations never substitute for live evidence.
 - When a Job needs multi-perspective review, use the visible `review-chair` agent or an Agent Graph to select specialist roles dynamically. Keep specialist Tasks as independent siblings against the same immutable target/version, and leave worker/model/provider routing to Relay.
 - A Task describes what an agent must accomplish; never emit a shell command as a worker Task.
 - Use dependencies only for Task IDs inside the current Job, and only when execution order actually matters. Never encode cross-Job or cross-repository dependencies in `dependencies`.

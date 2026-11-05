@@ -54,4 +54,10 @@ For a managed Job, Relay owns Job completion. A satisfied Plan, successful imple
 
 Post-merge publication and deployment activity is separate from Job lifecycle. Events or evidence such as `package.published`, published version metadata, service restart, and deployment verification may be attached after the Job is already `COMPLETED`; they must not hold the Job open, reopen it, or redefine completion. If post-merge deployment needs remediation, record that as separate deployment/recovery work rather than mutating the completed implementation Job lifecycle.
 
+## Live acceptance after publication
+
+Use **publish-first live acceptance** when verification genuinely requires a running published build, real provider/account, device, or runtime. The Planner completes available build/isolated tests and mandatory pre-merge gates, then hands off unrun live-only scenarios as explicit `NOT_RUN` / `PENDING_POST_PUBLISH` evidence, not successful tests. Do not let a live-only check become a pre-merge Task or repeated Plan round just because its environment is unavailable. Independent Final Review and normal Relay merge/delivery remain mandatory.
+
+After a **verified** publication/deployment receipt, the orchestrator uses the handoff to run supported live checks and monitor health if capable and authorized. A persistent watcher requires a real scheduled automation/monitoring mechanism; never promise background execution without creating one. If the scenario requires a user action or unsupported device/account, provide a concrete manual-acceptance checklist and request/reminder rather than holding the completed code Job open. Record exact version, test owner, evidence and final status separately; failures trigger a new post-release fix/rollback workflow. Security, legal, data-loss and explicit pre-release approval requirements are **not** deferrable under this policy.
+
 If a PR closes without merge, check the Job state through Relay CLI; do not infer a successful completion.

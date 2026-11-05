@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SQLiteRelayStore } from '../../dist/relay-store.js';
 import { AgentObjectivePlanner, buildPlannerCodexArgs } from '../../dist/planner.js';
@@ -133,4 +133,29 @@ test('reapplying a succeeded Plan is idempotent and leaves one committed Task', 
     assert.equal(durable?.plans?.[0]?.status, 'SUCCEEDED');
     assert.equal(durable?.tasks?.length, 1);
   } finally { fixture.cleanup(); }
+});
+
+
+test('Planner distinguishes publish-first live acceptance from blocking pre-publish gates', async () => {
+  const root = new URL('../../skills/agents-relay/', import.meta.url);
+  const [planner, taskContract, orchestrator, reviewer] = await Promise.all([
+    readFile(new URL('agents/planner.agent.md', root), 'utf8'),
+    readFile(new URL('contracts/task-job-contract.md', root), 'utf8'),
+    readFile(new URL('contracts/orchestrator-workflows.md', root), 'utf8'),
+    readFile(new URL('agents/reviewer.agent.md', root), 'utf8'),
+  ]);
+  assert.match(planner, /### Publish-first live acceptance/);
+  assert.match(planner, /do not create a blocking pre-publish Task/i);
+  assert.match(planner, /PENDING_POST_PUBLISH/);
+  assert.match(planner, /mandatory pre-release gate/i);
+  assert.match(planner, /objective_status: "satisfied".*next_tasks: \[\]/s);
+  assert.match(planner, /Never claim a watcher\/reminder exists until it is actually created/);
+  assert.match(planner, /Preserve historical failed\/deferred Tasks/i);
+  assert.match(orchestrator, /After a \*\*verified\*\* publication\/deployment receipt/);
+  assert.match(orchestrator, /manual-acceptance checklist/);
+  assert.match(orchestrator, /not.*deferrable/i);
+  assert.match(taskContract, /do not create release-blocking Tasks for an unavailable future environment/i);
+  assert.match(taskContract, /Reviewers apply the same publish-first evidence boundary/);
+  assert.match(reviewer, /live-only check is \*\*NOT_RUN\*\*/);
+  assert.match(reviewer, /Missing mandatory pre-release evidence/);
 });
