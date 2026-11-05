@@ -64,3 +64,26 @@ test('active named Reviewer role is admitted and strict CLI findings parse rejec
  for(const sample of ['{}','[]','[{"id":"A","summary":""}]','[{"id":"A","summary":"x"},{"id":"A","summary":"y"}]'])
    assert.throws(()=>parseRevisionFindings(sample));
 });
+
+test('targeted revision preserves exact compatible original ChatGPT FIFO new-turn identity; incompatible adapter fails safe', async () => {
+ const { prepareRevisionThreadDelivery } = await import('../dist/reviewer-thread.js');
+ const original = {...task('owner'),adapter:'chatgpt',threadId:'thread-1',threadUrl:'https://chatgpt.com/c/thread-1',
+   routing:{provider:'chatgpt',projectId:'p',model:'account-defaults'}};
+ const buildChild = () => ({...task('child','QUEUED'),adapter:'chatgpt',executionId:'revision-execution',
+   routing:{provider:'chatgpt',projectId:'p',model:'account-defaults'},
+   revision:{kind:'targeted',originalTaskId:'owner',reviewTaskId:'review',basedOnHeadSha:'head',requestIds:['r1']}});
+ const j={...fixture(),tasks:[original]};
+ const matching=buildChild();
+ assert.equal(prepareRevisionThreadDelivery(j,matching).threadId,'thread-1');
+ assert.equal(matching.revision.threadContinuation.decision,'reuse');
+ assert.equal(prepareRevisionThreadDelivery(j,matching).requestId,'test:child:revision-execution');
+ const unavailable=buildChild();unavailable.adapter='codex';
+ assert.equal(prepareRevisionThreadDelivery(j,unavailable),undefined);
+ assert.equal(unavailable.revision.threadContinuation.decision,'fallback');
+ const deleted=buildChild();j.tasks[0].threadDeletedAt=new Date().toISOString();
+ assert.equal(prepareRevisionThreadDelivery(j,deleted),undefined);
+ assert.equal(deleted.revision.threadContinuation.decision,'fallback');
+ j.tasks[0].threadDeletedAt=undefined;
+ matching.adapter='codex';
+ assert.throws(()=>prepareRevisionThreadDelivery(j,matching),/refuse uncertain duplicate send/);
+});

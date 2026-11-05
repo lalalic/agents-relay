@@ -35,6 +35,13 @@ Every Implementation, Reviewer, and Troubleshooter execution publishes `task.sta
 
 A Reviewer must **not** publish unstructured `task.completed`: missing verdict or immutable head is invalid. Relay validates the Reviewer verdict; read the accepted review outcome through the matching Relay CLI.
 
+### Targeted review findings and original Task revisions
+
+The automatically created `job-acceptance-reviewer` (historical `reviewer` records remain valid) owns the integrated Job acceptance gate, not the Implementation Agent's self-review. For blocking findings with an unambiguous original succeeded Task owner, its *active execution* calls `agents-relay task revise --repo ... --id ... --task-id ORIGINAL --review-task-id REVIEW --execution-id REVIEW_EXEC --head-sha REVIEW_SHA --request-id STABLE_ID --findings-file PATH`. A findings file is a JSON array of identified `{id, summary, evidence?}` items. Relay rejects stale execution/head, unsupported owner or conflicting request ID, and transactionally appends `review.feedback` comments and one targeted child per owner/Review round. The CLI receipt is evidence of request persistence, **not** repair or completion. The Reviewer then publishes its single correlated `task.completed` verdict `changes-required` with matching `findings` and immutable `head_sha`; the Review Graph authorizes scheduling only when all blocking findings have durable owners. No direct `task.blocked`/`task.unblocked` event is emitted by the agent.
+
+A fix child reports its **own** correlated completion after verified repair. Downstream `dependencyValidity` policy is `order-only` by default, or explicitly `revalidate`/`rerun` per declared input. All changed upstream generations must settle before a fan-in consumer can verify or rerun. Relay derives successful revision lineage from durable Task results, then creates another fresh immutable-head Job Acceptance Review. A partially submitted message, unverified terminal, historical result or stale source SHA does not count as a fix or approval.
+
+
 ## Troubleshooter human escalation
 
 Only a real user action merits escalation. Troubleshooter invokes the Relay escalation operation, specifying the required action, resolution condition, and diagnostic context. Relay durably records the human action and blocks **the Troubleshooter Task**, leaving the original failed Task `FAILED`. This is a Relay state transition, not a third agent terminal event.
