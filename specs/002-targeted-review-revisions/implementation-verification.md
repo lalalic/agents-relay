@@ -59,3 +59,50 @@ live-provider scenario remains skipped, not silently accepted.
 
 An isolated CLI or browser submission acknowledgement is not a worker terminal
 event and does not prove approval or delivery.
+
+## Post-publication live acceptance handoff
+
+These live checks are **NOT_RUN / PENDING_POST_PUBLISH**. The Plan 11 record is
+historical and remains unchanged; this section supplies its missing follow-up
+details. The package version in this reviewed source tree is
+`agents-relay@2.0.150`. Plan 11 separately records a running Relay runtime as
+`agents-relay@2.0.209`. These are distinct version surfaces: the `2.0.209`
+runtime is the intended live-check target only after its build provenance is
+verified to include the final approved, merged PR #293 commit. The package
+version and deployed runtime version must both be captured in the live receipt;
+neither version string alone proves that the other contains the reviewed code.
+
+**Owner:** The Job orchestrator owns scheduling and recording the follow-up
+after verified publication. If it cannot run the checks in the supported live
+environment, it must request user-run acceptance and preserve this status as
+pending; it must not report a pass or silently close the handoff.
+
+**Trigger and prerequisites:** Start only after Relay confirms PR #293's
+approved commit was merged and the package publication receipt is verified.
+Before executing, verify that the live Relay runtime is healthy and that its
+reported build provenance includes that exact merged commit. If the deployed
+runtime version differs from `2.0.209`, record the actual version and commit
+and confirm they contain the merged change before proceeding. Use the supported
+live environment and caller-owned WebHelm session; do not recreate cancelled
+Task 787 or claim its evidence.
+
+**Scenarios to run:**
+
+1. Exercise one genuine managed multi-provider Job through Review → targeted
+   Fix → Re-review → approved delivery, using real provider actions and the
+   authorized Relay delivery path. Capture the immutable review SHA, targeted
+   revision lineage, correlated terminal events, approved SHA, and delivery
+   receipt.
+2. Exercise ChatGPT, Codex, and WebHelm worker FIFO/session-affinity behavior
+   with the same review→fix→re-review flow. Verify each continuation uses the
+   intended original thread/session when compatible, and that uncertain
+   submissions are reconciled without duplicate sends or premature slot
+   release.
+
+The follow-up receipt must record publication identity and time, package
+version, deployed runtime version and build commit, scenario Job/Task identities,
+observed thread/session and FIFO evidence, delivery receipt, per-scenario
+PASS/FAIL/NOT_RUN, and any unresolved limits. Keep both scenarios pending until
+that evidence is available. These live checks are post-publication acceptance;
+they are not represented by the isolated test results above or as evidence that
+has already passed.
