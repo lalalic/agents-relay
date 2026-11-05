@@ -3,6 +3,7 @@ import type { PlannerHistoryCleanup } from './planner-history-cleanup.js';
 import { classifyTaskResolution } from './workflow/task-resolution.js';
 import { tryTransitionTaskEvent } from './task-transitions.js';
 import { satisfiesWorker, type WorkerCandidate } from './worker-routing.js';
+import { isSuperseded } from './runtime-status.js';
 
 function dependencySatisfied(task: Task, byId: ReadonlyMap<string, Task>): boolean {
   return task.dependencies.every(id => {
@@ -77,8 +78,9 @@ export function forceRestateConverged(job: Job, planId?: string, candidates?: re
 export function objectiveSatisfiedForReview(job: Job): boolean {
   const latest = (job.plans ?? []).at(-1);
   if (latest?.status !== 'SUCCEEDED' || latest.objectiveStatus !== 'satisfied') return false;
+  const byId = new Map(job.tasks.map(task => [task.id, task]));
   const implementation = job.tasks.filter(task => task.kind !== 'planner' && task.agentName !== 'reviewer' && task.agentName !== 'troubleshooter'
-    && task.resolutionClassification?.kind !== 'superseded');
+    && !isSuperseded(task, byId));
   return implementation.length > 0 && implementation.every(task => task.state === 'SUCCEEDED');
 }
 

@@ -1682,7 +1682,7 @@ test('cancelled Task supersede uses resolution graph and reopens implementation 
 
 test('final review ignores explicitly superseded cancelled history', async () => {
   const succeeded=task('done','SUCCEEDED');
-  const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split';
+  const superseded=task('old','CANCELLED'); superseded.error='Superseded after objective split'; superseded.resolution={path:'cancel_supersede',state:'resolved'};
   const store=new InMemoryStore({...job([succeeded,superseded]),state:'ACTIVE',headSha:'abc1234567890'});
   const bus=new MemoryEventBus();
   const reconciler=managedReconciler(store,{owner:'test',adapters:[new FakeAdapter()],eventBus:bus,maxConcurrent:0,reviewer:{adapter:'chatgpt',routing:{provider:'chatgpt',model:'account-defaults',decidedBy:'test',decidedAt:now()}}});

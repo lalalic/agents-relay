@@ -1,6 +1,6 @@
 ---
 title: Review Lifecycle
-description: Manages review creation, immutable verdicts, changes-required, and re-review.
+description: Manages review creation, immutable verdicts, changes-required, and re-review. The implementationComplete guard ignores only durably resolved cancel_supersede cancellations and failed Tasks with a valid superseded classification targeting succeeded work.
 ---
 flowchart LR
 %% relay: initial none

@@ -44,9 +44,9 @@ async function fixture(forceRestate = true, includeFailed = true) {
   return { env, job, plan, sqlite, store };
 }
 
-function runtime(store) {
+function runtime(store, overrides = {}) {
   return new Reconciler(store, { owner: 'planner-test', adapters: [{ name: 'codex', id: 'codex-worker', capabilities: [] }],
-    maxConcurrent: 0, noGitHub: true, projectPathForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } } });
+    maxConcurrent: 0, noGitHub: true, projectPathForJob: () => process.cwd(), planner: { plan: async () => { throw new Error('not launched'); } }, ...overrides });
 }
 
 const cleanup = [
@@ -104,6 +104,75 @@ test('L3 rejected Force Restate apply has zero SQLite changes and same execution
     assert.equal(JSON.stringify(await f.sqlite.loadJob(f.job.id)), afterCommit, 'duplicate apply is idempotent');
     assert.equal(reconciler.plannerLive.has(f.plan.id), false, 'successful commit releases the Planner execution');
   } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
+});
+
+test('L3 satisfied Plan Apply accepts resolved cancellations and reconciliation creates review at the current head', async () => {
+  const f = await fixture(false, false);
+  const headSha = 'immutable-current-head-793';
+  f.job.reviewEnabled = true;
+  f.job.headSha = headSha;
+  const superseded = task(f.job.id, 'resolved-cancel', 'CANCELLED', {
+    error: 'Superseded by corrected durable work',
+    resolution: { path: 'cancel_supersede', state: 'resolved' },
+  });
+  f.job.tasks.push(superseded);
+  await f.sqlite.saveJob(f.job);
+  const reconciler = runtime(f.store, {
+    headShaProvider: async () => headSha,
+    reviewer: { adapter: 'chatgpt', routing: { provider: 'chatgpt', model: 'account-defaults', decidedBy: 'l3-test', decidedAt: at } },
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  reconciler.plannerLive.set(f.plan.id, { executionId: 'planner-execution-1', controller, timer });
+  try {
+    const applied = await reconciler.applyPlannerTree(f.job.id, f.plan.id, 'planner-execution-1', {
+      objective_status: 'satisfied', assessment: 'Verified implementation is complete; the resolved cancellation is superseded history.',
+      next_tasks: [], history_cleanup: [],
+    });
+    assert.equal(applied.status, 'SUCCEEDED');
+    const committed = await f.sqlite.loadJob(f.job.id);
+    assert.equal(committed.plans.at(-1).objectiveStatus, 'satisfied');
+    assert.equal(committed.tasks.find(item => item.id === 'resolved-cancel').state, 'CANCELLED');
+    const reconciled = await reconciler.reconcile(f.job.id);
+    assert.equal(reconciled.review?.outcome, 'pending');
+    assert.equal(reconciled.review?.headSha, headSha);
+    const reviewTask = reconciled.tasks.find(item => item.id === reconciled.review?.taskId);
+    assert.equal(reviewTask?.agentName, 'reviewer');
+    assert.equal(reviewTask?.reviewHeadSha, headSha);
+    assert.deepEqual(reviewTask?.dependencies, ['verified'], 'resolved cancelled history is not part of the acceptance review gate');
+  } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
+});
+
+test('L3 satisfied Plan Apply rejects unresolved or unproven historical work without SQLite writes', async () => {
+  const invalidHistory = [
+    task('JOB', 'unresolved-cancel', 'CANCELLED', { resolution: { path: 'cancel_supersede', state: 'active' } }),
+    task('JOB', 'text-only-cancel', 'CANCELLED', { error: 'Superseded by corrected work' }),
+    task('JOB', 'active-work', 'RUNNING', { executionId: 'active-execution' }),
+    task('JOB', 'ordinary-failure', 'FAILED'),
+    task('JOB', 'invalid-classification', 'FAILED', { resolutionClassification: {
+      kind: 'superseded', targetTaskId: 'missing-target', evidence: 'claimed replacement', reason: 'claimed covered', updatedAt: at,
+    } }),
+    task('JOB', 'incomplete-classification', 'FAILED', { resolutionClassification: {
+      kind: 'superseded', targetTaskId: 'verified', evidence: '', reason: 'claimed covered', updatedAt: at,
+    } }),
+  ];
+  for (const invalid of invalidHistory) {
+    const f = await fixture(false, false);
+    invalid.jobId = f.job.id;
+    f.job.tasks.push(invalid);
+    await f.sqlite.saveJob(f.job);
+    const reconciler = runtime(f.store);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    reconciler.plannerLive.set(f.plan.id, { executionId: 'planner-execution-1', controller, timer });
+    try {
+      const before = JSON.stringify(await f.sqlite.loadJob(f.job.id));
+      await assert.rejects(reconciler.applyPlannerTree(f.job.id, f.plan.id, 'planner-execution-1', {
+        objective_status: 'satisfied', assessment: `Unproven implementation history: ${invalid.id}.`, next_tasks: [], history_cleanup: [],
+      }), error => error.code === 'PLAN_APPLY_VALIDATION_FAILED' && error.phase === 'forward_convergence', invalid.id);
+      assert.equal(JSON.stringify(await f.sqlite.loadJob(f.job.id)), before, `${invalid.id} must not mutate the durable Plan or Tasks`);
+    } finally { clearTimeout(timer); await reconciler.close(); f.sqlite.close(); f.env.cleanup(); }
+  }
 });
 
 test('L3 unknown execution stays unresolved while evidence-backed recovery commits after rejection', async () => {
